@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cortex AI Chat</title>
+    
+    <!-- External Libraries (Local) -->
+    <script src="../../components/assets/marked.min.js"></script>
+    <script src="../../components/assets/highlight.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/dracula.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    
+    <!-- Terminal Assets -->
+    <link rel="stylesheet" href="../../components/assets/xterm/xterm.css" />
+    <script src="../../components/assets/xterm/xterm.js"></script>
+    <script src="../../components/assets/xterm/xterm-addon-fit.js"></script>
+
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="model_selector.css">
+    
+    
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+    <script>
+        window.onerror = function(msg, url, line, col, error) {
+            console.log("CORTEX_JS_ERROR: " + msg + " at " + url + ":" + line + ":" + col);
+            return false;
+        };
+    </script>
+</head>
+<body class="dark">
+    <div id="app-container">
+        <!-- History Sidebar -->
+        <aside id="history-sidebar" class="collapsed">
+            <div class="sidebar-header">
+                <h3>Recent Chats</h3>
+                <button id="close-sidebar-btn" title="Close Sidebar">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </div>
+            <div id="chat-history-list">
+                <!-- History items will be injected here -->
+            </div>
+        </aside>
+
+        <div id="chat-container">
+            <!-- Minimal Header -->
+            <div id="header">
+                <button id="toggle-history-btn" title="Show History">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 3"></path><circle cx="12" cy="12" r="9"></circle><path d="M3.05 11a9 9 0 1 1 .5 4"></path></svg>
+                </button>
+                <div class="header-center">
+                    <span class="logo">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-2.54Z"></path><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-2.54Z"></path></svg>
+                    </span>
+                    <span class="title">Cortex AI</span>
+                </div>
+                <div class="actions">
+                    <button id="new-chat-btn" title="New Chat">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                    </button>
+                    <button id="clear-chat-btn" title="Clear All Messages">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Chat Messages Container -->
+            <div id="chatMessages">
+                <div id="empty-state">
+                    <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto 20px auto; display: block; opacity: 0.6;"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-2.54Z"></path><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-2.54Z"></path></svg>
+                    <p>Start a new conversation with Cortex AI</p>
+                </div>
+            </div>
+
+            <!-- Compact Input Area -->
+            <div id="input-area">
+                <div id="input-container">
+                    <textarea id="chatInput" placeholder="Plan and build, @ for context, / for commands" rows="1"></textarea>
+                    
+                    <div class="input-toolbar">
+                        <div class="toolbar-left">
+                            <div class="custom-dropdown" id="mode-selector">
+                                <button class="dropdown-trigger" title="Select Interaction Mode">
+                                    <i class="fas fa-infinity icon-agent"></i>
+                                    <span id="current-mode">Agent</span>
+                                    <i class="fas fa-chevron-down"></i>
+                                </button>
+                                <div class="dropdown-menu">
+                                    <div class="dropdown-item active" data-value="Agent" title="Autonomous Agent Mode">
+                                        <i class="fas fa-infinity"></i>
+                                        <div class="item-text">
+                                            <span>Agent</span>
+                                        </div>
+                                    </div>
+                                    <div class="dropdown-item" data-value="Ask" title="Pure Q&A Mode">
+                                        <i class="fas fa-comment-dots"></i>
+                                        <div class="item-text">
+                                            <span>Ask</span>
+                                        </div>
+                                    </div>
+                                    <div class="dropdown-item" data-value="Plan" title="Architectural Planning Mode">
+                                        <i class="fas fa-magic"></i>
+                                        <div class="item-text">
+                                            <span>Plan</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="toolbar-right">
+                            <!-- Model Selector -->
+                            <div class="custom-dropdown" id="model-selector">
+                                <button class="dropdown-trigger" title="Select AI Model">
+                                    <span id="selected-model">DeepSeek Chat V3</span>
+                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                                </button>
+                                <div class="dropdown-menu model-dropdown-menu">
+                                    <div class="dropdown-header">Qwen Models</div>
+                                    <div class="dropdown-item" data-value="qwen-max" data-perf="1.6" data-cost="$2.40/1M">
+                                        <div class="item-icon qwen-icon">Q</div>
+                                        <div class="item-text">
+                                            <span>Qwen-Max <span class="model-tag ultimate">ULTIMATE</span></span>
+                                        </div>
+                                        <span class="model-cost">$2.40/1M</span>
+                                    </div>
+                                    <div class="dropdown-item" data-value="qwen-plus" data-perf="1.3" data-cost="$0.80/1M">
+                                        <div class="item-icon qwen-icon">Q</div>
+                                        <div class="item-text">
+                                            <span>Qwen-Plus <span class="model-tag balanced">BALANCED</span></span>
+                                        </div>
+                                        <span class="model-cost">$0.80/1M</span>
+                                    </div>
+                                    <div class="dropdown-item" data-value="qwen-3.5-max" data-perf="1.5" data-cost="$2.00/1M">
+                                        <div class="item-icon qwen-icon">Q</div>
+                                        <div class="item-text">
+                                            <span>Qwen-3.5-Max</span>
+                                        </div>
+                                        <span class="model-cost">$2.00/1M</span>
+                                    </div>
+                                    <div class="dropdown-item" data-value="qwen-3.5-plus" data-perf="1.4" data-cost="$0.70/1M">
+                                        <div class="item-icon qwen-icon">Q</div>
+                                        <div class="item-text">
+                                            <span>Qwen-3.5-Plus</span>
+                                        </div>
+                                        <span class="model-cost">$0.70/1M</span>
+                                    </div>
+                                    <div class="dropdown-item" data-value="qwen-3.5-flash" data-perf="1.0" data-cost="$0.10/1M">
+                                        <div class="item-icon qwen-icon">Q</div>
+                                        <div class="item-text">
+                                            <span>Qwen-3.5-Flash <span class="model-tag best-value">BEST VALUE</span></span>
+                                        </div>
+                                        <span class="model-cost">$0.10/1M</span>
+                                    </div>
+                                    
+                                    <div class="dropdown-divider"></div>
+                                    <div class="dropdown-header">DeepSeek Models</div>
+                                    <div class="dropdown-item active" data-value="deepseek-chat" data-perf="1.2" data-cost="$0.27/1M">
+                                        <div class="item-icon deepseek-icon">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>DeepSeek Chat V3 <span class="model-tag active-tag">
+                                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                                                Active
+                                            </span></span>
+                                        </div>
+                                        <span class="model-cost">$0.27/1M</span>
+                                    </div>
+                                    
+                                    <div class="dropdown-divider"></div>
+                                    <div class="dropdown-footer">
+                                        Cost per 1M tokens • API key required
+                                    </div>
+                                </div>
+                            </div>
+                        
+                            <button class="icon-btn optional-btn" title="Mentions">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"></circle><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.92 7.94"></path></svg>
+                            </button>
+                            <button class="icon-btn optional-btn" title="Attach Image">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+                            </button>
+                            <button class="icon-btn optional-btn" title="Enhance Prompt">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+                            </button>
+                            <button class="icon-btn optional-btn" title="Voice Input">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
+                            </button>
+                            
+                            <button id="sendBtn" class="primary-btn" title="Send Message">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                            </button>
+                            <button id="stopBtn" class="stop-btn" title="Stop" style="display: none;">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect></svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

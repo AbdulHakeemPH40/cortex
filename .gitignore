@@ -1,0 +1,21 @@
+﻿# Environment
+.env
+.env.example
+
+# Logs
+*.log
+test_out.txt
+
+# Test files
+test_*.py
+clear_deepseek_key.py
+fix_deepseek_key.py
+reset_settings.py
+
+# Temp
+tmp/
+nul
+
+# Documentation (optional)
+Docs/
+*.md
