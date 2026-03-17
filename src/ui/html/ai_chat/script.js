@@ -43,13 +43,14 @@ function initTerminal() {
 
 function toggleTerminal() {
     var container = document.getElementById('terminal-container');
-    var handle    = document.getElementById('terminal-resize-handle');
-    var toggleBtn = document.getElementById('toggle-terminal-btn');
     if (!container) return;
+    
+    // Show the container if hidden
+    if (container.style.display === 'none') {
+        container.style.display = 'flex';
+    }
 
     var isOpen = container.classList.toggle('open');
-    if (handle) handle.classList.toggle('visible', isOpen);
-    if (toggleBtn) toggleBtn.classList.toggle('active', isOpen);
 
     if (isOpen) {
         // Give the CSS transition time to expand, then fit
@@ -1160,12 +1161,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
     window.showTerminal = function() {
         var container = document.getElementById('terminal-container');
-        var handle    = document.getElementById('terminal-resize-handle');
-        var toggleBtn = document.getElementById('toggle-terminal-btn');
         if (container && !container.classList.contains('open')) {
+            // Make sure container is visible
+            container.style.display = 'flex';
             container.classList.add('open');
-            if (handle) handle.classList.add('visible');
-            if (toggleBtn) toggleBtn.classList.add('active');
             setTimeout(function () {
                 if (fitAddon) fitAddon.fit();
                 if (term) term.focus();

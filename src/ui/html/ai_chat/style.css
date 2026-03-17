@@ -1714,133 +1714,17 @@ body.light .change-action-block {
 }
 
 /* =========================================================
-   Terminal Panel
+   Terminal Panel (Hidden by default - shown only when needed)
    ========================================================= */
 
-/* Resize drag handle — sits between chat messages and terminal */
-#terminal-resize-handle {
-    height: 0;
-    background: transparent;
-    cursor: ns-resize;
-    flex-shrink: 0;
-    transition: background 0.2s, height 0.15s;
-    position: relative;
-    z-index: 20;
-}
+/* The terminal panel is now hidden by default and only shown 
+   programmatically via window.showTerminal() when needed */
 
-#terminal-resize-handle::after {
-    content: '';
-    display: block;
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    transform: translate(-50%, -50%);
-    width: 32px;
-    height: 3px;
-    border-radius: 2px;
-    background: transparent;
-    transition: background 0.2s;
-}
-
-/* Visible state — when terminal is open */
-#terminal-container.open ~ * #terminal-resize-handle,
-#terminal-resize-handle.visible {
-    height: 5px;
-    background: var(--border);
-}
-
-#terminal-resize-handle.visible:hover {
-    background: var(--accent);
-}
-
-#terminal-resize-handle.visible::after {
-    background: rgba(255,255,255,0.3);
-}
-
-/* Terminal container — collapsed by default */
+/* Terminal container — hidden by default */
 #terminal-container {
-    height: 0;
-    min-height: 0;
-    overflow: hidden;
-    flex-shrink: 0;
-    display: flex;
-    flex-direction: column;
-    background: #0c0c0c;
-    border-top: 0px solid var(--border);
-    transition: height 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-                border-top-width 0.25s;
+    display: none;
 }
 
-#terminal-container.open {
-    height: 220px;
-    border-top-width: 1px;
-}
-
-/* Terminal header bar */
-#terminal-header {
-    height: 28px;
-    min-height: 28px;
-    background: #1a1a1a;
-    border-bottom: 1px solid #2d2d2d;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 10px;
-    font-size: 11px;
-    color: #858585;
-    font-family: 'Segoe UI', sans-serif;
-    font-weight: 500;
-    letter-spacing: 0.3px;
-    text-transform: uppercase;
-    flex-shrink: 0;
-}
-
-#close-terminal-btn {
-    background: transparent;
-    border: none;
-    color: #858585;
-    cursor: pointer;
-    padding: 3px;
-    border-radius: 3px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.15s;
-}
-
-#close-terminal-btn:hover {
-    color: #cccccc;
-    background: rgba(255,255,255,0.08);
-}
-
-/* The xterm.js mounting point — fills remaining space */
-#terminal-inner {
-    flex: 1;
-    overflow: hidden;
-    padding: 4px 6px;
-}
-
-/* xterm overrides inside our panel */
-#terminal-inner .xterm {
-    height: 100%;
-}
-
-#terminal-inner .xterm-viewport {
-    overflow-y: auto !important;
-}
-
-/* Toggle button active glow when terminal is open */
-#toggle-terminal-btn.active {
-    color: var(--accent) !important;
-    background: rgba(0, 122, 204, 0.12) !important;
-}
-
-/* Light mode overrides */
-body.light #terminal-container {
-    background: #1e1e1e;  /* keep terminal dark even in light mode */
-}
-
-body.light #terminal-header {
-    background: #181818;
-    border-bottom-color: #333;
+#terminal-resize-handle {
+    display: none;
 }
