@@ -3,14 +3,42 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Cortex AI Agent IDE Chat Interface">
     <title>Cortex AI Chat</title>
     
-    <!-- External Libraries (Local) -->
+    <!-- External Libraries (Local for reliability) -->
     <script src="../../components/assets/marked.min.js"></script>
     <script src="../../components/assets/highlight.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/dracula.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
-    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+    
+    <!-- Optional: Math rendering (lazy loaded) -->
+    <script>
+        window.MathJax = { startup: { pageReady: () => Promise.resolve() } };
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async defer></script>
+    
+    <!-- Optional: Diagrams (lazy loaded) -->
+    <script>
+        window.mermaidLoaded = false;
+        window.initMermaid = function() {
+            if (window.mermaidLoaded) return Promise.resolve();
+            return new Promise((resolve) => {
+                var script = document.createElement('script');
+                script.src = 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js';
+                script.onload = function() {
+                    if (window.mermaid) {
+                        mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+                        window.mermaidLoaded = true;
+                    }
+                    resolve();
+                };
+                script.onerror = function() { resolve(); };
+                document.head.appendChild(script);
+            });
+        };
+    </script>
+    
+    <!-- Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     
     <!-- Terminal Assets -->
@@ -21,64 +49,107 @@
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="model_selector.css">
     
-    
+    <!-- Qt WebChannel -->
     <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+    
+    <!-- Error Handling & Loading State -->
     <script>
-        window.onerror = function(msg, url, line, col, error) {
-            console.log("CORTEX_JS_ERROR: " + msg + " at " + url + ":" + line + ":" + col);
-            return false;
-        };
+        (function() {
+            'use strict';
+            
+            // Global error handler
+            window.onerror = function(msg, url, line, col, error) {
+                console.error('[Cortex Error]', msg, 'at', url + ':' + line + ':' + col);
+                if (window.bridge && bridge.on_js_error) {
+                    bridge.on_js_error(JSON.stringify({ msg: msg, url: url, line: line, col: col }));
+                }
+                return false;
+            };
+            
+            // Unhandled promise rejections
+            window.onunhandledrejection = function(event) {
+                console.error('[Cortex Unhandled Promise]', event.reason);
+            };
+            
+            // Loading state management
+            window.cortexLoaded = false;
+            window.markReady = function() {
+                window.cortexLoaded = true;
+                document.body.classList.add('loaded');
+            };
+        })();
     </script>
 </head>
 <body class="dark">
-    <div id="app-container">
+    <!-- Loading Indicator -->
+    <div id="loading-overlay" aria-hidden="true">
+        <div class="loading-spinner"></div>
+        <span>Loading Cortex...</span>
+    </div>
+    
+    <div id="app-container" role="main" aria-label="Cortex AI Chat Interface">
         <!-- History Sidebar -->
-        <aside id="history-sidebar" class="collapsed">
+        <aside id="history-sidebar" class="collapsed" role="complementary" aria-label="Chat History">
             <div class="sidebar-header">
                 <h3>Recent Chats</h3>
-                <button id="close-sidebar-btn" title="Close Sidebar">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                <button id="close-sidebar-btn" title="Close Sidebar" aria-label="Close sidebar">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                 </button>
             </div>
-            <div id="chat-history-list">
+            <div id="chat-history-list" role="list" aria-label="Previous conversations">
                 <!-- History items will be injected here -->
             </div>
         </aside>
 
         <div id="chat-container">
-            <!-- Minimal Header -->
-            <div id="header">
-                <button id="toggle-history-btn" title="Show History">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 3"></path><circle cx="12" cy="12" r="9"></circle><path d="M3.05 11a9 9 0 1 1 .5 4"></path></svg>
+            <!-- Header -->
+            <header id="header" role="banner">
+                <button id="toggle-history-btn" title="Show History" aria-label="Toggle chat history sidebar" aria-expanded="false">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8v4l3 3"></path><circle cx="12" cy="12" r="9"></circle><path d="M3.05 11a9 9 0 1 1 .5 4"></path></svg>
                 </button>
                 <div class="header-center">
-                    <span class="logo">
+                    <span class="logo" aria-hidden="true">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-2.54Z"></path><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-2.54Z"></path></svg>
                     </span>
                     <span class="title">Cortex AI</span>
                 </div>
                 <div class="actions">
-                    <button id="new-chat-btn" title="New Chat">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                    <button id="new-chat-btn" title="New Chat (Ctrl+N)" aria-label="Start new chat">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
                     </button>
-                    <button id="clear-chat-btn" title="Clear All Messages">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+                    <button id="clear-chat-btn" title="Clear All Messages" aria-label="Clear all messages">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
                     </button>
                 </div>
-            </div>
+            </header>
 
             <!-- Chat Messages Container -->
-            <div id="chatMessages">
+            <div id="chatMessages" role="log" aria-live="polite" aria-atomic="false" aria-relevant="additions">
                 <div id="empty-state">
-                    <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto 20px auto; display: block; opacity: 0.6;"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-2.54Z"></path><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-2.54Z"></path></svg>
+                    <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto 20px auto; display: block; opacity: 0.6;" aria-hidden="true"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-2.54Z"></path><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-2.54Z"></path></svg>
                     <p>Start a new conversation with Cortex AI</p>
                 </div>
             </div>
 
-            <!-- Compact Input Area -->
-            <div id="input-area">
+            <!-- Context Bar (shows active context like @mentions) -->
+            <div id="context-bar" class="context-bar" style="display: none;">
+                <div class="context-items"></div>
+                <button class="context-clear" title="Clear context">×</button>
+            </div>
+            
+            <!-- Input Area -->
+            <div id="input-area" role="form" aria-label="Message input">
                 <div id="input-container">
-                    <textarea id="chatInput" placeholder="Plan and build, @ for context, / for commands" rows="1"></textarea>
+                    <textarea 
+                        id="chatInput" 
+                        placeholder="Plan and build, @ for context, / for commands&#10;Ctrl+Enter for new line, Enter to send" 
+                        rows="1"
+                        aria-label="Type your message"
+                        aria-multiline="true"
+                        spellcheck="false"
+                        autocomplete="off"
+                        autocapitalize="sentences"
+                    ></textarea>
                     
                     <div class="input-toolbar">
                         <div class="toolbar-left">

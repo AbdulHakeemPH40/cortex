@@ -25,12 +25,19 @@ class ChatBridge(QObject):
     always_allow_changed = pyqtSignal(bool)
     
     open_file_requested = pyqtSignal(str)
+    open_file_at_line_requested = pyqtSignal(str, int)  # file_path, line_number
     show_diff_requested = pyqtSignal(str)
     
     # Terminal Signals
     terminal_input = pyqtSignal(str)
     terminal_output = pyqtSignal(str)
     terminal_resize = pyqtSignal(int, int)
+    
+    # Navigation
+    navigate_to_line = pyqtSignal(str, int)  # file_path, line_number
+    
+    # Smart paste signal
+    smart_paste_check_requested = pyqtSignal(str)  # pasted_text
     
     @pyqtSlot(str)
     def on_message_submitted(self, text):
@@ -76,9 +83,19 @@ class ChatBridge(QObject):
     def on_open_file(self, file_path):
         self.open_file_requested.emit(file_path)
 
+    @pyqtSlot(str, int)
+    def on_open_file_at_line(self, file_path, line_number):
+        """Open file at specific line number."""
+        self.open_file_at_line_requested.emit(file_path, line_number)
+
     @pyqtSlot(str)
     def on_show_diff(self, file_path):
         self.show_diff_requested.emit(file_path)
+
+    @pyqtSlot(str)
+    def on_check_smart_paste(self, pasted_text):
+        """Check if pasted text matches current editor selection."""
+        self.smart_paste_check_requested.emit(pasted_text)
 
 
 class AIChatWidget(QWidget):
@@ -92,7 +109,11 @@ class AIChatWidget(QWidget):
     mode_changed = pyqtSignal(str)
     
     open_file_requested = pyqtSignal(str)
+    open_file_at_line_requested = pyqtSignal(str, int)  # file_path, line_number
     show_diff_requested = pyqtSignal(str)
+    
+    # Smart paste signal - emitted when user pastes code, to check if it matches editor selection
+    smart_paste_check_requested = pyqtSignal(str)  # pasted_text
 
     
     def __init__(self, parent=None):
@@ -128,6 +149,7 @@ class AIChatWidget(QWidget):
         self._bridge.generate_plan_requested.connect(self.generate_plan_requested.emit)
         self._bridge.mode_changed.connect(self.mode_changed.emit)
         self._bridge.open_file_requested.connect(self.open_file_requested.emit)
+        self._bridge.open_file_at_line_requested.connect(self.open_file_at_line_requested.emit)
         self._bridge.show_diff_requested.connect(self.show_diff_requested.emit)
         self._channel.registerObject("bridge", self._bridge)
 

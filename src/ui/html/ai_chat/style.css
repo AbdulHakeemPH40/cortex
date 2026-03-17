@@ -41,6 +41,47 @@ body {
     user-select: text; /* Enable selection everywhere */
 }
 
+/* Loading Overlay */
+#loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--bg-main);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+
+body.loaded #loading-overlay {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+}
+
+.loading-spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-bottom: 16px;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+#loading-overlay span {
+    color: var(--text-muted);
+    font-size: 14px;
+}
+
 button, #toggle-history-btn, .history-item {
     user-select: none; /* Disable on UI elements */
 }
@@ -311,6 +352,128 @@ button, #toggle-history-btn, .history-item {
 .copy-msg-btn:hover {
     color: var(--text);
     background: var(--hover-bg);
+}
+
+/* --- AI Thinking Animation (Grid Style) --- */
+.thinking-message {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 12px;
+    padding: 12px 16px !important;
+    background: var(--bubble-assistant) !important;
+    border-radius: 12px;
+    width: auto !important;
+    max-width: fit-content !important;
+    margin-bottom: 16px;
+    align-self: flex-start !important;
+    border: 1px solid var(--border) !important;
+}
+
+.thinking-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 10px);
+    grid-template-rows: repeat(3, 10px);
+    gap: 3px;
+    animation: thinking-glow 4s ease-in-out infinite alternate;
+}
+
+.thinking-cell {
+    width: 10px;
+    height: 10px;
+    background: rgba(0, 122, 204, 0.2);
+    border-radius: 2px;
+    animation: thinking-float 6s ease-in-out infinite alternate;
+    transition: opacity 0.6s ease, background 0.8s ease;
+}
+
+/* Individual floating delays */
+.thinking-cell:nth-child(1) { animation-delay: 0s; }
+.thinking-cell:nth-child(2) { animation-delay: 0.5s; }
+.thinking-cell:nth-child(3) { animation-delay: 1s; }
+.thinking-cell:nth-child(4) { animation-delay: 0.7s; }
+.thinking-cell:nth-child(5) { animation-delay: 0.2s; }
+.thinking-cell:nth-child(6) { animation-delay: 1.2s; }
+.thinking-cell:nth-child(7) { animation-delay: 0.9s; }
+.thinking-cell:nth-child(8) { animation-delay: 0.4s; }
+.thinking-cell:nth-child(9) { animation-delay: 1.5s; }
+
+@keyframes thinking-glow {
+    0% {
+        filter: drop-shadow(0 0 3px rgba(0, 122, 204, 0.3));
+    }
+    100% {
+        filter: drop-shadow(0 0 10px rgba(0, 122, 204, 0.6));
+    }
+}
+
+@keyframes thinking-float {
+    0% {
+        transform: translateY(0px);
+    }
+    100% {
+        transform: translateY(-3px);
+    }
+}
+
+.thinking-label {
+    color: var(--text-muted);
+    font-size: 13px;
+    font-style: italic;
+}
+
+/* --- Legacy Thinking Animation (Dots) --- */
+.message-bubble.thinking {
+    opacity: 0.7;
+}
+
+.thinking-content {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.thinking-dots {
+    display: flex;
+    gap: 4px;
+}
+
+.thinking-dots .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: thinking-bounce 1.4s infinite ease-in-out both;
+}
+
+.thinking-dots .dot-1 {
+    animation-delay: -0.32s;
+}
+
+.thinking-dots .dot-2 {
+    animation-delay: -0.16s;
+}
+
+.thinking-dots .dot-3 {
+    animation-delay: 0s;
+}
+
+@keyframes thinking-bounce {
+    0%, 80%, 100% {
+        transform: scale(0.6);
+        opacity: 0.5;
+    }
+    40% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+.thinking-text {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-style: italic;
 }
 
 /* --- Input Area Overhaul --- */
@@ -1477,6 +1640,90 @@ body.light #generate-plan-btn {
     font-family: 'Cascadia Code', 'Consolas', monospace;
 }
 
+/* Inline file links in chat messages */
+.file-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: #79c0ff;
+    cursor: pointer;
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 13px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(88, 166, 255, 0.1);
+    border: 1px solid rgba(88, 166, 255, 0.2);
+    transition: all 0.2s;
+    margin: 0 2px;
+}
+
+.file-link:hover {
+    background: rgba(88, 166, 255, 0.2);
+    border-color: rgba(88, 166, 255, 0.4);
+    text-decoration: none;
+}
+
+.file-link i {
+    font-size: 12px;
+}
+
+/* Light mode */
+body.light .file-link {
+    color: #0969da;
+    background: rgba(9, 105, 218, 0.1);
+    border-color: rgba(9, 105, 218, 0.2);
+}
+
+body.light .file-link:hover {
+    background: rgba(9, 105, 218, 0.2);
+}
+
+/* =========================================================
+   Smart Paste Reference
+   ========================================================= */
+
+.smart-paste-reference {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: #7ee787;
+    cursor: pointer;
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 13px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(126, 231, 135, 0.1);
+    border: 1px solid rgba(126, 231, 135, 0.2);
+    transition: all 0.2s;
+    margin: 0 2px;
+}
+
+.smart-paste-reference:hover {
+    background: rgba(126, 231, 135, 0.2);
+    border-color: rgba(126, 231, 135, 0.4);
+}
+
+.smart-paste-reference i {
+    font-size: 12px;
+}
+
+/* Smart paste indicator in input area */
+.chat-input.smart-paste-active {
+    border-color: rgba(126, 231, 135, 0.5);
+    box-shadow: 0 0 0 2px rgba(126, 231, 135, 0.1);
+}
+
+/* Light mode */
+body.light .smart-paste-reference {
+    color: #1a7f37;
+    background: rgba(31, 136, 61, 0.1);
+    border-color: rgba(31, 136, 61, 0.2);
+}
+
+body.light .smart-paste-reference:hover {
+    background: rgba(31, 136, 61, 0.2);
+}
+
 /* =========================================================
    Tool Execution Indicator
    ========================================================= */
@@ -1727,4 +1974,157 @@ body.light .change-action-block {
 
 #terminal-resize-handle {
     display: none;
+}
+
+/* --- Context Bar (for @mentions) --- */
+.context-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    background: var(--bg-header);
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+}
+
+.context-items {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    flex: 1;
+}
+
+.context-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    background: var(--accent);
+    color: white;
+    border-radius: 4px;
+    font-size: 11px;
+}
+
+.context-item i {
+    font-size: 10px;
+}
+
+.context-clear {
+    width: 20px;
+    height: 20px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    line-height: 1;
+}
+
+.context-clear:hover {
+    background: var(--hover-bg);
+    color: var(--text);
+}
+
+/* --- Message Action Buttons --- */
+.message-actions {
+    display: flex;
+    gap: 4px;
+    margin-top: 8px;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.message-bubble:hover .message-actions {
+    opacity: 1;
+}
+
+.msg-action-btn {
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    background: var(--bg-input);
+    color: var(--text-muted);
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: all 0.2s;
+}
+
+.msg-action-btn:hover {
+    background: var(--hover-bg);
+    color: var(--text);
+    border-color: var(--accent);
+}
+
+.msg-action-btn i {
+    font-size: 10px;
+}
+
+/* --- Quick Actions (below AI responses) --- */
+.quick-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+}
+
+.quick-action-btn {
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    border-radius: 16px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.quick-action-btn:hover {
+    background: var(--hover-bg);
+    color: var(--text);
+    border-color: var(--accent);
+}
+
+/* --- Streaming Cursor --- */
+.streaming-cursor {
+    display: inline-block;
+    width: 8px;
+    height: 16px;
+    background: var(--accent);
+    margin-left: 2px;
+    animation: blink 1s infinite;
+    vertical-align: middle;
+}
+
+@keyframes blink {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0; }
+}
+
+/* --- File Link Styling --- */
+.file-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--accent);
+    cursor: pointer;
+    text-decoration: none;
+    padding: 1px 4px;
+    border-radius: 3px;
+    transition: background 0.2s;
+}
+
+.file-link:hover {
+    background: var(--hover-bg);
+    text-decoration: underline;
+}
+
+.file-link i {
+    font-size: 12px;
 }

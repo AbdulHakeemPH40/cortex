@@ -763,7 +763,9 @@ class CortexMainWindow(QMainWindow):
         self._ai_chat.generate_plan_requested.connect(self._on_generate_plan)
         self._ai_chat.mode_changed.connect(self._ai_agent.set_interaction_mode)
         self._ai_chat.open_file_requested.connect(self._open_file)
+        self._ai_chat.open_file_at_line_requested.connect(self._open_file_at_line)
         self._ai_chat.show_diff_requested.connect(self._on_show_diff)
+        self._ai_chat.smart_paste_check_requested.connect(self._on_smart_paste_check)
 
         # Terminal tab changes
         self._terminal_tabs.currentChanged.connect(self._on_terminal_tab_changed)
@@ -852,7 +854,93 @@ class CortexMainWindow(QMainWindow):
         else:
             log.warning(f"No edit info found for {file_path}")
 
-    def _open_file_at_line(self, filepath: str, line: int):
+    def _open_file_at_line(self, file_path: str, line_number: int):
+        """Open file and navigate to specific line."""
+        # First open the file
+        self._open_file(file_path)
+        
+        # Get the current editor
+        editor = self._editor_tabs.currentWidget()
+        if isinstance(editor, CodeEditor):
+            # Navigate to line (0-indexed in Scintilla, but 1-indexed for users)
+            line_index = max(0, line_number - 1)
+            editor.setCursorPosition(line_index, 0)
+            editor.ensureLineVisible(line_index)
+            log.info(f"Navigated to line {line_number} in {file_path}")
+
+    def _on_smart_paste_check(self, pasted_text: str):
+        """Check if pasted text matches current editor selection. Send result to chat."""
+        try:
+            # Get current editor
+            editor = self._editor_tabs.currentWidget()
+            if not isinstance(editor, CodeEditor):
+                # No editor open, just paste normally
+                self._ai_chat._view.page().runJavaScript(
+                    f"handleSmartPasteResult({{isMatch: false}});"
+                )
+                return
+            
+            # Get selected text from editor
+            selected_text = editor.selectedText()
+            
+            # Normalize texts for comparison (remove extra whitespace)
+            def normalize(text):
+                return '\n'.join(line.strip() for line in text.strip().split('\n') if line.strip())
+            
+            pasted_normalized = normalize(pasted_text)
+            selected_normalized = normalize(selected_text)
+            
+            # Check if they match (allowing for minor differences)
+            is_match = (pasted_normalized == selected_normalized or 
+                       pasted_normalized in selected_normalized or 
+                       selected_normalized in pasted_normalized)
+            
+            if is_match:
+                # Get file path and line numbers
+                file_path = self._editor_tabs.current_filepath()
+                if file_path:
+                    # Get selection range
+                    start_line, _ = editor.getSelectionStart()
+                    end_line, _ = editor.getSelectionEnd()
+                    
+                    # Convert to 1-indexed
+                    start_line += 1
+                    end_line += 1
+                    
+                    # Build line range string
+                    if start_line == end_line:
+                        line_range = f"{start_line}"
+                    else:
+                        line_range = f"{start_line}-{end_line}"
+                    
+                    # Escape the file path for JavaScript
+                    import json
+                    file_path_js = json.dumps(file_path)
+                    
+                    # Send result to JavaScript
+                    self._ai_chat._view.page().runJavaScript(
+                        f"handleSmartPasteResult({{isMatch: true, filePath: {file_path_js}, lineRange: '{line_range}'}});"
+                    )
+                    log.info(f"Smart paste: matched selection in {file_path} lines {line_range}")
+                else:
+                    # No file path, paste normally
+                    self._ai_chat._view.page().runJavaScript(
+                        f"handleSmartPasteResult({{isMatch: false}});"
+                    )
+            else:
+                # No match, paste normally
+                self._ai_chat._view.page().runJavaScript(
+                    f"handleSmartPasteResult({{isMatch: false}});"
+                )
+                
+        except Exception as e:
+            log.error(f"Smart paste check error: {e}")
+            # On error, paste normally
+            self._ai_chat._view.page().runJavaScript(
+                f"handleSmartPasteResult({{isMatch: false}});"
+            )
+
+    def _open_file_at_line_duplicate(self, filepath: str, line: int):
         self._open_file(filepath)
         editor = self._editor_tabs.current_editor()
         if editor:
@@ -1125,6 +1213,19 @@ class CortexMainWindow(QMainWindow):
     def _on_tab_changed(self, index: int):
         fp = self._editor_tabs._files.get(index)
         self._update_status_file(fp)
+        
+        # Update AI agent with active file for context injection
+        if fp and hasattr(self, '_ai_agent'):
+            try:
+                editor = self._editor_tabs.widget(index)
+                cursor_pos = None
+                if hasattr(editor, 'getCursorPosition'):
+                    line, col = editor.getCursorPosition()
+                    cursor_pos = (line + 1, col)  # Convert to 1-indexed
+                self._ai_agent.set_active_file(fp, cursor_pos)
+                log.debug(f"Active file updated for AI: {fp} at {cursor_pos}")
+            except Exception as e:
+                log.warning(f"Could not update active file for AI: {e}")
 
     # def _apply_initial_theme(self):
     #     from PyQt6.QtWidgets import QApplication

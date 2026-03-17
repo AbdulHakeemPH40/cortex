@@ -112,6 +112,37 @@ function initMarked() {
     renderer.table = function (header, body) {
         return '<div class="table-wrapper"><table><thead>' + header + '</thead><tbody>' + body + '</tbody></table></div>';
     };
+    
+    // Custom text renderer to detect file paths and make them clickable
+    renderer.text = function(textObj) {
+        // Handle marked v13+ which passes {text: "..."} instead of raw string
+        var text = (typeof textObj === 'object' && textObj.text) ? textObj.text : textObj;
+        if (typeof text !== 'string') return text;
+        
+        // Pattern to detect file paths with optional line numbers
+        // Matches: src/main.py, src/main.py:42, ./config.json, etc.
+        var filePattern = /(`?)([\w\-/.\\]+\.(?:py|js|ts|jsx|tsx|html|css|scss|java|cpp|c|go|rs|php|rb|swift|kt|json|xml|yaml|yml|md|vue))(?::(\d+))?(`?)/gi;
+        
+        return text.replace(filePattern, function(match, backtick1, filePath, lineNum, backtick2) {
+            // Don't modify if already in backticks (code)
+            if (backtick1 === '`' && backtick2 === '`') {
+                return match;
+            }
+            
+            // Clean up the path
+            var cleanPath = filePath.replace(/\\/g, '/');
+            var fileName = cleanPath.split('/').pop();
+            
+            // Build the HTML
+            var lineAttr = lineNum ? ', ' + lineNum : '';
+            var lineDisplay = lineNum ? ':' + lineNum : '';
+            var escapedPath = cleanPath.replace(/'/g, "\\'");
+            
+            return '<span class="file-link" onclick="window.openFile(\'' + escapedPath + '\'' + lineAttr + ')">' +
+                   '<i class="fas fa-file-code"></i> ' + fileName + lineDisplay +
+                   '</span>';
+        });
+    };
     marked.setOptions({ renderer: renderer, breaks: true, gfm: true });
 }
 
@@ -154,6 +185,9 @@ document.addEventListener('DOMContentLoaded', function () {
     initMarked();
     initTerminal();
     initBridge();
+    
+    // Mark as ready when everything is loaded
+    if (window.markReady) window.markReady();
 
     // Event Listeners
     var toggle = document.getElementById('toggle-history-btn');
@@ -202,7 +236,84 @@ document.addEventListener('DOMContentLoaded', function () {
             input.style.height = 'auto';
             input.style.height = (input.scrollHeight) + 'px';
         };
+        
+        // Smart paste handler - converts copied code to file references
+        // Store pending paste text to handle async result from Python
+        window._pendingSmartPasteText = null;
+        window._smartPasteTimeout = null;
+        
+        input.onpaste = function(e) {
+            e.preventDefault();
+            
+            // Get pasted content
+            var pastedText = (e.clipboardData || window.clipboardData).getData('text');
+            
+            // Check if it looks like code (multiple lines or contains code patterns)
+            var lines = pastedText.split('\n');
+            var isCodeLike = lines.length > 2 || 
+                            /^(function|def|class|import|from|const|let|var|if|for|while|return|public|private|async|await|switch|case|try|catch)\s/.test(pastedText) ||
+                            /[{}\[\]();]/.test(pastedText);
+            
+            if (isCodeLike && bridge) {
+                // Store the text and ask Python to check
+                window._pendingSmartPasteText = pastedText;
+                
+                // Set a timeout to handle case where Python doesn't respond
+                window._smartPasteTimeout = setTimeout(function() {
+                    if (window._pendingSmartPasteText) {
+                        insertTextAtCursor(input, window._pendingSmartPasteText);
+                        window._pendingSmartPasteText = null;
+                    }
+                }, 2000); // 2 second timeout
+                
+                bridge.on_check_smart_paste(pastedText);
+            } else {
+                // Not code-like, paste normally
+                insertTextAtCursor(input, pastedText);
+            }
+        };
+        
+        // Handler called by Python with the result
+        window.handleSmartPasteResult = function(result) {
+            // Clear the timeout
+            if (window._smartPasteTimeout) {
+                clearTimeout(window._smartPasteTimeout);
+                window._smartPasteTimeout = null;
+            }
+            
+            var input = document.getElementById('chatInput');
+            if (!input) return;
+            
+            var textToInsert;
+            
+            if (result && result.isMatch) {
+                // Insert file reference instead of raw code
+                textToInsert = result.filePath.split(/[\\/]/).pop() + ' ' + result.lineRange;
+            } else {
+                // Paste normally using the stored text
+                textToInsert = window._pendingSmartPasteText || '';
+            }
+            
+            if (textToInsert) {
+                insertTextAtCursor(input, textToInsert);
+            }
+            window._pendingSmartPasteText = null;
+        };
+        
         setTimeout(function () { if (input) input.focus(); }, 200);
+    }
+    
+    // Helper function to insert text at cursor position
+    function insertTextAtCursor(textarea, text) {
+        var start = textarea.selectionStart;
+        var end = textarea.selectionEnd;
+        var value = textarea.value;
+        
+        textarea.value = value.substring(0, start) + text + value.substring(end);
+        textarea.selectionStart = textarea.selectionEnd = start + text.length;
+        
+        // Trigger input event to resize
+        textarea.dispatchEvent(new Event('input'));
     }
 });
 
@@ -384,6 +495,10 @@ function sendMessage() {
     }
 
     appendMessage(text, 'user', true);
+    
+    // Show AI thinking animation
+    showThinkingIndicator();
+    
     bridge.on_message_submitted(text);
 
     input.value = '';
@@ -394,6 +509,103 @@ function sendMessage() {
     var stopBtn = document.getElementById('stopBtn');
     if (sendBtn) sendBtn.style.display = 'none';
     if (stopBtn) stopBtn.style.display = 'flex';
+}
+
+// --- AI Thinking Grid Animation ---
+var thinkingInterval = null;
+var thinkingCells = null;
+
+function showThinkingAnimation() {
+    var thinkingEl = document.getElementById('thinking-animation');
+    
+    // Create the thinking element if it doesn't exist
+    if (!thinkingEl) {
+        var container = document.getElementById('chatMessages');
+        if (!container) return;
+        
+        thinkingEl = document.createElement('div');
+        thinkingEl.id = 'thinking-animation';
+        thinkingEl.className = 'message-bubble assistant thinking-message';
+        thinkingEl.innerHTML = '<div class="thinking-grid">' +
+            '<div class="thinking-cell"></div><div class="thinking-cell"></div>' +
+            '<div class="thinking-cell"></div><div class="thinking-cell"></div>' +
+            '<div class="thinking-cell"></div><div class="thinking-cell"></div>' +
+            '<div class="thinking-cell"></div><div class="thinking-cell"></div>' +
+            '<div class="thinking-cell"></div></div>' +
+            '<span class="thinking-label">Thinking...</span>';
+        
+        container.appendChild(thinkingEl);
+    }
+    
+    thinkingEl.style.display = 'flex';
+    thinkingCells = thinkingEl.querySelectorAll('.thinking-cell');
+    
+    // Scroll to bottom to show the thinking indicator
+    var container = document.getElementById('chatMessages');
+    if (container) {
+        container.scrollTop = container.scrollHeight;
+    }
+    
+    // Start the random highlighting pattern
+    if (thinkingInterval) clearInterval(thinkingInterval);
+    highlightThinkingCells();
+    thinkingInterval = setInterval(highlightThinkingCells, 400);
+}
+
+function hideThinkingAnimation() {
+    var thinkingEl = document.getElementById('thinking-animation');
+    if (!thinkingEl) {
+        console.error('Thinking animation element not found on hide!');
+        return;
+    }
+    
+    console.log('Hiding thinking animation...');
+    thinkingEl.style.display = 'none';
+    
+    if (thinkingInterval) {
+        clearInterval(thinkingInterval);
+        thinkingInterval = null;
+    }
+    
+    // Reset cells
+    if (thinkingCells) {
+        thinkingCells.forEach(function(cell) {
+            cell.style.opacity = '1';
+            cell.style.background = 'rgba(0, 122, 204, 0.2)';
+        });
+    }
+}
+
+function highlightThinkingCells() {
+    if (!thinkingCells || thinkingCells.length === 0) return;
+    
+    // Reset all cells to dim state
+    thinkingCells.forEach(function(cell) {
+        cell.style.opacity = '0.3';
+        cell.style.background = 'rgba(0, 122, 204, 0.15)';
+    });
+    
+    // Pick 2-4 random cells to highlight
+    var numToHighlight = Math.floor(Math.random() * 3) + 2;
+    
+    for (var i = 0; i < numToHighlight; i++) {
+        var randomIndex = Math.floor(Math.random() * 9);
+        var randomCell = thinkingCells[randomIndex];
+        
+        // Make this cell fully visible and brighter
+        randomCell.style.opacity = '1';
+        randomCell.style.background = 'rgba(0, 122, 204, 0.9)';
+    }
+}
+
+function showThinkingIndicator() {
+    // Use the new grid animation instead of old dots
+    showThinkingAnimation();
+}
+
+function removeThinkingIndicator() {
+    // Hide the new grid animation
+    hideThinkingAnimation();
 }
 
 function stopGeneration() {
@@ -410,14 +622,11 @@ function onChunk(chunk) {
     var container = document.getElementById('chatMessages');
     if (!container) return;
 
-    // Auto-show terminal when AI starts responding (for command visibility)
-    if (!currentAssistantMessage && chunk.trim()) {
-        // Check if this is the start of a response
-        if (window.showTerminal && !document.getElementById('terminal-container').classList.contains('open')) {
-            // Only show terminal if the chunk indicates a tool might be used
-            // This is a subtle indicator - terminal will be ready but not intrusive
-        }
-    }
+    // Remove thinking indicator when first chunk arrives
+    removeThinkingIndicator();
+
+    // Terminal output is now shown inline in chat via showTerminalOutputInChat()
+    // The terminal panel is only shown when explicitly requested
 
     if (!currentAssistantMessage) {
         currentAssistantMessage = document.createElement('div');
@@ -456,6 +665,9 @@ function updateStreamingUI() {
 }
 
 function onComplete() {
+    // Remove thinking indicator if still present
+    removeThinkingIndicator();
+    
     if (currentAssistantMessage) {
         var text = currentContent;
         var chat = chats.find(function (c) { return c.id === currentChatId; });
@@ -1218,4 +1430,81 @@ document.addEventListener('DOMContentLoaded', function() {
             terminalOutput.remove();
         }
     };
+    
+    // --- Context Bar Functions ---
+    window.addContextItem = function(type, name, icon) {
+        var contextBar = document.getElementById('context-bar');
+        var contextItems = contextBar.querySelector('.context-items');
+        if (!contextBar || !contextItems) return;
+        
+        var item = document.createElement('span');
+        item.className = 'context-item';
+        item.innerHTML = '<i class="fas fa-' + (icon || 'file') + '"></i> ' + escapeHtml(name);
+        item.dataset.type = type;
+        item.dataset.name = name;
+        
+        contextItems.appendChild(item);
+        contextBar.style.display = 'flex';
+    };
+    
+    window.clearContextBar = function() {
+        var contextBar = document.getElementById('context-bar');
+        var contextItems = contextBar.querySelector('.context-items');
+        if (contextItems) contextItems.innerHTML = '';
+        if (contextBar) contextBar.style.display = 'none';
+    };
+    
+    // Context clear button handler
+    var contextClearBtn = document.querySelector('.context-clear');
+    if (contextClearBtn) {
+        contextClearBtn.onclick = window.clearContextBar;
+    }
+    
+    // --- Message Action Functions ---
+    window.copyMessage = function(msgId) {
+        var bubble = document.getElementById(msgId);
+        if (!bubble) return;
+        var content = bubble.querySelector('.message-content');
+        if (content) {
+            var text = content.innerText;
+            navigator.clipboard.writeText(text).then(function() {
+                showToast('Copied to clipboard');
+            });
+        }
+    };
+    
+    window.regenerateMessage = function(msgId) {
+        if (bridge && bridge.on_regenerate) {
+            bridge.on_regenerate(msgId);
+        }
+    };
+    
+    window.insertAtCursor = function(text) {
+        if (bridge && bridge.on_insert_at_cursor) {
+            bridge.on_insert_at_cursor(text);
+        }
+    };
+    
+    // --- Toast Notification ---
+    function showToast(message) {
+        var existing = document.querySelector('.toast-notification');
+        if (existing) existing.remove();
+        
+        var toast = document.createElement('div');
+        toast.className = 'toast-notification';
+        toast.textContent = message;
+        toast.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:var(--accent);color:white;padding:8px 16px;border-radius:4px;font-size:12px;z-index:10000;animation:fadeInOut 2s forwards;';
+        document.body.appendChild(toast);
+        
+        setTimeout(function() { toast.remove(); }, 2000);
+    }
+    
+    // Add fadeInOut animation
+    var style = document.createElement('style');
+    style.textContent = '@keyframes fadeInOut{0%{opacity:0;transform:translateX(-50%) translateY(10px);}10%{opacity:1;transform:translateX(-50%) translateY(0);}90%{opacity:1;transform:translateX(-50%) translateY(0);}100%{opacity:0;transform:translateX(-50%) translateY(-10px);}}';
+    document.head.appendChild(style);
+    
+    // Expose thinking functions for Python bridge (already defined earlier)
+    window.startThinking = showThinkingAnimation;
+    window.stopThinking = hideThinkingAnimation;
 });

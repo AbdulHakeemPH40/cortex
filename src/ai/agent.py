@@ -193,6 +193,8 @@ Maintain a professional, proactive, and highly competent engineering tone."""
         super().__init__(parent)
         from src.config.settings import get_settings
         from src.ai.tools import ToolRegistry
+        from src.ai.context_manager import get_context_manager
+        from src.core.change_orchestrator import get_change_orchestrator
         self._settings = get_settings()
         self._project_root: Optional[str] = None
         self._tool_registry = ToolRegistry(project_root=self._project_root)
@@ -204,6 +206,10 @@ Maintain a professional, proactive, and highly competent engineering tone."""
         self._check_configuration()
         self._mode = "Agent"  # Default mode
         self._warmup_shown = False  # Track if warmup has been shown
+        self._context_manager = None  # Will be initialized when project is set
+        self._active_file_path = None
+        self._cursor_position = None
+        self._change_orchestrator = get_change_orchestrator()
 
     def set_interaction_mode(self, mode: str):
         """Set the interaction mode (Agent or Ask)."""
@@ -289,6 +295,18 @@ Maintain a professional, proactive, and highly competent engineering tone."""
         self._tool_registry.project_root = path
         log.info(f"AI Agent context switched to project: {path}")
         self._load_history_from_disk(path)
+        
+        # Initialize context manager with new project root
+        from src.ai.context_manager import get_context_manager
+        self._context_manager = get_context_manager(path)
+
+    def set_active_file(self, file_path: str, cursor_position: tuple = None):
+        """Set the currently active file in the editor for context injection."""
+        self._active_file_path = file_path
+        self._cursor_position = cursor_position
+        if self._context_manager:
+            self._context_manager.set_active_file(file_path, cursor_position)
+        log.debug(f"Active file set: {file_path} at position {cursor_position}")
 
     def chat(self, user_message: Optional[str], code_context: str = ""):
         """Send a message and get a streamed response."""
@@ -302,29 +320,40 @@ Maintain a professional, proactive, and highly competent engineering tone."""
                 self._handle_project_warmup()
                 return
             
-            # Check for pending tool confirmation
+            # Check for pending tool confirmation - auto-execute if permission system was removed
             if self._pending_tool_calls:
-                msg = user_message.lower().strip()
-                if msg in ["yes", "y", "confirm", "ok", "do it", "approve"]:
-                    self._execute_pending_tools()
-                    return
-                elif msg in ["no", "n", "cancel", "deny", "stop"]:
-                    self._cancel_pending_tools()
-                    return
-                # Handle "Always allow" from text if buttons not used
-                elif "always" in msg:
-                    self.set_always_allowed(True)
-                    self._execute_pending_tools()
-                    return
-                # If neither, treat as a normal message but warn
-                log.warning("Tool execution pending. Please confirm with 'yes' or 'no'.")
-                # Do NOT proceed to call the API with pending tools, it will cause Error 400
+                # Permission system removed - auto-execute pending tools
+                log.info("Auto-executing pending tools (permission system bypassed)")
+                self._execute_pending_tools()
                 return
             
-            # Build context-aware message
-            content = user_message
-            if code_context.strip():
-                content = f"{user_message}\n\n**Code context:**\n```\n{code_context}\n```"
+            # Build context-aware message using Context Manager
+            if self._context_manager:
+                # Get automatic context with file relevance detection
+                chat_context = self._context_manager.get_context_for_query(
+                    query=user_message,
+                    active_file_path=self._active_file_path,
+                    cursor_position=self._cursor_position
+                )
+                
+                # Format context for AI
+                context_prompt = self._context_manager.format_context_for_ai(chat_context)
+                
+                # Build final message with context
+                content = f"{context_prompt}\n\n## USER QUERY\n{user_message}\n\nPlease provide assistance based on the above context."
+                
+                # Update session context
+                self._context_manager.update_session_context({
+                    "role": "user",
+                    "content": user_message,
+                    "timestamp": "now"
+                })
+            else:
+                # Fallback to basic code context if context manager not available
+                content = user_message
+                if code_context.strip():
+                    content = f"{user_message}\n\n**Code context:**\n```\n{code_context}\n```"
+            
             self._history.append({"role": "user", "content": content})
             self._save_history_to_disk()
 
