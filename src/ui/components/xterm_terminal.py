@@ -532,12 +532,53 @@ class XTermWidget(QWidget):
         self._kill_process()
         super().closeEvent(event)
         
+    # PROTECTED PATHS for terminal operations
+    TERMINAL_PROTECTED_PATTERNS = [
+        r'^[\s]*rm\s+-rf\s+[/\\]?$',  # rm -rf /
+        r'^[\s]*rm\s+.*[/\\]windows',  # Anything with Windows directory
+        r'^[\s]*rm\s+.*[/\\]system32',  # System32
+        r'^[\s]*del\s+.*[/\\]windows',
+        r'^[\s]*rmdir\s+.*[/\\]windows',
+        r'^[\s]*remove-item\s+.*[/\\]windows',
+        r'^[\s]*rm\s+.*\*.*',  # Wildcard deletes
+        r'^[\s]*del\s+.*\*.*',
+    ]
+    
+    def _is_terminal_command_safe(self, command: str) -> tuple[bool, str]:
+        """Check if terminal command is safe to execute.
+        
+        Returns: (is_safe, warning_message)
+        """
+        import re
+        cmd_lower = command.lower().strip()
+        
+        # Check against dangerous patterns
+        for pattern in self.TERMINAL_PROTECTED_PATTERNS:
+            if re.match(pattern, cmd_lower, re.IGNORECASE):
+                return False, "⚠️ DANGEROUS COMMAND BLOCKED: This could delete system files!"
+        
+        # Check for rm -rf or del /s with broad targets
+        if re.match(r'^[\s]*rm\s+-rf\s+\.', cmd_lower):
+            return False, "⚠️ BLOCKED: Cannot delete current directory recursively"
+        
+        if re.match(r'^[\s]*rm\s+-rf\s+~', cmd_lower):
+            return False, "⚠️ BLOCKED: Cannot delete home directory"
+        
+        return True, ""
+    
     def _parse_and_emit_file_operation(self, command: str):
         """Parse terminal command and emit file operation signals."""
         import re
         import os
         
         if not command:
+            return
+        
+        # SAFETY CHECK
+        is_safe, warning = self._is_terminal_command_safe(command)
+        if not is_safe:
+            # Emit warning to UI
+            self.file_operation_detected.emit('blocked', warning, 'error')
             return
             
         # Normalize command

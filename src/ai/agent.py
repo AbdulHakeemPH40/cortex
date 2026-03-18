@@ -228,8 +228,9 @@ You are CORTEX, an intelligent coding assistant integrated into Cortex IDE.
 
 ### 2. CONTEXT AWARENESS
 - ALWAYS check the current project directory first before assuming anything
-- If project appears empty or minimal → Ask user what they want to build
-- If project has files → Ask user what they need help with
+- On first user interaction → Use `list_directory` on project root to understand structure
+- If project is empty → Say "I can see this is an empty folder. What would you like to build?"
+- If project has files → Briefly summarize what you found and ask what they need help with
 - NEVER hallucinate files or features that don't exist
 - NEVER create files unless user SPECIFICALLY requests it
 
@@ -335,14 +336,30 @@ Be helpful, concise, and responsive to what the user actually needs."""
 
     def set_project_root(self, path: str):
         """Set project root and load project-specific history."""
+        # Clear any existing context first to prevent cross-contamination
+        self._history.clear()
+        self._history_summary = ""
+        self._active_file_path = None
+        self._cursor_position = None
+        self._warmup_shown = False  # Reset for new project
+        
         self._project_root = path
         self._tool_registry.project_root = path
         log.info(f"AI Agent context switched to project: {path}")
-        self._load_history_from_disk(path)
+        
+        # Only load history if this is not a fresh/empty project switch
+        # The history will be loaded by _on_project_opened if needed
+        # self._load_history_from_disk(path)
         
         # Initialize context manager with new project root
         from src.ai.context_manager import get_context_manager
         self._context_manager = get_context_manager(path)
+        
+        # Clear any cached context from previous project
+        if self._context_manager:
+            self._context_manager.set_active_file(None)
+            self._context_manager._mentioned_files_history.clear()
+            self._context_manager._session_context.clear()
 
     def set_active_file(self, file_path: str, cursor_position: tuple = None):
         """Set the currently active file in the editor for context injection."""
@@ -424,6 +441,11 @@ Be helpful, concise, and responsive to what the user actually needs."""
         system_content = self.SYSTEM_PROMPT
         if self._history_summary:
             system_content += f"\n\n## CONVERSATION SUMMARY (PAST CONTEXT)\n{self._history_summary}"
+        
+        # On first interaction, add instruction to explore project
+        if not self._warmup_shown and self._project_root:
+            system_content += f"\n\n## FIRST INTERACTION - EXPLORE PROJECT\nThis is the first message. Use `list_directory` on '{self._project_root}' to understand the project structure before responding."
+            self._warmup_shown = True
             
         # Use trimmed history to prevent orphaned tool messages (Error 400)
         history_msgs = self._get_trimmed_history(20)
@@ -852,13 +874,9 @@ Be helpful, concise, and responsive to what the user actually needs."""
         """
         import difflib
         
-        # Emit assistant content first (if any) so user sees the AI is working
-        if assistant_content and assistant_content.strip():
-            self.response_chunk.emit(assistant_content)
-        else:
-            # Emit a default message so user knows AI is using tools
-            tool_names = [tc["function"]["name"] for tc in tool_calls]
-            self.response_chunk.emit(f"I'll help you with that. Let me use {', '.join(tool_names)} to gather information...")
+        # NOTE: Assistant content was already emitted by the worker thread
+        # We should NOT emit it again here to avoid duplication
+        # The content is only used for history storage at the end
         
         # Start exploration block for UI display
         self.response_chunk.emit("\n<exploration>\n")
@@ -1190,38 +1208,33 @@ Be helpful, concise, and responsive to what the user actually needs."""
         todos = []
         main_task = ""
         
-        # Look for numbered task lists (1. Task description, 2. Task description, etc.)
-        # Or checkbox style (- [ ] Task, - [x] Task)
-        
-        # Pattern for numbered tasks
-        numbered_pattern = r'^\s*(\d+)\.\s*(.+)$'
-        # Pattern for checkbox tasks
+        # Pattern for checkbox tasks (- [ ] Task, - [x] Task) - MOST RELIABLE
         checkbox_pattern = r'^\s*[-*]\s*\[([ xX])\]\s*(.+)$'
+        # Pattern for numbered tasks with checkboxes (1. [ ] Task)
+        numbered_checkbox_pattern = r'^\s*(\d+)\.\s*\[([ xX])\]\s*(.+)$'
         
         lines = text.split('\n')
         task_id = 0
+        in_task_section = False
         
         for line in lines:
-            # Check numbered tasks
-            numbered_match = re.match(numbered_pattern, line)
-            if numbered_match:
-                task_id += 1
-                content = numbered_match.group(2).strip()
-                if not main_task and task_id == 1:
-                    main_task = content[:50] + ('...' if len(content) > 50 else '')
-                todos.append({
-                    'id': f'task_{task_id}',
-                    'content': content,
-                    'status': 'PENDING'
-                })
+            # Skip file listings (they look like todos but aren't)
+            # Skip lines that are just filenames or file paths
+            if re.match(r'^\s*[`\'"]?[\w\-\.]+\.(py|js|md|txt|json|css|html)[`\'"]?', line):
+                continue
+            if ' - ' in line and any(ext in line for ext in ['.py', '.js', '.md', '.txt']):
+                # Likely a file description, not a task
                 continue
             
-            # Check checkbox tasks
+            # Check checkbox tasks first (most reliable indicator of actual todos)
             checkbox_match = re.match(checkbox_pattern, line)
             if checkbox_match:
                 task_id += 1
                 checked = checkbox_match.group(1).lower() == 'x'
                 content = checkbox_match.group(2).strip()
+                # Clean up markdown formatting
+                content = re.sub(r'\*\*(.+?)\*\*', r'\1', content)  # Remove **
+                content = re.sub(r'`(.+?)`', r'\1', content)  # Remove ``
                 if not main_task and task_id == 1:
                     main_task = content[:50] + ('...' if len(content) > 50 else '')
                 todos.append({
@@ -1229,11 +1242,34 @@ Be helpful, concise, and responsive to what the user actually needs."""
                     'content': content,
                     'status': 'COMPLETE' if checked else 'PENDING'
                 })
+                in_task_section = True
+                continue
+            
+            # Check numbered checkbox tasks
+            numbered_checkbox_match = re.match(numbered_checkbox_pattern, line)
+            if numbered_checkbox_match:
+                task_id += 1
+                checked = numbered_checkbox_match.group(2).lower() == 'x'
+                content = numbered_checkbox_match.group(3).strip()
+                # Clean up markdown formatting
+                content = re.sub(r'\*\*(.+?)\*\*', r'\1', content)
+                content = re.sub(r'`(.+?)`', r'\1', content)
+                if not main_task and task_id == 1:
+                    main_task = content[:50] + ('...' if len(content) > 50 else '')
+                todos.append({
+                    'id': f'task_{task_id}',
+                    'content': content,
+                    'status': 'COMPLETE' if checked else 'PENDING'
+                })
+                in_task_section = True
         
-        # Only emit if we found meaningful todos (at least 2)
-        if len(todos) >= 2:
+        # Only emit if we found actual checkbox todos (not just numbered lists)
+        if len(todos) >= 1 and in_task_section:
             log.info(f"Parsed {len(todos)} todos from response")
             self.todos_updated.emit(todos, main_task)
+        else:
+            # No real todos found - clear the todo section
+            self.todos_updated.emit([], "")
     
     def update_todo_status(self, task_id: str, status: str):
         """Update a specific todo item's status."""

@@ -312,6 +312,54 @@ class ToolRegistry:
         except Exception as e:
             raise Exception(f"Failed to edit file: {e}")
 
+    # PROTECTED PATHS - Cannot be deleted
+    PROTECTED_PATHS = [
+        # System directories
+        "c:\\", "c:/", "/", "/bin", "/boot", "/dev", "/etc", "/lib", "/lib64",
+        "/proc", "/root", "/sbin", "/sys", "/usr", "/var",
+        "c:\\windows", "c:\\program files", "c:\\program files (x86)",
+        "c:\\programdata", "c:\\users", "c:\\system32",
+        # Common user directories
+        "~", "~/", os.path.expanduser("~"),
+        os.path.expanduser("~/documents"),
+        os.path.expanduser("~/downloads"),
+        os.path.expanduser("~/desktop"),
+        os.path.expanduser("~/pictures"),
+        os.path.expanduser("~/videos"),
+        os.path.expanduser("~/music"),
+    ]
+    
+    def _is_protected_path(self, path: str) -> tuple[bool, str]:
+        """Check if path is protected from deletion.
+        
+        Returns: (is_protected, reason)
+        """
+        import os
+        
+        # Normalize path
+        path = os.path.normpath(os.path.abspath(path)).lower()
+        
+        # Check against protected paths
+        for protected in self.PROTECTED_PATHS:
+            protected_normalized = os.path.normpath(os.path.abspath(protected)).lower()
+            # Check if path is the protected path or inside it
+            if path == protected_normalized or path.startswith(protected_normalized + os.sep):
+                return True, f"Cannot delete protected system path: {protected}"
+        
+        # Check if path is outside project root (when project is set)
+        if self.project_root:
+            project_root_normalized = os.path.normpath(os.path.abspath(self.project_root)).lower()
+            if not path.startswith(project_root_normalized):
+                return True, "Cannot delete files outside project directory"
+        
+        # Check for dangerous patterns
+        dangerous_patterns = ['..', '~', '*', '?']
+        for pattern in dangerous_patterns:
+            if pattern in os.path.basename(path):
+                return True, f"Path contains dangerous pattern: {pattern}"
+        
+        return False, ""
+    
     def _delete_path(self, path: str, recursive: bool = True) -> str:
         """Delete a file or directory in project directory."""
         try:
@@ -320,20 +368,40 @@ class ToolRegistry:
             if not os.path.isabs(path):
                 path = os.path.join(working_dir, path)
             
+            # Normalize path
+            path = os.path.normpath(os.path.abspath(path))
+            
+            # SECURITY CHECK: Is this a protected path?
+            is_protected, reason = self._is_protected_path(path)
+            if is_protected:
+                return f"❌ BLOCKED: {reason}"
+            
             if not os.path.exists(path):
                 return f"Path does not exist: {path}"
-                
+            
+            # Additional check: Don't allow deleting entire project root
+            if self.project_root:
+                project_root_normalized = os.path.normpath(os.path.abspath(self.project_root)).lower()
+                if os.path.normpath(path).lower() == project_root_normalized:
+                    return "❌ BLOCKED: Cannot delete entire project root directory"
+            
+            # Check if it's a directory with many files (potential accident)
+            if os.path.isdir(path):
+                file_count = sum([len(files) for r, d, files in os.walk(path)])
+                if file_count > 50:
+                    return f"❌ BLOCKED: Directory contains {file_count} files. Too many to delete safely."
+            
             import shutil
             if os.path.isdir(path):
                 if recursive:
                     shutil.rmtree(path)
-                    return f"Directory deleted recursively: {path}"
+                    return f"✅ Directory deleted recursively: {os.path.basename(path)}"
                 else:
                     os.rmdir(path)
-                    return f"Directory deleted: {path}"
+                    return f"✅ Directory deleted: {os.path.basename(path)}"
             else:
                 os.remove(path)
-                return f"File deleted: {path}"
+                return f"✅ File deleted: {os.path.basename(path)}"
         except Exception as e:
             raise Exception(f"Failed to delete path: {e}")
             

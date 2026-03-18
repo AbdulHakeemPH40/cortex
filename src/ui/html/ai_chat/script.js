@@ -10,6 +10,37 @@ var currentContent = "";
 var renderPending = false;
 var lastRenderTime = 0;
 var RENDER_INTERVAL = 32; // ~30fps for smooth visual but low CPU
+var userScrolled = false; // Track if user manually scrolled
+
+// Smart scroll - only auto-scroll if user is near bottom
+function smartScroll(container) {
+    if (!container) return;
+    
+    // Check if user is near bottom (within 100px)
+    var isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+    
+    // Only auto-scroll if user hasn't manually scrolled or is near bottom
+    if (!userScrolled || isNearBottom) {
+        container.scrollTop = container.scrollHeight;
+    }
+}
+
+// Track user scroll
+function initScrollTracking() {
+    var container = document.getElementById('chatMessages');
+    if (!container) return;
+    
+    container.addEventListener('scroll', function() {
+        // Check if user scrolled up (not at bottom)
+        var isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 50;
+        userScrolled = !isAtBottom;
+    });
+    
+    // Reset scroll tracking when new message starts
+    container.addEventListener('mousedown', function() {
+        userScrolled = false;
+    });
+}
 
 // --- Initialization ---
 
@@ -131,14 +162,7 @@ function initMarked() {
                     return '<li class="task-item ' + checkedClass + '">' + checkedIcon + '<span class="task-text">' + taskText + '</span></li>';
                 }
                 
-                // Check for numbered card pattern (starts with number like "1. **Text**")
-                var numMatch = text.match(/^(\d+)\.\s*(.+)$/);
-                if (numMatch) {
-                    var num = numMatch[1];
-                    var content = numMatch[2];
-                    return '<li class="numbered-card" data-num="' + num + '"><span class="card-number">' + num + '</span><span class="card-content">' + content + '</span></li>';
-                }
-                
+                // Regular list item - text is already parsed by parseInline
                 return '<li>' + text + '</li>';
             },
             
@@ -155,11 +179,34 @@ function initMarked() {
             blockquote: function(token) {
                 var text = this.parser.parse(token.tokens);
                 return '<blockquote class="md-blockquote">' + text + '</blockquote>';
-            },
-            
+            }
+        },
+        tokenizer: {
+            inlineText: function(src) {
+                // Default inline text handling
+                var defaultTokenizer = marked.Renderer.prototype;
+                var match = src.match(/^([^\n]+)/);
+                if (match) {
+                    return {
+                        type: 'text',
+                        raw: match[0],
+                        text: match[0]
+                    };
+                }
+                return false;
+            }
+        }
+    });
+    
+    // Add extension for file link detection (runs after default parsing)
+    marked.use({
+        renderer: {
             text: function(token) {
                 var text = token.text;
                 if (typeof text !== 'string') return text;
+                
+                // First process inline markdown (bold, italic, code)
+                text = processInlineMarkdownNoEscape(text);
                 
                 // Pattern to detect file paths with optional line numbers
                 var filePattern = /(`?)([\w\-/.\\]+\.(?:py|js|ts|jsx|tsx|html|css|scss|java|cpp|c|go|rs|php|rb|swift|kt|json|xml|yaml|yml|md|vue))(?::(\d+))?(`?)/gi;
@@ -182,23 +229,80 @@ function initMarked() {
     });
     
     function renderProjectTree(text) {
-        var lines = text.trim().split('\n');
-        var html = '<div class="project-tree">';
-        lines.forEach(line => {
-            var isDir = line.trim().endsWith('/') || !line.includes('.');
-            var icon = isDir ? 'fa-folder' : 'fa-file';
-            var commentSplit = line.split('#');
-            var mainLine = commentSplit[0];
-            var comment = commentSplit.length > 1 ? '<span class="comment"># ' + escapeHtml(commentSplit[1]) + '</span>' : '';
-            
-            html += '<div class="tree-node">';
-            html += '<i class="fas ' + icon + '"></i>';
-            html += '<div class="tree-text"><span>' + escapeHtml(mainLine) + '</span>' + comment + '</div>';
-            html += '</div>';
-        });
+    var lines = text.trim().split('\n');
+    var html = '<div class="project-tree">';
+    
+    lines.forEach(function(line) {
+        if (!line.trim()) return;
+        
+        // Parse tree structure (├──, └──, │, etc.)
+        var treeMatch = line.match(/^(\s*)([│├└─\-\s]*)(.*)$/);
+        if (!treeMatch) return;
+        
+        var indent = treeMatch[1].length + treeMatch[2].length;
+        var treeChars = treeMatch[2];
+        var content = treeMatch[3].trim();
+        
+        // Extract comment if present
+        var commentSplit = content.split('#');
+        var mainContent = commentSplit[0].trim();
+        var comment = commentSplit.length > 1 ? '<span class="tree-comment"># ' + escapeHtml(commentSplit[1].trim()) + '</span>' : '';
+        
+        // Determine if directory or file
+        var isDir = mainContent.endsWith('/') || (!mainContent.includes('.') && !mainContent.match(/\.(py|js|md|txt|json|css|html|yml|yaml|xml|sh|bat|ps1)$/i));
+        
+        // Get file extension for icon
+        var ext = '';
+        var fileName = mainContent.replace(/\/$/, '');
+        if (!isDir && mainContent.includes('.')) {
+            ext = mainContent.split('.').pop().toLowerCase();
+        }
+        
+        // File icon based on extension
+        var fileIcon = getFileIconForTree(ext, isDir);
+        
+        // Calculate indent level for responsive display
+        var indentLevel = Math.floor(indent / 2);
+        var paddingLeft = indentLevel * 20;
+        
+        html += '<div class="tree-line" style="padding-left: ' + paddingLeft + 'px;">';
+        html += '<span class="tree-branch">' + escapeHtml(treeChars) + '</span>';
+        html += '<span class="tree-icon">' + fileIcon + '</span>';
+        html += '<span class="tree-name">' + escapeHtml(fileName) + '</span>';
+        if (comment) {
+            html += '<span class="tree-comment-wrapper">' + comment + '</span>';
+        }
         html += '</div>';
-        return html;
+    });
+    
+    html += '</div>';
+    return html;
+}
+
+function getFileIconForTree(ext, isDir) {
+    if (isDir) {
+        return '<i class="fas fa-folder" style="color: #dcb67a;"></i>';
     }
+    
+    var iconMap = {
+        'py': '<i class="fab fa-python" style="color: #3776ab;"></i>',
+        'js': '<i class="fab fa-js" style="color: #f7df1e;"></i>',
+        'ts': '<i class="fab fa-js" style="color: #3178c6;"></i>',
+        'html': '<i class="fab fa-html5" style="color: #e34f26;"></i>',
+        'css': '<i class="fab fa-css3-alt" style="color: #264de4;"></i>',
+        'md': '<i class="fas fa-file-alt" style="color: #083fa1;"></i>',
+        'json': '<i class="fas fa-file-code" style="color: #292929;"></i>',
+        'yml': '<i class="fas fa-file-code" style="color: #cb171e;"></i>',
+        'yaml': '<i class="fas fa-file-code" style="color: #cb171e;"></i>',
+        'txt': '<i class="fas fa-file-alt" style="color: #6b7280;"></i>',
+        'sh': '<i class="fas fa-terminal" style="color: #4caf50;"></i>',
+        'bat': '<i class="fas fa-terminal" style="color: #4caf50;"></i>',
+        'ps1': '<i class="fas fa-terminal" style="color: #4caf50;"></i>',
+        'xml': '<i class="fas fa-file-code" style="color: #ff6600;"></i>'
+    };
+    
+    return iconMap[ext] || '<i class="fas fa-file" style="color: #9ca3af;"></i>';
+}
     
     // Configure marked with all options
     marked.setOptions({ 
@@ -249,6 +353,7 @@ document.addEventListener('DOMContentLoaded', function () {
     initMarked();
     initTerminal();
     initBridge();
+    initScrollTracking(); // Initialize scroll tracking
     
     // Mark as ready when everything is loaded
     if (window.markReady) window.markReady();
@@ -505,10 +610,14 @@ function appendMessage(text, sender, shouldSave) {
         content.textContent = text;
     } else {
         try {
-            content.innerHTML = marked.parse(text);
+            if (typeof marked !== 'undefined' && marked.parse) {
+                content.innerHTML = marked.parse(text);
+            } else {
+                content.innerHTML = formatMarkdownFallback(text);
+            }
         } catch (e) {
             console.error('Markdown parse error in appendMessage:', e);
-            content.textContent = text;
+            content.innerHTML = formatMarkdownFallback(text);
         }
     }
     
@@ -525,7 +634,7 @@ function appendMessage(text, sender, shouldSave) {
     
     bubble.appendChild(content);
     container.appendChild(bubble);
-    container.scrollTop = container.scrollHeight;
+    smartScroll(container);
     
     if (sender === 'assistant' && window.MathJax && window.MathJax.typeset) {
         window.MathJax.typeset([bubble]);
@@ -617,7 +726,7 @@ function showThinkingAnimation() {
     `;
     
     container.appendChild(thinkingEl);
-    container.scrollTop = container.scrollHeight;
+    smartScroll(container);
     
     // Start timer
     thinkingTimerInterval = setInterval(updateThinkingTimer, 1000);
@@ -677,7 +786,7 @@ function addToolResult(icon, text) {
         
         item.innerHTML = `<span class="exploration-icon ${iconClass}">${icon}</span><span class="${isError ? 'error-text' : ''}">${escapeHtml(text)}</span>`;
         list.appendChild(item);
-        container.scrollTop = container.scrollHeight;
+        smartScroll(container);
     }
 }
 
@@ -715,7 +824,7 @@ function renderPermissionBlock(permData) {
     `;
     
     container.appendChild(card);
-    container.scrollTop = container.scrollHeight;
+    smartScroll(container);
 }
 
 function getToolIcon(toolName) {
@@ -821,10 +930,19 @@ function showToolActivity(type, info, status) {
         var header = document.createElement('div');
         header.className = 'activity-header';
         header.innerHTML = '<span class="activity-icon running">↻</span> <span class="activity-title">Exploring</span> <span class="activity-toggle">▼</span>';
-        header.onclick = function() {
-            currentActivitySection.classList.toggle('collapsed');
-            header.querySelector('.activity-toggle').textContent = currentActivitySection.classList.contains('collapsed') ? '▶' : '▼';
+        header.style.cursor = 'pointer';
+        
+        // Click handler for toggle
+        header.onclick = function(e) {
+            e.stopPropagation();
+            var section = this.parentElement;
+            var isCollapsed = section.classList.toggle('collapsed');
+            var toggle = this.querySelector('.activity-toggle');
+            if (toggle) {
+                toggle.textContent = isCollapsed ? '▶' : '▼';
+            }
         };
+        
         currentActivitySection.appendChild(header);
         
         // Create activity list
@@ -838,28 +956,65 @@ function showToolActivity(type, info, status) {
     var list = currentActivitySection.querySelector('.activity-list');
     if (!list) return;
     
-    // Track file count
-    if (type === 'read_file' || type === 'write_file' || type === 'edit_file') {
-        fileCount++;
+    // Check if this item already exists (match by type and base filename)
+    var existingItem = null;
+    var items = list.querySelectorAll('.activity-item');
+    var baseInfo = info.split(' ')[0].split('(')[0]; // Get base filename without extras
+    
+    for (var i = 0; i < items.length; i++) {
+        var itemType = items[i].getAttribute('data-type');
+        var itemInfo = items[i].getAttribute('data-info');
+        var itemBaseInfo = itemInfo ? itemInfo.split(' ')[0].split('(')[0] : '';
+        
+        // Match by type and base filename
+        if (itemType === type && baseInfo && itemBaseInfo && 
+            (itemBaseInfo === baseInfo || itemInfo.includes(baseInfo) || info.includes(itemBaseInfo))) {
+            existingItem = items[i];
+            break;
+        }
     }
     
-    // Create activity item
-    var item = document.createElement('div');
-    item.className = 'activity-item ' + (status || 'running');
-    item.setAttribute('data-type', type);
-    item.setAttribute('data-info', info);
-    
-    var icon = getFileIcon(type, info);
-    var label = formatActivityLabel(type, info, status);
-    
-    item.innerHTML = icon + '<span class="activity-text">' + label + '</span>';
-    
-    if (status === 'complete') {
+    // If item exists and status is updating to complete, update it
+    if (existingItem && status === 'complete') {
+        existingItem.className = 'activity-item complete';
         var badge = getStatusBadge(type, info);
-        if (badge) {
-            item.innerHTML += '<span class="activity-badge">' + badge + '</span>';
+        if (badge && !existingItem.querySelector('.activity-badge')) {
+            existingItem.innerHTML += '<span class="activity-badge">' + badge + '</span>';
         }
-        // Update header to show completed count
+        // Update the text to show completion
+        var textEl = existingItem.querySelector('.activity-text');
+        if (textEl) {
+            textEl.innerHTML = formatActivityLabel(type, info, 'complete');
+        }
+    } else if (!existingItem) {
+        // Track file count for new items
+        if (type === 'read_file' || type === 'write_file' || type === 'edit_file') {
+            fileCount++;
+        }
+        
+        // Create new activity item
+        var item = document.createElement('div');
+        item.className = 'activity-item ' + (status || 'running');
+        item.setAttribute('data-type', type);
+        item.setAttribute('data-info', info);
+        
+        var icon = getFileIcon(type, info);
+        var label = formatActivityLabel(type, info, status);
+        
+        item.innerHTML = icon + '<span class="activity-text">' + label + '</span>';
+        
+        if (status === 'complete') {
+            var badge = getStatusBadge(type, info);
+            if (badge) {
+                item.innerHTML += '<span class="activity-badge">' + badge + '</span>';
+            }
+        }
+        
+        list.appendChild(item);
+    }
+    
+    // Update header when complete
+    if (status === 'complete') {
         var header = currentActivitySection.querySelector('.activity-title');
         if (header && fileCount > 0) {
             header.textContent = 'Explored ' + fileCount + ' file' + (fileCount > 1 ? 's' : '');
@@ -871,10 +1026,7 @@ function showToolActivity(type, info, status) {
         }
     }
     
-    list.appendChild(item);
-    container.scrollTop = container.scrollHeight;
-    
-    return item;
+    smartScroll(container);
 }
 
 function getFileIcon(type, info) {
@@ -1002,7 +1154,7 @@ function showThinking() {
     thinkingItem.innerHTML = '<span class="thinking-dots">...</span> <span class="activity-text">Thinking</span>';
     
     list.appendChild(thinkingItem);
-    container.scrollTop = container.scrollHeight;
+    smartScroll(container);
     
     // Update thinking duration every second
     thinkingInterval = setInterval(function() {
@@ -1072,14 +1224,24 @@ var currentTodoList = [];
 function updateTodos(todos, mainTask) {
     if (!todos || !Array.isArray(todos)) return;
     
-    currentTodoList = todos;
-    
     var section = document.getElementById('todo-section');
     var list = document.getElementById('todo-list');
     var mainTaskEl = document.getElementById('todo-main-task');
     var progressEl = document.getElementById('todo-progress-count');
     
     if (!section || !list) return;
+    
+    // If no todos, hide section and clear
+    if (todos.length === 0) {
+        section.style.display = 'none';
+        list.innerHTML = '';
+        if (mainTaskEl) mainTaskEl.textContent = '';
+        if (progressEl) progressEl.textContent = '0/0';
+        currentTodoList = [];
+        return;
+    }
+    
+    currentTodoList = todos;
     
     // Show section
     section.style.display = 'block';
@@ -1155,6 +1317,9 @@ function startStreaming() {
     currentActivitySection = null;
     fileCount = 0;
     
+    // Clear previous todos for new response
+    clearTodos();
+    
     // Create new assistant message bubble
     if (!currentAssistantMessage) {
         currentAssistantMessage = document.createElement('div');
@@ -1166,7 +1331,7 @@ function startStreaming() {
         currentContent = "";
     }
     
-    container.scrollTop = container.scrollHeight;
+    smartScroll(container);
 }
 
 function onChunk(chunk) {
@@ -1288,38 +1453,85 @@ function updateStreamingUI() {
         contentDiv.innerHTML = formatMarkdownFallback(currentContent);
     }
     
-    container.scrollTop = container.scrollHeight;
+    smartScroll(container);
 }
 
 // Fallback markdown formatter for when marked.js fails
 function formatMarkdownFallback(text) {
     if (!text) return '';
     
-    var html = text
-        // Escape HTML
+    // Process line by line for better control
+    var lines = text.split('\n');
+    var result = [];
+    var inList = false;
+    
+    for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        var trimmed = line.trim();
+        
+        // Headers
+        if (trimmed.match(/^#{1,6}\s/)) {
+            var level = trimmed.match(/^(#+)/)[1].length;
+            var content = trimmed.replace(/^#{1,6}\s*/, '');
+            result.push('<h' + level + '>' + processInlineMarkdown(content) + '</h' + level + '>');
+            continue;
+        }
+        
+        // List items
+        if (trimmed.match(/^[-*]\s/)) {
+            if (!inList) {
+                result.push('<ul>');
+                inList = true;
+            }
+            var content = trimmed.replace(/^[-*]\s*/, '');
+            result.push('<li>' + processInlineMarkdown(content) + '</li>');
+            continue;
+        } else if (inList) {
+            result.push('</ul>');
+            inList = false;
+        }
+        
+        // Regular paragraph
+        if (trimmed) {
+            result.push('<p>' + processInlineMarkdown(line) + '</p>');
+        }
+    }
+    
+    if (inList) {
+        result.push('</ul>');
+    }
+    
+    return result.join('');
+}
+
+// Process inline markdown (bold, italic, code) - for use in text renderer (no HTML escaping)
+function processInlineMarkdownNoEscape(text) {
+    return text
+        // Bold - must come before italic
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/__(.+?)__/g, '<strong>$1</strong>')
+        // Italic
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/_(.+?)_/g, '<em>$1</em>')
+        // Inline code
+        .replace(/`([^`]+)`/g, '<code>$1</code>');
+}
+
+// Process inline markdown with HTML escaping - for fallback parser
+function processInlineMarkdown(text) {
+    return text
+        // Escape HTML first
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
-        // Headers
-        .replace(/^### (.*$)/gim, '<h3>$1</h3>')
-        .replace(/^## (.*$)/gim, '<h2>$1</h2>')
-        .replace(/^# (.*$)/gim, '<h1>$1</h1>')
-        // Bold
-        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-        .replace(/__(.*?)__/g, '<strong>$1</strong>')
+        // Then process inline markdown
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/__(.+?)__/g, '<strong>$1</strong>')
         // Italic
-        .replace(/\*(.*?)\*/g, '<em>$1</em>')
-        .replace(/_(.*?)_/g, '<em>$1</em>')
-        // Code blocks
-        .replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/_(.+?)_/g, '<em>$1</em>')
         // Inline code
-        .replace(/`([^`]+)`/g, '<code>$1</code>')
-        // Lists
-        .replace(/^\s*[-*] (.*$)/gim, '<li>$1</li>')
-        // Line breaks
-        .replace(/\n/g, '<br>');
-    
-    return html;
+        .replace(/`([^`]+)`/g, '<code>$1</code>');
 }
 
 function onComplete() {
@@ -1338,10 +1550,14 @@ function onComplete() {
         var contentDiv = currentAssistantMessage.querySelector('.message-content');
         if (contentDiv) {
             try {
-                contentDiv.innerHTML = marked.parse(text);
+                if (typeof marked !== 'undefined' && marked.parse) {
+                    contentDiv.innerHTML = marked.parse(text);
+                } else {
+                    contentDiv.innerHTML = formatMarkdownFallback(text);
+                }
             } catch (e) {
                 console.error('Markdown parse error in onComplete:', e);
-                contentDiv.textContent = text;
+                contentDiv.innerHTML = formatMarkdownFallback(text);
             }
             handlePostRenderSpecialTags(contentDiv);
         }
@@ -1647,7 +1863,7 @@ function showTerminalOutputInChat(command, output, isRunning) {
         container.insertAdjacentHTML('beforeend', html);
     }
     
-    container.scrollTop = container.scrollHeight;
+    smartScroll(container);
 }
 
 // --- File Reference Display ---
@@ -1685,7 +1901,7 @@ function showFileReference(filePath, lineNumber, content) {
         container.insertAdjacentHTML('beforeend', html);
     }
     
-    container.scrollTop = container.scrollHeight;
+    smartScroll(container);
 }
 
 // --- Tool Execution Indicator ---
@@ -1729,7 +1945,7 @@ function showToolExecution(toolName, args, status) {
         container.insertAdjacentHTML('beforeend', html);
     }
     
-    container.scrollTop = container.scrollHeight;
+    smartScroll(container);
     return toolId;
 }
 
@@ -1760,7 +1976,7 @@ function showChangeActions(filePath, changes) {
         container.insertAdjacentHTML('beforeend', html);
     }
     
-    container.scrollTop = container.scrollHeight;
+    smartScroll(container);
 }
 
 function acceptChange(actionId, filePath) {

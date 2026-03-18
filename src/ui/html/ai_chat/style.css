@@ -2465,16 +2465,79 @@ body.light .tab-content {
 
 /* --- Project Tree --- */
 .project-tree {
-    font-family: 'Cascadia Code', 'Consolas', monospace;
-    font-size: 12px;
-    line-height: 1.4;
-    padding: 10px;
+    font-family: 'Cascadia Code', 'Consolas', 'Fira Code', monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    padding: 12px 16px;
     background: rgba(0, 0, 0, 0.2);
-    border-radius: 6px;
+    border-radius: 8px;
     border: 1px solid var(--border);
     margin: 8px 0;
+    overflow-x: auto;
+    white-space: nowrap;
 }
 
+.tree-line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0;
+    transition: background 0.15s;
+}
+
+.tree-line:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 3px;
+}
+
+.tree-branch {
+    color: #6e7681;
+    font-family: inherit;
+    white-space: pre;
+}
+
+.tree-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    flex-shrink: 0;
+}
+
+.tree-icon i {
+    font-size: 14px;
+}
+
+.tree-name {
+    color: var(--text);
+    font-family: inherit;
+}
+
+.tree-comment-wrapper {
+    margin-left: auto;
+    padding-left: 16px;
+}
+
+.tree-comment {
+    color: #6a9955;
+    font-size: 12px;
+    opacity: 0.8;
+}
+
+/* Light mode */
+body.light .project-tree {
+    background: #f8f9fa;
+}
+
+body.light .tree-branch {
+    color: #8c959f;
+}
+
+body.light .tree-line:hover {
+    background: rgba(0, 0, 0, 0.03);
+}
+
+/* Old tree-node styles (keep for backward compatibility) */
 .tree-node {
     display: flex;
     align-items: flex-start;
@@ -2865,14 +2928,13 @@ body.light #generate-plan-btn {
 .file-link {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
+    gap: 4px;
     color: #79c0ff;
     cursor: pointer;
     font-family: 'Cascadia Code', 'Consolas', monospace;
     font-size: 12px;
-    padding: 3px 8px;
-    border-radius: 4px;
-    background: rgba(88, 166, 255, 0.08);
+    padding: 0;
+    background: transparent;
     border: 1px solid rgba(88, 166, 255, 0.15);
     transition: all 0.15s ease;
     margin: 0 2px;
@@ -2880,8 +2942,8 @@ body.light #generate-plan-btn {
 }
 
 .file-link:hover {
-    background: rgba(88, 166, 255, 0.15);
-    border-color: rgba(88, 166, 255, 0.3);
+    color: #a8d8ff;
+    text-decoration: underline;
 }
 
 .file-link i {
@@ -2891,12 +2953,12 @@ body.light #generate-plan-btn {
 
 body.light .file-link {
     color: #0969da;
-    background: rgba(9, 105, 218, 0.08);
-    border-color: rgba(9, 105, 218, 0.15);
+    background: transparent;
 }
 
 body.light .file-link:hover {
-    background: rgba(9, 105, 218, 0.15);
+    color: #0550ae;
+    text-decoration: underline;
 }
 
 /* =========================================================
