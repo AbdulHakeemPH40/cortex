@@ -878,6 +878,21 @@ function showToolActivity(type, info, status) {
 }
 
 function getFileIcon(type, info) {
+    // Terminal file operations
+    if (type.startsWith('terminal_')) {
+        var opType = type.replace('terminal_', '');
+        var icons = {
+            'create': '<span class="file-icon terminal">+</span>',
+            'create_dir': '<span class="file-icon folder">📁</span>',
+            'delete': '<span class="file-icon delete">🗑️</span>',
+            'delete_dir': '<span class="file-icon delete">🗑️</span>',
+            'move': '<span class="file-icon move">→</span>',
+            'copy': '<span class="file-icon copy">📋</span>',
+            'rename': '<span class="file-icon rename">✎</span>'
+        };
+        return icons[opType] || '<span class="file-icon terminal">⌘</span>';
+    }
+    
     if (type === 'read_file' || type === 'write_file' || type === 'edit_file') {
         var ext = info.split('.').pop().toLowerCase();
         var icons = {
@@ -1247,16 +1262,64 @@ function updateStreamingUI() {
     if (!contentDiv) return;
 
     try {
-        // Let marked.js handle all markdown parsing - don't pre-process
+        // Ensure marked is available and properly configured
+        if (typeof marked === 'undefined' || !marked.parse) {
+            console.warn('marked.js not available, using fallback');
+            contentDiv.innerHTML = formatMarkdownFallback(currentContent);
+            return;
+        }
+        
+        // Parse markdown with marked.js
         var html = marked.parse(currentContent);
+        if (!html || html === currentContent) {
+            // marked didn't parse, use fallback
+            html = formatMarkdownFallback(currentContent);
+        }
         contentDiv.innerHTML = html;
+        
+        // Apply syntax highlighting to code blocks
+        if (window.hljs) {
+            contentDiv.querySelectorAll('pre code').forEach(function(block) {
+                hljs.highlightElement(block);
+            });
+        }
     } catch (e) {
         console.error('Markdown parse error:', e);
-        // Fallback to plain text with escaped HTML
-        contentDiv.textContent = currentContent;
+        contentDiv.innerHTML = formatMarkdownFallback(currentContent);
     }
     
     container.scrollTop = container.scrollHeight;
+}
+
+// Fallback markdown formatter for when marked.js fails
+function formatMarkdownFallback(text) {
+    if (!text) return '';
+    
+    var html = text
+        // Escape HTML
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        // Headers
+        .replace(/^### (.*$)/gim, '<h3>$1</h3>')
+        .replace(/^## (.*$)/gim, '<h2>$1</h2>')
+        .replace(/^# (.*$)/gim, '<h1>$1</h1>')
+        // Bold
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/__(.*?)__/g, '<strong>$1</strong>')
+        // Italic
+        .replace(/\*(.*?)\*/g, '<em>$1</em>')
+        .replace(/_(.*?)_/g, '<em>$1</em>')
+        // Code blocks
+        .replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
+        // Inline code
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        // Lists
+        .replace(/^\s*[-*] (.*$)/gim, '<li>$1</li>')
+        // Line breaks
+        .replace(/\n/g, '<br>');
+    
+    return html;
 }
 
 function onComplete() {

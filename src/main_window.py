@@ -1002,7 +1002,29 @@ class CortexMainWindow(QMainWindow):
         # Link to AI Agent immediately
         self._ai_agent.set_terminal(term)
         
+        # Connect file operations to AI chat
+        term.file_operation_detected.connect(self._on_terminal_file_operation)
+        
         return term
+        
+    def _on_terminal_file_operation(self, operation_type: str, file_path: str, status: str):
+        """Handle file operations from terminal and show in AI chat."""
+        # Map operation types to display format
+        op_labels = {
+            'create': 'Creating file',
+            'create_dir': 'Creating directory',
+            'delete': 'Deleting file',
+            'delete_dir': 'Deleting directory',
+            'move': 'Moving file',
+            'copy': 'Copying file',
+            'rename': 'Renaming file'
+        }
+        
+        label = op_labels.get(operation_type, operation_type)
+        display_info = f"{label}: {file_path}"
+        
+        # Show in AI chat as tool activity
+        self._ai_chat.show_tool_activity('terminal_' + operation_type, display_info, status)
 
     def _on_terminal_tab_changed(self, index: int):
         """Update AI agent when active terminal changes."""

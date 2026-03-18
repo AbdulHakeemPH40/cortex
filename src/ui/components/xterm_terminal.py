@@ -76,6 +76,7 @@ class XTermWidget(QWidget):
     
     command_executed = pyqtSignal(str, int)  # command, exit_code
     terminal_output_received = pyqtSignal(str) # For AI to listen to
+    file_operation_detected = pyqtSignal(str, str, str)  # operation_type, file_path, status
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -98,6 +99,10 @@ class XTermWidget(QWidget):
         self._render_timer = QTimer(self)
         self._render_timer.timeout.connect(self._render_buffers)
         self._stdout_buffer = bytearray()
+        
+        # Track current command for file operation detection
+        self._current_command = ""
+        self._command_buffer = ""
         self._stderr_buffer = bytearray()
         
     def _build_ui(self):
@@ -185,6 +190,17 @@ class XTermWidget(QWidget):
             
     def _on_js_input(self, data: str):
         """Called when user types in xterm.js"""
+        # Track command input for file operation detection
+        if data == '\r' or data == '\n':
+            # Command submitted - parse it
+            self._current_command = self._command_buffer.strip()
+            self._command_buffer = ""
+            self._parse_and_emit_file_operation(self._current_command)
+        elif data == '\x7f' or data == '\b':  # Backspace
+            self._command_buffer = self._command_buffer[:-1]
+        elif data.isprintable():
+            self._command_buffer += data
+            
         if self._pty_process:
             try:
                 self._pty_process.write(data)
@@ -515,3 +531,66 @@ class XTermWidget(QWidget):
     def closeEvent(self, event):
         self._kill_process()
         super().closeEvent(event)
+        
+    def _parse_and_emit_file_operation(self, command: str):
+        """Parse terminal command and emit file operation signals."""
+        import re
+        import os
+        
+        if not command:
+            return
+            
+        # Normalize command
+        cmd_lower = command.lower().strip()
+        
+        # File creation patterns
+        create_patterns = [
+            (r'^[\s]*(?:touch|ni|new-item)\s+(.+)', 'create'),
+            (r'^[\s]*echo\s+.*\s*>\s*(.+)', 'create'),
+            (r'^[\s]*(?:mkdir|md|new-item\s+-itemtype\s+directory)\s+(.+)', 'create_dir'),
+        ]
+        
+        # File deletion patterns
+        delete_patterns = [
+            (r'^[\s]*(?:rm|del|remove-item)\s+(?:-r|-recurse\s+)?(.+)', 'delete'),
+            (r'^[\s]*rmdir\s+(?:/s\s+)?(.+)', 'delete_dir'),
+        ]
+        
+        # File move/rename patterns
+        move_patterns = [
+            (r'^[\s]*(?:mv|move|move-item)\s+(.+)\s+(.+)', 'move'),
+            (r'^[\s]*(?:cp|copy|copy-item)\s+(.+)\s+(.+)', 'copy'),
+            (r'^[\s]*(?:ren|rename)\s+(.+)\s+(.+)', 'rename'),
+        ]
+        
+        # Check each pattern
+        for pattern, op_type in create_patterns:
+            match = re.match(pattern, cmd_lower, re.IGNORECASE)
+            if match:
+                path = match.group(1).strip().strip('"\'')
+                # Resolve relative to current directory
+                if not os.path.isabs(path):
+                    path = os.path.join(self._cwd, path)
+                self.file_operation_detected.emit(op_type, path, 'running')
+                return
+                
+        for pattern, op_type in delete_patterns:
+            match = re.match(pattern, cmd_lower, re.IGNORECASE)
+            if match:
+                path = match.group(1).strip().strip('"\'')
+                if not os.path.isabs(path):
+                    path = os.path.join(self._cwd, path)
+                self.file_operation_detected.emit(op_type, path, 'running')
+                return
+                
+        for pattern, op_type in move_patterns:
+            match = re.match(pattern, cmd_lower, re.IGNORECASE)
+            if match:
+                src = match.group(1).strip().strip('"\'')
+                dst = match.group(2).strip().strip('"\'')
+                if not os.path.isabs(src):
+                    src = os.path.join(self._cwd, src)
+                if not os.path.isabs(dst):
+                    dst = os.path.join(self._cwd, dst)
+                self.file_operation_detected.emit(op_type, f"{src} → {dst}", 'running')
+                return
