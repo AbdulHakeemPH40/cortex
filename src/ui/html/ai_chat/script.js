@@ -114,6 +114,8 @@ function initMarked() {
                 return '<h' + depth + ' id="' + id + '" class="md-heading md-h' + depth + '">' + text + '</h' + depth + '>';
             },
             
+
+            
             listitem: function(token) {
                 var text = this.parser.parseInline(token.tokens);
                 
@@ -128,6 +130,15 @@ function initMarked() {
                         : '<svg class="task-circle" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg>';
                     return '<li class="task-item ' + checkedClass + '">' + checkedIcon + '<span class="task-text">' + taskText + '</span></li>';
                 }
+                
+                // Check for numbered card pattern (starts with number like "1. **Text**")
+                var numMatch = text.match(/^(\d+)\.\s*(.+)$/);
+                if (numMatch) {
+                    var num = numMatch[1];
+                    var content = numMatch[2];
+                    return '<li class="numbered-card" data-num="' + num + '"><span class="card-number">' + num + '</span><span class="card-content">' + content + '</span></li>';
+                }
+                
                 return '<li>' + text + '</li>';
             },
             
@@ -588,38 +599,21 @@ function showThinkingAnimation() {
     thinkingStartTime = Date.now();
     explorationItems = [];
     
-    // Create modern Qoder-style thinking indicator
+    // Create Cortex-style thinking indicator with pulsing orb
     var thinkingEl = document.createElement('div');
     thinkingEl.id = 'thinking-animation';
-    thinkingEl.className = 'message-bubble assistant thinking-message-modern';
+    thinkingEl.className = 'thinking-message';
     thinkingEl.innerHTML = `
-        <div class="thinking-header">
-            <div class="thinking-icon">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="12" cy="12" r="10"></circle>
-                    <path d="M12 6v6l4 2"></path>
-                </svg>
-            </div>
-            <span class="thinking-title">Thought</span>
-            <span class="thinking-separator">·</span>
-            <span class="thinking-timer" id="thinking-timer">0s</span>
+        <div class="thinking-orb">
+            <div class="thinking-orb-ring"></div>
+            <div class="thinking-orb-ring"></div>
+            <div class="thinking-orb-core"></div>
         </div>
-        <div class="thinking-content-text" id="thinking-main-text">
-            Analyzing your request...
+        <div class="thinking-content">
+            <span class="thinking-title">Cortex is thinking</span>
+            <span class="thinking-subtitle" id="thinking-main-text">Analyzing your request...</span>
         </div>
-        <div class="exploration-section" id="exploration-section">
-            <div class="exploration-toggle" onclick="toggleExploration()">
-                <svg class="exploration-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
-                <span>Exploring</span>
-                <span class="exploration-status" id="exploration-status"></span>
-            </div>
-            <div class="exploration-list" id="exploration-list"></div>
-        </div>
-        <div class="thinking-dots">
-            <span class="dot"></span>
-            <span class="dot"></span>
-            <span class="dot"></span>
-        </div>
+        <span class="thinking-timer" id="thinking-timer">0s</span>
     `;
     
     container.appendChild(thinkingEl);
@@ -688,61 +682,35 @@ function addToolResult(icon, text) {
 }
 
 function renderPermissionBlock(permData) {
-    // Render tool permission request as a card
     var container = document.getElementById('chatMessages');
     if (!container) return;
     
     removeThinkingIndicator();
     
-    // Handle both string and object inputs
-    var tools;
-    if (typeof permData === 'string') {
-        try {
-            tools = JSON.parse(permData);
-        } catch(e) {
-            tools = [{ name: 'Command', info: permData }];
-        }
-    } else if (Array.isArray(permData)) {
-        tools = permData;
-    } else if (permData && typeof permData === 'object') {
-        tools = [permData];
-    } else {
-        tools = [{ name: 'Unknown', info: String(permData) }];
+    // Get first tool info
+    var toolName = 'Tool';
+    var toolInfo = '';
+    if (Array.isArray(permData) && permData.length > 0) {
+        toolName = permData[0].name || 'Tool';
+        toolInfo = permData[0].info || '';
+    } else if (typeof permData === 'object' && permData !== null) {
+        toolName = permData.name || 'Tool';
+        toolInfo = permData.info || '';
     }
     
     var card = document.createElement('div');
     card.className = 'permission-card';
     
-    var toolsHtml = tools.map(function(tool) {
-        var icon = getToolIcon(tool.name || 'tool');
-        return `
-            <div class="permission-tool">
-                <span class="tool-icon">${icon}</span>
-                <div class="tool-details">
-                    <span class="tool-name">${escapeHtml(tool.name || 'Tool')}</span>
-                    <span class="tool-info">${escapeHtml(tool.info || '')}</span>
-                </div>
-            </div>
-        `;
-    }).join('');
-    
     card.innerHTML = `
-        <div class="permission-header">
-            <svg class="permission-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-            <span class="permission-title">Tool Execution</span>
-        </div>
-        <div class="permission-tools">
-            ${toolsHtml}
+        <div class="permission-header">Tool Execution</div>
+        <div class="permission-tool">
+            <span class="tool-icon">${getToolIcon(toolName)}</span>
+            <span class="tool-name">${escapeHtml(toolName)}</span>
+            <span class="tool-info">${escapeHtml(toolInfo)}</span>
         </div>
         <div class="permission-actions">
-            <button class="permission-allow" onclick="handlePermissionAllow()">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-                Allow
-            </button>
-            <button class="permission-deny" onclick="handlePermissionDeny()">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                Deny
-            </button>
+            <button class="permission-allow" onclick="handlePermissionAllow()">Allow</button>
+            <button class="permission-deny" onclick="handlePermissionDeny()">Deny</button>
         </div>
     `;
     
@@ -762,15 +730,33 @@ function getToolIcon(toolName) {
 }
 
 function handlePermissionAllow() {
-    if (window.bridge) {
+    if (window.bridge && window.bridge.handle_permission_response) {
         window.bridge.handle_permission_response(true);
     }
+    // Remove the permission card
+    var cards = document.querySelectorAll('.permission-card');
+    cards.forEach(function(card) {
+        card.style.opacity = '0';
+        card.style.transform = 'scale(0.95)';
+        setTimeout(function() {
+            card.remove();
+        }, 200);
+    });
 }
 
 function handlePermissionDeny() {
-    if (window.bridge) {
+    if (window.bridge && window.bridge.handle_permission_response) {
         window.bridge.handle_permission_response(false);
     }
+    // Remove the permission card
+    var cards = document.querySelectorAll('.permission-card');
+    cards.forEach(function(card) {
+        card.style.opacity = '0';
+        card.style.transform = 'scale(0.95)';
+        setTimeout(function() {
+            card.remove();
+        }, 200);
+    });
 }
 
 function updateThinkingText(text) {
@@ -814,6 +800,359 @@ function stopGeneration() {
 var currentPlan = "";
 var currentTasks = "";
 var currentWalkthrough = "";
+
+// Tool Activity Display - Industry Standard (Cursor/Qoder Style)
+var activityStartTime = null;
+var thinkingInterval = null;
+var currentActivitySection = null;
+var fileCount = 0;
+
+function showToolActivity(type, info, status) {
+    var container = document.getElementById('chatMessages');
+    if (!container) return;
+    
+    // Always create a fresh activity section or use the current one
+    if (!currentActivitySection || !document.body.contains(currentActivitySection)) {
+        currentActivitySection = document.createElement('div');
+        currentActivitySection.className = 'activity-section';
+        fileCount = 0;
+        
+        // Create collapsible header
+        var header = document.createElement('div');
+        header.className = 'activity-header';
+        header.innerHTML = '<span class="activity-icon running">↻</span> <span class="activity-title">Exploring</span> <span class="activity-toggle">▼</span>';
+        header.onclick = function() {
+            currentActivitySection.classList.toggle('collapsed');
+            header.querySelector('.activity-toggle').textContent = currentActivitySection.classList.contains('collapsed') ? '▶' : '▼';
+        };
+        currentActivitySection.appendChild(header);
+        
+        // Create activity list
+        var list = document.createElement('div');
+        list.className = 'activity-list';
+        currentActivitySection.appendChild(list);
+        
+        container.appendChild(currentActivitySection);
+    }
+    
+    var list = currentActivitySection.querySelector('.activity-list');
+    if (!list) return;
+    
+    // Track file count
+    if (type === 'read_file' || type === 'write_file' || type === 'edit_file') {
+        fileCount++;
+    }
+    
+    // Create activity item
+    var item = document.createElement('div');
+    item.className = 'activity-item ' + (status || 'running');
+    item.setAttribute('data-type', type);
+    item.setAttribute('data-info', info);
+    
+    var icon = getFileIcon(type, info);
+    var label = formatActivityLabel(type, info, status);
+    
+    item.innerHTML = icon + '<span class="activity-text">' + label + '</span>';
+    
+    if (status === 'complete') {
+        var badge = getStatusBadge(type, info);
+        if (badge) {
+            item.innerHTML += '<span class="activity-badge">' + badge + '</span>';
+        }
+        // Update header to show completed count
+        var header = currentActivitySection.querySelector('.activity-title');
+        if (header && fileCount > 0) {
+            header.textContent = 'Explored ' + fileCount + ' file' + (fileCount > 1 ? 's' : '');
+        }
+        var iconEl = currentActivitySection.querySelector('.activity-icon');
+        if (iconEl) {
+            iconEl.textContent = '✓';
+            iconEl.className = 'activity-icon complete';
+        }
+    }
+    
+    list.appendChild(item);
+    container.scrollTop = container.scrollHeight;
+    
+    return item;
+}
+
+function getFileIcon(type, info) {
+    if (type === 'read_file' || type === 'write_file' || type === 'edit_file') {
+        var ext = info.split('.').pop().toLowerCase();
+        var icons = {
+            'js': '<span class="file-icon js">JS</span>',
+            'py': '<span class="file-icon py">PY</span>',
+            'css': '<span class="file-icon css">CSS</span>',
+            'html': '<span class="file-icon html">HTML</span>',
+            'json': '<span class="file-icon json">JSON</span>',
+            'md': '<span class="file-icon md">MD</span>',
+            'ts': '<span class="file-icon ts">TS</span>',
+            'tsx': '<span class="file-icon tsx">TSX</span>',
+            'jsx': '<span class="file-icon jsx">JSX</span>',
+            'txt': '<span class="file-icon">TXT</span>',
+            'yml': '<span class="file-icon">YML</span>',
+            'yaml': '<span class="file-icon">YML</span>',
+            'xml': '<span class="file-icon">XML</span>',
+            'sh': '<span class="file-icon terminal">SH</span>',
+            'bat': '<span class="file-icon terminal">BAT</span>',
+            'ps1': '<span class="file-icon terminal">PS1</span>'
+        };
+        return icons[ext] || '<span class="file-icon">FILE</span>';
+    }
+    if (type === 'list_directory') return '<span class="file-icon folder">📁</span>';
+    if (type === 'run_command') return '<span class="file-icon terminal">⌘</span>';
+    if (type === 'search_code') return '<span class="file-icon search">🔍</span>';
+    if (type === 'git_status' || type === 'git_diff') return '<span class="file-icon git">GIT</span>';
+    if (type === 'thinking') return '<span class="file-icon think">💭</span>';
+    return '<span class="file-icon">⚙️</span>';
+}
+
+function formatActivityLabel(type, info, status) {
+    var runningPrefix = status === 'running' ? '<span class="running-label">Running</span> ' : '';
+    
+    if (type === 'read_file') {
+        return status === 'running' ? runningPrefix + escapeHtml(info) : escapeHtml(info);
+    }
+    if (type === 'write_file' || type === 'edit_file') {
+        return status === 'running' ? runningPrefix + escapeHtml(info) : escapeHtml(info) + ' ✓';
+    }
+    if (type === 'list_directory') {
+        return status === 'running' ? 'Exploring ' + escapeHtml(info) : 'Exploring ' + escapeHtml(info);
+    }
+    if (type === 'run_command') {
+        return runningPrefix + '<code>' + escapeHtml(info) + '</code>' + (status === 'complete' ? ' ✓' : '');
+    }
+    if (type === 'search_code') {
+        return 'Grepped code <code>' + escapeHtml(info) + '</code>';
+    }
+    if (type === 'git_status') {
+        return status === 'running' ? 'Checking status' : 'Status retrieved';
+    }
+    if (type === 'git_diff') {
+        return status === 'running' ? 'Getting diff' : 'Diff retrieved';
+    }
+    if (type === 'thinking') {
+        return 'Thought · ' + info;
+    }
+    return escapeHtml(info);
+}
+
+function getStatusBadge(type, info) {
+    if (type === 'edit_file' || type === 'write_file') {
+        return '<span class="activity-badge applied">Applied</span>';
+    }
+    if (type === 'run_command') {
+        return '<span class="activity-badge completed">Completed</span>';
+    }
+    if (type === 'list_directory' && info.includes('items')) {
+        return '<span class="activity-badge completed">' + info + '</span>';
+    }
+    return '';
+}
+
+function showThinking() {
+    activityStartTime = Date.now();
+    var container = document.getElementById('chatMessages');
+    if (!container) return;
+    
+    // Remove any existing thinking indicator
+    var existing = document.getElementById('thinking-indicator');
+    if (existing) existing.remove();
+    
+    // Create activity section if needed
+    if (!currentActivitySection || !document.body.contains(currentActivitySection)) {
+        currentActivitySection = document.createElement('div');
+        currentActivitySection.className = 'activity-section';
+        fileCount = 0;
+        
+        var header = document.createElement('div');
+        header.className = 'activity-header';
+        header.innerHTML = '<span class="activity-icon running">↻</span> <span class="activity-title">Exploring</span> <span class="activity-toggle">▼</span>';
+        currentActivitySection.appendChild(header);
+        
+        var list = document.createElement('div');
+        list.className = 'activity-list';
+        currentActivitySection.appendChild(list);
+        
+        container.appendChild(currentActivitySection);
+    }
+    
+    var list = currentActivitySection.querySelector('.activity-list');
+    if (!list) return;
+    
+    var thinkingItem = document.createElement('div');
+    thinkingItem.className = 'activity-item thinking';
+    thinkingItem.id = 'thinking-indicator';
+    thinkingItem.innerHTML = '<span class="thinking-dots">...</span> <span class="activity-text">Thinking</span>';
+    
+    list.appendChild(thinkingItem);
+    container.scrollTop = container.scrollHeight;
+    
+    // Update thinking duration every second
+    thinkingInterval = setInterval(function() {
+        var elapsed = Math.floor((Date.now() - activityStartTime) / 1000);
+        var item = document.getElementById('thinking-indicator');
+        if (item) {
+            item.querySelector('.activity-text').textContent = 'Thinking · ' + elapsed + 's';
+        }
+    }, 1000);
+}
+
+function hideThinking() {
+    if (thinkingInterval) {
+        clearInterval(thinkingInterval);
+        thinkingInterval = null;
+    }
+    var item = document.getElementById('thinking-indicator');
+    if (item && activityStartTime) {
+        var elapsed = Math.floor((Date.now() - activityStartTime) / 1000);
+        item.className = 'activity-item complete';
+        item.innerHTML = '<span class="file-icon think">💭</span> <span class="activity-text">Thought · ' + elapsed + 's</span>';
+    }
+}
+
+function updateActivityHeader(count, status) {
+    var header = document.querySelector('.activity-header .activity-title');
+    if (header) {
+        header.textContent = status === 'complete' ? 'Explored ' + count + ' files' : 'Exploring';
+    }
+    var icon = document.querySelector('.activity-header .activity-icon');
+    if (icon) {
+        icon.textContent = status === 'complete' ? '✓' : '↻';
+        icon.className = 'activity-icon ' + (status === 'complete' ? 'complete' : 'running');
+    }
+}
+
+function clearToolActivity() {
+    if (currentActivitySection) {
+        currentActivitySection.remove();
+        currentActivitySection = null;
+    }
+    fileCount = 0;
+    activityStartTime = null;
+    if (thinkingInterval) {
+        clearInterval(thinkingInterval);
+        thinkingInterval = null;
+    }
+}
+
+function updateToolActivity(itemId, status, newInfo) {
+    var item = document.getElementById(itemId);
+    if (item) {
+        item.className = 'activity-item ' + status;
+        if (newInfo) {
+            var textEl = item.querySelector('.activity-text');
+            if (textEl) textEl.innerHTML = newInfo;
+        }
+    }
+}
+
+// ================================================
+// TODO LIST MANAGEMENT - Cursor/Qoder Style
+// ================================================
+
+var currentTodoList = [];
+
+function updateTodos(todos, mainTask) {
+    if (!todos || !Array.isArray(todos)) return;
+    
+    currentTodoList = todos;
+    
+    var section = document.getElementById('todo-section');
+    var list = document.getElementById('todo-list');
+    var mainTaskEl = document.getElementById('todo-main-task');
+    var progressEl = document.getElementById('todo-progress-count');
+    
+    if (!section || !list) return;
+    
+    // Show section
+    section.style.display = 'block';
+    
+    // Set main task title
+    if (mainTaskEl && mainTask) {
+        mainTaskEl.textContent = mainTask;
+    }
+    
+    // Count completed
+    var completed = todos.filter(function(t) { return t.status === 'COMPLETE'; }).length;
+    var total = todos.length;
+    
+    if (progressEl) {
+        progressEl.textContent = completed + '/' + total;
+    }
+    
+    // Clear and rebuild list
+    list.innerHTML = '';
+    
+    todos.forEach(function(todo) {
+        var item = document.createElement('div');
+        var statusClass = getStatusClass(todo.status);
+        item.className = 'todo-item ' + statusClass;
+        item.setAttribute('data-id', todo.id);
+        
+        item.innerHTML = 
+            '<div class="todo-checkbox"></div>' +
+            '<span class="todo-text">' + escapeHtml(todo.content) + '</span>';
+        
+        list.appendChild(item);
+    });
+}
+
+function getStatusClass(status) {
+    switch (status) {
+        case 'COMPLETE': return 'completed';
+        case 'IN_PROGRESS': return 'in-progress';
+        case 'CANCELLED': return 'cancelled';
+        default: return 'pending';
+    }
+}
+
+function toggleTodoSection() {
+    var section = document.getElementById('todo-section');
+    if (section) {
+        section.classList.toggle('collapsed');
+    }
+}
+
+function clearTodos() {
+    var section = document.getElementById('todo-section');
+    var list = document.getElementById('todo-list');
+    var mainTaskEl = document.getElementById('todo-main-task');
+    var progressEl = document.getElementById('todo-progress-count');
+    
+    if (section) section.style.display = 'none';
+    if (list) list.innerHTML = '';
+    if (mainTaskEl) mainTaskEl.textContent = '';
+    if (progressEl) progressEl.textContent = '0/0';
+    
+    currentTodoList = [];
+}
+
+function startStreaming() {
+    var container = document.getElementById('chatMessages');
+    if (!container) return;
+    
+    // Remove thinking indicator
+    removeThinkingIndicator();
+    
+    // Reset activity section for new response
+    currentActivitySection = null;
+    fileCount = 0;
+    
+    // Create new assistant message bubble
+    if (!currentAssistantMessage) {
+        currentAssistantMessage = document.createElement('div');
+        currentAssistantMessage.className = 'message-bubble assistant';
+        var content = document.createElement('div');
+        content.className = 'message-content';
+        currentAssistantMessage.appendChild(content);
+        container.appendChild(currentAssistantMessage);
+        currentContent = "";
+    }
+    
+    container.scrollTop = container.scrollHeight;
+}
 
 function onChunk(chunk) {
     var container = document.getElementById('chatMessages');
@@ -908,7 +1247,7 @@ function updateStreamingUI() {
     if (!contentDiv) return;
 
     try {
-        // Parse markdown content
+        // Let marked.js handle all markdown parsing - don't pre-process
         var html = marked.parse(currentContent);
         contentDiv.innerHTML = html;
     } catch (e) {
@@ -1592,10 +1931,35 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // --- Python Hooks ---
     window.onChunk = onChunk;
+    window.startStreaming = startStreaming;
     window.onComplete = onComplete;
     window.appendMessage = appendMessage;
+    window.clearChatHistory = function() {
+        // Clear localStorage chat history
+        localStorage.setItem('cortex_chats', '[]');
+        chats = [];
+        currentChatId = null;
+        renderHistoryList();
+    };
+    window.showToolActivity = showToolActivity;
+    window.updateToolActivity = updateToolActivity;
+    window.clearToolActivity = clearToolActivity;
+    window.showThinking = showThinking;
+    window.hideThinking = hideThinking;
+    window.updateActivityHeader = updateActivityHeader;
+    
+    // TODO Functions
+    window.updateTodos = updateTodos;
+    window.toggleTodoSection = toggleTodoSection;
+    window.clearTodos = clearTodos;
+    
     window.setTheme = function (isDark) {
+        // Preserve the 'loaded' class when changing theme
+        var isLoaded = document.body.classList.contains('loaded');
         document.body.className = isDark ? 'dark' : 'light';
+        if (isLoaded) {
+            document.body.classList.add('loaded');
+        }
     };
     window.focusInput = function () {
         var input = document.getElementById('chatInput');

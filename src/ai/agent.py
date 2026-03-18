@@ -209,6 +209,10 @@ class AIAgent(QObject):
     request_error = pyqtSignal(str)
     file_generated = pyqtSignal(str)
     file_edited_diff = pyqtSignal(str, str, str)  # file_path, original_content, new_content
+    tool_activity = pyqtSignal(str, str, str)  # tool_type, info, status
+    thinking_started = pyqtSignal()
+    thinking_stopped = pyqtSignal()
+    todos_updated = pyqtSignal(list, str)  # todos_list, main_task
 
     SYSTEM_PROMPT = """# CORTEX AGENTIC IDE MANAGER v3.7 - Project File Workflows
 
@@ -230,9 +234,12 @@ You are CORTEX, a high-performance autonomous agent fully integrated into the Co
     </options>
     ```
 
-## SAFETY & PERMISSIONS
-- **File Deletion**: Always explain WHY you are deleting something.
-- **Confirmation**: The system will automatically wrap your tool calls in a permission UI. You do not need to ask for permission manually unless you want to confirm a higher-level decision.
+## AUTONOMOUS OPERATION (AGENT MODE)
+- **Auto-approval ENABLED**: You have full permission to execute tools without asking for confirmation
+- **File Creation**: Create files directly as needed - no permission needed
+- **Code Execution**: Run commands directly - no permission needed
+- **Proactive Behavior**: Don't ask "should I do X?" - just do it!
+- **File Deletion**: You may delete files when necessary for the task
 
 Maintain a professional, proactive, and highly competent engineering tone."""
 
@@ -252,6 +259,7 @@ Maintain a professional, proactive, and highly competent engineering tone."""
         self._always_allowed: bool = False
         self._check_configuration()
         self._mode = "Agent"  # Default mode
+        self._always_allowed = True  # Agent mode has full autonomy by default
         self._warmup_shown = False  # Track if warmup has been shown
         self._context_manager = None  # Will be initialized when project is set
         self._active_file_path = None
@@ -262,6 +270,10 @@ Maintain a professional, proactive, and highly competent engineering tone."""
         """Set the interaction mode (Agent or Ask)."""
         self._mode = mode
         log.info(f"AI Agent interaction mode switched to: {mode}")
+        # Enable always allow in Agent mode for full autonomy
+        if mode == "Agent":
+            self._always_allowed = True
+            log.info("AI Agent: Auto-approval enabled for Agent mode")
 
     def _is_greeting(self, message: str) -> bool:
         """Check if message is a simple greeting - DISABLED for context-aware responses."""
@@ -319,6 +331,14 @@ Maintain a professional, proactive, and highly competent engineering tone."""
         if self._context_manager:
             self._context_manager.set_active_file(file_path, cursor_position)
         log.debug(f"Active file set: {file_path} at position {cursor_position}")
+    
+    def clear_active_file(self):
+        """Clear the active file context when switching projects."""
+        self._active_file_path = None
+        self._cursor_position = None
+        if self._context_manager:
+            self._context_manager.set_active_file(None)
+        log.debug("Active file cleared")
 
     def chat(self, user_message: Optional[str], code_context: str = ""):
         """Send a message and get a streamed response."""
@@ -526,6 +546,7 @@ Maintain a professional, proactive, and highly competent engineering tone."""
         self._worker.finished.connect(self._on_done)
         self._worker.error_occurred.connect(self._on_error)
         log.info("Starting AI worker thread...")
+        self.thinking_started.emit()  # Show thinking indicator
         self._worker.start()
         log.info(f"AI worker started, isRunning={self._worker.isRunning()}")
 
@@ -745,6 +766,11 @@ Maintain a professional, proactive, and highly competent engineering tone."""
 
     def _on_done(self, full_text: str):
         log.info(f"_on_done called, full_text length={len(full_text)}, worker={self._worker}")
+        self.thinking_stopped.emit()  # Hide thinking indicator
+        
+        # Parse and emit TODOs if present
+        self._parse_and_emit_todos(full_text)
+        
         # Clear worker reference since it's done
         worker = self._worker
         self._worker = None
@@ -827,24 +853,39 @@ Maintain a professional, proactive, and highly competent engineering tone."""
             except:
                 args = {}
             
-            # Clean, minimal status messages with emojis
+            # Display tool activity with cards
             if name == "run_command":
-                cmd = args.get("command", "")[:60]
-                self.response_chunk.emit(f"🔧 `{cmd}{'...' if len(cmd) > 60 else ''}`\n")
+                cmd = args.get("command", "")
+                self.tool_activity.emit("run_command", cmd[:60], "running")
             elif name == "list_directory":
                 path = args.get("path", "")
-                self.response_chunk.emit(f"📁 `{path.split('\\')[-1] or path}`\n")
+                display_path = path.split('\\')[-1] or path.split('/')[-1] or path
+                self.tool_activity.emit("list_directory", display_path, "running")
             elif name == "read_file":
                 path = args.get("path", "")
-                self.response_chunk.emit(f"📄 `{path.split('\\')[-1] or path}`\n")
+                display_path = path.split('\\')[-1] or path.split('/')[-1] or path
+                self.tool_activity.emit("read_file", display_path, "running")
             elif name == "write_file":
                 path = args.get("path", "")
-                self.response_chunk.emit(f"✏️ Creating `{path.split('\\')[-1] or path}`\n")
+                display_path = path.split('\\')[-1] or path.split('/')[-1] or path
+                self.tool_activity.emit("write_file", display_path, "running")
             elif name == "edit_file":
                 path = args.get("path", "")
-                self.response_chunk.emit(f"✏️ Editing `{path.split('\\')[-1] or path}`\n")
+                display_path = path.split('\\')[-1] or path.split('/')[-1] or path
+                self.tool_activity.emit("edit_file", display_path, "running")
+            elif name == "search_code":
+                query = args.get("query", "")
+                self.tool_activity.emit("search_code", query[:40], "running")
+            elif name == "git_status":
+                self.tool_activity.emit("git_status", "Checking status", "running")
+            elif name == "git_diff":
+                self.tool_activity.emit("git_diff", "Getting diff", "running")
+            elif name == "delete_path":
+                path = args.get("path", "")
+                display_path = path.split('\\')[-1] or path.split('/')[-1] or path
+                self.tool_activity.emit("delete_path", display_path, "running")
             else:
-                self.response_chunk.emit(f"⚙️ {name}\n")
+                self.tool_activity.emit(name, str(args)[:50], "running")
             
             log.info(f"Executing tool: {name} with args: {args}")
             
@@ -868,31 +909,35 @@ Maintain a professional, proactive, and highly competent engineering tone."""
                 "success": result.success
             })
             
-            # Tool result display with better feedback
+            # Tool result display with activity cards
             if result.success:
                 if name == "list_directory":
                     content = str(result.result)
                     file_count = content.count('\n') + 1 if content else 0
-                    self.response_chunk.emit(f"   → Found {file_count} items\n")
+                    self.tool_activity.emit("list_directory", f"Found {file_count} items", "complete")
                 elif name == "read_file":
                     path = args.get("path", "")
                     content = str(result.result)
                     line_count = content.count('\n') + 1 if content else 0
-                    self.response_chunk.emit(f"   → Read {line_count} lines from {path.split('/')[-1] if '/' in path else path.split('\\')[-1] if '\\' in path else path}\n")
+                    display_path = path.split('/')[-1] if '/' in path else path.split('\\')[-1] if '\\' in path else path
+                    self.tool_activity.emit("read_file", f"{display_path} ({line_count} lines)", "complete")
                 elif name in ["write_file", "edit_file"]:
                     path = args.get("path", "")
-                    self.response_chunk.emit(f"   ✏️ Modified {path.split('/')[-1] if '/' in path else path.split('\\')[-1] if '\\' in path else path}\n")
+                    display_path = path.split('/')[-1] if '/' in path else path.split('\\')[-1] if '\\' in path else path
+                    self.tool_activity.emit(name, f"{display_path} ✓", "complete")
                 elif name == "run_command":
                     cmd = args.get("command", "")
-                    self.response_chunk.emit(f"   🔧 Executed: {cmd[:50]}{'...' if len(cmd) > 50 else ''}\n")
+                    self.tool_activity.emit("run_command", f"{cmd[:40]} ✓", "complete")
                 elif name == "search_code":
-                    self.response_chunk.emit(f"   🔍 Search completed\n")
+                    self.tool_activity.emit("search_code", "Search completed", "complete")
                 elif name == "git_status":
-                    self.response_chunk.emit(f"   📊 Git status retrieved\n")
+                    self.tool_activity.emit("git_status", "Status retrieved", "complete")
                 elif name == "git_diff":
-                    self.response_chunk.emit(f"   📋 Git diff retrieved\n")
+                    self.tool_activity.emit("git_diff", "Diff retrieved", "complete")
+                else:
+                    self.tool_activity.emit(name, "Completed", "complete")
             else:
-                self.response_chunk.emit(f"   ❌ Error: {result.error}\n")
+                self.tool_activity.emit(name, f"Error: {result.error[:40]}", "error")
 
             # Hand off the file edit to the frontend tracker for the Diff popup
             if name in ["write_file", "edit_file"] and result.success:
@@ -1059,6 +1104,14 @@ Maintain a professional, proactive, and highly competent engineering tone."""
         else:
             self.response_chunk.emit("\n🔒 **Auto-approval disabled**. I'll ask for confirmation before making changes.")
 
+    def enable_always_allowed(self):
+        """Enable always allow mode - AI works fully autonomously"""
+        self.set_always_allowed(True)
+        
+    def disable_always_allowed(self):
+        """Disable always allow mode - AI asks for confirmation"""
+        self.set_always_allowed(False)
+
     def clear_history(self):
         """Clear current session history."""
         self._history.clear()
@@ -1109,6 +1162,64 @@ Maintain a professional, proactive, and highly competent engineering tone."""
             self._worker.wait()
             self._worker = None
             log.info("AI worker stopped.")
+
+    def _parse_and_emit_todos(self, text: str):
+        """Parse TODO items from response text and emit to UI."""
+        import re
+        
+        todos = []
+        main_task = ""
+        
+        # Look for numbered task lists (1. Task description, 2. Task description, etc.)
+        # Or checkbox style (- [ ] Task, - [x] Task)
+        
+        # Pattern for numbered tasks
+        numbered_pattern = r'^\s*(\d+)\.\s*(.+)$'
+        # Pattern for checkbox tasks
+        checkbox_pattern = r'^\s*[-*]\s*\[([ xX])\]\s*(.+)$'
+        
+        lines = text.split('\n')
+        task_id = 0
+        
+        for line in lines:
+            # Check numbered tasks
+            numbered_match = re.match(numbered_pattern, line)
+            if numbered_match:
+                task_id += 1
+                content = numbered_match.group(2).strip()
+                if not main_task and task_id == 1:
+                    main_task = content[:50] + ('...' if len(content) > 50 else '')
+                todos.append({
+                    'id': f'task_{task_id}',
+                    'content': content,
+                    'status': 'PENDING'
+                })
+                continue
+            
+            # Check checkbox tasks
+            checkbox_match = re.match(checkbox_pattern, line)
+            if checkbox_match:
+                task_id += 1
+                checked = checkbox_match.group(1).lower() == 'x'
+                content = checkbox_match.group(2).strip()
+                if not main_task and task_id == 1:
+                    main_task = content[:50] + ('...' if len(content) > 50 else '')
+                todos.append({
+                    'id': f'task_{task_id}',
+                    'content': content,
+                    'status': 'COMPLETE' if checked else 'PENDING'
+                })
+        
+        # Only emit if we found meaningful todos (at least 2)
+        if len(todos) >= 2:
+            log.info(f"Parsed {len(todos)} todos from response")
+            self.todos_updated.emit(todos, main_task)
+    
+    def update_todo_status(self, task_id: str, status: str):
+        """Update a specific todo item's status."""
+        # This can be called during tool execution to show progress
+        # Status: PENDING, IN_PROGRESS, COMPLETE, CANCELLED
+        pass  # UI will be updated via todos_updated signal with full list
 
     def _save_workflow_files(self, text: str):
         """Extract workflow tags and save to .cortex/ directory."""

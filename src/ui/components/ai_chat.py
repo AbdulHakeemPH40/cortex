@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import platform
 import shutil
 from typing import Optional
@@ -97,6 +98,15 @@ class ChatBridge(QObject):
         """Check if pasted text matches current editor selection."""
         self.smart_paste_check_requested.emit(pasted_text)
 
+    @pyqtSlot(bool)
+    def handle_permission_response(self, allowed):
+        """Handle permission response from JS (Allow/Deny tool execution)."""
+        # Emit proceed signal if allowed, otherwise just log
+        if allowed:
+            self.proceed_requested.emit()
+        else:
+            log.info("User denied tool execution permission")
+
 
 class AIChatWidget(QWidget):
     """Web-based AI chat widget using QWebEngineView."""
@@ -170,9 +180,9 @@ class AIChatWidget(QWidget):
         
     def on_chunk(self, chunk):
         """Handle AI streaming chunk."""
-        # Use standard string escaping for JS
-        safe_chunk = chunk.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r")
-        self._view.page().runJavaScript(f"if(window.onChunk) window.onChunk('{safe_chunk}');")
+        # Use JSON encoding to properly escape for JavaScript
+        safe_chunk = json.dumps(chunk)
+        self._view.page().runJavaScript(f"if(window.onChunk) window.onChunk({safe_chunk});")
         
     def on_complete(self, full_text):
         """Handle AI completion."""
@@ -180,8 +190,8 @@ class AIChatWidget(QWidget):
         
     def on_error(self, error):
         """Handle error."""
-        safe_error = error.replace("'", "\\'")
-        self._view.page().runJavaScript(f"if(window.appendMessage) window.appendMessage('❌ Error: {safe_error}', 'assistant', false);")
+        safe_error = json.dumps(f"❌ Error: {error}")
+        self._view.page().runJavaScript(f"if(window.appendMessage) window.appendMessage({safe_error}, 'assistant', false);")
         
     def clear_chat(self):
         """Clear chat."""
@@ -200,8 +210,43 @@ class AIChatWidget(QWidget):
         
     def add_system_message(self, text):
         """Add a system message."""
-        safe_text = text.replace("'", "\\'")
-        self._view.page().runJavaScript(f"if(window.appendMessage) window.appendMessage('{safe_text}', 'assistant', false);")
+        safe_text = json.dumps(text)
+        self._view.page().runJavaScript(f"if(window.appendMessage) window.appendMessage({safe_text}, 'assistant', false);")
+
+    def _add_ai_bubble_streaming(self):
+        """Start a new AI streaming message bubble."""
+        self._view.page().runJavaScript("if(window.startStreaming) window.startStreaming();")
+    
+    def show_tool_activity(self, tool_type: str, info: str, status: str = "running"):
+        """Show tool activity card in the chat UI."""
+        safe_info = json.dumps(info)
+        self._view.page().runJavaScript(
+            f"if(window.showToolActivity) window.showToolActivity('{tool_type}', {safe_info}, '{status}');"
+        )
+    
+    def clear_tool_activity(self):
+        """Clear tool activity cards."""
+        self._view.page().runJavaScript("if(window.clearToolActivity) window.clearToolActivity();")
+    
+    def show_thinking(self):
+        """Show thinking indicator."""
+        self._view.page().runJavaScript("if(window.showThinking) window.showThinking();")
+    
+    def hide_thinking(self):
+        """Hide thinking indicator and show duration."""
+        self._view.page().runJavaScript("if(window.hideThinking) window.hideThinking();")
+    
+    def update_todos(self, todos: list, main_task: str = ""):
+        """Update the TODO list in the UI."""
+        todos_json = json.dumps(todos)
+        main_task_safe = json.dumps(main_task)
+        self._view.page().runJavaScript(
+            f"if(window.updateTodos) window.updateTodos({todos_json}, {main_task_safe});"
+        )
+    
+    def clear_todos(self):
+        """Clear the TODO list from the UI."""
+        self._view.page().runJavaScript("if(window.clearTodos) window.clearTodos();")
 
     def set_code_context_callback(self, callback):
         self._get_code_context = callback

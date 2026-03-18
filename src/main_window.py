@@ -758,6 +758,10 @@ class CortexMainWindow(QMainWindow):
         self._ai_agent.request_error.connect(self._ai_chat.on_error)
         self._ai_agent.file_generated.connect(self._open_file)
         self._ai_agent.file_edited_diff.connect(self._file_tracker.add_edit)
+        self._ai_agent.tool_activity.connect(self._ai_chat.show_tool_activity)
+        self._ai_agent.thinking_started.connect(self._ai_chat.show_thinking)
+        self._ai_agent.thinking_stopped.connect(self._ai_chat.hide_thinking)
+        self._ai_agent.todos_updated.connect(self._ai_chat.update_todos)
         
         # New interaction signals
         self._ai_chat.generate_plan_requested.connect(self._on_generate_plan)
@@ -1156,7 +1160,18 @@ class CortexMainWindow(QMainWindow):
     # Project & Events
     # ------------------------------------------------------------------
     def _on_project_opened(self, folder_path: str):
+        # Set project root FIRST (this loads project-specific context)
         self._ai_agent.set_project_root(folder_path)
+        
+        # Clear chat UI, history, and active file context
+        # This ensures we get fresh context for the new project, not old history
+        self._ai_chat.clear_chat()
+        self._ai_agent.clear_history()
+        self._ai_agent.clear_active_file()
+        
+        # Also clear JavaScript localStorage chat history
+        self._ai_chat._view.page().runJavaScript("if(window.clearChatHistory) window.clearChatHistory();")
+        
         self._sidebar.set_project(folder_path)
         # Update all current terminal tabs to the new project directory
         for i in range(self._terminal_tabs.count()):
