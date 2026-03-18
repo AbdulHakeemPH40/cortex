@@ -206,6 +206,16 @@ class AIChatWidget(QWidget):
     def set_code_context_callback(self, callback):
         self._get_code_context = callback
 
+    def set_project_info(self, name: str, path: str = ""):
+        """Update the project indicator in the chat header."""
+        safe_name = name.replace("'", "\\'").replace("\\", "\\\\")
+        safe_path = path.replace("'", "\\'").replace("\\", "\\\\")
+        self._view.page().runJavaScript(f"if(window.setProjectInfo) window.setProjectInfo('{safe_name}', '{safe_path}');")
+
+    def clear_project_info(self):
+        """Hide the project indicator."""
+        self._view.page().runJavaScript("if(window.clearProjectInfo) window.clearProjectInfo();")
+
     def _start_terminal_backend(self):
         """Initialize the backend shell process (PowerShell by default on Windows)."""
         shell = "powershell.exe" if platform.system() == "Windows" else "bash"

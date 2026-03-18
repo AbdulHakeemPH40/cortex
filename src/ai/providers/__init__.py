@@ -57,6 +57,7 @@ class ChatResponse:
     finish_reason: Optional[str] = None
     duration_ms: float = 0.0
     error: Optional[str] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = None
 
 
 class BaseProvider(ABC):
@@ -513,14 +514,31 @@ class DeepSeekProvider(BaseProvider):
                 )
             else:
                 # Handle regular response
+                message = response.choices[0].message
+                
+                # Extract tool calls if present
+                tool_calls = None
+                if hasattr(message, 'tool_calls') and message.tool_calls:
+                    tool_calls = []
+                    for tc in message.tool_calls:
+                        tool_calls.append({
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments
+                            }
+                        })
+                
                 return ChatResponse(
-                    content=response.choices[0].message.content,
+                    content=message.content or "",
                     model=model,
                     provider="deepseek",
                     input_tokens=response.usage.prompt_tokens if response.usage else 0,
                     output_tokens=response.usage.completion_tokens if response.usage else 0,
                     finish_reason=response.choices[0].finish_reason,
-                    duration_ms=duration_ms
+                    duration_ms=duration_ms,
+                    tool_calls=tool_calls
                 )
                 
         except Exception as e:
@@ -556,6 +574,14 @@ class DeepSeekProvider(BaseProvider):
             
             import json
             for chunk in response:
+                # Check if chunk has choices
+                if not chunk.choices:
+                    continue
+                
+                # Check for finish reason - stream is done
+                if chunk.choices[0].finish_reason:
+                    break
+                
                 delta = chunk.choices[0].delta
                 if delta.content:
                     yield delta.content

@@ -67,30 +67,109 @@ function initMarked() {
         setTimeout(initMarked, 50);
         return;
     }
-    var renderer = new marked.Renderer();
-    renderer.code = function (code, language) {
-        var codeText = typeof code === 'object' ? code.text : code;
-        var lang = (language || 'text').toLowerCase();
-        
-        // Specialized Tree Rendering
-        if (lang === 'tree' || (lang === 'plaintext' && codeText.includes('├──') || codeText.includes('└──'))) {
-            return renderProjectTree(codeText);
+    
+    // Use marked's built-in renderer with minimal overrides
+    // marked v15+ uses a different API - we use extensions instead of renderer overrides
+    
+    // First, let's create a simple extension for code blocks
+    marked.use({
+        renderer: {
+            code: function(token) {
+                var code = token.text || '';
+                var lang = (token.lang || 'text').toLowerCase();
+                
+                // Specialized Tree Rendering
+                if (lang === 'tree' || (lang === 'plaintext' && (code.includes('├──') || code.includes('└──')))) {
+                    return renderProjectTree(code);
+                }
+
+                var highlighted;
+                try { 
+                    highlighted = hljs.highlight(code, { language: hljs.getLanguage(lang) ? lang : 'plaintext' }).value; 
+                } catch (e) { 
+                    highlighted = escapeHtml(code); 
+                }
+                var isShell = ['bash', 'sh', 'powershell', 'ps1', 'cmd', 'shell'].includes(lang);
+                var runBtn = isShell ? '<button class="run-btn" onclick="runCode(this)" title="Run in terminal"><i class="fas fa-play"></i> Run</button>' : '';
+                return '<div class="code-block-container">' +
+                    '<div class="code-header">' +
+                    '<span class="code-lang">' + lang.toUpperCase() + '</span>' +
+                    '<div class="code-actions">' + runBtn + '<button class="copy-btn" onclick="copyToClipboard(this)" title="Copy"><i class="fas fa-copy"></i> Copy</button></div>' +
+                    '</div>' +
+                    '<pre><code class="hljs language-' + lang + '">' + highlighted + '</code></pre>' +
+                    '</div>';
+            },
+            
+            table: function(token) {
+                var header = token.header ? '<tr>' + token.header.map(cell => '<th>' + this.parser.parseInline(cell.tokens) + '</th>').join('') + '</tr>' : '';
+                var body = token.rows ? token.rows.map(row => '<tr>' + row.map(cell => '<td>' + this.parser.parseInline(cell.tokens) + '</td>').join('') + '</tr>').join('') : '';
+                return '<div class="table-wrapper"><table><thead>' + header + '</thead><tbody>' + body + '</tbody></table></div>';
+            },
+            
+            heading: function(token) {
+                var text = this.parser.parseInline(token.tokens);
+                var depth = token.depth;
+                var cleanText = text.replace(/<[^>]+>/g, '');
+                var id = cleanText.toLowerCase().replace(/[^\w]+/g, '-');
+                return '<h' + depth + ' id="' + id + '" class="md-heading md-h' + depth + '">' + text + '</h' + depth + '>';
+            },
+            
+            listitem: function(token) {
+                var text = this.parser.parseInline(token.tokens);
+                
+                // Check for task list pattern
+                var taskMatch = text.match(/^\s*\[([ xX])\]\s*/);
+                if (taskMatch) {
+                    var isChecked = taskMatch[1].toLowerCase() === 'x';
+                    var checkedClass = isChecked ? 'checked' : '';
+                    var taskText = text.replace(/^\s*\[([ xX])\]\s*/, '');
+                    var checkedIcon = isChecked 
+                        ? '<svg class="task-check" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>'
+                        : '<svg class="task-circle" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg>';
+                    return '<li class="task-item ' + checkedClass + '">' + checkedIcon + '<span class="task-text">' + taskText + '</span></li>';
+                }
+                return '<li>' + text + '</li>';
+            },
+            
+            codespan: function(token) {
+                return '<code class="inline-code">' + escapeHtml(token.text) + '</code>';
+            },
+            
+            link: function(token) {
+                var text = this.parser.parseInline(token.tokens);
+                var title = token.title ? ' title="' + escapeHtml(token.title) + '"' : '';
+                return '<a href="' + token.href + '"' + title + ' target="_blank" rel="noopener">' + text + '</a>';
+            },
+            
+            blockquote: function(token) {
+                var text = this.parser.parse(token.tokens);
+                return '<blockquote class="md-blockquote">' + text + '</blockquote>';
+            },
+            
+            text: function(token) {
+                var text = token.text;
+                if (typeof text !== 'string') return text;
+                
+                // Pattern to detect file paths with optional line numbers
+                var filePattern = /(`?)([\w\-/.\\]+\.(?:py|js|ts|jsx|tsx|html|css|scss|java|cpp|c|go|rs|php|rb|swift|kt|json|xml|yaml|yml|md|vue))(?::(\d+))?(`?)/gi;
+                
+                return text.replace(filePattern, function(match, backtick1, filePath, lineNum, backtick2) {
+                    if (backtick1 === '`' && backtick2 === '`') {
+                        return match;
+                    }
+                    var cleanPath = filePath.replace(/\\/g, '/');
+                    var fileName = cleanPath.split('/').pop();
+                    var lineAttr = lineNum ? ', ' + lineNum : '';
+                    var lineDisplay = lineNum ? ':' + lineNum : '';
+                    var escapedPath = cleanPath.replace(/'/g, "\\'");
+                    return '<span class="file-link" onclick="window.openFile(\'' + escapedPath + '\'' + lineAttr + ')">' +
+                           '<i class="fas fa-file-code"></i> ' + fileName + lineDisplay +
+                           '</span>';
+                });
+            }
         }
-
-        var highlighted;
-        try { highlighted = hljs.highlight(codeText, { language: hljs.getLanguage(lang) ? lang : 'plaintext' }).value; }
-        catch (e) { highlighted = codeText; }
-        var isShell = ['bash', 'sh', 'powershell', 'ps1', 'cmd', 'shell'].includes(lang);
-        var runBtn = isShell ? '<button class="run-btn" onclick="runCode(this)" title="Run in terminal"><i class="fas fa-play"></i> Run</button>' : '';
-        return '<div class="code-block-container">' +
-            '<div class="code-header">' +
-            '<span class="code-lang">' + lang.toUpperCase() + '</span>' +
-            '<div class="code-actions">' + runBtn + '<button class="copy-btn" onclick="copyToClipboard(this)" title="Copy"><i class="fas fa-copy"></i> Copy</button></div>' +
-            '</div>' +
-            '<pre><code class="hljs language-' + lang + '">' + highlighted + '</code></pre>' +
-            '</div>';
-    };
-
+    });
+    
     function renderProjectTree(text) {
         var lines = text.trim().split('\n');
         var html = '<div class="project-tree">';
@@ -109,41 +188,15 @@ function initMarked() {
         html += '</div>';
         return html;
     }
-    renderer.table = function (header, body) {
-        return '<div class="table-wrapper"><table><thead>' + header + '</thead><tbody>' + body + '</tbody></table></div>';
-    };
     
-    // Custom text renderer to detect file paths and make them clickable
-    renderer.text = function(textObj) {
-        // Handle marked v13+ which passes {text: "..."} instead of raw string
-        var text = (typeof textObj === 'object' && textObj.text) ? textObj.text : textObj;
-        if (typeof text !== 'string') return text;
-        
-        // Pattern to detect file paths with optional line numbers
-        // Matches: src/main.py, src/main.py:42, ./config.json, etc.
-        var filePattern = /(`?)([\w\-/.\\]+\.(?:py|js|ts|jsx|tsx|html|css|scss|java|cpp|c|go|rs|php|rb|swift|kt|json|xml|yaml|yml|md|vue))(?::(\d+))?(`?)/gi;
-        
-        return text.replace(filePattern, function(match, backtick1, filePath, lineNum, backtick2) {
-            // Don't modify if already in backticks (code)
-            if (backtick1 === '`' && backtick2 === '`') {
-                return match;
-            }
-            
-            // Clean up the path
-            var cleanPath = filePath.replace(/\\/g, '/');
-            var fileName = cleanPath.split('/').pop();
-            
-            // Build the HTML
-            var lineAttr = lineNum ? ', ' + lineNum : '';
-            var lineDisplay = lineNum ? ':' + lineNum : '';
-            var escapedPath = cleanPath.replace(/'/g, "\\'");
-            
-            return '<span class="file-link" onclick="window.openFile(\'' + escapedPath + '\'' + lineAttr + ')">' +
-                   '<i class="fas fa-file-code"></i> ' + fileName + lineDisplay +
-                   '</span>';
-        });
-    };
-    marked.setOptions({ renderer: renderer, breaks: true, gfm: true });
+    // Configure marked with all options
+    marked.setOptions({ 
+        breaks: true, 
+        gfm: true,
+        pedantic: false,
+        smartLists: true,
+        smartypants: false
+    });
 }
 
 function initBridge() {
@@ -440,7 +493,12 @@ function appendMessage(text, sender, shouldSave) {
     if (sender === 'user') {
         content.textContent = text;
     } else {
-        content.innerHTML = marked.parse(text);
+        try {
+            content.innerHTML = marked.parse(text);
+        } catch (e) {
+            console.error('Markdown parse error in appendMessage:', e);
+            content.textContent = text;
+        }
     }
     
     // Add Copy Message Button
@@ -514,88 +572,227 @@ function sendMessage() {
 // --- AI Thinking Grid Animation ---
 var thinkingInterval = null;
 var thinkingCells = null;
+var thinkingStartTime = null;
+var thinkingTimerInterval = null;
+var explorationItems = [];
 
 function showThinkingAnimation() {
-    var thinkingEl = document.getElementById('thinking-animation');
+    var container = document.getElementById('chatMessages');
+    if (!container) return;
     
-    // Create the thinking element if it doesn't exist
-    if (!thinkingEl) {
-        var container = document.getElementById('chatMessages');
-        if (!container) return;
-        
-        thinkingEl = document.createElement('div');
-        thinkingEl.id = 'thinking-animation';
-        thinkingEl.className = 'message-bubble assistant thinking-message';
-        thinkingEl.innerHTML = '<div class="thinking-grid">' +
-            '<div class="thinking-cell"></div><div class="thinking-cell"></div>' +
-            '<div class="thinking-cell"></div><div class="thinking-cell"></div>' +
-            '<div class="thinking-cell"></div><div class="thinking-cell"></div>' +
-            '<div class="thinking-cell"></div><div class="thinking-cell"></div>' +
-            '<div class="thinking-cell"></div></div>' +
-            '<span class="thinking-label">Thinking...</span>';
-        
-        container.appendChild(thinkingEl);
+    // Remove any existing thinking element
+    var existingThinking = document.getElementById('thinking-animation');
+    if (existingThinking) existingThinking.remove();
+    
+    // Record start time
+    thinkingStartTime = Date.now();
+    explorationItems = [];
+    
+    // Create modern Qoder-style thinking indicator
+    var thinkingEl = document.createElement('div');
+    thinkingEl.id = 'thinking-animation';
+    thinkingEl.className = 'message-bubble assistant thinking-message-modern';
+    thinkingEl.innerHTML = `
+        <div class="thinking-header">
+            <div class="thinking-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <path d="M12 6v6l4 2"></path>
+                </svg>
+            </div>
+            <span class="thinking-title">Thought</span>
+            <span class="thinking-separator">·</span>
+            <span class="thinking-timer" id="thinking-timer">0s</span>
+        </div>
+        <div class="thinking-content-text" id="thinking-main-text">
+            Analyzing your request...
+        </div>
+        <div class="exploration-section" id="exploration-section">
+            <div class="exploration-toggle" onclick="toggleExploration()">
+                <svg class="exploration-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                <span>Exploring</span>
+                <span class="exploration-status" id="exploration-status"></span>
+            </div>
+            <div class="exploration-list" id="exploration-list"></div>
+        </div>
+        <div class="thinking-dots">
+            <span class="dot"></span>
+            <span class="dot"></span>
+            <span class="dot"></span>
+        </div>
+    `;
+    
+    container.appendChild(thinkingEl);
+    container.scrollTop = container.scrollHeight;
+    
+    // Start timer
+    thinkingTimerInterval = setInterval(updateThinkingTimer, 1000);
+}
+
+function updateThinkingTimer() {
+    var timerEl = document.getElementById('thinking-timer');
+    if (timerEl && thinkingStartTime) {
+        var elapsed = Math.floor((Date.now() - thinkingStartTime) / 1000);
+        timerEl.textContent = elapsed + 's';
+    }
+}
+
+function toggleExploration() {
+    var section = document.getElementById('exploration-section');
+    if (section) {
+        section.classList.toggle('collapsed');
+    }
+}
+
+function addExplorationItem(icon, text) {
+    var list = document.getElementById('exploration-list');
+    var status = document.getElementById('exploration-status');
+    if (!list) return;
+    
+    explorationItems.push(text);
+    
+    var item = document.createElement('div');
+    item.className = 'exploration-item';
+    item.innerHTML = `<span class="exploration-icon">${icon}</span><span>${escapeHtml(text)}</span>`;
+    list.appendChild(item);
+    
+    // Update status count
+    if (status) {
+        status.textContent = explorationItems.length + ' action' + (explorationItems.length > 1 ? 's' : '');
     }
     
-    thinkingEl.style.display = 'flex';
-    thinkingCells = thinkingEl.querySelectorAll('.thinking-cell');
-    
-    // Scroll to bottom to show the thinking indicator
+    // Scroll to show new item
     var container = document.getElementById('chatMessages');
-    if (container) {
+    if (container) container.scrollTop = container.scrollHeight;
+}
+
+function addToolResult(icon, text) {
+    // Add tool result to the current message or exploration list
+    var container = document.getElementById('chatMessages');
+    if (!container) return;
+    
+    // If we have an exploration list, add there
+    var list = document.getElementById('exploration-list');
+    if (list) {
+        var item = document.createElement('div');
+        item.className = 'exploration-item tool-result';
+        
+        // Style based on icon type
+        var isError = icon === '❌';
+        var iconClass = isError ? 'error-icon' : 'success-icon';
+        
+        item.innerHTML = `<span class="exploration-icon ${iconClass}">${icon}</span><span class="${isError ? 'error-text' : ''}">${escapeHtml(text)}</span>`;
+        list.appendChild(item);
         container.scrollTop = container.scrollHeight;
     }
+}
+
+function renderPermissionBlock(permData) {
+    // Render tool permission request as a card
+    var container = document.getElementById('chatMessages');
+    if (!container) return;
     
-    // Start the random highlighting pattern
-    if (thinkingInterval) clearInterval(thinkingInterval);
-    highlightThinkingCells();
-    thinkingInterval = setInterval(highlightThinkingCells, 400);
+    removeThinkingIndicator();
+    
+    // Handle both string and object inputs
+    var tools;
+    if (typeof permData === 'string') {
+        try {
+            tools = JSON.parse(permData);
+        } catch(e) {
+            tools = [{ name: 'Command', info: permData }];
+        }
+    } else if (Array.isArray(permData)) {
+        tools = permData;
+    } else if (permData && typeof permData === 'object') {
+        tools = [permData];
+    } else {
+        tools = [{ name: 'Unknown', info: String(permData) }];
+    }
+    
+    var card = document.createElement('div');
+    card.className = 'permission-card';
+    
+    var toolsHtml = tools.map(function(tool) {
+        var icon = getToolIcon(tool.name || 'tool');
+        return `
+            <div class="permission-tool">
+                <span class="tool-icon">${icon}</span>
+                <div class="tool-details">
+                    <span class="tool-name">${escapeHtml(tool.name || 'Tool')}</span>
+                    <span class="tool-info">${escapeHtml(tool.info || '')}</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    card.innerHTML = `
+        <div class="permission-header">
+            <svg class="permission-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            <span class="permission-title">Tool Execution</span>
+        </div>
+        <div class="permission-tools">
+            ${toolsHtml}
+        </div>
+        <div class="permission-actions">
+            <button class="permission-allow" onclick="handlePermissionAllow()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                Allow
+            </button>
+            <button class="permission-deny" onclick="handlePermissionDeny()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                Deny
+            </button>
+        </div>
+    `;
+    
+    container.appendChild(card);
+    container.scrollTop = container.scrollHeight;
+}
+
+function getToolIcon(toolName) {
+    var name = (toolName || '').toLowerCase();
+    if (name.includes('read') || name.includes('file')) return '📄';
+    if (name.includes('write') || name.includes('edit')) return '✏️';
+    if (name.includes('run') || name.includes('command') || name.includes('terminal')) return '⚙️';
+    if (name.includes('search') || name.includes('find')) return '🔍';
+    if (name.includes('list') || name.includes('dir')) return '📁';
+    if (name.includes('git')) return '📦';
+    return '🔧';
+}
+
+function handlePermissionAllow() {
+    if (window.bridge) {
+        window.bridge.handle_permission_response(true);
+    }
+}
+
+function handlePermissionDeny() {
+    if (window.bridge) {
+        window.bridge.handle_permission_response(false);
+    }
+}
+
+function updateThinkingText(text) {
+    var textEl = document.getElementById('thinking-main-text');
+    if (textEl) {
+        textEl.textContent = text;
+    }
 }
 
 function hideThinkingAnimation() {
     var thinkingEl = document.getElementById('thinking-animation');
-    if (!thinkingEl) {
-        console.error('Thinking animation element not found on hide!');
-        return;
+    if (thinkingEl) {
+        thinkingEl.remove();
     }
     
-    console.log('Hiding thinking animation...');
-    thinkingEl.style.display = 'none';
-    
-    if (thinkingInterval) {
-        clearInterval(thinkingInterval);
-        thinkingInterval = null;
+    if (thinkingTimerInterval) {
+        clearInterval(thinkingTimerInterval);
+        thinkingTimerInterval = null;
     }
     
-    // Reset cells
-    if (thinkingCells) {
-        thinkingCells.forEach(function(cell) {
-            cell.style.opacity = '1';
-            cell.style.background = 'rgba(0, 122, 204, 0.2)';
-        });
-    }
-}
-
-function highlightThinkingCells() {
-    if (!thinkingCells || thinkingCells.length === 0) return;
-    
-    // Reset all cells to dim state
-    thinkingCells.forEach(function(cell) {
-        cell.style.opacity = '0.3';
-        cell.style.background = 'rgba(0, 122, 204, 0.15)';
-    });
-    
-    // Pick 2-4 random cells to highlight
-    var numToHighlight = Math.floor(Math.random() * 3) + 2;
-    
-    for (var i = 0; i < numToHighlight; i++) {
-        var randomIndex = Math.floor(Math.random() * 9);
-        var randomCell = thinkingCells[randomIndex];
-        
-        // Make this cell fully visible and brighter
-        randomCell.style.opacity = '1';
-        randomCell.style.background = 'rgba(0, 122, 204, 0.9)';
-    }
+    thinkingStartTime = null;
+    explorationItems = [];
 }
 
 function showThinkingIndicator() {
@@ -622,13 +819,66 @@ function onChunk(chunk) {
     var container = document.getElementById('chatMessages');
     if (!container) return;
 
-    // Remove thinking indicator when first chunk arrives
-    removeThinkingIndicator();
+    // Check for permission block (tool approval request)
+    if (chunk.includes('<permission>')) {
+        var permMatch = chunk.match(/<permission>\n?([\s\S]*?)\n?<\/permission>/);
+        if (permMatch) {
+            try {
+                var permData = JSON.parse(permMatch[1]);
+                renderPermissionBlock(permData);
+                return;
+            } catch (e) {
+                console.error("Failed to parse permission block:", e);
+            }
+        }
+    }
+
+    // Check if this is an exploration item (tool execution feedback)
+    // These come as emojis: 📁 📄 ✏️ 🔧 ⚙️
+    var explorationMatch = chunk.match(/^(📁|📄|✏️|🔧|⚙️)\s*`?([^`\n]+)`?/);
+    if (explorationMatch) {
+        var icon = explorationMatch[1];
+        var text = explorationMatch[2].trim();
+        addExplorationItem(icon, text);
+        // Don't hide thinking yet - more exploration might come
+        return;
+    }
+    
+    // Check for tool result lines (→ or ❌)
+    var toolResultMatch = chunk.match(/^(\s*)(→|✓|✏️|🔧|🔍|📊|📋|❌)\s*(.+)$/);
+    if (toolResultMatch) {
+        var icon = toolResultMatch[2];
+        var text = toolResultMatch[3].trim();
+        addToolResult(icon, text);
+        return;
+    }
+    
+    // Check for exploration section markers
+    if (chunk.includes('<exploration>')) {
+        updateThinkingText("Exploring project context...");
+        return;
+    }
+    if (chunk.includes('</exploration>')) {
+        return; // Just skip the closing tag
+    }
+    
+    // Skip file_edited tags
+    if (chunk.includes('<file_edited>') || chunk.includes('</file_edited>')) {
+        return;
+    }
+    
+    // If we get actual content, hide thinking and start message
+    if (chunk.trim() && !chunk.startsWith('<') && !chunk.includes('→')) {
+        removeThinkingIndicator();
+    }
 
     // Terminal output is now shown inline in chat via showTerminalOutputInChat()
     // The terminal panel is only shown when explicitly requested
 
     if (!currentAssistantMessage) {
+        // Remove thinking indicator when first real content arrives
+        removeThinkingIndicator();
+        
         currentAssistantMessage = document.createElement('div');
         currentAssistantMessage.className = 'message-bubble assistant';
         var content = document.createElement('div');
@@ -657,9 +907,15 @@ function updateStreamingUI() {
     var contentDiv = currentAssistantMessage.querySelector('.message-content');
     if (!contentDiv) return;
 
-    // Simplified: Just render markdown. 
-    // The backend will handle saving specialized tags to files and opening them.
-    contentDiv.innerHTML = marked.parse(currentContent);
+    try {
+        // Parse markdown content
+        var html = marked.parse(currentContent);
+        contentDiv.innerHTML = html;
+    } catch (e) {
+        console.error('Markdown parse error:', e);
+        // Fallback to plain text with escaped HTML
+        contentDiv.textContent = currentContent;
+    }
     
     container.scrollTop = container.scrollHeight;
 }
@@ -679,7 +935,12 @@ function onComplete() {
         // Render final content including any tags that didn't close yet
         var contentDiv = currentAssistantMessage.querySelector('.message-content');
         if (contentDiv) {
-            contentDiv.innerHTML = marked.parse(text);
+            try {
+                contentDiv.innerHTML = marked.parse(text);
+            } catch (e) {
+                console.error('Markdown parse error in onComplete:', e);
+                contentDiv.textContent = text;
+            }
             handlePostRenderSpecialTags(contentDiv);
         }
 
@@ -687,8 +948,13 @@ function onComplete() {
             window.MathJax.typeset([currentAssistantMessage]);
         }
     }
-    currentAssistantMessage = null;
-    currentContent = "";
+    
+    // Reset for next message - but only if not continuing after tools
+    // The "[Tools executed, continuing...]" marker indicates tool continuation
+    if (!currentContent.includes('[Tools executed, continuing...]')) {
+        currentAssistantMessage = null;
+        currentContent = "";
+    }
     
     // Hide stop button, show send button
     var sendBtn = document.getElementById('sendBtn');
@@ -729,37 +995,6 @@ function handlePermissionTag() {
         }
         // Remove tag from content
         currentContent = currentContent.substring(0, startIndex) + currentContent.substring(endIndex + endTag.length);
-    }
-}
-
-function renderPermissionBlock(data) {
-    try {
-        var actions = JSON.parse(data);
-        // Use first action's info as the command display, fall back to raw
-        var cmdText = (actions[0] && actions[0].info) ? actions[0].info : JSON.stringify(actions);
-
-        var html = '<div class="perm-card">';
-        html += '<div class="perm-title"><i class="fas fa-terminal"></i> PERMISSION REQUIRED</div>';
-        html += '<div class="perm-cmd"><code>' + escapeHtml(cmdText) + '</code></div>';
-        html += '<div class="perm-actions">';
-        html += '<button class="perm-yes" onclick="confirmPermission(true)"><i class="fas fa-play"></i> Yes, Run</button>';
-        html += '<button class="perm-no"  onclick="confirmPermission(false)"><i class="fas fa-times"></i> Cancel</button>';
-        html += '<label class="perm-always"><input type="checkbox" id="always-allow-check"> Always allow</label>';
-        html += '</div>';
-        html += '</div>';
-        return html;
-    } catch(e) {
-        // Fallback: treat raw string as command text
-        var html = '<div class="perm-card">';
-        html += '<div class="perm-title"><i class="fas fa-terminal"></i> PERMISSION REQUIRED</div>';
-        html += '<div class="perm-cmd"><code>' + escapeHtml(data.trim()) + '</code></div>';
-        html += '<div class="perm-actions">';
-        html += '<button class="perm-yes" onclick="confirmPermission(true)"><i class="fas fa-play"></i> Yes, Run</button>';
-        html += '<button class="perm-no"  onclick="confirmPermission(false)"><i class="fas fa-times"></i> Cancel</button>';
-        html += '<label class="perm-always"><input type="checkbox" id="always-allow-check"> Always allow</label>';
-        html += '</div>';
-        html += '</div>';
-        return html;
     }
 }
 
@@ -1507,4 +1742,227 @@ document.addEventListener('DOMContentLoaded', function() {
     // Expose thinking functions for Python bridge (already defined earlier)
     window.startThinking = showThinkingAnimation;
     window.stopThinking = hideThinkingAnimation;
+    window.addExploration = addExplorationItem;
+    window.updateThinkingText = updateThinkingText;
+    window.toggleExploration = toggleExploration;
+    
+    // --- Project Directory Awareness ---
+    window.setProjectInfo = function(name, path) {
+        var indicator = document.getElementById('project-indicator');
+        var projectName = document.getElementById('project-name');
+        
+        if (!indicator || !projectName) return;
+        
+        if (name && name.trim()) {
+            projectName.textContent = name;
+            indicator.title = path || name;
+            indicator.style.display = 'inline-flex';
+        } else {
+            indicator.style.display = 'none';
+        }
+    };
+    
+    window.clearProjectInfo = function() {
+        var indicator = document.getElementById('project-indicator');
+        if (indicator) {
+            indicator.style.display = 'none';
+        }
+    };
+    
+    // --- Qoder-Style TODO Section Functions ---
+    window.todoItems = [];
+    window.changedFiles = [];
+    
+    window.toggleTodoSection = function() {
+        var section = document.getElementById('todo-section');
+        if (section) {
+            section.classList.toggle('collapsed');
+        }
+    };
+    
+    window.toggleChangedFilesSection = function() {
+        var section = document.getElementById('changed-files-section');
+        if (section) {
+            section.classList.toggle('collapsed');
+        }
+    };
+    
+    window.setTodos = function(todos) {
+        // todos: [{id, content, status: 'PENDING'|'IN_PROGRESS'|'COMPLETE'}]
+        window.todoItems = todos || [];
+        renderTodos();
+    };
+    
+    window.addTodo = function(id, content, status) {
+        var existing = window.todoItems.find(function(t) { return t.id === id; });
+        if (existing) {
+            existing.content = content;
+            existing.status = status;
+        } else {
+            window.todoItems.push({ id: id, content: content, status: status || 'PENDING' });
+        }
+        renderTodos();
+    };
+    
+    window.updateTodoStatus = function(id, status) {
+        var todo = window.todoItems.find(function(t) { return t.id === id; });
+        if (todo) {
+            todo.status = status;
+            renderTodos();
+        }
+    };
+    
+    window.clearTodos = function() {
+        window.todoItems = [];
+        renderTodos();
+    };
+    
+    function renderTodos() {
+        var section = document.getElementById('todo-section');
+        var list = document.getElementById('todo-list');
+        var status = document.getElementById('todo-status');
+        
+        if (!section || !list) return;
+        
+        if (window.todoItems.length === 0) {
+            section.style.display = 'none';
+            return;
+        }
+        
+        section.style.display = 'block';
+        
+        var completed = window.todoItems.filter(function(t) { return t.status === 'COMPLETE'; }).length;
+        var total = window.todoItems.length;
+        
+        if (status) {
+            if (completed === total && total > 0) {
+                status.textContent = total + '/' + total + ' done';
+            } else {
+                status.textContent = completed + '/' + total + ' done';
+            }
+        }
+        
+        list.innerHTML = '';
+        window.todoItems.forEach(function(todo) {
+            var item = document.createElement('div');
+            item.className = 'todo-item';
+            if (todo.status === 'COMPLETE') item.className += ' completed';
+            if (todo.status === 'IN_PROGRESS') item.className += ' in-progress';
+            
+            var statusClass = todo.status.toLowerCase().replace('_', '-');
+            var statusText = todo.status === 'IN_PROGRESS' ? 'In Progress' : todo.status.charAt(0) + todo.status.slice(1).toLowerCase();
+            
+            item.innerHTML = 
+                '<div class="todo-checkbox"></div>' +
+                '<span class="todo-text">' + escapeHtml(todo.content) + '</span>' +
+                '<span class="todo-item-status ' + statusClass + '">' + statusText + '</span>';
+            
+            list.appendChild(item);
+        });
+    }
+    
+    // --- Changed Files Functions ---
+    window.setChangedFiles = function(files) {
+        // files: [{path, name, status: 'modified'|'accepted'|'rejected', type}]
+        window.changedFiles = files || [];
+        renderChangedFiles();
+    };
+    
+    window.addChangedFile = function(path, name, status, type) {
+        var existing = window.changedFiles.find(function(f) { return f.path === path; });
+        if (existing) {
+            existing.status = status;
+        } else {
+            window.changedFiles.push({ path: path, name: name || path.split(/[\\/]/).pop(), status: status || 'modified', type: type || 'file' });
+        }
+        renderChangedFiles();
+    };
+    
+    window.updateFileStatus = function(path, status) {
+        var file = window.changedFiles.find(function(f) { return f.path === path; });
+        if (file) {
+            file.status = status;
+            renderChangedFiles();
+        }
+    };
+    
+    window.clearChangedFiles = function() {
+        window.changedFiles = [];
+        renderChangedFiles();
+    };
+    
+    function renderChangedFiles() {
+        var section = document.getElementById('changed-files-section');
+        var list = document.getElementById('changed-files-list');
+        var status = document.getElementById('changed-files-status');
+        var actions = document.getElementById('changed-files-actions');
+        
+        if (!section || !list) return;
+        
+        if (window.changedFiles.length === 0) {
+            section.style.display = 'none';
+            return;
+        }
+        
+        section.style.display = 'block';
+        
+        var allAccepted = window.changedFiles.every(function(f) { return f.status === 'accepted'; });
+        var hasPending = window.changedFiles.some(function(f) { return f.status === 'modified'; });
+        
+        if (status) {
+            status.textContent = allAccepted ? 'Accepted' : (hasPending ? 'Pending' : 'Mixed');
+            status.style.color = allAccepted ? '#3fb950' : '#d19a66';
+        }
+        
+        if (actions) {
+            actions.style.display = hasPending ? 'flex' : 'none';
+        }
+        
+        list.innerHTML = '';
+        window.changedFiles.forEach(function(file) {
+            var item = document.createElement('div');
+            item.className = 'changed-file-item';
+            
+            var icon = getFileIcon(file.type || file.name);
+            var statusClass = file.status;
+            var statusDisplay = file.status === 'modified' ? 'M' : (file.status === 'accepted' ? 'Accepted' : file.status);
+            
+            item.innerHTML = 
+                '<span class="file-type-icon">' + icon + '</span>' +
+                '<span class="changed-file-name" onclick="window.openFile(\'' + file.path.replace(/\\/g, '\\\\').replace(/'/g, "\\'") + '\')">' + escapeHtml(file.name) + '</span>' +
+                '<span class="changed-file-status ' + statusClass + '">' + statusDisplay + '</span>';
+            
+            list.appendChild(item);
+        });
+    }
+    
+    function getFileIcon(nameOrType) {
+        var ext = (nameOrType || '').split('.').pop().toLowerCase();
+        var icons = {
+            'py': '<i class="fab fa-python" style="color:#3776ab;"></i>',
+            'js': '<i class="fab fa-js" style="color:#f7df1e;"></i>',
+            'ts': '<i class="fab fa-js" style="color:#3178c6;"></i>',
+            'html': '<i class="fab fa-html5" style="color:#e34f26;"></i>',
+            'css': '<i class="fab fa-css3" style="color:#1572b6;"></i>',
+            'json': '<i class="fas fa-brackets-curly" style="color:#cbcb41;"></i>',
+            'md': '<i class="fab fa-markdown" style="color:#083fa1;"></i>'
+        };
+        return icons[ext] || '<i class="fas fa-file-code" style="color:var(--accent);"></i>';
+    }
+    
+    window.acceptAllChanges = function() {
+        window.changedFiles.forEach(function(f) { f.status = 'accepted'; });
+        renderChangedFiles();
+        if (bridge && bridge.on_accept_all_changes) {
+            bridge.on_accept_all_changes();
+        }
+    };
+    
+    window.rejectAllChanges = function() {
+        window.changedFiles.forEach(function(f) { f.status = 'rejected'; });
+        renderChangedFiles();
+        if (bridge && bridge.on_reject_all_changes) {
+            bridge.on_reject_all_changes();
+        }
+    };
 });
