@@ -1,4 +1,3 @@
-// --- Global Variables ---
 var bridge = null;
 var term = null;
 var fitAddon = null;
@@ -11,6 +10,8 @@ var renderPending = false;
 var lastRenderTime = 0;
 var RENDER_INTERVAL = 32; // ~30fps for smooth visual but low CPU
 var userScrolled = false; // Track if user manually scrolled
+var _taskSummaryBuffer = ""; // Accumulates <task_summary>...</task_summary> during streaming
+var _inTaskSummary = false;  // True while receiving a task_summary block
 
 // Smart scroll - only auto-scroll if user is near bottom
 function smartScroll(container) {
@@ -993,21 +994,31 @@ function showToolActivity(type, info, status) {
     }
     
     // If item exists and status is updating to complete, update it
+    // Update text if item already exists
     if (existingItem && status === 'complete') {
         existingItem.className = 'activity-item complete';
         var badge = getStatusBadge(type, info);
         if (badge && !existingItem.querySelector('.activity-badge')) {
             existingItem.innerHTML += '<span class="activity-badge">' + badge + '</span>';
         }
-        // Update the text to show completion
         var textEl = existingItem.querySelector('.activity-text');
         if (textEl) {
             textEl.innerHTML = formatActivityLabel(type, info, 'complete');
         }
     } else if (!existingItem) {
-        // Track file count for new items
-        if (type === 'read_file' || type === 'write_file' || type === 'edit_file') {
+        // Track stats for header
+        if (!currentActivitySection.stats) {
+            currentActivitySection.stats = { reads: 0, edits: 0, other: 0 };
+        }
+        
+        if (type === 'read_file') {
+            currentActivitySection.stats.reads++;
             fileCount++;
+        } else if (['write_file', 'edit_file', 'inject_after', 'add_import'].includes(type) || type.startsWith('terminal_create') || type.startsWith('terminal_edit')) {
+            currentActivitySection.stats.edits++;
+            fileCount++;
+        } else {
+            currentActivitySection.stats.other++;
         }
         
         // Create new activity item
@@ -1031,12 +1042,23 @@ function showToolActivity(type, info, status) {
         list.appendChild(item);
     }
     
-    // Update header when complete
-    if (status === 'complete') {
-        var header = currentActivitySection.querySelector('.activity-title');
-        if (header && fileCount > 0) {
-            header.textContent = 'Explored ' + fileCount + ' file' + (fileCount > 1 ? 's' : '');
+    // Update header
+    var header = currentActivitySection.querySelector('.activity-title');
+    if (header && fileCount > 0) {
+        var stats = currentActivitySection.stats || { reads: 0, edits: 0 };
+        var summary = 'Explored ' + fileCount + ' file' + (fileCount > 1 ? 's' : '');
+        if (status === 'complete') {
+            var details = [];
+            if (stats.reads > 0) details.push(stats.reads + ' read' + (stats.reads > 1 ? 's' : ''));
+            if (stats.edits > 0) details.push(stats.edits + ' edit' + (stats.edits > 1 ? 's' : ''));
+            if (details.length > 0) {
+                summary += ' (' + details.join(', ') + ')';
+            }
         }
+        header.textContent = summary;
+    }
+    
+    if (status === 'complete') {
         var iconEl = currentActivitySection.querySelector('.activity-icon');
         if (iconEl) {
             iconEl.textContent = '✓';
@@ -1063,7 +1085,7 @@ function getFileIcon(type, info) {
         return icons[opType] || '<span class="file-icon terminal">⌘</span>';
     }
     
-    if (type === 'read_file' || type === 'write_file' || type === 'edit_file') {
+    if (type === 'read_file' || type === 'write_file' || type === 'edit_file' || type === 'inject_after' || type === 'add_import') {
         var ext = info.split('.').pop().toLowerCase();
         var icons = {
             'js': '<span class="file-icon js">JS</span>',
@@ -1094,22 +1116,36 @@ function getFileIcon(type, info) {
 }
 
 function formatActivityLabel(type, info, status) {
-    var runningPrefix = status === 'running' ? '<span class="running-label">Running</span> ' : '';
+    var isEdit = ['write_file', 'edit_file', 'inject_after', 'add_import'].includes(type) || type.startsWith('terminal_create') || type.startsWith('terminal_edit');
+    var labelText = isEdit ? 'Editing...' : 'Running';
+    var runningPrefix = status === 'running' ? '<span class="running-label">' + labelText + '</span> ' : '';
+    
+    var displayInfo = escapeHtml(info);
+    
+    // Parse +X -Y pattern if present
+    var diffMatch = displayInfo.match(/\+(\d+)\s-(\d+)$/);
+    if (diffMatch) {
+        var added = diffMatch[1];
+        var removed = diffMatch[2];
+        var countHtml = '<span class="diff-count"><span class="added">+' + added + '</span> <span class="removed">-' + removed + '</span></span>';
+        displayInfo = displayInfo.replace(/\+(\d+)\s-(\d+)$/, countHtml);
+    }
     
     if (type === 'read_file') {
-        return status === 'running' ? runningPrefix + escapeHtml(info) : escapeHtml(info);
+        return status === 'running' ? runningPrefix + displayInfo : displayInfo;
     }
-    if (type === 'write_file' || type === 'edit_file') {
-        return status === 'running' ? runningPrefix + escapeHtml(info) : escapeHtml(info) + ' ✓';
+    if (isEdit) {
+        var checkmark = (status === 'complete' && !diffMatch) ? ' ✓' : '';
+        return status === 'running' ? runningPrefix + displayInfo : displayInfo + checkmark;
     }
     if (type === 'list_directory') {
-        return status === 'running' ? 'Exploring ' + escapeHtml(info) : 'Exploring ' + escapeHtml(info);
+        return status === 'running' ? 'Exploring ' + displayInfo : 'Exploring ' + displayInfo;
     }
     if (type === 'run_command') {
-        return runningPrefix + '<code>' + escapeHtml(info) + '</code>' + (status === 'complete' ? ' ✓' : '');
+        return runningPrefix + '<code>' + displayInfo + '</code>' + (status === 'complete' ? ' ✓' : '');
     }
     if (type === 'search_code') {
-        return 'Grepped code <code>' + escapeHtml(info) + '</code>';
+        return 'Grepped code <code>' + displayInfo + '</code>';
     }
     if (type === 'git_status') {
         return status === 'running' ? 'Checking status' : 'Status retrieved';
@@ -1118,9 +1154,9 @@ function formatActivityLabel(type, info, status) {
         return status === 'running' ? 'Getting diff' : 'Diff retrieved';
     }
     if (type === 'thinking') {
-        return 'Thought · ' + info;
+        return 'Thought · ' + displayInfo;
     }
-    return escapeHtml(info);
+    return displayInfo;
 }
 
 function getStatusBadge(type, info) {
@@ -1231,6 +1267,132 @@ function updateToolActivity(itemId, status, newInfo) {
             if (textEl) textEl.innerHTML = newInfo;
         }
     }
+}
+
+// ================================================
+// CREATED FILES CARD - Industry Standard (Cursor Style)
+// ================================================
+
+/**
+ * Renders a premium "Created Files" card in the AI chat.
+ * Called when the AI emits a <task_summary> JSON block on task completion.
+ *
+ * @param {Object} summaryData - Parsed task_summary JSON: { title, files, message }
+ *   files: [{ name, path, action }] where action is "created" | "modified" | "deleted"
+ */
+function showCreatedFilesCard(summaryData) {
+    var container = document.getElementById('chatMessages');
+    if (!container || !summaryData) return;
+
+    var files = summaryData.files || [];
+    var title  = summaryData.title   || 'Task Complete';
+    var msg    = summaryData.message || '';
+
+    // ── Build card element ──────────────────────────────────────────────────
+    var card = document.createElement('div');
+    card.className = 'created-files-card';
+    card.setAttribute('aria-label', 'Files changed by Cortex AI');
+
+    // Header row
+    var header = document.createElement('div');
+    header.className = 'cfc-header';
+    header.innerHTML =
+        '<span class="cfc-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span>' +
+        '<span class="cfc-title">' + escapeHtml(title) + '</span>' +
+        '<span class="cfc-count">' + files.length + ' file' + (files.length !== 1 ? 's' : '') + '</span>';
+    card.appendChild(header);
+
+    // File list
+    var list = document.createElement('div');
+    list.className = 'cfc-list';
+
+    files.forEach(function(file) {
+        var action = (file.action || 'modified').toLowerCase();
+        var name   = file.name   || (file.path ? file.path.split(/[\\/]/).pop() : 'unknown');
+        var path   = file.path   || name;
+
+        var row = document.createElement('div');
+        row.className = 'cfc-file-row';
+
+        // File icon by extension
+        var ext = name.split('.').pop().toLowerCase();
+        var fileIconHTML = getCfcFileIcon(ext);
+
+        // Action badge
+        var badgeClass = 'cfc-badge-' + action;  // created | modified | deleted
+        var badgeLabel = action.charAt(0).toUpperCase() + action.slice(1);
+
+        row.innerHTML =
+            '<span class="cfc-file-icon">' + fileIconHTML + '</span>' +
+            '<button class="cfc-filename" title="Open ' + escapeHtml(name) + '">' +
+                escapeHtml(name) +
+            '</button>' +
+            '<span class="cfc-badge ' + badgeClass + '">' + badgeLabel + '</span>' +
+            '<button class="cfc-diff-btn" title="View diff for ' + escapeHtml(name) + '">DIFF</button>';
+
+        // Click handlers
+        var filenameBtn = row.querySelector('.cfc-filename');
+        if (filenameBtn) {
+            filenameBtn.onclick = (function(p) {
+                return function() {
+                    if (bridge && bridge.open_file) bridge.open_file(p);
+                };
+            })(path);
+        }
+
+        var diffBtn = row.querySelector('.cfc-diff-btn');
+        if (diffBtn) {
+            if (action === 'deleted') {
+                diffBtn.disabled = true;
+                diffBtn.style.opacity = '0.3';
+            } else {
+                diffBtn.onclick = (function(p) {
+                    return function() {
+                        if (bridge && bridge.show_diff) bridge.show_diff(p);
+                    };
+                })(path);
+            }
+        }
+
+        list.appendChild(row);
+    });
+    card.appendChild(list);
+
+    // Optional summary message footer
+    if (msg) {
+        var footer = document.createElement('div');
+        footer.className = 'cfc-footer';
+        footer.textContent = msg;
+        card.appendChild(footer);
+    }
+
+    container.appendChild(card);
+
+    // Trigger slide-in animation after paint
+    requestAnimationFrame(function() {
+        card.classList.add('cfc-visible');
+    });
+
+    smartScroll(container);
+}
+
+function getCfcFileIcon(ext) {
+    var icons = {
+        'py':   '<span class="cfc-ext-badge py">PY</span>',
+        'js':   '<span class="cfc-ext-badge js">JS</span>',
+        'ts':   '<span class="cfc-ext-badge ts">TS</span>',
+        'jsx':  '<span class="cfc-ext-badge js">JSX</span>',
+        'tsx':  '<span class="cfc-ext-badge ts">TSX</span>',
+        'html': '<span class="cfc-ext-badge html">HTML</span>',
+        'css':  '<span class="cfc-ext-badge css">CSS</span>',
+        'json': '<span class="cfc-ext-badge json">JSON</span>',
+        'md':   '<span class="cfc-ext-badge md">MD</span>',
+        'txt':  '<span class="cfc-ext-badge">TXT</span>',
+        'sh':   '<span class="cfc-ext-badge sh">SH</span>',
+        'yml':  '<span class="cfc-ext-badge">YML</span>',
+        'yaml': '<span class="cfc-ext-badge">YAML</span>',
+    };
+    return icons[ext] || '<span class="cfc-ext-badge">FILE</span>';
 }
 
 // ================================================
@@ -1403,6 +1565,18 @@ function onChunk(chunk) {
     if (chunk.includes('<file_edited>') || chunk.includes('</file_edited>')) {
         return;
     }
+
+    // ── Task Summary: suppress from streamed output, buffer for final card ──
+    if (chunk.includes('<task_summary>')) {
+        _inTaskSummary = true;
+    }
+    if (_inTaskSummary) {
+        _taskSummaryBuffer += chunk;
+        if (chunk.includes('</task_summary>')) {
+            _inTaskSummary = false; // stay buffered; card rendered in onComplete
+        }
+        return; // never show raw task_summary JSON in the chat bubble
+    }
     
     // If we get actual content, hide thinking and start message
     if (chunk.trim() && !chunk.startsWith('<') && !chunk.includes('→')) {
@@ -1458,6 +1632,10 @@ function updateStreamingUI() {
             // marked didn't parse, use fallback
             html = formatMarkdownFallback(currentContent);
         }
+        
+        // Highlight file creation mentions
+        html = highlightFileCreations(html);
+        
         contentDiv.innerHTML = html;
         
         // Apply syntax highlighting to code blocks
@@ -1557,14 +1735,15 @@ function onComplete() {
     removeThinkingIndicator();
     
     if (currentAssistantMessage) {
-        var text = currentContent;
+        // Strip <task_summary> block from visible text before final render
+        var text = currentContent.replace(/<task_summary>[\s\S]*?<\/task_summary>/g, '').trim();
         var chat = chats.find(function (c) { return c.id === currentChatId; });
         if (chat) {
             chat.messages.push({ text: text, sender: 'assistant' });
             saveChats();
         }
         
-        // Render final content including any tags that didn't close yet
+        // Render final content (without task_summary block)
         var contentDiv = currentAssistantMessage.querySelector('.message-content');
         if (contentDiv) {
             try {
@@ -1583,14 +1762,27 @@ function onComplete() {
         if (window.MathJax && window.MathJax.typeset) {
             window.MathJax.typeset([currentAssistantMessage]);
         }
+
+        // ── Render Created Files card if task_summary was present ──
+        var summaryText = _taskSummaryBuffer || currentContent;
+        var summaryMatch = summaryText.match(/<task_summary>([\s\S]*?)<\/task_summary>/);
+        if (summaryMatch) {
+            try {
+                var summaryData = JSON.parse(summaryMatch[1].trim());
+                if (summaryData && Array.isArray(summaryData.files) && summaryData.files.length > 0) {
+                    showCreatedFilesCard(summaryData);
+                }
+            } catch (e) {
+                console.warn('Could not parse task_summary JSON:', e);
+            }
+        }
     }
     
-    // Reset for next message - but only if not continuing after tools
-    // The "[Tools executed, continuing...]" marker indicates tool continuation
-    if (!currentContent.includes('[Tools executed, continuing...]')) {
-        currentAssistantMessage = null;
-        currentContent = "";
-    }
+    // Reset for next message
+    currentAssistantMessage = null;
+    currentContent = "";
+    _taskSummaryBuffer = "";
+    _inTaskSummary = false;
     
     // Hide stop button, show send button
     var sendBtn = document.getElementById('sendBtn');
@@ -1606,6 +1798,7 @@ function handlePostRenderSpecialTags(container) {
     if (currentContent.includes('<options>')) handleOptionsTag();
     if (currentContent.includes('<diff>')) handleDiffTag(); // Keep for legacy compatibility if needed
     if (currentContent.includes('<file_edited>')) handleFileEditedTag();
+    if (currentContent.includes('<task_summary>')) handleTaskSummaryTag();
 }
 
 // Dead code removed: switchTab, handleAgenticContent, renderAgenticView
@@ -1735,6 +1928,22 @@ function handleFileEditedTag() {
     }
 }
 
+function handleTaskSummaryTag() {
+    var startTag = '<task_summary>';
+    var endTag = '</task_summary>';
+    var startIndex = currentContent.indexOf(startTag);
+    var endIndex = currentContent.indexOf(endTag);
+    
+    var contentDiv = currentAssistantMessage.querySelector('.message-content');
+    
+    if (startIndex !== -1 && endIndex !== -1) {
+        var textBefore = currentContent.substring(0, startIndex);
+        var summaryData = currentContent.substring(startIndex + startTag.length, endIndex);
+        var textAfter = currentContent.substring(endIndex + endTag.length);
+        contentDiv.innerHTML = marked.parse(textBefore) + renderTaskSummary(summaryData) + marked.parse(textAfter);
+    }
+}
+
 function handleDiffTag() {
     var startTag = '<diff>';
     var endTag = '</diff>';
@@ -1782,27 +1991,88 @@ function renderExplorationBlock(data, isStreaming) {
 }
 
 function renderFileEditedBlock(data, isStreaming) {
-    if (isStreaming) return '<div class="file-edit-card"><span class="pending">⏳ Editing file...</span></div>';
+    if (isStreaming) return '<div class="file-edit-inline"><span class="pending">⏳ Editing...</span></div>';
     
-    var filePath = data.trim();
-    var fileName = filePath.split('/').pop().split('\\\\').pop();
-    var escapedId = filePath.replace(/[^a-zA-Z0-9]/g, '-');
+    var lines = data.trim().split('\n');
+    var filePath = lines[0] || data.trim();
+    var fileName = filePath.split('/').pop().split('\\').pop();
     
+    // Parse change stats if available (+X -Y format)
+    var changeStats = '';
+    if (lines.length > 1 && lines[1].match(/\+\d+\s+-\d+/)) {
+        changeStats = lines[1];
+    }
+    
+    // Simple inline display like screenshot
     return `
-<div class="file-edit-card" id="edit-${escapedId}">
-    <div class="file-edit-header">
-        <span class="file-icon">📄</span>
-        <span class="edit-label">Edited</span>
-        <code class="file-name" onclick="window.openFile('${filePath.replace(/\\\\/g, '\\\\\\\\')}')">\`${fileName}\`</code>
-    </div>
-    <div class="file-edit-actions">
-        <button class="diff-btn" onclick="window.showDiff('${filePath.replace(/\\\\/g, '\\\\\\\\')}')">
-            <span class="diff-badge">DIFF</span>
-        </button>
-        <span class="file-path">${filePath}</span>
-    </div>
+<div class="file-change-inline">
+    <span class="change-icon">📝</span>
+    <span class="change-file">${fileName}</span>
+    ${changeStats ? `<span class="change-stats">${changeStats}</span>` : ''}
+    <span class="change-status">Applied</span>
 </div>
     `;
+}
+
+// Task Summary Card - displays completion summary
+function renderTaskSummary(data) {
+    try {
+        var summary = typeof data === 'string' ? JSON.parse(data) : data;
+        var title = summary.title || 'Task Complete';
+        var removed = summary.removed || [];
+        var kept = summary.kept || [];
+        var files = summary.files || [];
+        var message = summary.message || '';
+        
+        var html = '<div class="task-summary-card">';
+        html += '<div class="task-summary-header">✅ ' + escapeHtml(title) + '</div>';
+        
+        // Removed section
+        if (removed.length > 0) {
+            html += '<div class="task-summary-section">';
+            html += '<div class="task-summary-label">Removed:</div>';
+            html += '<ul class="task-summary-list removed">';
+            removed.forEach(function(item) {
+                html += '<li><span class="item-icon">🗑️</span>' + escapeHtml(item) + '</li>';
+            });
+            html += '</ul></div>';
+        }
+        
+        // Kept section
+        if (kept.length > 0) {
+            html += '<div class="task-summary-section">';
+            html += '<div class="task-summary-label">Kept:</div>';
+            html += '<ul class="task-summary-list kept">';
+            kept.forEach(function(item) {
+                html += '<li><span class="item-icon">✓</span>' + escapeHtml(item) + '</li>';
+            });
+            html += '</ul></div>';
+        }
+        
+        // Files section
+        if (files.length > 0) {
+            html += '<div class="task-summary-section">';
+            html += '<div class="task-summary-label">Files:</div>';
+            html += '<ul class="task-summary-list files">';
+            files.forEach(function(item) {
+                var icon = item.action === 'created' ? '📄' : item.action === 'deleted' ? '🗑️' : '📝';
+                var status = item.action || 'modified';
+                html += '<li><span class="item-icon">' + icon + '</span><code>' + escapeHtml(item.name) + '</code> <span class="file-action">' + status + '</span></li>';
+            });
+            html += '</ul></div>';
+        }
+        
+        // Final message
+        if (message) {
+            html += '<div class="task-summary-message">' + escapeHtml(message) + '</div>';
+        }
+        
+        html += '</div>';
+        return html;
+    } catch (e) {
+        console.error('Task summary parse error:', e);
+        return '<div class="task-summary-card"><div class="task-summary-header">✅ Task Complete</div></div>';
+    }
 }
 
 function renderDiffBlock(data, isStreaming) {
@@ -2017,6 +2287,30 @@ function escapeHtml(text) {
     var div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// Highlight file creation mentions with animation
+function highlightFileCreations(html) {
+    // Pattern: "create the <filename> file" or "creating <filename>" or similar
+    // Match inline code that looks like filenames in creation context
+    var patterns = [
+        // "create the `filename` file" or "creating `filename`"
+        { regex: /(create|creating|make|making)\s+(the\s+)?<code>([^<]+)<\/code>\s+(file|with)/gi, className: 'file-creation-highlight' },
+        // "`filename` file" when preceded by creation words in same sentence
+        { regex: /(I'll|I will|let me|going to)\s+[^.]*?<code>([^<]+\.(js|css|html|py|java|cpp|c|h|ts|jsx|tsx|json|md|txt))<\/code>/gi, className: 'file-creation-highlight' }
+    ];
+    
+    patterns.forEach(function(pattern) {
+        html = html.replace(pattern.regex, function(match, p1, p2, filename) {
+            // Extract the actual filename from the match
+            var actualFilename = filename || p2;
+            if (!actualFilename) return match;
+            
+            return match.replace('<code>' + actualFilename + '</code>', '<code class="file-creation-pulse">' + actualFilename + '</code>');
+        });
+    });
+    
+    return html;
 }
 
 function copyToClipboard(btn) {

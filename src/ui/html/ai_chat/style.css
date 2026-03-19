@@ -708,6 +708,30 @@ body.light .numbered-card .card-content {
     border-radius: 4px;
 }
 
+/* Edit Indicators (+X -Y) */
+.diff-count {
+    margin-left: auto;
+    display: flex;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    opacity: 0.9;
+}
+
+.added {
+    color: var(--success) !important;
+}
+
+.removed {
+    color: var(--error) !important;
+}
+
+.running-label {
+    color: var(--accent);
+    font-weight: 600;
+}
+
 .exploration-icon {
     font-size: 14px;
     width: 20px;
@@ -2250,6 +2274,167 @@ body.light .tab-content {
     display: flex;
 
 /* File Edit Card in Chat */
+/* Inline file change display - like screenshot */
+.file-change-inline {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg-header);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    margin: 6px 0;
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 13px;
+}
+
+.file-change-inline .change-icon {
+    font-size: 14px;
+}
+
+.file-change-inline .change-file {
+    color: var(--text);
+    font-weight: 500;
+}
+
+.file-change-inline .change-stats {
+    color: #6a9955;
+    font-size: 12px;
+}
+
+.file-change-inline .change-status {
+    margin-left: auto;
+    background: rgba(46, 160, 67, 0.2);
+    color: #3fb950;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+/* ==========================================
+   TASK SUMMARY CARD
+   Clean completion summary display
+   ========================================== */
+.task-summary-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--success);
+    border-radius: var(--radius-md);
+    padding: 16px 20px;
+    margin: 16px 0;
+    font-family: 'Segoe UI', sans-serif;
+}
+
+.task-summary-header {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+}
+
+.task-summary-section {
+    margin-bottom: 12px;
+}
+
+.task-summary-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+}
+
+.task-summary-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.task-summary-list li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+    color: var(--text);
+    font-size: 13px;
+    border-bottom: 1px solid var(--border);
+}
+
+.task-summary-list li:last-child {
+    border-bottom: none;
+}
+
+.task-summary-list .item-icon {
+    width: 20px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.task-summary-list.removed li {
+    color: #f87171;
+}
+
+.task-summary-list.kept li {
+    color: #4ade80;
+}
+
+.task-summary-list.files code {
+    background: var(--bg-tertiary);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+    color: var(--text);
+}
+
+.task-summary-list .file-action {
+    margin-left: auto;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+}
+
+.task-summary-message {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+    font-size: 13px;
+    color: var(--success);
+    font-weight: 500;
+}
+
+/* ==========================================
+   FILE CREATION PULSE ANIMATION
+   Highlights filenames when AI mentions creating them
+   ========================================== */
+.file-creation-pulse {
+    background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary), var(--accent-primary));
+    background-size: 200% 100%;
+    color: white !important;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    animation: fileCreationPulse 2s ease-in-out infinite;
+    box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+}
+
+@keyframes fileCreationPulse {
+    0%, 100% {
+        background-position: 0% 50%;
+        box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+    }
+    50% {
+        background-position: 100% 50%;
+        box-shadow: 0 0 20px rgba(59, 130, 246, 0.8);
+    }
+}
+
+/* Old card style (keep for compatibility) */
 .file-edit-card {
     background: var(--bg-header);
     border: 1px solid var(--border);
@@ -4009,4 +4194,328 @@ body.light .change-action-block {
 
 .file-link i {
     font-size: 12px;
+}
+
+/* ================================================
+   CREATED FILES CARD (Phase 3)
+   Displayed when AI completes a task with file changes.
+   ================================================ */
+
+.created-files-card {
+    /* Base - slides in from below */
+    background: rgba(30, 35, 48, 0.96);
+    border: 1px solid rgba(99, 130, 255, 0.28);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    margin-top: 12px;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(99, 130, 255, 0.1);
+    
+    /* Slide-in animation */
+    opacity: 0;
+    transform: translateY(10px);
+    transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.created-files-card.cfc-visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+/* Light Mode */
+body.light .created-files-card {
+    background: #ffffff;
+    border-color: #d0d7ff;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+}
+
+/* ── Header ─────────────────────────────────────── */
+.cfc-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    background: rgba(99, 130, 255, 0.08);
+    border-bottom: 1px solid rgba(99, 130, 255, 0.15);
+}
+
+body.light .cfc-header {
+    background: rgba(59, 130, 246, 0.06);
+    border-bottom-color: rgba(59, 130, 246, 0.15);
+}
+
+.cfc-icon {
+    color: #6382ff;
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.cfc-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cfc-count {
+    font-size: 11px;
+    color: var(--text-muted);
+    background: rgba(99, 130, 255, 0.12);
+    border: 1px solid rgba(99, 130, 255, 0.2);
+    border-radius: 10px;
+    padding: 1px 7px;
+    flex-shrink: 0;
+}
+
+/* ── File List ─────────────────────────────────── */
+.cfc-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+.cfc-file-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    transition: background 0.15s;
+}
+
+.cfc-file-row:last-child {
+    border-bottom: none;
+}
+
+.cfc-file-row:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+body.light .cfc-file-row:hover {
+    background: rgba(0, 0, 0, 0.03);
+}
+
+body.light .cfc-file-row {
+    border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
+/* Extension badge */
+.cfc-file-icon {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+}
+
+.cfc-ext-badge {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    padding: 2px 5px;
+    border-radius: 4px;
+    background: rgba(99, 130, 255, 0.12);
+    color: #9ab3ff;
+    border: 1px solid rgba(99, 130, 255, 0.2);
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+}
+.cfc-ext-badge.py   { background: rgba(55, 118, 171, 0.2);  color: #74b0e0; border-color: rgba(55, 118, 171, 0.3); }
+.cfc-ext-badge.js   { background: rgba(247, 223, 30, 0.15); color: #f7df1e; border-color: rgba(247, 223, 30, 0.25); }
+.cfc-ext-badge.ts   { background: rgba(49, 120, 198, 0.2);  color: #6ab4ef; border-color: rgba(49, 120, 198, 0.3); }
+.cfc-ext-badge.html { background: rgba(227, 79, 38, 0.2);   color: #f07049; border-color: rgba(227, 79, 38, 0.3); }
+.cfc-ext-badge.css  { background: rgba(38, 77, 228, 0.2);   color: #748ee8; border-color: rgba(38, 77, 228, 0.3); }
+.cfc-ext-badge.json { background: rgba(80, 80, 80, 0.3);    color: #aaa;    border-color: rgba(80, 80, 80, 0.4); }
+.cfc-ext-badge.md   { background: rgba(8, 63, 161, 0.2);    color: #6d98e0; border-color: rgba(8, 63, 161, 0.3); }
+.cfc-ext-badge.sh   { background: rgba(76, 175, 80, 0.2);   color: #7dd57f; border-color: rgba(76, 175, 80, 0.3); }
+
+/* Filename button */
+.cfc-filename {
+    background: none;
+    border: none;
+    color: var(--text);
+    font-size: 12.5px;
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    cursor: pointer;
+    flex: 1;
+    text-align: left;
+    padding: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    transition: color 0.15s;
+}
+
+.cfc-filename:hover {
+    color: #8fb4ff;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+/* Action badge */
+.cfc-badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 10px;
+    flex-shrink: 0;
+    letter-spacing: 0.3px;
+}
+
+.cfc-badge-created  { background: rgba(34, 197, 94, 0.15);  color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.25); }
+.cfc-badge-modified { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.25); }
+.cfc-badge-deleted  { background: rgba(239, 68, 68, 0.15);  color: #f87171; border: 1px solid rgba(239, 68, 68, 0.25); }
+
+/* Light mode badges */
+body.light .cfc-badge-created  { background: rgba(34, 197, 94, 0.1);  color: #16a34a; }
+body.light .cfc-badge-modified { background: rgba(59, 130, 246, 0.1); color: #2563eb; }
+body.light .cfc-badge-deleted  { background: rgba(239, 68, 68, 0.1);  color: #dc2626; }
+
+/* DIFF button */
+.cfc-diff-btn {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    padding: 2px 8px;
+    border-radius: 5px;
+    background: rgba(99, 130, 255, 0.1);
+    color: #8faeff;
+    border: 1px solid rgba(99, 130, 255, 0.2);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: all 0.15s;
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+}
+
+.cfc-diff-btn:hover:not(:disabled) {
+    background: rgba(99, 130, 255, 0.2);
+    border-color: rgba(99, 130, 255, 0.4);
+    color: #b3caff;
+}
+
+.cfc-diff-btn:disabled {
+    cursor: default;
+}
+
+/* ── Footer ─────────────────────────────────────── */
+.cfc-footer {
+    padding: 8px 14px;
+    font-size: 11px;
+    color: var(--text-muted);
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    font-style: italic;
+    background: rgba(0, 0, 0, 0.1);
+}
+
+body.light .cfc-footer {
+    border-top-color: rgba(0, 0, 0, 0.06);
+    background: rgba(0, 0, 0, 0.03);
+}
+
+/* --- Task Summary Card (AI Completion) --- */
+.task-summary-card {
+    background: rgba(30, 41, 59, 0.4);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 16px;
+    margin: 12px 0;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    animation: slideUpFade 0.4s ease-out;
+}
+
+body.light .task-summary-card {
+    background: rgba(241, 245, 249, 0.8);
+    border-color: rgba(0, 0, 0, 0.05);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.task-summary-header {
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 12px;
+    color: var(--success);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.task-summary-section {
+    margin-bottom: 12px;
+}
+
+.task-summary-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+    font-weight: 600;
+}
+
+.task-summary-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.task-summary-list li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    padding: 2px 0;
+}
+
+.task-summary-list li code {
+    background: rgba(255, 255, 255, 0.05);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 12px;
+}
+
+body.light .task-summary-list li code {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+.item-icon {
+    font-size: 14px;
+    width: 20px;
+    display: flex;
+    justify-content: center;
+}
+
+.file-action {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 10px;
+    text-transform: uppercase;
+    font-weight: 700;
+    margin-left: auto;
+}
+
+.files .file-action { background: rgba(59, 130, 246, 0.15); color: #60a5fa; }
+.removed .item-icon { color: var(--error); }
+.kept .item-icon { color: var(--success); }
+
+.task-summary-message {
+    padding-top: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    font-size: 13px;
+    color: var(--text);
+    font-style: italic;
+}
+
+body.light .task-summary-message {
+    border-top-color: rgba(0, 0, 0, 0.05);
+}
+
+@keyframes slideUpFade {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
 }

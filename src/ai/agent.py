@@ -37,14 +37,82 @@ class ToolWorker(QThread):
         self.tool_calls = tool_calls
         self._results = []
         
+    def _repair_json(self, json_str: str) -> str:
+        """Robustly repair truncated JSON by closing strings and brackets."""
+        json_str = json_str.strip()
+        if not json_str: return "{}"
+        
+        # 1. Handle unclosed quotes
+        quote_count: int = 0
+        escaped: bool = False
+        for char in json_str:
+            if char == '\\':
+                escaped = not escaped
+            elif char == '"' and not escaped:
+                quote_count += 1
+                escaped = False
+            else:
+                escaped = False
+        
+        if quote_count % 2 != 0:
+            json_str += '"'
+            
+        # 2. Balance braces and brackets
+        braces: list[int] = []
+        brackets: list[int] = []
+        in_string: bool = False
+        escaped = False
+        
+        for i, char in enumerate(json_str):
+            if char == '\\':
+                escaped = not escaped
+                continue
+            if char == '"' and not escaped:
+                in_string = not in_string
+            escaped = False
+            
+            if not in_string:
+                if char == '{': braces.append(i)
+                elif char == '}': 
+                    if braces: braces.pop()
+                elif char == '[': brackets.append(i)
+                elif char == ']':
+                    if brackets: brackets.pop()
+        
+        # Close in reverse order
+        while braces or brackets:
+            last_brace: int = braces[-1] if braces else -1
+            last_bracket: int = brackets[-1] if brackets else -1
+            
+            if last_brace > last_bracket:
+                json_str += '}'
+                braces.pop()
+            else:
+                json_str += ']'
+                brackets.pop()
+                
+        return json_str
+
     def run(self):
         """Execute all tools sequentially in background thread."""
         try:
             for tool_call in self.tool_calls:
                 name = tool_call["function"]["name"]
                 try:
-                    args = json.loads(tool_call["function"]["arguments"])
-                except:
+                    raw_args: str = tool_call["function"]["arguments"]
+                    try:
+                        args = json.loads(raw_args)
+                    except json.JSONDecodeError:
+                        log.warning(f"Malformed JSON in tool call {name}, attempting repair...")
+                        repaired: str = self._repair_json(raw_args)
+                        try:
+                            args = json.loads(repaired)
+                            log.info(f"Successfully repaired JSON for {name}")
+                        except Exception as e:
+                            log.error(f"Failed to repair JSON for {name}: {e}. Repaired: {repaired[:100]}...")
+                            args = {}
+                except Exception as e:
+                    log.error(f"Error preparing tool arguments: {e}")
                     args = {}
                 
                 # Emit started signal
@@ -58,7 +126,8 @@ class ToolWorker(QThread):
                     "tool_call_id": tool_call["id"],
                     "name": name,
                     "content": str(result.result) if result.success else f"Error: {result.error}",
-                    "success": result.success
+                    "success": result.success,
+                    "duration_ms": result.duration_ms
                 })
                 
                 # Emit completed signal
@@ -106,56 +175,39 @@ class AIWorker(QThread):
     def _call_provider(self):
         """Call AI provider using the provider registry."""
         # Map provider string to ProviderType
-        # Current providers
         provider_map = {
-            "openai": ProviderType.OPENAI,
-            "anthropic": ProviderType.ANTHROPIC,
             "deepseek": ProviderType.DEEPSEEK,
-            "mock": ProviderType.MOCK
+            "together": ProviderType.TOGETHER,  # Qwen, Kimi, MiniMax, DeepSeek-R1
         }
         
-        # TODO: Future Together AI integration
-        # Together AI supports multiple models with unified API:
-        # - DeepSeek: deepseek-ai/DeepSeek-R1, deepseek-ai/DeepSeek-V3.1
-        # - Qwen: Qwen/Qwen3.5-9B, Qwen/Qwen3-Coder-Next-Fp8, Qwen/Qwen3-235B-A22B
-        # - Moonshot: moonshotai/Kimi-K2.5
-        #
-        # Usage example:
-        # from together import Together
-        # client = Together()
-        # response = client.chat.completions.create(
-        #     model="deepseek-ai/DeepSeek-R1",
-        #     messages=[{"role": "user", "content": "Hello"}]
-        # )
-        #
-        # To add Together AI:
-        # 1. Create TogetherProvider in src/ai/providers/together_provider.py
-        # 2. Add ProviderType.TOGETHER to providers/__init__.py
-        # 3. Add "together": ProviderType.TOGETHER to this map
+        # Together AI models (use "together" provider with these model IDs):
+        # - Qwen/Qwen3.5-397B-A17B
+        # - moonshotai/Kimi-K2.5
+        # - MiniMaxAI/MiniMax-M2.5
+        # - deepseek-ai/DeepSeek-R1
         
-        provider_type = provider_map.get(self.provider, ProviderType.MOCK)
+        provider_type = provider_map.get(self.provider, ProviderType.DEEPSEEK)
         
         # Get provider instance from registry
         registry = get_provider_registry()
         provider = registry.get_provider(provider_type)
         
         # Get API key - Prioritize environment variable (.env) over storage
-        if provider_type != ProviderType.MOCK:
-            api_key = os.getenv(f"{self.provider.upper()}_API_KEY", "")
-            
-            if not api_key:
-                key_manager = get_key_manager()
-                api_key = key_manager.get_key(self.provider)
-            
-            if not api_key:
-                raise ValueError(
+        api_key = os.getenv(f"{self.provider.upper()}_API_KEY", "")
+        
+        if not api_key:
+            key_manager = get_key_manager()
+            api_key = key_manager.get_key(self.provider)
+        
+        if not api_key:
+            raise ValueError(
                     f"No API key found for {self.provider}.\n\n"
                     f"Please add your key via AI → API Key Settings or set "
                     f"{self.provider.upper()}_API_KEY environment variable."
                 )
-            
-            # Set the API key on the provider
-            provider.set_api_key(api_key)
+        
+        # Set the API key on the provider
+        provider.set_api_key(api_key)
         
         # Convert messages to ChatMessage objects
         chat_messages = []
@@ -169,83 +221,107 @@ class AIWorker(QThread):
             ))
         
         # Stream the response with proper tool call handling
-        try:
-            log.info("Starting to stream from provider...")
-            chunk_count = 0
-            tool_call_buffer = {}  # index -> accumulated tool call data
-            
-            import time
-            last_chunk_time = time.time()
-            
-            for chunk in provider.chat_stream(
-                messages=chat_messages,
-                model=self.model,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                tools=self.tools
-            ):
-                if not chunk:
-                    # Check for timeout on empty chunks
-                    if time.time() - last_chunk_time > 30:  # 30 second timeout
-                        log.warning("Stream timeout - no data received for 30 seconds")
-                        break
-                    continue
+        # Exponential backoff for rate limits
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                log.info(f"Starting to stream from provider... (attempt {attempt + 1})")
+                chunk_count = 0
+                tool_call_buffer = {}  # index -> accumulated tool call data
                 
+                import time
                 last_chunk_time = time.time()
-                chunk_count += 1
                 
-                # Handle tool call deltas
-                if chunk.startswith("__TOOL_CALL_DELTA__:"):
-                    try:
-                        deltas = json.loads(chunk[len("__TOOL_CALL_DELTA__:"):])
-                        for delta in deltas:
-                            index = delta.get("index", 0)
-                            if index not in tool_call_buffer:
-                                tool_call_buffer[index] = {"id": "", "name": "", "arguments": ""}
-                            
-                            if delta.get("id"):
-                                tool_call_buffer[index]["id"] += delta["id"]
-                            if delta.get("function", {}).get("name"):
-                                tool_call_buffer[index]["name"] += delta["function"]["name"]
-                            if delta.get("function", {}).get("arguments"):
-                                tool_call_buffer[index]["arguments"] += delta["function"]["arguments"]
-                    except Exception as e:
-                        log.error(f"Error parsing tool call delta: {e}")
-                else:
-                    # Regular content chunk
-                    self._full_response += chunk
-                    self.chunk_received.emit(chunk)
-            
-            log.info(f"Stream completed, received {chunk_count} chunks")
-            
-            # Convert tool call buffer to final format
-            if tool_call_buffer:
-                final_tool_calls = []
-                for idx in sorted(tool_call_buffer.keys()):
-                    tc = tool_call_buffer[idx]
-                    if tc["id"] and tc["name"]:  # Only include complete tool calls
-                        final_tool_calls.append({
-                            "id": tc["id"],
-                            "type": "function",
-                            "function": {
-                                "name": tc["name"],
-                                "arguments": tc["arguments"]
-                            }
-                        })
-                if final_tool_calls:
-                    self.tool_calls = final_tool_calls
-                    log.info(f"Worker has {len(final_tool_calls)} tool calls to return")
-            
-            log.info(f"Emitting finished signal with response length {len(self._full_response)}")
-            self.finished.emit(self._full_response)
-            
-        except Exception as e:
-            error_msg = str(e)
-            if "authentication" in error_msg.lower() or "api key" in error_msg.lower():
-                error_msg = f"Invalid API key for {self.provider}. Please check your settings."
-            elif "rate limit" in error_msg.lower():
-                error_msg = f"Rate limit exceeded for {self.provider}. Please try again later."
-            raise Exception(error_msg)
+                for chunk in provider.chat_stream(
+                    messages=chat_messages,
+                    model=self.model,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                    tools=self.tools
+                ):
+                    if not chunk:
+                        # Check for timeout on empty chunks
+                        if time.time() - last_chunk_time > 30:  # 30 second timeout
+                            log.warning("Stream timeout - no data received for 30 seconds")
+                            break
+                        continue
+                    
+                    last_chunk_time = time.time()
+                    chunk_count += 1
+                    
+                    # Handle tool call deltas
+                    if chunk.startswith("__TOOL_CALL_DELTA__:"):
+                        try:
+                            deltas = json.loads(chunk[len("__TOOL_CALL_DELTA__:"):])
+                            for delta in deltas:
+                                index = delta.get("index", 0)
+                                if index not in tool_call_buffer:
+                                    tool_call_buffer[index] = {"id": "", "name": "", "arguments": ""}
+                                
+                                # Debug: log each delta
+                                args_preview = delta.get("function", {}).get("arguments", "")[:50] if delta.get("function", {}).get("arguments") else "EMPTY"
+                                log.debug(f"Tool delta: idx={index}, id={delta.get('id')}, name={delta.get('function', {}).get('name')}, args={args_preview}...")
+                                
+                                if delta.get("id"):
+                                    tool_call_buffer[index]["id"] += delta["id"]
+                                if delta.get("function", {}).get("name"):
+                                    tool_call_buffer[index]["name"] += delta["function"]["name"]
+                                if delta.get("function", {}).get("arguments"):
+                                    tool_call_buffer[index]["arguments"] += delta["function"]["arguments"]
+                        except Exception as e:
+                            log.error(f"Error parsing tool call delta: {e}")
+                    else:
+                        # Regular content chunk
+                        self._full_response += chunk
+                        self.chunk_received.emit(chunk)
+                
+                log.info(f"Stream completed, received {chunk_count} chunks")
+                
+                # Convert tool call buffer to final format
+                if tool_call_buffer:
+                    log.debug(f"Tool call buffer contents: {tool_call_buffer}")
+                    final_tool_calls = []
+                    for idx in sorted(tool_call_buffer.keys()):
+                        tc = tool_call_buffer[idx]
+                        # Validate tool call has all required fields including non-empty arguments
+                        if tc["id"] and tc["name"]:
+                            args = tc["arguments"].strip() if tc["arguments"] else ""
+                            # Skip tool calls with empty or invalid arguments
+                            if not args or args == "{}" or args == "":
+                                log.warning(f"Skipping incomplete tool call {tc['name']}: id={tc['id']}, args='{args[:100] if args else 'EMPTY'}'")
+                                continue
+                            log.debug(f"Valid tool call: {tc['name']} with args length {len(args)}")
+                            final_tool_calls.append({
+                                "id": tc["id"],
+                                "type": "function",
+                                "function": {
+                                    "name": tc["name"],
+                                    "arguments": tc["arguments"]
+                                }
+                            })
+                    if final_tool_calls:
+                        self.tool_calls = final_tool_calls
+                        log.info(f"Worker has {len(final_tool_calls)} tool calls to return")
+                    elif tool_call_buffer:
+                        # Some tool calls were skipped due to empty arguments
+                        # Add a note to the response so AI knows to retry
+                        self._full_response += "\n\n[SYSTEM ERROR: Tool call was rejected because arguments were empty. This is a streaming issue. Please try again and make sure to include the file path and content in your tool call.]\n"
+                
+                log.info(f"Emitting finished signal with response length {len(self._full_response)}")
+                self.finished.emit(self._full_response)
+                return  # Success, exit retry loop
+            except Exception as e:
+                error_msg = str(e)
+                if "rate limit" in error_msg.lower() and attempt < max_retries - 1:
+                    wait_time = 2 ** attempt  # 1s, 2s, 4s
+                    log.warning(f"Rate limit hit, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(wait_time)
+                    continue
+                if "authentication" in error_msg.lower() or "api key" in error_msg.lower():
+                    error_msg = f"Invalid API key for {self.provider}. Please check your settings."
+                elif "rate limit" in error_msg.lower():
+                    error_msg = f"Rate limit exceeded for {self.provider}. Please try again later."
+                raise Exception(error_msg)
 
 
 class AIAgent(QObject):
@@ -262,61 +338,80 @@ class AIAgent(QObject):
     thinking_stopped = pyqtSignal()
     todos_updated = pyqtSignal(list, str)  # todos_list, main_task
 
-    SYSTEM_PROMPT = """# CORTEX AI ASSISTANT - Context-Aware IDE Agent
+    SYSTEM_PROMPT = """# CORTEX AI ASSISTANT — Autonomous IDE Agent
 
 ## IDENTITY
-You are CORTEX, an intelligent coding assistant integrated into Cortex IDE.
+You are CORTEX, an intelligent autonomous coding assistant integrated into Cortex IDE.
+You operate like a senior software engineer: read before you write, verify after you edit, match the project's existing style.
 
-## CRITICAL RULES - MUST FOLLOW
+---
 
-### 1. RESPOND TO WHAT USER ACTUALLY ASKS
-- If user says "hi" or greets you → Simply greet back warmly. Do NOT list capabilities or create files.
-- If user asks a question → Answer the question. Do NOT assume they want code written.
-- If user explicitly asks to create/modify/build something → Then and ONLY then, take action.
+## CRITICAL RULES — MUST FOLLOW ALL
 
-### 2. CONTEXT AWARENESS
-- ALWAYS check the current project directory first before assuming anything
-- On first user interaction → Use `list_directory` on project root to understand structure
-- If project is empty → Say "I can see this is an empty folder. What would you like to build?"
-- If project has files → Briefly summarize what you found and ask what they need help with
-- NEVER hallucinate files or features that don't exist
-- NEVER create files unless user SPECIFICALLY requests it
+### RULE 1: RESPOND TO WHAT USER ACTUALLY ASKS
+- "hi" or greetings → greet back warmly, do NOT list capabilities or create files
+- A question → answer it; do NOT assume they want code written
+- "create X" / "build X" / "fix X" → THEN take action
 
-### 3. NO HALLUCINATION
-- Do NOT invent project context that doesn't exist
-- Do NOT assume what the user wants
-- Do NOT list your capabilities unless asked
-- Do NOT be overly verbose - be concise and direct
+### RULE 2: EXPLORE BEFORE ACT (ReAct Pattern)
+- ALWAYS `list_directory` on project root on first interaction to understand structure.
+- BEFORE EDITING a large file (>200 lines):
+  1. `get_file_outline` to find the line numbers of functions/classes.
+  2. `read_file` with `start_line` and `end_line` for the relevant section to get current context with line numbers.
+- NEVER edit a file you haven't read in this session.
+- NEVER hallucinate files, paths, or features.
 
-### 4. TOOL USAGE - CRITICAL
-- When using tools, ALWAYS provide ALL required parameters
-- `write_file` requires: path (string), content (string) - NEVER call with empty args
-- `edit_file` requires: path (string), old_string (string), new_string (string)
-- `read_file` requires: path (string)
-- `list_directory` requires: path (string, use "." for current directory)
-- Use `list_directory` to understand the project BEFORE making assumptions
-- Use `read_file` to understand existing code BEFORE modifying
-- For BULK operations (delete all files, etc.): Use `run_command` instead of multiple `delete_path` calls
+  ### RULE 3: THE 10 INDUSTRIAL EDIT RULES (E1-E10)
+  - E1 (Explore): NEVER edit without `read_file`. Use `get_file_outline` for files >200 lines.
+  - E2 (Precision): Use `edit_file` (find/replace) for most changes. `write_file` is ONLY for new files.
+  - E3 (Uniqueness): `old_string` MUST be unique. Include 3+ lines of context if needed.
+  - E4 (Boilerplate): Use `add_import` for imports to avoid duplication.
+  - E5 (Injection): Use `inject_after` for adding code to existing functions/classes when search-replace is too brittle.
+  - E6 (Truncation): Never rewrite 100+ line files. Build them incrementally (skeleton first, then `edit_file`).
+  - E7 (Verification): Immediately `read_file` the changed lines after an edit to confirm success.
+  - E8 (Style): Match indentation (2 vs 4 spaces) EXACTLY.
+  - E9 (Failure): If an edit fails due to multiple matches, look at the line numbers provided in the error. Choose a match and add more context from that specific line to make your `old_string` unique. DO NOT retry with the same parameters.
+  - E10 (Atomic): Every tool call MUST be followed by its result before the next  ### RULE 9: TASK MANAGEMENT
+  - For complex tasks, ALWAYS use `<tasklist>` with `- [ ]` checkboxes.
+  - Mark items `[x]` as you complete them in subsequent turns.
+  - This populates the user's progress tracker.
 
-### 5. CONVERSATION FLOW
-User says "hi" → You say "Hi! How can I help you today?"
-User asks "what can you do?" → THEN explain your capabilities
-User says "create a todo app" → THEN start planning and creating
-User says "fix this bug" → THEN analyze and fix
-User says "delete all files" → Use `run_command` to delete all at once (e.g., `rm -rf *` or `del /q *`), NOT individual `delete_path` calls
+  ### RULE 10: EDIT EXACTNESS (E11)
+  - Your `old_string` MUST match the file content exactly, including whitespace, comments, and empty lines.
+  - If you aren't 100% sure of the context, `read_file` the specific line range again.
+  - Inclusion of line numbers in your thought process helps avoid errors.
 
-## WORKFLOW TAGS (Only when user requests plans/tasks)
-- `<plan>`: Implementation strategies (only when asked to plan)
-- `<tasklist>`: Step-by-step checklists (only when working on tasks)
-- `<options>`: Numbered choices for user selection
+  ### RULE 11: TOOL USAGE — REQUIRED PARAMETERS
+  - `read_file` → path, start_line, end_line, numbered (bool)
+  - `edit_file` → path, old_string, new_string, expected_occurrences
+  - `inject_after` → path, anchor, new_code
+  - `add_import` → path, import_statement
+  - `get_file_outline` → path
+  - `undo_last_action` → ()
 
-## PERMISSION SYSTEM (Chat-based confirmation)
-- For DESTRUCTIVE actions (delete, overwrite files), ask user "Should I proceed? (yes/no)"
-- Wait for user to type "yes" before executing the tool
-- If user says "no" or anything else, cancel the action
-- For CREATE/EDIT actions, proceed without asking (these are safe)
+  ### RULE 12: TASK COMPLETION — MANDATORY SUMMARY
+  - End your response with a `<task_summary>` JSON block.
 
-Be helpful, concise, and responsive to what the user actually needs."""
+  ### RULE 13: INCREMENTAL DEVELOPMENT (LARGE FILES)
+  - Skeleton First → `write_file`
+  - Detail Addition → `edit_file` / `inject_after`
+
+```
+<tasklist>
+- [ ] Task 1
+- [ ] Task 2
+</tasklist>
+
+<task_summary>
+{
+  "title": "Brief task description",
+  "files": [{"name": "file.py", "path": "/abs/path/file.py", "action": "modified"}],
+  "message": "Summary"
+}
+</task_summary>
+```
+
+Be concise, direct, and responsive. Do what the user asks — no more, no less."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -332,6 +427,7 @@ Be helpful, concise, and responsive to what the user actually needs."""
         self._worker: AIWorker | None = None
         self._pending_tool_calls: list[dict] = []
         self._always_allowed: bool = False
+        self._continue_after_tools_flag: bool = False  # Reset on error
         self._check_configuration()
         self._mode = "Agent"  # Default mode
         self._always_allowed = True  # Agent mode has full autonomy by default
@@ -550,6 +646,20 @@ Be helpful, concise, and responsive to what the user actually needs."""
             {"role": "system", "content": mode_hint}
         ] + history_msgs
 
+        # Token counting guard - estimate and summarize if too large
+        estimated_tokens = self._estimate_token_count(messages)
+        if estimated_tokens > 50000:  # Leave room for response
+            log.warning(f"Context too large ({estimated_tokens} est. tokens). Triggering summarization.")
+            self._summarize_history(15)
+            # Rebuild history after summarization
+            history_msgs = self._get_trimmed_history(20)
+            messages = [
+                {"role": "system", "content": system_content},
+                {"role": "system", "content": mode_hint}
+            ] + history_msgs
+            estimated_tokens = self._estimate_token_count(messages)
+            log.info(f"After summarization: {estimated_tokens} est. tokens")
+
         # FOR TESTING: Force deepseek if not mock
         provider = self._settings.get("ai", "provider") or "deepseek"
         if provider != "mock":
@@ -560,7 +670,8 @@ Be helpful, concise, and responsive to what the user actually needs."""
         if provider == "deepseek" and "deepseek" not in model.lower():
             model = "deepseek-chat"
         temperature = float(self._settings.get("ai", "temperature") or 0.7)
-        max_tokens = int(self._settings.get("ai", "max_tokens") or 4096)
+        # Increase max_tokens to 8192 for large code generation
+        max_tokens = int(self._settings.get("ai", "max_tokens") or 8192)
 
         # Validate API key exists for non-mock providers
         if provider != "mock":
@@ -694,6 +805,19 @@ Be helpful, concise, and responsive to what the user actually needs."""
             
         return self._history[start_idx:]
 
+    def _estimate_token_count(self, messages: list) -> int:
+        """Rough estimate: 1 token ≈ 4 characters (industry standard approximation)"""
+        total_chars = 0
+        for msg in messages:
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                total_chars += len(content)
+            # Also count tool calls if present
+            tool_calls = msg.get("tool_calls")
+            if tool_calls:
+                total_chars += len(json.dumps(tool_calls))
+        return total_chars // 4
+
     def _summarize_history(self, count: int = 10):
         """
         Summarize the oldest part of history and remove it.
@@ -728,7 +852,7 @@ Be helpful, concise, and responsive to what the user actually needs."""
         # Use provider directly to avoid recursive chat turns
         provider_name = self._settings.get("ai", "provider") or "deepseek"
         provider = get_provider_registry().get_provider(
-            ProviderType.DEEPSEEK if provider_name != "mock" else ProviderType.MOCK
+            ProviderType.TOGETHER if provider_name == "together" else ProviderType.DEEPSEEK
         )
         
         # Format messages for summarization
@@ -873,8 +997,8 @@ Be helpful, concise, and responsive to what the user actually needs."""
         log.info(f"_on_done called, full_text length={len(full_text)}, worker={self._worker}")
         self.thinking_stopped.emit()  # Hide thinking indicator
         
-        # Parse and emit TODOs if present
-        self._parse_and_emit_todos(full_text)
+        # Parse and emit TODOs if present, and clean the text for UI display
+        full_text = self._parse_and_emit_todos(full_text)
         
         # Clear worker reference since it's done
         worker = self._worker
@@ -914,12 +1038,7 @@ Be helpful, concise, and responsive to what the user actually needs."""
             else:
                 # Execute tools immediately - add assistant + tools atomically
                 self._execute_tools(tool_calls, full_text)
-                # _execute_tools sets _continue_after_tools_flag
-                # Now trigger continuation
-                log.info("Triggering continuation after tools execution")
-                from PyQt6.QtCore import QTimer
-                QTimer.singleShot(100, lambda: self._continue_chat_after_tools())
-                return  # Return early - continuation scheduled via QTimer
+                return  # Return early - continuation will be triggered by _on_all_tools_completed
         else:
             self._history.append({"role": "assistant", "content": full_text})
             self.response_complete.emit(full_text)
@@ -929,160 +1048,122 @@ Be helpful, concise, and responsive to what the user actually needs."""
         self._save_history_to_disk()
 
     def _execute_tools(self, tool_calls, assistant_content=""):
-        """Execute tool calls and continue the chat.
+        """Execute tool calls in a background thread and then continue the chat.
         
         Args:
             tool_calls: List of tool call objects from the assistant
             assistant_content: The assistant's message content (to be added atomically with tools)
         """
-        import difflib
-        
-        # NOTE: Assistant content was already emitted by the worker thread
-        # We should NOT emit it again here to avoid duplication
-        # The content is only used for history storage at the end
-        
         # Start exploration block for UI display
         self.response_chunk.emit("\n<exploration>\n")
         
-        # Collect tool results first
-        tool_results = []
+        # Create ToolWorker to run tools in background
+        self._tool_worker = ToolWorker(self._tool_registry, tool_calls)
         
-        for tool_call in tool_calls:
-            name = tool_call["function"]["name"]
-            try:
-                args = json.loads(tool_call["function"]["arguments"])
-            except:
-                args = {}
+        # Connect signals
+        self._tool_worker.tool_started.connect(self._on_tool_started)
+        self._tool_worker.tool_completed.connect(lambda n, a, r: self._on_tool_completed(n, a, r))
+        self._tool_worker.all_tools_completed.connect(lambda res: self._on_all_tools_completed(res, tool_calls, assistant_content))
+        self._tool_worker.error_occurred.connect(self._on_tool_error)
+        
+        self._tool_worker.start()
+
+    def _on_tool_started(self, name, args):
+        """Called when a tool starts execution in background."""
+        log.info(f"Executing tool: {name} with args: {args}")
+        display_path = ""
+        if "path" in args:
+            path = str(args["path"])
+            display_path = path.split('\\')[-1] or path.split('/')[-1] or path
             
-            # Display tool activity with cards
-            if name == "run_command":
-                cmd = args.get("command", "")
-                self.tool_activity.emit("run_command", cmd[:60], "running")
-            elif name == "list_directory":
-                path = args.get("path", "")
-                display_path = path.split('\\')[-1] or path.split('/')[-1] or path
-                self.tool_activity.emit("list_directory", display_path, "running")
+        if name == "run_command":
+            self.tool_activity.emit("run_command", args.get("command", "")[:60], "running")
+        elif name in ["write_file", "edit_file", "read_file", "delete_path", "list_directory"]:
+            self.tool_activity.emit(name, display_path or args.get("path", ""), "running")
+        else:
+            self.tool_activity.emit(name, str(args)[:50], "running")
+
+    def _on_tool_completed(self, name, args, result):
+        """Called when a single tool finishes in background."""
+        display_path = ""
+        if "path" in args:
+            path = str(args["path"])
+            display_path = path.split('\\')[-1] or path.split('/')[-1] or path
+
+        if result.success:
+            if name == "list_directory":
+                content = str(result.result)
+                file_count = content.count('\n') + 1 if content else 0
+                self.tool_activity.emit("list_directory", f"Found {file_count} items", "complete")
             elif name == "read_file":
-                path = args.get("path", "")
-                display_path = path.split('\\')[-1] or path.split('/')[-1] or path
-                self.tool_activity.emit("read_file", display_path, "running")
-            elif name == "write_file":
-                path = args.get("path", "")
-                display_path = path.split('\\')[-1] or path.split('/')[-1] or path
-                self.tool_activity.emit("write_file", display_path, "running")
-            elif name == "edit_file":
-                path = args.get("path", "")
-                display_path = path.split('\\')[-1] or path.split('/')[-1] or path
-                self.tool_activity.emit("edit_file", display_path, "running")
-            elif name == "search_code":
-                query = args.get("query", "")
-                self.tool_activity.emit("search_code", query[:40], "running")
-            elif name == "git_status":
-                self.tool_activity.emit("git_status", "Checking status", "running")
-            elif name == "git_diff":
-                self.tool_activity.emit("git_diff", "Getting diff", "running")
-            elif name == "delete_path":
-                path = args.get("path", "")
-                display_path = path.split('\\')[-1] or path.split('/')[-1] or path
-                self.tool_activity.emit("delete_path", display_path, "running")
-            else:
-                self.tool_activity.emit(name, str(args)[:50], "running")
-            
-            log.info(f"Executing tool: {name} with args: {args}")
-            
-            # For diff tracking, read file before edit
-            original_content = ""
-            if name in ["write_file", "edit_file"]:
+                content = str(result.result)
+                line_count = content.count('\n') + 1 if content else 0
+                self.tool_activity.emit("read_file", f"{display_path} ({line_count} lines)", "complete")
+            elif name in ["write_file", "edit_file", "inject_after", "add_import"]:
                 try:
-                    path = args.get("path")
-                    if path and isinstance(path, str) and os.path.exists(path):
-                        with open(path, 'r', encoding='utf-8') as f:
-                            original_content = f.read()
-                except: pass
-
-            result = self._tool_registry.execute_tool(name, args)
-            
-            # Store tool result
-            tool_results.append({
-                "tool_call_id": tool_call["id"],
-                "name": name,
-                "content": str(result.result) if result.success else f"Error: {result.error}",
-                "success": result.success
-            })
-            
-            # Tool result display with activity cards
-            if result.success:
-                if name == "list_directory":
-                    content = str(result.result)
-                    file_count = content.count('\n') + 1 if content else 0
-                    self.tool_activity.emit("list_directory", f"Found {file_count} items", "complete")
-                elif name == "read_file":
-                    path = args.get("path", "")
-                    content = str(result.result)
-                    line_count = content.count('\n') + 1 if content else 0
-                    display_path = path.split('/')[-1] if '/' in path else path.split('\\')[-1] if '\\' in path else path
-                    self.tool_activity.emit("read_file", f"{display_path} ({line_count} lines)", "complete")
-                elif name in ["write_file", "edit_file"]:
-                    path = args.get("path", "")
-                    display_path = path.split('/')[-1] if '/' in path else path.split('\\')[-1] if '\\' in path else path
-                    self.tool_activity.emit(name, f"{display_path} ✓", "complete")
-                elif name == "run_command":
-                    cmd = args.get("command", "")
-                    self.tool_activity.emit("run_command", f"{cmd[:40]} ✓", "complete")
-                elif name == "search_code":
-                    self.tool_activity.emit("search_code", "Search completed", "complete")
-                elif name == "git_status":
-                    self.tool_activity.emit("git_status", "Status retrieved", "complete")
-                elif name == "git_diff":
-                    self.tool_activity.emit("git_diff", "Diff retrieved", "complete")
+                    res_obj = json.loads(result.result) if isinstance(result.result, str) else result.result
+                    added = res_obj.get("added_lines", 0)
+                    removed = res_obj.get("removed_lines", 0)
+                except:
+                    added, removed = 0, 0
+                
+                info = display_path
+                if added > 0 or removed > 0:
+                    info += f" +{added} -{removed}"
                 else:
-                    self.tool_activity.emit(name, "Completed", "complete")
-            else:
-                self.tool_activity.emit(name, f"Error: {result.error[:40]}", "error")
-
-            # Hand off the file edit to the frontend tracker for the Diff popup
-            if name in ["write_file", "edit_file"] and result.success:
-                try:
-                    new_content = ""
-                    path = args.get("path")
-                    if path and isinstance(path, str) and os.path.exists(path):
-                        with open(path, 'r', encoding='utf-8') as f:
-                            new_content = f.read()
+                    info += " ✓"
                     
-                    if path and isinstance(path, str) and original_content != new_content:
-                        self.file_edited_diff.emit(path, original_content, new_content)
-                        self.response_chunk.emit(f"\n</exploration>\n<file_edited>\n{path}\n</file_edited>\n<exploration>\n")
-                except Exception as e:
-                    log.error(f"Failed to process file edit diff: {e}")
-        
-        # Close exploration block
+                self.tool_activity.emit(name, info, "complete")
+                # Manual metadata emission for exploration section
+                self.response_chunk.emit(f"\n</exploration>\n<file_edited>\n{path}\nModified\n</file_edited>\n<exploration>\n")
+            else:
+                self.tool_activity.emit(name, "Completed", "complete")
+        else:
+            self.tool_activity.emit(name, f"Error: {result.error[:40]}", "error")
+            self.response_chunk.emit(f"\n⚠️ Error calling {name}: {result.error}\n")
+
+    def _on_all_tools_completed(self, results, original_tool_calls, assistant_content):
+        """Called when ALL tools in the batch are finished."""
+        log.info(f"All {len(results)} tools completed")
         self.response_chunk.emit("\n</exploration>\n")
         
-        # NOW add assistant message and ALL tool results atomically to history
-        # This ensures proper pairing - assistant with tool_calls always followed by matching tool responses
+        # Add assistant message and tool responses to history
         self._history.append({
             "role": "assistant",
             "content": assistant_content,
-            "tool_calls": tool_calls
+            "tool_calls": original_tool_calls
         })
         
-        for tool_result in tool_results:
+        for res in results:
+            tool_json = json.dumps({
+                "success": res["success"],
+                "output": str(res["content"]) if res["success"] else None,
+                "error": str(res["content"]) if not res["success"] else None,
+                "duration_ms": res.get("duration_ms", 0)
+            })
             self._history.append({
                 "role": "tool",
-                "tool_call_id": tool_result["tool_call_id"],
-                "name": tool_result["name"],
-                "content": tool_result["content"]
+                "tool_call_id": res["tool_call_id"],
+                "name": res["name"],
+                "content": tool_json
             })
-        
-        # Batch save after all tools are done
+            
         self._save_history_to_disk()
-        
-        # Store that we need to continue after tools
         self._continue_after_tools_flag = True
+        self.response_complete.emit("")
         
-        # Emit completion to unlock UI - the actual continuation happens after worker cleanup
-        self.response_complete.emit(assistant_content + "\n\n[Tools executed, continuing...]")
-    
+        # Trigger continuation
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(100, self._continue_chat_after_tools)
+
+    def _on_tool_error(self, error_msg):
+        """Handle fatal error in ToolWorker."""
+        log.error(f"ToolWorker fatal error: {error_msg}")
+        self.response_chunk.emit(f"\n❌ Tool Execution Failed: {error_msg}\n")
+        self.response_chunk.emit("\n</exploration>\n")
+        self._continue_after_tools_flag = False
+        self.response_complete.emit("Error during tool execution")
+
     def _continue_chat_after_tools(self):
         """Continue chat after tools have been executed."""
         log.info("_continue_chat_after_tools called")
@@ -1190,6 +1271,10 @@ Be helpful, concise, and responsive to what the user actually needs."""
 
     def _on_error(self, error: str):
         log.error(f"AI error: {error}")
+        # Reset flags on error
+        self._continue_after_tools_flag = False
+        # Stop thinking indicator
+        self.thinking_stopped.emit()
         # Clear worker reference on error
         self._worker = None
         self.request_error.emit(error)
@@ -1264,75 +1349,88 @@ Be helpful, concise, and responsive to what the user actually needs."""
             self._worker = None
             log.info("AI worker stopped.")
 
-    def _parse_and_emit_todos(self, text: str):
-        """Parse TODO items from response text and emit to UI."""
+    def _parse_and_emit_todos(self, text: str) -> str:
+        """Parse TODO items from response text, emit to UI, and return cleaned text."""
         import re
         
         todos = []
         main_task = ""
+        cleaned_text = text
         
-        # Pattern for checkbox tasks (- [ ] Task, - [x] Task) - MOST RELIABLE
-        checkbox_pattern = r'^\s*[-*]\s*\[([ xX])\]\s*(.+)$'
-        # Pattern for numbered tasks with checkboxes (1. [ ] Task)
-        numbered_checkbox_pattern = r'^\s*(\d+)\.\s*\[([ xX])\]\s*(.+)$'
+        # 1. Try to find a <tasklist> section first
+        tasklist_match = re.search(r'<tasklist>(.*?)</tasklist>', text, re.DOTALL)
+        content_to_parse = tasklist_match.group(1) if tasklist_match else text
         
-        lines = text.split('\n')
+        # 2. Global search for [ ] or [x] items
+        # Matches "- [ ] Task" or "* [x] Task" or "1. [ ] Task"
+        # Relaxed regex to allow hyphens and other chars in content
+        task_pattern = r'\[([ xX])\]\s*([^\[\n<]+)'
+        
+        matches = list(re.finditer(task_pattern, content_to_parse))
         task_id = 0
-        in_task_section = False
         
-        for line in lines:
-            # Skip file listings (they look like todos but aren't)
-            # Skip lines that are just filenames or file paths
-            if re.match(r'^\s*[`\'"]?[\w\-\.]+\.(py|js|md|txt|json|css|html)[`\'"]?', line):
+        for match in matches:
+            status_char = match.group(1).lower()
+            content = match.group(2).strip()
+            
+            # Clean up trailing hyphens or bullets if they were caught by the greedy match
+            content = re.sub(r'\s*[-\*]$', '', content).strip()
+            
+            # Filter out noise (file extensions, very short text, UI hints)
+            if any(content.lower().endswith(ext) for ext in ['.py', '.js', '.css', '.html', '.json', '.md']):
                 continue
-            if ' - ' in line and any(ext in line for ext in ['.py', '.js', '.md', '.txt']):
-                # Likely a file description, not a task
+            if len(content) < 3 or "error" in content.lower():
                 continue
             
-            # Check checkbox tasks first (most reliable indicator of actual todos)
-            checkbox_match = re.match(checkbox_pattern, line)
-            if checkbox_match:
-                task_id += 1
-                checked = checkbox_match.group(1).lower() == 'x'
-                content = checkbox_match.group(2).strip()
-                # Clean up markdown formatting
-                content = re.sub(r'\*\*(.+?)\*\*', r'\1', content)  # Remove **
-                content = re.sub(r'`(.+?)`', r'\1', content)  # Remove ``
-                if not main_task and task_id == 1:
-                    main_task = content[:50] + ('...' if len(content) > 50 else '')
-                todos.append({
-                    'id': f'task_{task_id}',
-                    'content': content,
-                    'status': 'COMPLETE' if checked else 'PENDING'
-                })
-                in_task_section = True
-                continue
+            task_id += 1
+            checked = status_char == 'x'
             
-            # Check numbered checkbox tasks
-            numbered_checkbox_match = re.match(numbered_checkbox_pattern, line)
-            if numbered_checkbox_match:
-                task_id += 1
-                checked = numbered_checkbox_match.group(2).lower() == 'x'
-                content = numbered_checkbox_match.group(3).strip()
-                # Clean up markdown formatting
-                content = re.sub(r'\*\*(.+?)\*\*', r'\1', content)
-                content = re.sub(r'`(.+?)`', r'\1', content)
-                if not main_task and task_id == 1:
-                    main_task = content[:50] + ('...' if len(content) > 50 else '')
-                todos.append({
-                    'id': f'task_{task_id}',
-                    'content': content,
-                    'status': 'COMPLETE' if checked else 'PENDING'
-                })
-                in_task_section = True
+            # Clean up markdown formatting
+            content = re.sub(r'\*\*(.+?)\*\*', r'\1', content)
+            content = re.sub(r'`(.+?)`', r'\1', content)
+            
+            if not main_task and task_id == 1:
+                main_task = content[:50] + ('...' if len(content) > 50 else '')
+                
+            todos.append({
+                'id': f'task_{task_id}',
+                'content': content,
+                'status': 'COMPLETE' if checked else 'PENDING'
+            })
         
-        # Only emit if we found actual checkbox todos (not just numbered lists)
-        if len(todos) >= 1 and in_task_section:
-            log.info(f"Parsed {len(todos)} todos from response")
+        # 3. Emit and Clean if we found actual todos
+        if todos:
+            log.info(f"Parsed {len(todos)} todos from response using robust extraction")
             self.todos_updated.emit(todos, main_task)
-        else:
-            # No real todos found - clear the todo section
+            
+            # 4. Clean the text for UI bubble
+            # Remove the <tasklist> block entirely
+            cleaned_text = re.sub(r'<tasklist>.*?</tasklist>', '', cleaned_text, flags=re.DOTALL)
+            
+            # Remove each extracted todo string from the text to be absolutely sure
+            # We sort by length descending to avoid partial matches causing issues
+            matches_sorted = sorted(matches, key=lambda m: len(m.group(0)), reverse=True)
+            for m in matches_sorted:
+                match_str = m.group(0)
+                # Try to remove the match plus any leading bullet/list markers
+                # e.g. "- [ ] Task" or "1. [ ] Task"
+                pattern = re.escape(match_str)
+                # Prefix with optional bullet/numbering
+                full_marker_pattern = r'^\s*[-*\d\.]*\s*' + pattern
+                cleaned_text = re.sub(full_marker_pattern, '', cleaned_text, flags=re.MULTILINE)
+                # Fallback: just remove the literal match if it wasn't at line start
+                cleaned_text = cleaned_text.replace(match_str, "")
+            
+            # Flatten multiple newlines and strip
+            cleaned_text = re.sub(r'\n{3,}', '\n\n', cleaned_text).strip()
+            # Clean up trailing content markers if they were orphaned
+            cleaned_text = re.sub(r'\n\s*[-*]$', '', cleaned_text).strip()
+            
+        elif not tasklist_match:
+            # If no manual tasks found and no tasklist tag, clear the section
             self.todos_updated.emit([], "")
+            
+        return cleaned_text
     
     def update_todo_status(self, task_id: str, status: str):
         """Update a specific todo item's status."""

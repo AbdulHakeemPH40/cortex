@@ -50,11 +50,9 @@ class AIWorkerV2(QThread):
         registry = get_provider_registry()
         provider_map = {
             "deepseek": ProviderType.DEEPSEEK,
-            "openai": ProviderType.OPENAI,
-            "anthropic": ProviderType.ANTHROPIC,
-            "mock": ProviderType.MOCK
+            "together": ProviderType.TOGETHER,
         }
-        provider_type = provider_map.get(self.provider, ProviderType.MOCK)
+        provider_type = provider_map.get(self.provider, ProviderType.DEEPSEEK)
         provider = registry.get_provider(provider_type)
         
         # Convert to ChatMessage objects
