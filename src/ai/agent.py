@@ -24,6 +24,54 @@ except ImportError:
     pass
 
 
+class ToolWorker(QThread):
+    """Runs tools in a background thread to keep UI responsive."""
+    tool_started = pyqtSignal(str, dict)  # name, args
+    tool_completed = pyqtSignal(str, dict, object)  # name, args, result
+    all_tools_completed = pyqtSignal(list)  # all tool results
+    error_occurred = pyqtSignal(str)
+    
+    def __init__(self, tool_registry, tool_calls: list, parent=None):
+        super().__init__(parent)
+        self.tool_registry = tool_registry
+        self.tool_calls = tool_calls
+        self._results = []
+        
+    def run(self):
+        """Execute all tools sequentially in background thread."""
+        try:
+            for tool_call in self.tool_calls:
+                name = tool_call["function"]["name"]
+                try:
+                    args = json.loads(tool_call["function"]["arguments"])
+                except:
+                    args = {}
+                
+                # Emit started signal
+                self.tool_started.emit(name, args)
+                
+                # Execute tool
+                result = self.tool_registry.execute_tool(name, args)
+                
+                # Store result
+                self._results.append({
+                    "tool_call_id": tool_call["id"],
+                    "name": name,
+                    "content": str(result.result) if result.success else f"Error: {result.error}",
+                    "success": result.success
+                })
+                
+                # Emit completed signal
+                self.tool_completed.emit(name, args, result)
+            
+            # Emit all completed
+            self.all_tools_completed.emit(self._results)
+            
+        except Exception as e:
+            log.error(f"ToolWorker error: {e}")
+            self.error_occurred.emit(str(e))
+
+
 class AIWorker(QThread):
     """Runs the AI API call in a background thread using Provider Registry."""
     chunk_received = pyqtSignal(str)
@@ -240,27 +288,33 @@ You are CORTEX, an intelligent coding assistant integrated into Cortex IDE.
 - Do NOT list your capabilities unless asked
 - Do NOT be overly verbose - be concise and direct
 
-### 4. TOOL USAGE
+### 4. TOOL USAGE - CRITICAL
+- When using tools, ALWAYS provide ALL required parameters
+- `write_file` requires: path (string), content (string) - NEVER call with empty args
+- `edit_file` requires: path (string), old_string (string), new_string (string)
+- `read_file` requires: path (string)
+- `list_directory` requires: path (string, use "." for current directory)
 - Use `list_directory` to understand the project BEFORE making assumptions
 - Use `read_file` to understand existing code BEFORE modifying
-- Only use `write_file`/`edit_file` when user EXPLICITLY asks for code changes
-- Only use `run_command` when user EXPLICITLY asks to run something
+- For BULK operations (delete all files, etc.): Use `run_command` instead of multiple `delete_path` calls
 
 ### 5. CONVERSATION FLOW
 User says "hi" → You say "Hi! How can I help you today?"
 User asks "what can you do?" → THEN explain your capabilities
 User says "create a todo app" → THEN start planning and creating
 User says "fix this bug" → THEN analyze and fix
+User says "delete all files" → Use `run_command` to delete all at once (e.g., `rm -rf *` or `del /q *`), NOT individual `delete_path` calls
 
 ## WORKFLOW TAGS (Only when user requests plans/tasks)
 - `<plan>`: Implementation strategies (only when asked to plan)
 - `<tasklist>`: Step-by-step checklists (only when working on tasks)
 - `<options>`: Numbered choices for user selection
 
-## AUTONOMOUS PERMISSIONS (Use ONLY when user requests action)
-- File operations permitted when user asks for code changes
-- Command execution permitted when user asks to run something
-- No confirmation needed for requested actions
+## PERMISSION SYSTEM (Chat-based confirmation)
+- For DESTRUCTIVE actions (delete, overwrite files), ask user "Should I proceed? (yes/no)"
+- Wait for user to type "yes" before executing the tool
+- If user says "no" or anything else, cancel the action
+- For CREATE/EDIT actions, proceed without asking (these are safe)
 
 Be helpful, concise, and responsive to what the user actually needs."""
 
@@ -395,11 +449,20 @@ Be helpful, concise, and responsive to what the user actually needs."""
                 self._handle_project_warmup()
                 return
             
-            # Check for pending tool confirmation - auto-execute if permission system was removed
+            # Check for pending tool confirmation
             if self._pending_tool_calls:
-                # Permission system removed - auto-execute pending tools
-                log.info("Auto-executing pending tools (permission system bypassed)")
-                self._execute_pending_tools()
+                # Check if user confirmed (yes, ok, sure, proceed, etc.)
+                confirmation_words = ['yes', 'yeah', 'yep', 'ok', 'okay', 'sure', 'proceed', 'confirm', 'do it', 'go ahead']
+                is_confirmed = any(word in user_message.lower() for word in confirmation_words)
+                
+                if is_confirmed:
+                    log.info("User confirmed pending tools execution")
+                    self._execute_pending_tools()
+                else:
+                    log.info("User did not confirm, cancelling pending tools")
+                    self._cancel_pending_tools()
+                    self.response_chunk.emit("\n❌ Action cancelled. Let me know if you need anything else.")
+                    self.response_complete.emit("Action cancelled.")
                 return
             
             # Build context-aware message using Context Manager

@@ -5,12 +5,35 @@ Allows AI to use tools to interact with the IDE environment
 
 import os
 import subprocess
+import time
 from typing import Dict, List, Callable, Any, Optional
 from dataclasses import dataclass
 from pathlib import Path
 from src.utils.logger import get_logger
 
 log = get_logger("tool_registry")
+
+# Simple file cache to avoid re-reading same files
+_file_cache: Dict[str, tuple[str, float]] = {}
+_file_cache_ttl = 5.0  # Cache TTL in seconds
+
+def _get_cached_file(path: str) -> Optional[str]:
+    """Get file content from cache if available and not expired."""
+    if path in _file_cache:
+        content, timestamp = _file_cache[path]
+        if time.time() - timestamp < _file_cache_ttl:
+            return content
+        else:
+            del _file_cache[path]
+    return None
+
+def _set_cached_file(path: str, content: str):
+    """Cache file content with timestamp."""
+    _file_cache[path] = (content, time.time())
+
+def _clear_file_cache():
+    """Clear the file cache."""
+    _file_cache.clear()
 
 
 @dataclass
@@ -147,13 +170,13 @@ class ToolRegistry:
 
         self.register_tool(
             name="delete_path",
-            description="Delete a file or directory (recursively)",
+            description="Delete a file or directory (recursively). For bulk delete, use run_command instead.",
             parameters=[
                 ToolParameter("path", "string", "Path to the file or directory to delete", required=True),
                 ToolParameter("recursive", "bool", "Whether to delete recursively if it's a directory", required=False, default=True)
             ],
             function=self._delete_path,
-            requires_confirmation=True
+            requires_confirmation=True  # Ask user for confirmation
         )
         
         self.register_tool(
@@ -247,26 +270,45 @@ class ToolRegistry:
         return "\n".join(descriptions)
         
     def execute_tool(self, tool_name: str, params: Dict[str, Any]) -> ToolResult:
-        """Execute a tool by name."""
+        """Execute a tool by name with parameter validation."""
         tool = self.tools.get(tool_name)
         if not tool:
             return ToolResult(success=False, result=None, error=f"Tool '{tool_name}' not found")
+        
+        # Validate required parameters
+        for param in tool.parameters:
+            if param.required and (param.name not in params or params[param.name] is None or params[param.name] == ""):
+                return ToolResult(
+                    success=False, 
+                    result=None, 
+                    error=f"Missing required parameter: {param.name}. Required params: {[p.name for p in tool.parameters if p.required]}"
+                )
             
         return tool.execute(params)
         
     # Tool implementations
     def _read_file(self, path: str, limit: int = 5000) -> str:
-        """Read file contents from project directory."""
+        """Read file contents from project directory with caching."""
         try:
             # Resolve path relative to project root (NOT IDE directory)
             working_dir = self.project_root or os.getcwd()
             if not os.path.isabs(path):
                 path = os.path.join(working_dir, path)
-                
+            
+            # Check cache first
+            cached = _get_cached_file(path)
+            if cached is not None:
+                log.debug(f"Cache hit for {path}")
+                if len(cached) > limit:
+                    return cached[:limit] + "\n... [truncated]"
+                return cached
+            
+            # Read from disk and cache
             with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read(limit)
-                if len(content) == limit:
-                    content += "\n... [truncated]"
+                content = f.read()
+                _set_cached_file(path, content)  # Cache full content
+                if len(content) > limit:
+                    return content[:limit] + "\n... [truncated]"
                 return content
         except Exception as e:
             raise Exception(f"Failed to read file: {e}")
@@ -284,6 +326,9 @@ class ToolRegistry:
             
             with open(path, 'w', encoding='utf-8') as f:
                 f.write(content)
+            
+            # Update cache with new content
+            _set_cached_file(path, content)
                 
             return f"File written successfully: {path}"
         except Exception as e:
@@ -307,6 +352,9 @@ class ToolRegistry:
             
             with open(path, 'w', encoding='utf-8') as f:
                 f.write(new_content)
+            
+            # Update cache with new content
+            _set_cached_file(path, new_content)
                 
             return f"File edited successfully: {path}"
         except Exception as e:

@@ -179,10 +179,13 @@ class AIChatWidget(QWidget):
         self.message_sent.emit(text, context)
         
     def on_chunk(self, chunk):
-        """Handle AI streaming chunk."""
+        """Handle AI streaming chunk - async to prevent UI blocking."""
         # Use JSON encoding to properly escape for JavaScript
         safe_chunk = json.dumps(chunk)
-        self._view.page().runJavaScript(f"if(window.onChunk) window.onChunk({safe_chunk});")
+        self._view.page().runJavaScript(
+            f"if(window.onChunk) window.onChunk({safe_chunk});",
+            lambda result: None  # Async callback
+        )
         
     def on_complete(self, full_text):
         """Handle AI completion."""
@@ -220,8 +223,10 @@ class AIChatWidget(QWidget):
     def show_tool_activity(self, tool_type: str, info: str, status: str = "running"):
         """Show tool activity card in the chat UI."""
         safe_info = json.dumps(info)
+        # Use runJavaScript with callback to make it async/non-blocking
         self._view.page().runJavaScript(
-            f"if(window.showToolActivity) window.showToolActivity('{tool_type}', {safe_info}, '{status}');"
+            f"if(window.showToolActivity) window.showToolActivity('{tool_type}', {safe_info}, '{status}');",
+            lambda result: None  # Callback makes it async
         )
     
     def clear_tool_activity(self):

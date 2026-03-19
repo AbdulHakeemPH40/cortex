@@ -2464,15 +2464,36 @@ body.light .tab-content {
 }
 
 /* --- Project Tree --- */
+/* Tree Container - Industry standard card style */
+.tree-container {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin: 12px 0;
+}
+
+.tree-header {
+    background: rgba(0, 0, 0, 0.3);
+    padding: 10px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.tree-header i {
+    color: #dcb67a;
+}
+
 .project-tree {
     font-family: 'Cascadia Code', 'Consolas', 'Fira Code', monospace;
     font-size: 13px;
     line-height: 1.6;
     padding: 12px 16px;
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    margin: 8px 0;
     overflow-x: auto;
     white-space: nowrap;
 }
@@ -2525,8 +2546,19 @@ body.light .tab-content {
 }
 
 /* Light mode */
+body.light .tree-container {
+    background: #ffffff;
+    border-color: #e1e4e8;
+}
+
+body.light .tree-header {
+    background: #f6f8fa;
+    border-bottom-color: #e1e4e8;
+    color: #24292e;
+}
+
 body.light .project-tree {
-    background: #f8f9fa;
+    background: transparent;
 }
 
 body.light .tree-branch {

@@ -230,8 +230,16 @@ function initMarked() {
     
     function renderProjectTree(text) {
     var lines = text.trim().split('\n');
-    var html = '<div class="project-tree">';
     
+    // Extract project name from first line if it ends with /
+    var projectName = '';
+    if (lines.length > 0 && lines[0].endsWith('/')) {
+        projectName = lines[0].replace(/\/$/, '');
+        lines = lines.slice(1); // Remove first line from processing
+    }
+    
+    // Build tree content
+    var treeContent = '';
     lines.forEach(function(line) {
         if (!line.trim()) return;
         
@@ -242,6 +250,8 @@ function initMarked() {
         var indent = treeMatch[1].length + treeMatch[2].length;
         var treeChars = treeMatch[2];
         var content = treeMatch[3].trim();
+        
+        if (!content) return; // Skip empty lines
         
         // Extract comment if present
         var commentSplit = content.split('#');
@@ -265,17 +275,25 @@ function initMarked() {
         var indentLevel = Math.floor(indent / 2);
         var paddingLeft = indentLevel * 20;
         
-        html += '<div class="tree-line" style="padding-left: ' + paddingLeft + 'px;">';
-        html += '<span class="tree-branch">' + escapeHtml(treeChars) + '</span>';
-        html += '<span class="tree-icon">' + fileIcon + '</span>';
-        html += '<span class="tree-name">' + escapeHtml(fileName) + '</span>';
+        treeContent += '<div class="tree-line" style="padding-left: ' + paddingLeft + 'px;">';
+        treeContent += '<span class="tree-branch">' + escapeHtml(treeChars) + '</span>';
+        treeContent += '<span class="tree-icon">' + fileIcon + '</span>';
+        treeContent += '<span class="tree-name">' + escapeHtml(fileName) + '</span>';
         if (comment) {
-            html += '<span class="tree-comment-wrapper">' + comment + '</span>';
+            treeContent += '<span class="tree-comment-wrapper">' + comment + '</span>';
         }
-        html += '</div>';
+        treeContent += '</div>';
     });
     
+    // Wrap in a nice container like the second image
+    var html = '<div class="tree-container">';
+    html += '<div class="tree-header">';
+    html += '<i class="fas fa-folder-open"></i> ';
+    html += '<span>' + (projectName || 'Project Structure') + '</span>';
     html += '</div>';
+    html += '<div class="project-tree">' + treeContent + '</div>';
+    html += '</div>';
+    
     return html;
 }
 
