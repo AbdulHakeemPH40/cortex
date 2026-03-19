@@ -8,16 +8,19 @@ var bridgeReady = false; // Flag to track if bridge is initialized
 // Get storage key based on current project
 function getStorageKey() {
     if (currentProjectPath) {
+        // Normalize path: convert backslashes to forward slashes and lowercase for consistency
+        var normalizedPath = currentProjectPath.replace(/\\/g, '/').toLowerCase().trim();
+        
         // Use a simple hash function instead of btoa for better compatibility
         var hash = 0;
-        for (var i = 0; i < currentProjectPath.length; i++) {
-            var char = currentProjectPath.charCodeAt(i);
+        for (var i = 0; i < normalizedPath.length; i++) {
+            var char = normalizedPath.charCodeAt(i);
             hash = ((hash << 5) - hash) + char;
             hash = hash & hash; // Convert to 32bit integer
         }
         var hashStr = Math.abs(hash).toString(16);
         var key = 'cortex_chats_' + hashStr;
-        console.log('[CHAT] Storage key for path "' + currentProjectPath + '" = ' + key);
+        console.log('[CHAT] Storage key for path "' + currentProjectPath + '" (normalized: "' + normalizedPath + '") = ' + key);
         return key;
     }
     console.log('[CHAT] No project path, using default key');
@@ -27,19 +30,146 @@ function getStorageKey() {
 // Load chats for current project
 function loadProjectChats() {
     var key = getStorageKey();
-    var data = localStorage.getItem(key);
-    console.log('[CHAT] localStorage.getItem(' + key + '):', data ? 'found ' + data.length + ' chars' : 'null');
-    var parsed = JSON.parse(data || '[]');
-    console.log('[CHAT] Parsed', parsed.length, 'chats');
-    return parsed;
+    try {
+        var data = localStorage.getItem(key);
+        console.log('[CHAT] LOAD - Key:', key);
+        console.log('[CHAT] LOAD - Data:', data ? 'found (' + data.length + ' chars)' : 'NULL (no saved chats)');
+        var parsed = JSON.parse(data || '[]');
+        console.log('[CHAT] LOAD - Parsed', parsed.length, 'chat(s)');
+        if (parsed.length > 0) {
+            parsed.forEach(function(c, i) {
+                console.log('[CHAT]   Chat ' + (i+1) + ': "' + c.title + '" with ' + c.messages.length + ' messages');
+            });
+            return parsed;
+        }
+        
+        // If localStorage is empty or returns NULL, try loading from file
+        console.log('[CHAT] LOAD - localStorage empty or no data, trying file-based storage...');
+        return loadChatsFromFile();
+    } catch (e) {
+        console.error('[CHAT] LOAD ERROR:', e.message);
+        // On error, try loading from file
+        console.log('[CHAT] LOAD - Error in localStorage, trying file-based storage...');
+        return loadChatsFromFile();
+    }
 }
 
-// Save chats for current project
+// FILE-BASED FALLBACK - Save chats for current project
+function saveProjectChatsToFile(chatList) {
+    var key = getStorageKey();
+    var data = JSON.stringify(chatList);
+    var success = false;
+    
+    console.log('[CHAT] SAVE FILE - Saving', chatList.length, 'chat(s),', data.length, 'chars');
+    
+    try {
+        if (bridge && typeof bridge.save_chats_to_file === 'function') {
+            var result = bridge.save_chats_to_file(key, data);
+            if (result === "OK") {
+                console.log('[CHAT] SAVE FILE - SUCCESS');
+                success = true;
+            } else {
+                console.error('[CHAT] SAVE FILE - FAILED:', result);
+            }
+        } else {
+            console.warn('[CHAT] SAVE FILE - Bridge not ready');
+        }
+    } catch (e) {
+        console.error('[CHAT] SAVE FILE - ERROR:', e.message);
+    }
+    
+    return success;
+}
+
+// FILE-BASED FALLBACK - Load chats from file
+function loadChatsFromFile() {
+    var key = getStorageKey();
+    console.log('[CHAT] LOAD FILE - Key:', key);
+    
+    if (!bridge || typeof bridge.load_chats_from_file !== 'function') {
+        console.warn('[CHAT] LOAD FILE - Bridge not ready');
+        return [];
+    }
+    
+    try {
+        // The bridge method returns a string directly (synchronous)
+        var result = bridge.load_chats_from_file(key);
+        console.log('[CHAT] LOAD FILE - Raw result type:', typeof result);
+        console.log('[CHAT] LOAD FILE - Raw result:', result);
+        
+        // If result is a Promise or looks like "[object Promise]", we need to handle it differently
+        if (result && result.toString() === '[object Promise]') {
+            console.error('[CHAT] LOAD FILE - Got Promise instead of direct result. Bridge not ready.');
+            return [];
+        }
+        
+        // Check if we got a valid string result
+        if (result && typeof result === 'string' && result !== "[]") {
+            console.log('[CHAT] LOAD FILE - Found', result.length, 'chars of data');
+            try {
+                var parsed = JSON.parse(result);
+                console.log('[CHAT] LOAD FILE - Successfully parsed', parsed.length, 'chats');
+                return parsed;
+            } catch (parseError) {
+                console.error('[CHAT] LOAD FILE - JSON parse error:', parseError.message);
+                console.error('[CHAT] LOAD FILE - Invalid JSON:', result.substring(0, 100));
+            }
+        } else if (result === "[]") {
+            console.log('[CHAT] LOAD FILE - Empty array returned (no saved chats)');
+            return [];
+        }
+    } catch (e) {
+        console.error('[CHAT] LOAD FILE - ERROR:', e.message);
+        console.error('[CHAT] LOAD FILE - Error stack:', e.stack);
+    }
+    
+    console.log('[CHAT] LOAD FILE - No data or error occurred');
+    return [];
+}
+
+// Save chats for current project - saves to both localStorage and file
 function saveProjectChats(chatList) {
     var key = getStorageKey();
     var data = JSON.stringify(chatList);
-    console.log('[CHAT] Saving to ' + key + ':', chatList.length, 'chats,', data.length, 'chars');
-    localStorage.setItem(key, data);
+    var saveSuccess = false;
+    
+    console.log('[CHAT] SAVE - Saving', chatList.length, 'chat(s),', data.length, 'chars');
+    
+    // Method 1: localStorage (fast but may not persist)
+    try {
+        localStorage.setItem(key, data);
+        var verify = localStorage.getItem(key);
+        if (verify) {
+            console.log('[CHAT] SAVE - localStorage: OK (' + verify.length + ' chars)');
+            saveSuccess = true;
+        } else {
+            console.error('[CHAT] SAVE - localStorage: FAILED (verify returned null)');
+        }
+    } catch (e) {
+        console.error('[CHAT] SAVE ERROR (localStorage):', e.message);
+    }
+    
+    // Method 2: File-based storage (reliable fallback)
+    try {
+        if (bridge && typeof bridge.save_chats_to_file === 'function') {
+            var result = bridge.save_chats_to_file(key, data);
+            if (result === "OK") {
+                console.log('[CHAT] SAVE - File backup: SUCCESS');
+            } else {
+                console.error('[CHAT] SAVE - File backup: FAILED:', result);
+            }
+        } else {
+            console.warn('[CHAT] SAVE - File backup: Bridge not ready');
+        }
+    } catch (e) {
+        console.error('[CHAT] SAVE ERROR (file backup):', e.message);
+    }
+    
+    if (!saveSuccess) {
+        console.error('[CHAT] SAVE - ALL METHODS FAILED - chats may be lost on restart!');
+    }
+    
+    return saveSuccess;
 }
 
 // Initialize chats as empty - will be loaded when project is set
@@ -407,6 +537,27 @@ function initBridge() {
     }
 }
 
+// Exposed globally for Python to call with retry logic
+window.trySetProjectInfo = function(name, path, retryCount, callback) {
+    retryCount = retryCount || 0;
+    if (retryCount > 5) {
+        console.error('[CHAT] setProjectInfo failed after', retryCount, 'attempts');
+        if (callback) callback(false);
+        return;
+    }
+    
+    if (window.setProjectInfo) {
+        console.log('[CHAT] Python calling setProjectInfo (attempt', retryCount + 1, ')');
+        window.setProjectInfo(name, path);
+        if (callback) callback(true);
+    } else {
+        console.log('[CHAT] setProjectInfo not ready, retrying in 200ms...');
+        setTimeout(function() {
+            window.trySetProjectInfo(name, path, retryCount + 1, callback);
+        }, 200);
+    }
+};
+
 document.addEventListener('DOMContentLoaded', function () {
     initMarked();
     initTerminal();
@@ -554,10 +705,10 @@ function toggleSidebar() {
 
 function saveChats() {
     if (!currentProjectPath) {
-        console.log('[CHAT] WARNING: saveChats called without project path - skipping save!');
+        console.log('[CHAT] saveChats: currentProjectPath is empty, cannot save!');
         return;
     }
-    console.log('[CHAT] saveChats called, saving', chats.length, 'chats');
+    console.log('[CHAT] saveChats called, saving', chats.length, 'chats for path:', currentProjectPath);
     saveProjectChats(chats);
     renderHistoryList();
 }
@@ -2848,6 +2999,67 @@ document.addEventListener('DOMContentLoaded', function() {
     window.toggleExploration = toggleExploration;
     
     // --- Project Directory Awareness ---
+    // New method that receives chat data directly from Python
+    window.setProjectInfoWithChats = function(name, path, chatsJson) {
+        console.log('[CHAT] setProjectInfoWithChats called:', name, path);
+        console.log('[CHAT] Received chat data from Python:', chatsJson ? chatsJson.length + ' chars' : 'null');
+        
+        var indicator = document.getElementById('project-indicator');
+        var projectName = document.getElementById('project-name');
+        
+        if (!indicator || !projectName) {
+            console.log('[CHAT] DOM not ready, retrying in 300ms');
+            setTimeout(function() {
+                window.setProjectInfoWithChats(name, path, chatsJson);
+            }, 300);
+            return;
+        }
+        
+        if (name && name.trim()) {
+            projectName.textContent = name;
+            indicator.title = path || name;
+            indicator.style.display = 'inline-flex';
+            
+            // Always load project-specific chat history when path is provided
+            if (path) {
+                // Set the path first before loading
+                currentProjectPath = path;
+                console.log('[CHAT] ✅ currentProjectPath SET to:', currentProjectPath);
+                
+                // Parse the chats data received from Python
+                var savedChats = [];
+                try {
+                    if (chatsJson && chatsJson !== "[]") {
+                        savedChats = JSON.parse(chatsJson);
+                        console.log('[CHAT] Parsed', savedChats.length, 'chats from Python data');
+                    }
+                } catch (e) {
+                    console.error('[CHAT] Error parsing chats from Python:', e.message);
+                }
+                
+                if (savedChats.length > 0) {
+                    // We have saved chats - load them
+                    chats = savedChats;
+                    currentChatId = null;
+                    clearMessages();
+                    loadChat(chats[0].id);
+                    updateChatList();
+                    console.log('[CHAT] Loaded chat with', chats[0].messages.length, 'messages');
+                } else {
+                    // No saved chats, start fresh
+                    // No saved chats, start fresh
+                    chats = [];
+                    startNewChat();
+                    updateChatList();
+                    console.log('[CHAT] Started fresh chat for new project');
+                }
+            }
+        } else {
+            indicator.style.display = 'none';
+        }
+    };
+    
+    // Keep the old method for compatibility
     window.setProjectInfo = function(name, path) {
         console.log('[CHAT] setProjectInfo called:', name, path);
         
@@ -2869,29 +3081,53 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Always load project-specific chat history when path is provided
             if (path) {
+                // Normalize the path for consistent storage key generation
+                var normalizedPath = path.replace(/\\/g, '/').toLowerCase().trim();
+                var oldNormalizedPath = currentProjectPath ? currentProjectPath.replace(/\\/g, '/').toLowerCase().trim() : '';
+                
                 console.log('[CHAT] Current path:', currentProjectPath, 'New path:', path);
+                console.log('[CHAT] Normalized - Old:', oldNormalizedPath, 'New:', normalizedPath);
                 
-                // Set the path first before loading
-                currentProjectPath = path;
-                
-                // Load chats for this project
-                var savedChats = loadProjectChats();
-                console.log('[CHAT] Loaded', savedChats.length, 'chats from storage');
-                
-                if (savedChats.length > 0) {
-                    // We have saved chats - load them
-                    chats = savedChats;
-                    currentChatId = null;
-                    clearMessages();
-                    loadChat(chats[0].id);
-                    console.log('[CHAT] Loaded chat with', chats[0].messages.length, 'messages');
+                // Only reload if path actually changed
+                if (normalizedPath !== oldNormalizedPath) {
+                    console.log('[CHAT] Path changed, loading project chats...');
+                    
+                    // Set the path first before loading
+                    currentProjectPath = path;
+                    console.log('[CHAT] ✅ currentProjectPath SET to:', currentProjectPath);
+                    
+                    // Load chats for this project
+                    var savedChats = loadProjectChats();
+                    console.log('[CHAT] Loaded', savedChats.length, 'chats from storage');
+                    
+                    // If no chats loaded and bridge might not be ready, retry after a delay
+                    if (savedChats.length === 0) {
+                        console.log('[CHAT] No chats loaded, will retry file loading in 500ms...');
+                        setTimeout(function() {
+                            var retryChats = loadProjectChats();
+                            console.log('[CHAT] Retry: Loaded', retryChats.length, 'chats from storage');
+                            if (retryChats.length > 0) {
+                                chats = retryChats;
+                                currentChatId = null;
+                                clearMessages();
+                                loadChat(chats[0].id);
+                                renderHistoryList();
+                                console.log('[CHAT] Retry successful: Loaded chat with', chats[0].messages.length, 'messages');
+                            }
+                        }, 500);
+                    } else {
+                        // We have saved chats - load them
+                        chats = savedChats;
+                        currentChatId = null;
+                        clearMessages();
+                        loadChat(chats[0].id);
+                    renderHistoryList();
+                        console.log('[CHAT] Loaded chat with', chats[0].messages.length, 'messages');
+                    }
+                    renderHistoryList();
                 } else {
-                    // No saved chats - start fresh
-                    chats = [];
-                    startNewChat();
-                    console.log('[CHAT] Started fresh chat for new project');
+                    console.log('[CHAT] Path unchanged, keeping current chats');
                 }
-                renderHistoryList();
             }
         } else {
             indicator.style.display = 'none';

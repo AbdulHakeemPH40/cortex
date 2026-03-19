@@ -436,7 +436,7 @@ body.light #chatMessages {
 
 .message-bubble.user {
     align-self: flex-end;
-    max-width: 100%;
+    max-width: 80% !important;
 }
 
 .message-bubble.assistant {
@@ -5516,14 +5516,29 @@ body.light .permission-block {
 }
 
 /* ── USER BUBBLE LAYOUT ─────────────────────────────────────────── */
+.message-bubble.user {
+    max-width: 80% !important;
+}
+
 .user-msg-row {
-    display: inline-flex;
+    display: flex;
     align-items: flex-end;
     gap: 8px;
+    max-width: 100%;
 }
 
 .user-text-wrap {
     position: relative;
+    max-width: 100%;
+    flex: 1;
+}
+
+.message-bubble.user .message-content {
+    word-wrap: break-word !important;
+    word-break: break-word !important;
+    white-space: pre-wrap !important;
+    overflow-wrap: break-word !important;
+    max-width: 100% !important;
 }
 
 /* Avatar circle */

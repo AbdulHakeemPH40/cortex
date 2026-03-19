@@ -41,6 +41,10 @@ class ChatBridge(QObject):
     smart_paste_check_requested = pyqtSignal(str)  # pasted_text
     search_files_requested = pyqtSignal(str)       # @ mention file search
     
+    # Chat persistence signals
+    save_chats_requested = pyqtSignal(str, str)  # storage_key, json_data
+    load_chats_requested = pyqtSignal(str)       # storage_key
+    
     @pyqtSlot(str)
     def on_message_submitted(self, text):
         self.message_submitted.emit(text)
@@ -170,20 +174,72 @@ class ChatBridge(QObject):
     def on_js_error(self, error_json: str):
         """Handle JavaScript errors reported from the page."""
         log.warning(f'JS Error: {error_json}')
+        
+    # ── CHAT PERSISTENCE: File-based storage fallback ─────────────────
+    
+    @pyqtSlot(str, str, result=str)
+    def save_chats_to_file(self, storage_key: str, json_data: str) -> str:
+        """
+        Save chat data to a JSON file in the .cortex/chats directory.
+        This provides a reliable fallback when localStorage doesn't persist.
+        Returns: "OK" or error message.
+        """
+        try:
+            # Create .cortex directory if it doesn't exist
+            cortex_dir = os.path.join(os.path.expanduser("~"), ".cortex")
+            chats_dir = os.path.join(cortex_dir, "chats")
+            os.makedirs(chats_dir, exist_ok=True)
+            
+            # Save to file
+            file_path = os.path.join(chats_dir, f"{storage_key}.json")
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(json_data)
+            
+            log.debug(f'Chats saved to file: {file_path} ({len(json_data)} chars)')
+            return "OK"
+        except Exception as e:
+            log.error(f'Failed to save chats to file: {e}')
+            return f"ERROR: {str(e)}"
+    
+    @pyqtSlot(str, result=str)
+    def load_chats_from_file(self, storage_key: str) -> str:
+        """
+        Load chat data from a JSON file in the .cortex/chats directory.
+        Returns: JSON string or empty array if file doesn't exist.
+        """
+        try:
+            chats_dir = os.path.join(os.path.expanduser("~"), ".cortex", "chats")
+            file_path = os.path.join(chats_dir, f"{storage_key}.json")
+            
+            if os.path.exists(file_path):
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    data = f.read()
+                log.debug(f'Chats loaded from file: {file_path} ({len(data)} chars)')
+                return data
+            else:
+                # Return empty array if file doesn't exist
+                return "[]"
+        except Exception as e:
+            log.error(f'Failed to load chats from file: {e}')
+            return "[]"
 
 
 from PyQt6.QtWebEngineCore import QWebEnginePage
 
 class ConsolePage(QWebEnginePage):
     """Custom page that captures JavaScript console messages."""
-    def javaScriptConsoleMessage(self, level, message, line, source):
+    def javaScriptConsoleMessage(self, level, message, lineNumber, sourceID):
         # level is an enum: InfoMessageLevel=0, WarningMessageLevel=1, ErrorMessageLevel=2
         level_val = level.value if hasattr(level, 'value') else int(level)
         level_names = {0: 'INFO', 1: 'WARN', 2: 'ERROR'}
         level_name = level_names.get(level_val, 'LOG')
-        # Show [CHAT] tagged messages or errors
+        # Show [CHAT] tagged messages or errors - these are important for debugging
         if '[CHAT]' in message or level_val >= 2:
-            print(f"[JS {level_name}] {message}")
+            # Use bright colors for [CHAT] messages to make them visible
+            if '[CHAT]' in message:
+                print(f"\033[96m[JS {level_name}] {message}\033[0m")  # Cyan color
+            else:
+                print(f"[JS {level_name}] {message}")
 
 
 class AIChatWidget(QWidget):
@@ -218,6 +274,32 @@ class AIChatWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         
+        # CRITICAL: Configure persistent storage profile for localStorage to survive app restarts
+        from PyQt6.QtWebEngineCore import QWebEngineProfile
+        from pathlib import Path
+        
+        # Get or create persistent storage profile
+        profile = QWebEngineProfile.defaultProfile()
+        
+        # Set persistent storage path - THIS IS CRITICAL FOR CHAT PERSISTENCE
+        storage_path = str(Path.home() / ".cortex" / "webengine_storage")
+        print(f"[WEBVIEW] Setting persistent storage path: {storage_path}")
+        
+        # These settings ensure data persists across app restarts
+        try:
+            # Set cache type to disk (not memory)
+            profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.DiskHttpCache)
+            print("[WEBVIEW] HTTP cache set to disk")
+        except Exception as e:
+            print(f"[WEBVIEW] Could not set HTTP cache: {e}")
+        
+        # Enable persistent storage
+        try:
+            profile.setPersistentStoragePath(storage_path)
+            print(f"[WEBVIEW] Persistent storage path set: {storage_path}")
+        except Exception as e:
+            print(f"[WEBVIEW] Could not set persistent storage: {e}")
+        
         # Web View with custom page for console logging
         self._view = QWebEngineView()
         self._page = ConsolePage(self._view)
@@ -226,6 +308,10 @@ class AIChatWidget(QWidget):
         # Enable standard context menu and selection features
         self._view.settings().setAttribute(
             self._view.settings().WebAttribute.JavascriptCanAccessClipboard, True
+        )
+        # Enable localStorage persistence (critical for chat history)
+        self._view.settings().setAttribute(
+            self._view.settings().WebAttribute.LocalStorageEnabled, True
         )
         
         # Setup Channel
@@ -394,11 +480,60 @@ class AIChatWidget(QWidget):
         safe_name = json.dumps(name)
         safe_path = json.dumps(path)
         print(f"[PYTHON] set_project_info called: {name}, {path}")
-        # Longer delay to ensure DOM and JS are fully loaded
+        
+        # Set the path immediately in Python so saveChats can use it
+        self._current_project_path = path
+        
+        # Wait longer for WebView to fully load before calling JS
         from PyQt6.QtCore import QTimer
-        QTimer.singleShot(800, lambda: self._page.runJavaScript(
-            f"if(window.setProjectInfo) {{ console.log('[CHAT] Python calling setProjectInfo'); window.setProjectInfo({safe_name}, {safe_path}); }} else {{ console.log('[CHAT] ERROR: setProjectInfo not ready'); }}"
-        ))
+        # Try calling once after a longer delay
+        QTimer.singleShot(3000, lambda: self._actually_call_set_project_info(safe_name, safe_path))
+    
+    def _actually_call_set_project_info(self, safe_name: str, safe_path: str):
+        """Actually call the JS function after waiting."""
+        # First, load the chat data from file on the Python side
+        import hashlib
+        
+        # Generate storage key using same logic as JavaScript
+        if self._current_project_path:
+            normalized_path = self._current_project_path.replace('\\', '/').lower().strip()
+            hash_val = 0
+            for char in normalized_path:
+                hash_val = ((hash_val << 5) - hash_val) + ord(char)
+                # JavaScript's `hash & hash` is equivalent to just keeping the value
+                # but ensuring it stays within 32-bit signed integer range
+                hash_val = hash_val & 0xFFFFFFFF
+                # Convert to signed 32-bit if needed
+                if hash_val > 0x7FFFFFFF:
+                    hash_val = hash_val - 0x100000000
+            # Convert to hex to match JavaScript's toString(16)
+            hash_str = format(abs(hash_val), 'x')
+            storage_key = f"cortex_chats_{hash_str}"
+            
+            # Load chats from file
+            chats_data = self._bridge.load_chats_from_file(storage_key)
+            log.info(f"Loading chats for key {storage_key}: {len(chats_data)} chars")
+            
+            # Push both project info AND chat data to JavaScript
+            safe_chats = json.dumps(chats_data)
+            self._page.runJavaScript(
+                f"""
+                if(window.setProjectInfoWithChats) {{
+                    console.log('[CHAT] Python calling setProjectInfoWithChats');
+                    window.setProjectInfoWithChats({safe_name}, {safe_path}, {safe_chats});
+                }} else if(window.setProjectInfo) {{
+                    console.log('[CHAT] Python calling setProjectInfo (old method)');
+                    window.setProjectInfo({safe_name}, {safe_path});
+                }} else {{
+                    console.log('[CHAT] setProjectInfo still not ready');
+                }}
+                """
+            )
+        else:
+            # No project path, just set the info
+            self._page.runJavaScript(
+                f"if(window.setProjectInfo) {{ console.log('[CHAT] Python calling setProjectInfo'); window.setProjectInfo({safe_name}, {safe_path}); }} else {{ console.log('[CHAT] setProjectInfo still not ready'); }}"
+            )
 
     def clear_project_info(self):
         """Hide the project indicator."""

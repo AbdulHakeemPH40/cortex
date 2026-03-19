@@ -93,6 +93,29 @@
                 window.cortexLoaded = true;
                 document.body.classList.add('loaded');
             };
+            
+            // CRITICAL: Define trySetProjectInfo IMMEDIATELY for Python to call
+            window._pendingProjectInfo = null;
+            window.trySetProjectInfo = function(name, path, retryCount) {
+                retryCount = retryCount || 0;
+                console.log('[CHAT] trySetProjectInfo called (attempt', retryCount + 1, '):', name, path);
+                
+                if (retryCount > 10) {
+                    console.error('[CHAT] setProjectInfo failed after', retryCount, 'attempts');
+                    return;
+                }
+                
+                if (window.setProjectInfo) {
+                    console.log('[CHAT] ✅ Calling setProjectInfo now');
+                    window.setProjectInfo(name, path);
+                } else {
+                    console.log('[CHAT] setProjectInfo not ready, retrying in 300ms...');
+                    setTimeout(function() {
+                        window.trySetProjectInfo(name, path, retryCount + 1);
+                    }, 300);
+                }
+            };
+            console.log('[CHAT] ✅ window.trySetProjectInfo defined at page load');
         })();
     </script>
 </head>
