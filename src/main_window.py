@@ -389,6 +389,7 @@ class CortexMainWindow(QMainWindow):
         # --- Left Sidebar ---
         self._sidebar = SidebarWidget()
         self._sidebar.setMinimumWidth(44)
+        self._sidebar.setMaximumWidth(320)
         self._main_splitter.addWidget(self._sidebar)
 
         # --- Center: Editor + Terminal stacked vertically ---
@@ -439,10 +440,15 @@ class CortexMainWindow(QMainWindow):
         self._main_splitter.addWidget(self._right_panel)
 
         # Splitter sizes for 3 panels: sidebar | editor | AI chat
-        sidebar_w = self._settings.get("window", "sidebar_width") or 260
-        right_w = self._settings.get("window", "right_panel_width") or 320
-        self._main_splitter.setSizes([sidebar_w, 860, right_w])
+        sidebar_w = self._settings.get("window", "sidebar_width") or 220
+        right_w = self._settings.get("window", "right_panel_width") or 350
+        total_w = (self._settings.get("window", "width") or 1400)
+        center_w = max(400, total_w - sidebar_w - right_w)
+        self._main_splitter.setSizes([sidebar_w, center_w, right_w])
         self._main_splitter.setHandleWidth(1)
+        
+        # Limit AI chat panel max width to prevent it from getting too wide
+        self._right_panel.setMaximumWidth(480)
 
         root_layout.addWidget(self._main_splitter, 1)
 
@@ -1182,17 +1188,17 @@ class CortexMainWindow(QMainWindow):
     # Project & Events
     # ------------------------------------------------------------------
     def _on_project_opened(self, folder_path: str):
+        log.info(f"Project opened: {folder_path}")
+        
         # Set project root FIRST (this loads project-specific context)
         self._ai_agent.set_project_root(folder_path)
         
-        # Clear chat UI, history, and active file context
-        # This ensures we get fresh context for the new project, not old history
-        self._ai_chat.clear_chat()
-        self._ai_agent.clear_history()
-        self._ai_agent.clear_active_file()
+        # Reset codebase index for new project
+        self._codebase_index = None
         
-        # Also clear JavaScript localStorage chat history
-        self._ai_chat._view.page().runJavaScript("if(window.clearChatHistory) window.clearChatHistory();")
+        # Note: Chat history is now per-project, so we don't clear it.
+        # The AI chat will automatically load the history for this project.
+        self._ai_agent.clear_active_file()
         
         self._sidebar.set_project(folder_path)
         # Update all current terminal tabs to the new project directory
@@ -1205,7 +1211,7 @@ class CortexMainWindow(QMainWindow):
         self.setWindowTitle(f"Cortex AI Agent — {project_name}")
         self._ai_chat.add_system_message(f"📂 Opened: {folder_path}")
         
-        # Update project indicator in AI chat
+        # Update project indicator in AI chat (this triggers project-specific chat loading)
         self._ai_chat.set_project_info(project_name, folder_path)
         
         # Update welcome tab if it exists
@@ -1331,6 +1337,11 @@ class CortexMainWindow(QMainWindow):
         if not self.isMaximized():
             self._settings.set("window", "width", self.width())
             self._settings.set("window", "height", self.height())
+        # Save splitter panel widths so they restore correctly on next open
+        sizes = self._main_splitter.sizes()
+        if len(sizes) == 3:
+            self._settings.set("window", "sidebar_width", sizes[0])
+            self._settings.set("window", "right_panel_width", sizes[2])
         # Kill all terminal shells before Qt destroys the widgets
         for i in range(self._terminal_tabs.count()):
             term = self._terminal_tabs.widget(i)

@@ -516,7 +516,10 @@ _context_manager = None
 def get_context_manager(project_root: str = None) -> AIContextManager:
     """Get the singleton context manager instance."""
     global _context_manager
-    if _context_manager is None:
-        _context_manager = AIContextManager(project_root)
-        _context_manager.initialize_index()
+    # Create new instance if none exists OR if project changed
+    if _context_manager is None or (project_root and _context_manager.project_root != project_root):
+        if project_root:
+            _context_manager = AIContextManager(project_root)
+            _context_manager.initialize_index()
+            log.info(f"Context manager initialized for project: {project_root}")
     return _context_manager

@@ -2,7 +2,48 @@ var bridge = null;
 var term = null;
 var fitAddon = null;
 var currentChatId = null;
-var chats = JSON.parse(localStorage.getItem('cortex_chats') || '[]');
+var currentProjectPath = ''; // Current project path for isolated chat history
+var bridgeReady = false; // Flag to track if bridge is initialized
+
+// Get storage key based on current project
+function getStorageKey() {
+    if (currentProjectPath) {
+        // Use a simple hash function instead of btoa for better compatibility
+        var hash = 0;
+        for (var i = 0; i < currentProjectPath.length; i++) {
+            var char = currentProjectPath.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash = hash & hash; // Convert to 32bit integer
+        }
+        var hashStr = Math.abs(hash).toString(16);
+        var key = 'cortex_chats_' + hashStr;
+        console.log('[CHAT] Storage key for path "' + currentProjectPath + '" = ' + key);
+        return key;
+    }
+    console.log('[CHAT] No project path, using default key');
+    return 'cortex_chats';
+}
+
+// Load chats for current project
+function loadProjectChats() {
+    var key = getStorageKey();
+    var data = localStorage.getItem(key);
+    console.log('[CHAT] localStorage.getItem(' + key + '):', data ? 'found ' + data.length + ' chars' : 'null');
+    var parsed = JSON.parse(data || '[]');
+    console.log('[CHAT] Parsed', parsed.length, 'chats');
+    return parsed;
+}
+
+// Save chats for current project
+function saveProjectChats(chatList) {
+    var key = getStorageKey();
+    var data = JSON.stringify(chatList);
+    console.log('[CHAT] Saving to ' + key + ':', chatList.length, 'chats,', data.length, 'chars');
+    localStorage.setItem(key, data);
+}
+
+// Initialize chats as empty - will be loaded when project is set
+var chats = [];
 
 var currentAssistantMessage = null;
 var currentContent = "";
@@ -109,27 +150,21 @@ function initMarked() {
             code: function(token) {
                 var code = token.text || '';
                 var lang = (token.lang || 'text').toLowerCase();
-                
+
                 // Specialized Tree Rendering
                 if (lang === 'tree' || (lang === 'plaintext' && (code.includes('├──') || code.includes('└──')))) {
                     return renderProjectTree(code);
                 }
 
+                // Just render <pre><code> — let injectCodeBlockHeader() add the header
                 var highlighted;
-                try { 
-                    highlighted = hljs.highlight(code, { language: hljs.getLanguage(lang) ? lang : 'plaintext' }).value; 
-                } catch (e) { 
-                    highlighted = escapeHtml(code); 
+                try {
+                    highlighted = hljs.highlight(code, { language: hljs.getLanguage(lang) ? lang : 'plaintext' }).value;
+                } catch (e) {
+                    highlighted = escapeHtml(code);
                 }
-                var isShell = ['bash', 'sh', 'powershell', 'ps1', 'cmd', 'shell'].includes(lang);
-                var runBtn = isShell ? '<button class="run-btn" onclick="runCode(this)" title="Run in terminal"><i class="fas fa-play"></i> Run</button>' : '';
-                return '<div class="code-block-container">' +
-                    '<div class="code-header">' +
-                    '<span class="code-lang">' + lang.toUpperCase() + '</span>' +
-                    '<div class="code-actions">' + runBtn + '<button class="copy-btn" onclick="copyToClipboard(this)" title="Copy"><i class="fas fa-copy"></i> Copy</button></div>' +
-                    '</div>' +
-                    '<pre><code class="hljs language-' + lang + '">' + highlighted + '</code></pre>' +
-                    '</div>';
+                // Store lang as data attribute so injectCodeBlockHeader can read it
+                return '<pre data-lang="' + escapeHtml(lang) + '"><code class="hljs language-' + lang + '">' + highlighted + '</code></pre>';
             },
             
             table: function(token) {
@@ -289,7 +324,7 @@ function initMarked() {
     // Wrap in a nice container like the second image
     var html = '<div class="tree-container">';
     html += '<div class="tree-header">';
-    html += '<i class="fas fa-folder-open"></i> ';
+    html += '<svg class="tree-header-icon" viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/></svg>';
     html += '<span>' + (projectName || 'Project Structure') + '</span>';
     html += '</div>';
     html += '<div class="project-tree">' + treeContent + '</div>';
@@ -300,27 +335,27 @@ function initMarked() {
 
 function getFileIconForTree(ext, isDir) {
     if (isDir) {
-        return '<i class="fas fa-folder" style="color: #dcb67a;"></i>';
+        return '<svg viewBox="0 0 24 24" fill="#dcb67a" width="14" height="14"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>';
     }
     
     var iconMap = {
-        'py': '<i class="fab fa-python" style="color: #3776ab;"></i>',
-        'js': '<i class="fab fa-js" style="color: #f7df1e;"></i>',
-        'ts': '<i class="fab fa-js" style="color: #3178c6;"></i>',
-        'html': '<i class="fab fa-html5" style="color: #e34f26;"></i>',
-        'css': '<i class="fab fa-css3-alt" style="color: #264de4;"></i>',
-        'md': '<i class="fas fa-file-alt" style="color: #083fa1;"></i>',
-        'json': '<i class="fas fa-file-code" style="color: #292929;"></i>',
-        'yml': '<i class="fas fa-file-code" style="color: #cb171e;"></i>',
-        'yaml': '<i class="fas fa-file-code" style="color: #cb171e;"></i>',
-        'txt': '<i class="fas fa-file-alt" style="color: #6b7280;"></i>',
-        'sh': '<i class="fas fa-terminal" style="color: #4caf50;"></i>',
-        'bat': '<i class="fas fa-terminal" style="color: #4caf50;"></i>',
-        'ps1': '<i class="fas fa-terminal" style="color: #4caf50;"></i>',
-        'xml': '<i class="fas fa-file-code" style="color: #ff6600;"></i>'
+        'py': '<span class="ft-badge ft-py">PY</span>',
+        'js': '<span class="ft-badge ft-js">JS</span>',
+        'ts': '<span class="ft-badge ft-ts">TS</span>',
+        'html': '<span class="ft-badge ft-html">&lt;&gt;</span>',
+        'css': '<span class="ft-badge ft-css">CSS</span>',
+        'md': '<span class="ft-badge ft-md">MD</span>',
+        'json': '<span class="ft-badge ft-json">{ }</span>',
+        'yml': '<span class="ft-badge ft-yaml">YML</span>',
+        'yaml': '<span class="ft-badge ft-yaml">YML</span>',
+        'txt': '<span class="ft-badge ft-txt">TXT</span>',
+        'sh': '<span class="ft-badge ft-sh">SH</span>',
+        'bat': '<span class="ft-badge ft-sh">BAT</span>',
+        'ps1': '<span class="ft-badge ft-sh">PS1</span>',
+        'xml': '<span class="ft-badge ft-xml">XML</span>'
     };
     
-    return iconMap[ext] || '<i class="fas fa-file" style="color: #9ca3af;"></i>';
+    return iconMap[ext] || '<span class="ft-badge ft-default">📄;</span>';
 }
     
     // Configure marked with all options
@@ -355,12 +390,16 @@ function initBridge() {
             bridge.terminal_output.connect(function (data) { if (term) term.write(data); });
 
             console.log("Cortex: Bridge Successfully Connected.");
+            bridgeReady = true;
             var sendBtn = document.getElementById('sendBtn');
             if (sendBtn) sendBtn.disabled = false;
 
-            loadChatHistory();
-            if (chats.length > 0) loadChat(chats[0].id);
-            else startNewChat();
+            // Start with empty chat - project-specific history will load when setProjectInfo is called
+            console.log('Bridge ready, waiting for setProjectInfo to load project chats');
+            if (!currentProjectPath) {
+                // Only start a new chat if no project is set yet
+                startNewChat();
+            }
         });
     } catch (e) {
         console.error("Cortex: Error during QWebChannel init: " + e.message);
@@ -514,12 +553,17 @@ function toggleSidebar() {
 }
 
 function saveChats() {
-    localStorage.setItem('cortex_chats', JSON.stringify(chats));
+    if (!currentProjectPath) {
+        console.log('[CHAT] WARNING: saveChats called without project path - skipping save!');
+        return;
+    }
+    console.log('[CHAT] saveChats called, saving', chats.length, 'chats');
+    saveProjectChats(chats);
     renderHistoryList();
 }
 
 function loadChatHistory() {
-    chats = JSON.parse(localStorage.getItem('cortex_chats') || '[]');
+    chats = loadProjectChats();
     renderHistoryList();
 }
 
@@ -576,7 +620,10 @@ function startNewChat() {
         timestamp: Date.now()
     };
     chats.unshift(newChat);
-    saveChats();
+    // Only save if we have a project path set
+    if (currentProjectPath) {
+        saveChats();
+    }
     clearMessages();
 }
 
@@ -627,6 +674,31 @@ function appendMessage(text, sender, shouldSave) {
 
     if (sender === 'user') {
         content.textContent = text;
+
+        // ── Enhanced user bubble: text wrap + avatar ─────────────────
+        var row = document.createElement('div');
+        row.className = 'user-msg-row';
+
+        var textWrap = document.createElement('div');
+        textWrap.className = 'user-text-wrap';
+        textWrap.appendChild(content);
+
+        // Hover copy button (floats above bubble on hover)
+        var ub = document.createElement('button');
+        ub.className = 'user-copy-btn';
+        ub.title = 'Copy message';
+        ub.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg> Copy';
+        ub.onclick = function(e) { e.stopPropagation(); copyMessage(text, ub); };
+        textWrap.appendChild(ub);
+
+        // User avatar
+        var av = document.createElement('div');
+        av.className = 'user-avatar';
+        av.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>';
+
+        row.appendChild(textWrap);
+        row.appendChild(av);
+        bubble.appendChild(row);
     } else {
         try {
             if (typeof marked !== 'undefined' && marked.parse) {
@@ -638,20 +710,20 @@ function appendMessage(text, sender, shouldSave) {
             console.error('Markdown parse error in appendMessage:', e);
             content.innerHTML = formatMarkdownFallback(text);
         }
+
+        // Copy button for assistant messages
+        var copyBtn = document.createElement('button');
+        copyBtn.className = 'copy-msg-btn';
+        copyBtn.title = 'Copy Message';
+        copyBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>';
+        copyBtn.onclick = function(e) {
+            e.stopPropagation();
+            copyMessage(text, copyBtn);
+        };
+        bubble.appendChild(copyBtn);
+        bubble.appendChild(content);
     }
-    
-    // Add Copy Message Button
-    var copyBtn = document.createElement('button');
-    copyBtn.className = 'copy-msg-btn';
-    copyBtn.title = 'Copy Message';
-    copyBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>`;
-    copyBtn.onclick = function(e) {
-        e.stopPropagation();
-        copyMessage(text, copyBtn);
-    };
-    bubble.appendChild(copyBtn);
-    
-    bubble.appendChild(content);
+
     container.appendChild(bubble);
     smartScroll(container);
     
@@ -1174,43 +1246,74 @@ function getStatusBadge(type, info) {
 
 function showThinking() {
     activityStartTime = Date.now();
+    _thinkingStartTime = Date.now();
     var container = document.getElementById('chatMessages');
     if (!container) return;
-    
-    // Remove any existing thinking indicator
-    var existing = document.getElementById('thinking-indicator');
-    if (existing) existing.remove();
-    
-    // Create activity section if needed
-    if (!currentActivitySection || !document.body.contains(currentActivitySection)) {
+
+    // Create assistant message bubble if not exists (activity lives INSIDE it)
+    if (!currentAssistantMessage) {
+        currentAssistantMessage = document.createElement('div');
+        currentAssistantMessage.className = 'message-bubble assistant';
+        var content = document.createElement('div');
+        content.className = 'message-content';
+        currentAssistantMessage.appendChild(content);
+        currentContent = '';
+        container.appendChild(currentAssistantMessage);
+        var emptyState = document.getElementById('empty-state');
+        if (emptyState) emptyState.remove();
+    }
+
+    // Create activity section INSIDE the message bubble, BEFORE message-content
+    if (!currentActivitySection || !currentAssistantMessage.contains(currentActivitySection)) {
         currentActivitySection = document.createElement('div');
         currentActivitySection.className = 'activity-section';
         fileCount = 0;
-        
+
         var header = document.createElement('div');
         header.className = 'activity-header';
-        header.innerHTML = '<span class="activity-icon running">↻</span> <span class="activity-title">Exploring</span> <span class="activity-toggle">▼</span>';
-        currentActivitySection.appendChild(header);
-        
+        header.innerHTML =
+            '<span class="activity-icon running">↻</span>' +
+            '<span class="activity-title">Working</span>' +
+            '<span class="activity-toggle">▾</span>';
+        header.onclick = function() {
+            currentActivitySection.classList.toggle('collapsed');
+            var t = header.querySelector('.activity-toggle');
+            if (t) t.textContent = currentActivitySection.classList.contains('collapsed') ? '▸' : '▾';
+        };
+
         var list = document.createElement('div');
         list.className = 'activity-list';
+
+        currentActivitySection.appendChild(header);
         currentActivitySection.appendChild(list);
-        
-        container.appendChild(currentActivitySection);
+
+        // Insert BEFORE message-content so activity appears above text
+        var msgContent = currentAssistantMessage.querySelector('.message-content');
+        currentAssistantMessage.insertBefore(currentActivitySection, msgContent);
     }
-    
+
     var list = currentActivitySection.querySelector('.activity-list');
     if (!list) return;
-    
+
+    // ── FREEZE any previous thinking item ─────────────────────────────────
+    // Convert ALL existing thinking-indicator elements to static state
+    var prevThinking = document.getElementById('thinking-indicator');
+    if (prevThinking) {
+        prevThinking.removeAttribute('id');          // de-register old id
+        prevThinking.className = 'activity-item';    // removes 'thinking' class → stops blink
+        var dotsEl = prevThinking.querySelector('.thinking-dots');
+        if (dotsEl) dotsEl.textContent = '•';       // replace '...' with static bullet
+    }
+
+    // ── Add new ACTIVE thinking item at the bottom of the list ────────────
     var thinkingItem = document.createElement('div');
     thinkingItem.className = 'activity-item thinking';
     thinkingItem.id = 'thinking-indicator';
     thinkingItem.innerHTML = '<span class="thinking-dots">...</span> <span class="activity-text">Thinking</span>';
-    
     list.appendChild(thinkingItem);
-    smartScroll(container);
-    
+
     // Update thinking duration every second
+    if (thinkingInterval) clearInterval(thinkingInterval);
     thinkingInterval = setInterval(function() {
         var elapsed = Math.floor((Date.now() - activityStartTime) / 1000);
         var item = document.getElementById('thinking-indicator');
@@ -1218,6 +1321,8 @@ function showThinking() {
             item.querySelector('.activity-text').textContent = 'Thinking · ' + elapsed + 's';
         }
     }, 1000);
+
+    smartScroll(container);
 }
 
 function hideThinking() {
@@ -1226,10 +1331,11 @@ function hideThinking() {
         thinkingInterval = null;
     }
     var item = document.getElementById('thinking-indicator');
-    if (item && activityStartTime) {
-        var elapsed = Math.floor((Date.now() - activityStartTime) / 1000);
-        item.className = 'activity-item complete';
-        item.innerHTML = '<span class="file-icon think">💭</span> <span class="activity-text">Thought · ' + elapsed + 's</span>';
+    if (item) {
+        item.removeAttribute('id');             // de-register so no stale id lingers
+        item.className = 'activity-item';       // removes 'thinking' → stops blink
+        var dotsEl = item.querySelector('.thinking-dots');
+        if (dotsEl) dotsEl.textContent = '•'; // freeze to static bullet
     }
 }
 
@@ -1403,55 +1509,66 @@ var currentTodoList = [];
 
 function updateTodos(todos, mainTask) {
     if (!todos || !Array.isArray(todos)) return;
-    
-    var section = document.getElementById('todo-section');
-    var list = document.getElementById('todo-list');
-    var mainTaskEl = document.getElementById('todo-main-task');
-    var progressEl = document.getElementById('todo-progress-count');
-    
+
+    var section  = document.getElementById('todo-section');
+    var list     = document.getElementById('todo-list');
+    var previewEl = document.getElementById('todo-preview-text');
+    var countEl  = document.getElementById('todo-progress-count');
+
     if (!section || !list) return;
-    
-    // If no todos, hide section and clear
+
     if (todos.length === 0) {
         section.style.display = 'none';
         list.innerHTML = '';
-        if (mainTaskEl) mainTaskEl.textContent = '';
-        if (progressEl) progressEl.textContent = '0/0';
+        if (previewEl) previewEl.textContent = '';
+        if (countEl)   countEl.textContent   = '0/0';
         currentTodoList = [];
         return;
     }
-    
+
     currentTodoList = todos;
-    
-    // Show section
-    section.style.display = 'block';
-    
-    // Set main task title
-    if (mainTaskEl && mainTask) {
-        mainTaskEl.textContent = mainTask;
-    }
-    
-    // Count completed
+    section.style.display = 'flex';
+
+    var total     = todos.length;
     var completed = todos.filter(function(t) { return t.status === 'COMPLETE'; }).length;
-    var total = todos.length;
-    
-    if (progressEl) {
-        progressEl.textContent = completed + '/' + total;
+
+    if (countEl) countEl.textContent = completed + '/' + total;
+
+    // Header preview: first incomplete task text
+    if (previewEl) {
+        var firstIncomplete = null;
+        for (var i = 0; i < todos.length; i++) {
+            if (todos[i].status !== 'COMPLETE' && todos[i].status !== 'CANCELLED') {
+                firstIncomplete = todos[i];
+                break;
+            }
+        }
+        previewEl.textContent = (firstIncomplete || todos[0]).content;
     }
-    
-    // Clear and rebuild list
+
     list.innerHTML = '';
-    
     todos.forEach(function(todo) {
         var item = document.createElement('div');
-        var statusClass = getStatusClass(todo.status);
-        item.className = 'todo-item ' + statusClass;
-        item.setAttribute('data-id', todo.id);
-        
-        item.innerHTML = 
-            '<div class="todo-checkbox"></div>' +
-            '<span class="todo-text">' + escapeHtml(todo.content) + '</span>';
-        
+        var statusLow = todo.status.toLowerCase().replace('_', '');
+        item.className = 'todo-item todo-' + statusLow;
+        item.dataset.id = todo.id;
+
+        var iconHtml = '';
+        switch (todo.status) {
+            case 'COMPLETE':
+                iconHtml = '<div class="todo-icon todo-icon-done"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><polyline points="20 6 9 17 4 12"/></svg></div>';
+                break;
+            case 'IN_PROGRESS':
+                iconHtml = '<div class="todo-icon todo-icon-progress"><svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="5"/></svg></div>';
+                break;
+            case 'CANCELLED':
+                iconHtml = '<div class="todo-icon todo-icon-cancelled"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></div>';
+                break;
+            default:
+                iconHtml = '<div class="todo-icon todo-icon-pending"></div>';
+        }
+
+        item.innerHTML = iconHtml + '<span class="todo-text">' + escapeHtml(todo.content) + '</span>';
         list.appendChild(item);
     });
 }
@@ -1467,8 +1584,15 @@ function getStatusClass(status) {
 
 function toggleTodoSection() {
     var section = document.getElementById('todo-section');
-    if (section) {
-        section.classList.toggle('collapsed');
+    var body    = document.getElementById('todo-body');
+    if (!section || !body) return;
+    var isExpanded = section.classList.contains('expanded');
+    if (isExpanded) {
+        section.classList.remove('expanded');
+        body.style.display = 'none';
+    } else {
+        section.classList.add('expanded');
+        body.style.display = 'block';
     }
 }
 
@@ -1518,6 +1642,11 @@ function onChunk(chunk) {
     var container = document.getElementById('chatMessages');
     if (!container) return;
 
+    // ── Set thinking start time on first real content chunk ──────────────
+    if (!_thinkingStartTime && chunk.trim() && !chunk.startsWith('<')) {
+        _thinkingStartTime = Date.now();
+    }
+
     // Check for permission block (tool approval request)
     if (chunk.includes('<permission>')) {
         var permMatch = chunk.match(/<permission>\n?([\s\S]*?)\n?<\/permission>/);
@@ -1527,80 +1656,61 @@ function onChunk(chunk) {
                 renderPermissionBlock(permData);
                 return;
             } catch (e) {
-                console.error("Failed to parse permission block:", e);
+                console.error('Failed to parse permission block:', e);
             }
         }
     }
 
     // Check if this is an exploration item (tool execution feedback)
-    // These come as emojis: 📁 📄 ✏️ 🔧 ⚙️
     var explorationMatch = chunk.match(/^(📁|📄|✏️|🔧|⚙️)\s*`?([^`\n]+)`?/);
     if (explorationMatch) {
-        var icon = explorationMatch[1];
-        var text = explorationMatch[2].trim();
-        addExplorationItem(icon, text);
-        // Don't hide thinking yet - more exploration might come
+        addExplorationItem(explorationMatch[1], explorationMatch[2].trim());
         return;
     }
-    
-    // Check for tool result lines (→ or ❌)
+
+    // Check for tool result lines
     var toolResultMatch = chunk.match(/^(\s*)(→|✓|✏️|🔧|🔍|📊|📋|❌)\s*(.+)$/);
     if (toolResultMatch) {
-        var icon = toolResultMatch[2];
-        var text = toolResultMatch[3].trim();
-        addToolResult(icon, text);
-        return;
-    }
-    
-    // Check for exploration section markers
-    if (chunk.includes('<exploration>')) {
-        updateThinkingText("Exploring project context...");
-        return;
-    }
-    if (chunk.includes('</exploration>')) {
-        return; // Just skip the closing tag
-    }
-    
-    // Skip file_edited tags
-    if (chunk.includes('<file_edited>') || chunk.includes('</file_edited>')) {
+        addToolResult(toolResultMatch[2], toolResultMatch[3].trim());
         return;
     }
 
-    // ── Task Summary: suppress from streamed output, buffer for final card ──
-    if (chunk.includes('<task_summary>')) {
-        _inTaskSummary = true;
+    // Skip structural exploration markers (don't show raw XML)
+    if (chunk.trim() === '<exploration>' || chunk.trim() === '</exploration>') return;
+    if (chunk.includes('<exploration>')) {
+        updateThinkingText('Exploring project context...');
+        return;
     }
+    if (chunk.includes('</exploration>')) return;
+
+    // ── Task Summary: buffer for final card, suppress from stream ────────
+    if (chunk.includes('<task_summary>')) _inTaskSummary = true;
     if (_inTaskSummary) {
         _taskSummaryBuffer += chunk;
-        if (chunk.includes('</task_summary>')) {
-            _inTaskSummary = false; // stay buffered; card rendered in onComplete
-        }
-        return; // never show raw task_summary JSON in the chat bubble
-    }
-    
-    // If we get actual content, hide thinking and start message
-    if (chunk.trim() && !chunk.startsWith('<') && !chunk.includes('→')) {
-        removeThinkingIndicator();
+        if (chunk.includes('</task_summary>')) _inTaskSummary = false;
+        return;
     }
 
-    // Terminal output is now shown inline in chat via showTerminalOutputInChat()
-    // The terminal panel is only shown when explicitly requested
+    // Hide thinking on first real content
+    if (chunk.trim() && !chunk.startsWith('<')) {
+        removeThinkingIndicator();
+    }
 
     if (!currentAssistantMessage) {
-        // Remove thinking indicator when first real content arrives
-        removeThinkingIndicator();
-        
         currentAssistantMessage = document.createElement('div');
         currentAssistantMessage.className = 'message-bubble assistant';
         var content = document.createElement('div');
         content.className = 'message-content';
         currentAssistantMessage.appendChild(content);
         container.appendChild(currentAssistantMessage);
-        currentContent = "";
+        currentContent = '';
+        var emptyState = document.getElementById('empty-state');
+        if (emptyState) emptyState.remove();
     }
 
+    // Accumulate raw content (INCLUDING custom tags — stripped at render time)
     currentContent += chunk;
-    
+
     // Throttled Rendering
     if (!renderPending) {
         renderPending = true;
@@ -1619,36 +1729,48 @@ function updateStreamingUI() {
     if (!contentDiv) return;
 
     try {
-        // Ensure marked is available and properly configured
-        if (typeof marked === 'undefined' || !marked.parse) {
-            console.warn('marked.js not available, using fallback');
-            contentDiv.innerHTML = formatMarkdownFallback(currentContent);
-            return;
+        // ── 1. Strip ALL custom tags before markdown render ─────────────────
+        var cleanText = currentContent
+            .replace(/<file_edited>[\s\S]*?<\/file_edited>/g, '')
+            .replace(/<exploration>[\s\S]*?<\/exploration>/g, '')
+            .replace(/<task_summary>[\s\S]*?<\/task_summary>/g, '')
+            .replace(/<tasklist>[\s\S]*?<\/tasklist>/g, '')
+            .replace(/<plan>[\s\S]*?<\/plan>/g, '')
+            .replace(/<permission>[\s\S]*?<\/permission>/g, '')
+            .trim();
+
+        // ── 2. Parse markdown ────────────────────────────────────────────
+        var html = '';
+        if (typeof marked !== 'undefined' && marked.parse) {
+            html = marked.parse(cleanText);
+        } else {
+            html = formatMarkdownFallback(cleanText);
         }
-        
-        // Parse markdown with marked.js
-        var html = marked.parse(currentContent);
-        if (!html || html === currentContent) {
-            // marked didn't parse, use fallback
-            html = formatMarkdownFallback(currentContent);
-        }
-        
+
         // Highlight file creation mentions
         html = highlightFileCreations(html);
-        
         contentDiv.innerHTML = html;
-        
-        // Apply syntax highlighting to code blocks
+
+        // ── 3. Syntax highlight (skip already-highlighted blocks) ──────────
         if (window.hljs) {
             contentDiv.querySelectorAll('pre code').forEach(function(block) {
-                hljs.highlightElement(block);
+                if (!block.dataset.highlighted) {
+                    hljs.highlightElement(block);
+                    block.dataset.highlighted = '1';
+                }
             });
         }
+
+        // ── 4. Inject code block headers on new blocks ─────────────────
+        contentDiv.querySelectorAll('pre code').forEach(function(block) {
+            injectCodeBlockHeader(block);
+        });
+
     } catch (e) {
         console.error('Markdown parse error:', e);
         contentDiv.innerHTML = formatMarkdownFallback(currentContent);
     }
-    
+
     smartScroll(container);
 }
 
@@ -1731,60 +1853,76 @@ function processInlineMarkdown(text) {
 }
 
 function onComplete() {
-    // Remove thinking indicator if still present
     removeThinkingIndicator();
-    
+    hideThinking();
+
     if (currentAssistantMessage) {
-        // Strip <task_summary> block from visible text before final render
-        var text = currentContent.replace(/<task_summary>[\s\S]*?<\/task_summary>/g, '').trim();
-        var chat = chats.find(function (c) { return c.id === currentChatId; });
+        // ── Strip all custom tags for display ─────────────────────────────
+        var displayText = currentContent
+            .replace(/<task_summary>[\s\S]*?<\/task_summary>/g, '')
+            .replace(/<file_edited>[\s\S]*?<\/file_edited>/g, '')
+            .replace(/<exploration>[\s\S]*?<\/exploration>/g, '')
+            .replace(/<tasklist>[\s\S]*?<\/tasklist>/g, '')
+            .replace(/<plan>[\s\S]*?<\/plan>/g, '')
+            .replace(/<permission>[\s\S]*?<\/permission>/g, '')
+            .trim();
+
+        // ── Save to history ────────────────────────────────────────────
+        var chat = chats.find(function(c) { return c.id === currentChatId; });
         if (chat) {
-            chat.messages.push({ text: text, sender: 'assistant' });
+            chat.messages.push({ text: displayText, sender: 'assistant' });
             saveChats();
         }
-        
-        // Render final content (without task_summary block)
+
+        // ── Final markdown render ───────────────────────────────────────
         var contentDiv = currentAssistantMessage.querySelector('.message-content');
         if (contentDiv) {
             try {
-                if (typeof marked !== 'undefined' && marked.parse) {
-                    contentDiv.innerHTML = marked.parse(text);
-                } else {
-                    contentDiv.innerHTML = formatMarkdownFallback(text);
-                }
+                contentDiv.innerHTML = (typeof marked !== 'undefined' && marked.parse)
+                    ? marked.parse(displayText)
+                    : formatMarkdownFallback(displayText);
             } catch (e) {
-                console.error('Markdown parse error in onComplete:', e);
-                contentDiv.innerHTML = formatMarkdownFallback(text);
+                contentDiv.innerHTML = formatMarkdownFallback(displayText);
             }
-            handlePostRenderSpecialTags(contentDiv);
+
+            // ── Code block headers + syntax highlight ───────────────────
+            contentDiv.querySelectorAll('pre code').forEach(function(block) {
+                if (window.hljs) hljs.highlightElement(block);
+                injectCodeBlockHeader(block);
+            });
+        }
+
+        // ── File edit cards ← KEY FIX ────────────────────────────────
+        renderCustomTagsInto(currentAssistantMessage, currentContent);
+
+        // ── Thought duration badge ──────────────────────────────────
+        var secs = getThoughtSeconds();
+        if (secs >= 1) {
+            currentAssistantMessage.appendChild(buildThoughtBadge(secs));
+        }
+        _thinkingStartTime = null;
+
+        // ── Task summary card ───────────────────────────────────────
+        var summaryText = _taskSummaryBuffer || currentContent;
+        var summaryMatch = summaryText.match(/<task_summary>([\s\S]*?)<\/task_summary>/);
+        if (summaryMatch) {
+            try {
+                var sd = JSON.parse(summaryMatch[1].trim());
+                if (sd && sd.files && sd.files.length > 0) showCreatedFilesCard(sd);
+            } catch (e) { /* silent */ }
         }
 
         if (window.MathJax && window.MathJax.typeset) {
             window.MathJax.typeset([currentAssistantMessage]);
         }
-
-        // ── Render Created Files card if task_summary was present ──
-        var summaryText = _taskSummaryBuffer || currentContent;
-        var summaryMatch = summaryText.match(/<task_summary>([\s\S]*?)<\/task_summary>/);
-        if (summaryMatch) {
-            try {
-                var summaryData = JSON.parse(summaryMatch[1].trim());
-                if (summaryData && Array.isArray(summaryData.files) && summaryData.files.length > 0) {
-                    showCreatedFilesCard(summaryData);
-                }
-            } catch (e) {
-                console.warn('Could not parse task_summary JSON:', e);
-            }
-        }
     }
-    
-    // Reset for next message
+
+    // ── Reset state ────────────────────────────────────────────────
     currentAssistantMessage = null;
-    currentContent = "";
-    _taskSummaryBuffer = "";
-    _inTaskSummary = false;
-    
-    // Hide stop button, show send button
+    currentContent          = '';
+    _taskSummaryBuffer      = '';
+    _inTaskSummary          = false;
+
     var sendBtn = document.getElementById('sendBtn');
     var stopBtn = document.getElementById('stopBtn');
     if (sendBtn) sendBtn.style.display = 'flex';
@@ -1908,24 +2046,27 @@ function handleExplorationTag() {
 function handleFileEditedTag() {
     var startTag = '<file_edited>';
     var endTag = '</file_edited>';
-    var startIndex = currentContent.indexOf(startTag);
-    var endIndex = currentContent.indexOf(endTag);
-    
-    var contentDiv = currentAssistantMessage.querySelector('.message-content');
-    
-    if (startIndex !== -1) {
-        var textBefore = currentContent.substring(0, startIndex);
-        var fileData = "";
-        
-        if (endIndex !== -1) {
-            fileData = currentContent.substring(startIndex + startTag.length, endIndex);
-            var textAfter = currentContent.substring(endIndex + endTag.length);
-            contentDiv.innerHTML = marked.parse(textBefore) + renderFileEditedBlock(fileData) + marked.parse(textAfter);
-        } else {
-            fileData = currentContent.substring(startIndex + startTag.length);
-            contentDiv.innerHTML = marked.parse(textBefore) + renderFileEditedBlock(fileData, true);
-        }
-    }
+
+    var contentDiv = currentAssistantMessage ? currentAssistantMessage.querySelector('.message-content') : null;
+    if (!contentDiv) return;
+
+    // Strip file_edited tags from visible text
+    var cleanText = currentContent
+        .replace(/<file_edited>[\s\S]*?<\/file_edited>/g, '')
+        .trim();
+    try {
+        contentDiv.innerHTML = (typeof marked !== 'undefined' && marked.parse)
+            ? marked.parse(cleanText) : cleanText;
+    } catch(e) { contentDiv.innerHTML = cleanText; }
+
+    // Inject code block headers
+    contentDiv.querySelectorAll('pre code').forEach(function(block) {
+        if (window.hljs) hljs.highlightElement(block);
+        injectCodeBlockHeader(block);
+    });
+
+    // Append .fec cards below message content
+    renderCustomTagsInto(currentAssistantMessage, currentContent);
 }
 
 function handleTaskSummaryTag() {
@@ -1999,19 +2140,24 @@ function renderFileEditedBlock(data, isStreaming) {
     
     // Parse change stats if available (+X -Y format)
     var changeStats = '';
-    if (lines.length > 1 && lines[1].match(/\+\d+\s+-\d+/)) {
-        changeStats = lines[1];
+    if (lines.length > 1 && lines[1].match(/[+-]\d+/)) {
+        changeStats = lines[1].trim();
     }
     
-    // Simple inline display like screenshot
-    return `
-<div class="file-change-inline">
-    <span class="change-icon">📝</span>
-    <span class="change-file">${fileName}</span>
-    ${changeStats ? `<span class="change-stats">${changeStats}</span>` : ''}
-    <span class="change-status">Applied</span>
-</div>
-    `;
+    var escapedPath = filePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    
+    return '<div class="file-edit-card" data-path="' + escapeHtml(filePath) + '">' +
+        '<div class="fec-left">' +
+          '<svg class="fec-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>' +
+          '<button class="fec-filename" onclick="openFileInEditor(\'' + escapedPath + '\')">' + escapeHtml(fileName) + '</button>' +
+          (changeStats ? '<span class="fec-stats">' + escapeHtml(changeStats) + '</span>' : '') +
+        '</div>' +
+        '<div class="fec-actions">' +
+          '<button class="fec-btn fec-diff" onclick="requestDiff(\'' + escapedPath + '\')" title="View diff">Diff</button>' +
+          '<button class="fec-btn fec-accept" onclick="acceptFileEdit(\'' + escapedPath + '\', this)" title="Accept changes">✓</button>' +
+          '<button class="fec-btn fec-reject" onclick="rejectFileEdit(\'' + escapedPath + '\', this)" title="Reject changes">✗</button>' +
+        '</div>' +
+    '</div>';
 }
 
 // Task Summary Card - displays completion summary
@@ -2356,6 +2502,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         trigger.onclick = function(e) {
             e.stopPropagation();
+            menu.style.display = ''; // clear any inline override first
             menu.classList.toggle('show');
         };
 
@@ -2368,17 +2515,16 @@ document.addEventListener('DOMContentLoaded', function() {
                 
                 if (modeText) modeText.innerText = val;
                 
-                // Update trigger icon
-                if (modeIcon) {
-                    if (val === 'Agent') modeIcon.className = 'fas fa-infinity icon-agent';
-                    else if (val === 'Ask') modeIcon.className = 'fas fa-comment-dots';
-                    else if (val === 'Plan') modeIcon.className = 'fas fa-magic';
+                // Update trigger icon (SVG swap)
+                var svgWrap = trigger.querySelector('svg.mode-icon');
+                if (svgWrap) {
+                    if (val === 'Agent') svgWrap.innerHTML = '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 4c1.93 0 3.5 1.57 3.5 3.5S13.93 13 12 13s-3.5-1.57-3.5-3.5S10.07 6 12 6zm0 14c-2.03 0-4.43-.82-6.14-2.88C7.55 15.8 9.68 15 12 15s4.45.8 6.14 2.12C16.43 19.18 14.03 20 12 20z"/>';
+                    else if (val === 'Ask') svgWrap.innerHTML = '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>';
+                    else if (val === 'Plan') svgWrap.innerHTML = '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>';
                 }
 
                 if (bridge) bridge.on_mode_changed(val);
-                // Close dropdown immediately
-                menu.classList.remove('show');
-                menu.style.display = 'none';
+                menu.classList.remove('show'); // class only, no inline style
             };
         });
     }
@@ -2703,15 +2849,50 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // --- Project Directory Awareness ---
     window.setProjectInfo = function(name, path) {
+        console.log('[CHAT] setProjectInfo called:', name, path);
+        
         var indicator = document.getElementById('project-indicator');
         var projectName = document.getElementById('project-name');
         
-        if (!indicator || !projectName) return;
+        if (!indicator || !projectName) {
+            console.log('[CHAT] DOM not ready, retrying in 300ms');
+            setTimeout(function() {
+                window.setProjectInfo(name, path);
+            }, 300);
+            return;
+        }
         
         if (name && name.trim()) {
             projectName.textContent = name;
             indicator.title = path || name;
             indicator.style.display = 'inline-flex';
+            
+            // Always load project-specific chat history when path is provided
+            if (path) {
+                console.log('[CHAT] Current path:', currentProjectPath, 'New path:', path);
+                
+                // Set the path first before loading
+                currentProjectPath = path;
+                
+                // Load chats for this project
+                var savedChats = loadProjectChats();
+                console.log('[CHAT] Loaded', savedChats.length, 'chats from storage');
+                
+                if (savedChats.length > 0) {
+                    // We have saved chats - load them
+                    chats = savedChats;
+                    currentChatId = null;
+                    clearMessages();
+                    loadChat(chats[0].id);
+                    console.log('[CHAT] Loaded chat with', chats[0].messages.length, 'messages');
+                } else {
+                    // No saved chats - start fresh
+                    chats = [];
+                    startNewChat();
+                    console.log('[CHAT] Started fresh chat for new project');
+                }
+                renderHistoryList();
+            }
         } else {
             indicator.style.display = 'none';
         }
@@ -2724,200 +2905,724 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     };
     
-    // --- Qoder-Style TODO Section Functions ---
-    window.todoItems = [];
-    window.changedFiles = [];
-    
-    window.toggleTodoSection = function() {
-        var section = document.getElementById('todo-section');
-        if (section) {
-            section.classList.toggle('collapsed');
-        }
-    };
-    
-    window.toggleChangedFilesSection = function() {
+    // --- Changed Files registry (new guide-style) ---
+    window._cfsCollapsed = true;
+
+    // Expose global toggleChangedFiles for header onclick
+    window.toggleChangedFiles = function() {
         var section = document.getElementById('changed-files-section');
-        if (section) {
-            section.classList.toggle('collapsed');
-        }
-    };
-    
-    window.setTodos = function(todos) {
-        // todos: [{id, content, status: 'PENDING'|'IN_PROGRESS'|'COMPLETE'}]
-        window.todoItems = todos || [];
-        renderTodos();
-    };
-    
-    window.addTodo = function(id, content, status) {
-        var existing = window.todoItems.find(function(t) { return t.id === id; });
-        if (existing) {
-            existing.content = content;
-            existing.status = status;
+        var body    = document.getElementById('cfs-body');
+        if (!section || !body) return;
+        window._cfsCollapsed = !window._cfsCollapsed;
+        if (window._cfsCollapsed) {
+            section.classList.remove('expanded');
+            body.style.display = 'none';
         } else {
-            window.todoItems.push({ id: id, content: content, status: status || 'PENDING' });
-        }
-        renderTodos();
-    };
-    
-    window.updateTodoStatus = function(id, status) {
-        var todo = window.todoItems.find(function(t) { return t.id === id; });
-        if (todo) {
-            todo.status = status;
-            renderTodos();
+            section.classList.add('expanded');
+            body.style.display = 'block';
         }
     };
-    
-    window.clearTodos = function() {
-        window.todoItems = [];
-        renderTodos();
-    };
-    
-    function renderTodos() {
-        var section = document.getElementById('todo-section');
-        var list = document.getElementById('todo-list');
-        var status = document.getElementById('todo-status');
-        
-        if (!section || !list) return;
-        
-        if (window.todoItems.length === 0) {
-            section.style.display = 'none';
-            return;
-        }
-        
-        section.style.display = 'block';
-        
-        var completed = window.todoItems.filter(function(t) { return t.status === 'COMPLETE'; }).length;
-        var total = window.todoItems.length;
-        
-        if (status) {
-            if (completed === total && total > 0) {
-                status.textContent = total + '/' + total + ' done';
-            } else {
-                status.textContent = completed + '/' + total + ' done';
-            }
-        }
-        
-        list.innerHTML = '';
-        window.todoItems.forEach(function(todo) {
-            var item = document.createElement('div');
-            item.className = 'todo-item';
-            if (todo.status === 'COMPLETE') item.className += ' completed';
-            if (todo.status === 'IN_PROGRESS') item.className += ' in-progress';
-            
-            var statusClass = todo.status.toLowerCase().replace('_', '-');
-            var statusText = todo.status === 'IN_PROGRESS' ? 'In Progress' : todo.status.charAt(0) + todo.status.slice(1).toLowerCase();
-            
-            item.innerHTML = 
-                '<div class="todo-checkbox"></div>' +
-                '<span class="todo-text">' + escapeHtml(todo.content) + '</span>' +
-                '<span class="todo-item-status ' + statusClass + '">' + statusText + '</span>';
-            
-            list.appendChild(item);
-        });
-    }
-    
-    // --- Changed Files Functions ---
-    window.setChangedFiles = function(files) {
-        // files: [{path, name, status: 'modified'|'accepted'|'rejected', type}]
-        window.changedFiles = files || [];
-        renderChangedFiles();
-    };
-    
-    window.addChangedFile = function(path, name, status, type) {
-        var existing = window.changedFiles.find(function(f) { return f.path === path; });
-        if (existing) {
-            existing.status = status;
-        } else {
-            window.changedFiles.push({ path: path, name: name || path.split(/[\\/]/).pop(), status: status || 'modified', type: type || 'file' });
-        }
-        renderChangedFiles();
-    };
-    
-    window.updateFileStatus = function(path, status) {
-        var file = window.changedFiles.find(function(f) { return f.path === path; });
-        if (file) {
-            file.status = status;
-            renderChangedFiles();
-        }
-    };
-    
-    window.clearChangedFiles = function() {
-        window.changedFiles = [];
-        renderChangedFiles();
-    };
-    
-    function renderChangedFiles() {
-        var section = document.getElementById('changed-files-section');
-        var list = document.getElementById('changed-files-list');
-        var status = document.getElementById('changed-files-status');
-        var actions = document.getElementById('changed-files-actions');
-        
-        if (!section || !list) return;
-        
-        if (window.changedFiles.length === 0) {
-            section.style.display = 'none';
-            return;
-        }
-        
-        section.style.display = 'block';
-        
-        var allAccepted = window.changedFiles.every(function(f) { return f.status === 'accepted'; });
-        var hasPending = window.changedFiles.some(function(f) { return f.status === 'modified'; });
-        
-        if (status) {
-            status.textContent = allAccepted ? 'Accepted' : (hasPending ? 'Pending' : 'Mixed');
-            status.style.color = allAccepted ? '#3fb950' : '#d19a66';
-        }
-        
-        if (actions) {
-            actions.style.display = hasPending ? 'flex' : 'none';
-        }
-        
-        list.innerHTML = '';
-        window.changedFiles.forEach(function(file) {
-            var item = document.createElement('div');
-            item.className = 'changed-file-item';
-            
-            var icon = getFileIcon(file.type || file.name);
-            var statusClass = file.status;
-            var statusDisplay = file.status === 'modified' ? 'M' : (file.status === 'accepted' ? 'Accepted' : file.status);
-            
-            item.innerHTML = 
-                '<span class="file-type-icon">' + icon + '</span>' +
-                '<span class="changed-file-name" onclick="window.openFile(\'' + file.path.replace(/\\/g, '\\\\').replace(/'/g, "\\'") + '\')">' + escapeHtml(file.name) + '</span>' +
-                '<span class="changed-file-status ' + statusClass + '">' + statusDisplay + '</span>';
-            
-            list.appendChild(item);
-        });
-    }
-    
-    function getFileIcon(nameOrType) {
-        var ext = (nameOrType || '').split('.').pop().toLowerCase();
-        var icons = {
-            'py': '<i class="fab fa-python" style="color:#3776ab;"></i>',
-            'js': '<i class="fab fa-js" style="color:#f7df1e;"></i>',
-            'ts': '<i class="fab fa-js" style="color:#3178c6;"></i>',
-            'html': '<i class="fab fa-html5" style="color:#e34f26;"></i>',
-            'css': '<i class="fab fa-css3" style="color:#1572b6;"></i>',
-            'json': '<i class="fas fa-brackets-curly" style="color:#cbcb41;"></i>',
-            'md': '<i class="fab fa-markdown" style="color:#083fa1;"></i>'
-        };
-        return icons[ext] || '<i class="fas fa-file-code" style="color:var(--accent);"></i>';
-    }
-    
-    window.acceptAllChanges = function() {
-        window.changedFiles.forEach(function(f) { f.status = 'accepted'; });
-        renderChangedFiles();
-        if (bridge && bridge.on_accept_all_changes) {
-            bridge.on_accept_all_changes();
-        }
-    };
-    
-    window.rejectAllChanges = function() {
-        window.changedFiles.forEach(function(f) { f.status = 'rejected'; });
-        renderChangedFiles();
-        if (bridge && bridge.on_reject_all_changes) {
-            bridge.on_reject_all_changes();
-        }
-    };
+
+    // Legacy setChangedFiles kept for compat
+    window.setChangedFiles = function() {};
+    window.clearChangedFiles = function() {};
+    window.updateFileStatus = function() {};
 });
+
+// ================================================================
+// NEW GUIDE-STYLE CHANGED FILES PANEL
+// ================================================================
+var _changedFiles = {};  // path -> {added, removed, status, editType}
+
+function addChangedFile(filePath, added, removed, editType) {
+    editType = editType || 'M';
+
+    if (_changedFiles[filePath]) {
+        _changedFiles[filePath].added   = added;
+        _changedFiles[filePath].removed = removed;
+        _refreshCfsHeader();
+        return;
+    }
+
+    _changedFiles[filePath] = { added: added, removed: removed, status: 'pending', editType: editType };
+
+    var section = document.getElementById('changed-files-section');
+    var list    = document.getElementById('cfs-list');
+    if (!section || !list) return;
+
+    section.style.display = 'flex';
+
+    var fileName    = filePath.split('/').pop().split('\\').pop();
+    var esc         = filePath.replace(/'/g, "\\'");
+    var badgeClass  = { 'M': 'cfs-badge-m', 'C': 'cfs-badge-c', 'D': 'cfs-badge-d' }[editType] || 'cfs-badge-m';
+    var addedHtml   = added   > 0 ? '<span class="cfs-stat-added">+' + added   + '</span>' : '';
+    var removedHtml = removed > 0 ? '<span class="cfs-stat-removed">-' + removed + '</span>' : '';
+
+    var row = document.createElement('div');
+    row.className = 'cfs-row';
+    row.dataset.path = filePath;
+    row.innerHTML =
+        '<div class="cfs-row-left">' +
+            '<div class="cfs-file-icon">' +
+                '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+                    '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>' +
+                    '<polyline points="14 2 14 8 20 8"/>' +
+                '</svg>' +
+            '</div>' +
+            '<button class="cfs-filename" onclick="openFileInEditor(\'' + esc + '\')" title="' + escapeHtml(filePath) + '">' +
+                escapeHtml(fileName) +
+            '</button>' +
+            addedHtml + removedHtml +
+            '<span class="cfs-badge ' + badgeClass + '">' + editType + '</span>' +
+        '</div>' +
+        '<div class="cfs-row-right" id="cfs-row-right-' + _escapeId(filePath) + '">' +
+            '<div class="cfs-row-pending-actions">' +
+                '<button class="cfs-row-accept-btn" onclick="acceptChangedFile(\'' + esc + '\',this)">\u2713</button>' +
+                '<button class="cfs-row-reject-btn" onclick="rejectChangedFile(\'' + esc + '\',this)">\u2717</button>' +
+            '</div>' +
+        '</div>';
+
+    list.appendChild(row);
+    _refreshCfsHeader();
+}
+
+function acceptChangedFile(filePath, btn) {
+    if (!_changedFiles[filePath]) return;
+    _changedFiles[filePath].status = 'accepted';
+    var row = document.querySelector('.cfs-row[data-path="' + filePath + '"]');
+    if (row) {
+        row.classList.add('cfs-accepted');
+        var rightEl = row.querySelector('.cfs-row-right');
+        if (rightEl) rightEl.innerHTML = '<span class="cfs-row-applied">Applied</span>';
+    }
+    if (window.bridge) bridge.on_accept_file_edit(filePath);
+    _refreshCfsHeader();
+    markFileAccepted(filePath);
+}
+
+function rejectChangedFile(filePath, btn) {
+    if (!_changedFiles[filePath]) return;
+    _changedFiles[filePath].status = 'rejected';
+    var row = document.querySelector('.cfs-row[data-path="' + filePath + '"]');
+    if (row) {
+        row.classList.add('cfs-rejected');
+        var rightEl = row.querySelector('.cfs-row-right');
+        if (rightEl) rightEl.innerHTML = '<span class="cfs-row-rejected-label">Rejected</span>';
+    }
+    if (window.bridge) bridge.on_reject_file_edit(filePath);
+    _refreshCfsHeader();
+    markFileRejected(filePath);
+}
+
+function acceptAllChanges(e) {
+    if (e) e.stopPropagation();
+    Object.keys(_changedFiles).forEach(function(p) {
+        if (_changedFiles[p].status === 'pending') {
+            var btn = document.querySelector('.cfs-row[data-path="' + p + '"] .cfs-row-accept-btn');
+            if (btn) acceptChangedFile(p, btn);
+        }
+    });
+}
+
+function rejectAllChanges(e) {
+    if (e) e.stopPropagation();
+    Object.keys(_changedFiles).forEach(function(p) {
+        if (_changedFiles[p].status === 'pending') {
+            var btn = document.querySelector('.cfs-row[data-path="' + p + '"] .cfs-row-reject-btn');
+            if (btn) rejectChangedFile(p, btn);
+        }
+    });
+}
+
+function _refreshCfsHeader() {
+    var files    = Object.values(_changedFiles);
+    var total    = files.length;
+    var accepted = files.filter(function(f) { return f.status === 'accepted'; }).length;
+    var rejected = files.filter(function(f) { return f.status === 'rejected'; }).length;
+    var pending  = files.filter(function(f) { return f.status === 'pending'; }).length;
+
+    var countEl  = document.getElementById('cfs-count');
+    var statusEl = document.getElementById('cfs-status-text');
+    var bulkEl   = document.getElementById('cfs-bulk-btns');
+
+    if (countEl) countEl.textContent = total;
+
+    if (pending > 0) {
+        if (statusEl) statusEl.style.display = 'none';
+        if (bulkEl)   bulkEl.style.display   = 'flex';
+    } else if (total > 0) {
+        if (bulkEl) bulkEl.style.display = 'none';
+        if (statusEl) {
+            statusEl.style.display = '';
+            if (rejected === 0)        { statusEl.textContent = 'Accepted'; statusEl.style.color = '#555'; }
+            else if (accepted === 0)   { statusEl.textContent = 'Rejected'; statusEl.style.color = '#444'; }
+            else { statusEl.textContent = accepted + ' accepted, ' + rejected + ' rejected'; statusEl.style.color = '#555'; }
+        }
+    }
+}
+
+function _escapeId(str) {
+    return str.replace(/[^a-zA-Z0-9]/g, '-');
+}
+
+// ================================================================
+// CURSOR-STYLE FILE EDIT CARD (buildFileEditCard)
+// ================================================================
+function buildFileEditCard(filePath, added, removed, editType, status) {
+    editType = editType || 'M';
+    status   = status   || 'pending';
+
+    var fileName = filePath.split('/').pop().split('\\').pop();
+    var ext      = fileName.split('.').pop().toLowerCase();
+    var esc      = filePath.replace(/'/g, "\\'");
+
+    // ── File type badge (colored, matches Cursor/Qoder) ──────────────────
+    var ftBadge = getFileTypeBadge(ext);
+
+    // ── Diff stats ─────────────────────────────────────────────
+    var addedHtml   = added   > 0 ? '<span class="fec-added">+'  + added   + '</span>' : '';
+    var removedHtml = removed > 0 ? '<span class="fec-removed">-' + removed + '</span>' : '';
+
+    // ── M/C/D badge ─────────────────────────────────────────────
+    var mClass = { 'M': 'fec-badge-m', 'C': 'fec-badge-c', 'D': 'fec-badge-d' }[editType] || 'fec-badge-m';
+
+    var isPending  = status === 'pending';
+    var isApplied  = status === 'applied';
+    var isRejected = status === 'rejected';
+
+    var rightHtml = '';
+    if (isPending) {
+        rightHtml =
+            '<div class="fec-pending-actions">' +
+                '<button class="fec-btn-diff"   onclick="requestDiff(\'' + esc + '\',this)">Diff</button>' +
+                '<button class="fec-btn-accept" onclick="acceptFileEdit(\'' + esc + '\',this)">Accept</button>' +
+                '<button class="fec-btn-reject" onclick="rejectFileEdit(\'' + esc + '\',this)">Reject</button>' +
+            '</div>';
+    } else if (isApplied) {
+        rightHtml = '<span class="fec-status-applied">Applied</span>';
+    } else if (isRejected) {
+        rightHtml = '<span class="fec-status-rejected">Rejected</span>';
+    }
+
+    var card = document.createElement('div');
+    card.className = 'fec fec-' + status;
+    card.dataset.path   = filePath;
+    card.dataset.status = status;
+
+    card.innerHTML =
+        '<div class="fec-left">' +
+            ftBadge +
+            '<button class="fec-name" onclick="openFileInEditor(\'' + esc + '\')" title="' + escapeHtml(filePath) + '">' +
+                escapeHtml(fileName) +
+            '</button>' +
+            addedHtml + removedHtml +
+            '<span class="fec-badge ' + mClass + '">' + editType + '</span>' +
+        '</div>' +
+        '<div class="fec-right">' + rightHtml + '</div>';
+
+    return card;
+}
+
+// File type badge — colored, matches Cursor/Qoder Image 1
+function getFileTypeBadge(ext) {
+    var badges = {
+        'js':   '<span class="ft-badge ft-js">JS</span>',
+        'jsx':  '<span class="ft-badge ft-js">JSX</span>',
+        'ts':   '<span class="ft-badge ft-ts">TS</span>',
+        'tsx':  '<span class="ft-badge ft-ts">TSX</span>',
+        'py':   '<span class="ft-badge ft-py">PY</span>',
+        'html': '<span class="ft-badge ft-html">&lt;&gt;</span>',
+        'css':  '<span class="ft-badge ft-css">CSS</span>',
+        'scss': '<span class="ft-badge ft-css">SCSS</span>',
+        'json': '<span class="ft-badge ft-json">{}</span>',
+        'md':   '<span class="ft-badge ft-md">MD</span>',
+        'go':   '<span class="ft-badge ft-go">GO</span>',
+        'rs':   '<span class="ft-badge ft-rs">RS</span>',
+        'java': '<span class="ft-badge ft-java">JV</span>',
+        'sh':   '<span class="ft-badge ft-sh">SH</span>'
+    };
+    return badges[ext] || '<span class="ft-badge ft-default">&#128196;</span>';
+}
+
+// ================================================================
+// RENDER CUSTOM TAGS INTO MESSAGE (renderCustomTagsInto)
+// ================================================================
+function renderCustomTagsInto(msgEl, fullText) {
+    if (!msgEl || !fullText) return;
+
+    // ── Find or create cards container ────────────────────────────────
+    // Works with BOTH .message-bubble AND .msg structures
+    var cardsEl = msgEl.querySelector('.msg-cards') ||
+                  msgEl.querySelector('.fec-cards-container');
+
+    if (!cardsEl) {
+        cardsEl = document.createElement('div');
+        cardsEl.className = 'fec-cards-container';
+        // Insert AFTER .message-content (or at end of msgEl)
+        var contentEl = msgEl.querySelector('.message-content') ||
+                        msgEl.querySelector('.msg-content');
+        if (contentEl && contentEl.parentNode === msgEl) {
+            contentEl.insertAdjacentElement('afterend', cardsEl);
+        } else {
+            msgEl.appendChild(cardsEl);
+        }
+    }
+
+    // ── Parse <file_edited> tags ────────────────────────────────────
+    var feRe = /<file_edited>([\s\S]*?)<\/file_edited>/g;
+    var m;
+    while ((m = feRe.exec(fullText)) !== null) {
+        var lines = m[1].trim().split('\n')
+                        .map(function(l) { return l.trim(); })
+                        .filter(Boolean);
+        if (!lines[0]) continue;
+
+        var filePath = lines[0];
+        var added = 0, removed = 0, editType = 'M';
+
+        if (lines[1]) {
+            var fa = lines[1].match(/\+(\d+)/);
+            var fr = lines[1].match(/-(\d+)/);
+            if (fa) added   = parseInt(fa[1]);
+            if (fr) removed = parseInt(fr[1]);
+        }
+        if (lines[2] && /^[MCD]$/.test(lines[2].toUpperCase())) {
+            editType = lines[2].toUpperCase();
+        }
+
+        // Don't add duplicate cards for same path
+        if (cardsEl.querySelector('[data-path="' + filePath + '"]')) continue;
+
+        var card = buildFileEditCard(filePath, added, removed, editType, 'pending');
+        cardsEl.appendChild(card);
+
+        // Also sync to Changed Files panel
+        addChangedFile(filePath, added, removed, editType);
+    }
+}
+
+// ================================================================
+// CODE BLOCK HEADER INJECTION
+// ================================================================
+function injectCodeBlockHeader(codeEl) {
+    var pre = codeEl.parentElement;
+    if (!pre || pre.tagName !== 'PRE') return;
+    if (pre.querySelector('.code-header')) return; // already injected
+
+    // Get language from data attribute or class
+    var lang = pre.dataset.lang || '';
+    if (!lang) {
+        var langClass = null;
+        codeEl.classList.forEach(function(c) {
+            if (c.startsWith('language-')) langClass = c;
+        });
+        lang = langClass ? langClass.replace('language-', '') : 'code';
+    }
+
+    var escapedCode = codeEl.textContent || '';
+    var isShell = ['bash', 'sh', 'powershell', 'ps1', 'cmd', 'shell', 'zsh'].includes(lang);
+
+    var header = document.createElement('div');
+    header.className = 'code-header';
+    header.innerHTML =
+        '<span class="code-lang">' + escapeHtml(lang.toUpperCase()) + '</span>' +
+        '<div class="code-actions">' +
+            (isShell ? '<button class="code-run-btn" title="Run in terminal">Run</button>' : '') +
+            '<button class="code-copy-btn">Copy</button>' +
+            '<button class="code-insert-btn">Insert</button>' +
+        '</div>';
+
+    header.querySelector('.code-copy-btn').onclick = function() {
+        var btn = header.querySelector('.code-copy-btn');
+        if (navigator.clipboard) {
+            navigator.clipboard.writeText(escapedCode).then(function() {
+                btn.textContent = '\u2713 Copied';
+                setTimeout(function() { btn.textContent = 'Copy'; }, 1800);
+            });
+        } else {
+            btn.textContent = '\u2713 Copied';
+            setTimeout(function() { btn.textContent = 'Copy'; }, 1800);
+        }
+    };
+
+    header.querySelector('.code-insert-btn').onclick = function() {
+        if (window.bridge && bridge.on_insert_code) bridge.on_insert_code(escapedCode, lang);
+    };
+
+    if (isShell) {
+        header.querySelector('.code-run-btn').onclick = function() {
+            if (window.bridge) bridge.on_run_command(escapedCode);
+        };
+    }
+
+    // Insert header BEFORE the code element, inside pre
+    pre.insertBefore(header, codeEl);
+    // Remove default top padding (header handles it)
+    pre.style.paddingTop = '0';
+}
+
+// ================================================================
+// GREP CARD
+// ================================================================
+function buildGrepCard(query, resultCount) {
+    var card = document.createElement('div');
+    card.className = 'grep-card';
+    var shortQuery = (query || '').length > 50 ? (query || '').slice(0, 50) + '...' : (query || '');
+    card.innerHTML =
+        '<div class="grep-left">' +
+            '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+                '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>' +
+            '</svg>' +
+            '<span class="grep-label">Grepped code</span>' +
+        '</div>' +
+        '<div class="grep-query">' + escapeHtml(shortQuery) + '</div>' +
+        '<div class="grep-count">' + (resultCount || 0) + ' result' + ((resultCount || 0) !== 1 ? 's' : '') + '</div>';
+    return card;
+}
+
+// ================================================================
+// THOUGHT DURATION BADGE
+// ================================================================
+var _thinkingStartTime = null;
+
+function getThoughtSeconds() {
+    if (!_thinkingStartTime) return 0;
+    return Math.round((Date.now() - _thinkingStartTime) / 1000);
+}
+
+function buildThoughtBadge(seconds) {
+    var badge = document.createElement('div');
+    badge.className = 'thought-badge';
+    badge.innerHTML =
+        '<svg class="thought-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+            '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 15"/>' +
+        '</svg>' +
+        '<span class="thought-text">Thought \u00b7 ' + seconds + 's</span>';
+    return badge;
+}
+
+// ================================================================
+// INDUSTRY STANDARD ENHANCEMENTS — CURSOR/QODER PARITY
+// ================================================================
+
+// ── FILE EDIT CARD BRIDGE HANDLERS ──────────────────────────────
+function openFileInEditor(filePath) {
+    if (window.bridge) bridge.on_open_file(filePath);
+}
+
+function requestDiff(filePath) {
+    if (window.bridge) bridge.on_show_diff(filePath);
+}
+
+function acceptFileEdit(filePath, triggerEl) {
+    var card = triggerEl
+        ? triggerEl.closest('.fec')
+        : document.querySelector('.fec[data-path="' + filePath + '"]');
+
+    if (card) {
+        card.dataset.status = 'applied';
+        card.className = 'fec fec-applied';
+        var pa = card.querySelector('.fec-pending-actions');
+        var aa = card.querySelector('.fec-applied-status');
+        var ra = card.querySelector('.fec-rejected-status');
+        if (pa) pa.style.display = 'none';
+        if (aa) aa.style.display = '';
+        if (ra) ra.style.display = 'none';
+    }
+    if (window.bridge) bridge.on_accept_file_edit(filePath);
+    if (_changedFiles[filePath] && _changedFiles[filePath].status === 'pending') {
+        var btn = document.querySelector('.cfs-row[data-path="' + filePath + '"] .cfs-row-accept-btn');
+        if (btn) acceptChangedFile(filePath, btn);
+    }
+}
+
+function rejectFileEdit(filePath, triggerEl) {
+    var card = triggerEl
+        ? triggerEl.closest('.fec')
+        : document.querySelector('.fec[data-path="' + filePath + '"]');
+
+    if (card) {
+        card.dataset.status = 'rejected';
+        card.className = 'fec fec-rejected';
+        var pa = card.querySelector('.fec-pending-actions');
+        var aa = card.querySelector('.fec-applied-status');
+        var ra = card.querySelector('.fec-rejected-status');
+        if (pa) pa.style.display = 'none';
+        if (aa) aa.style.display = 'none';
+        if (ra) ra.style.display = '';
+    }
+    if (window.bridge) bridge.on_reject_file_edit(filePath);
+    if (_changedFiles[filePath] && _changedFiles[filePath].status === 'pending') {
+        var btn = document.querySelector('.cfs-row[data-path="' + filePath + '"] .cfs-row-reject-btn');
+        if (btn) rejectChangedFile(filePath, btn);
+    }
+}
+
+function approveActions(buttonEl) {
+    if (window.bridge) bridge.on_approve_tools();
+    var block = buttonEl ? buttonEl.closest('.permission-block') : null;
+    if (block) {
+        var btns = block.querySelector('.perm-buttons');
+        if (btns) btns.innerHTML = '<span class="perm-approved">\u2713 Approved \u2014 executing...</span>';
+    }
+    sendMessage('yes');
+}
+
+function denyActions(buttonEl) {
+    if (window.bridge) bridge.on_deny_tools();
+    sendMessage('no');
+}
+
+function approveAlways(buttonEl) {
+    if (window.bridge) bridge.on_always_allow();
+    approveActions(buttonEl);
+}
+
+function undoLastAction() {
+    if (window.bridge) bridge.on_undo_action();
+}
+
+// Called FROM Python to update file card state
+function markFileAccepted(filePath) {
+    acceptFileEdit(filePath, null);
+}
+
+function markFileRejected(filePath) {
+    rejectFileEdit(filePath, null);
+}
+
+// ── @ MENTION SYSTEM ────────────────────────────────────────────
+var _mentionAtIndex = -1;
+
+function showMentionDropdown(query, atIdx) {
+    _mentionAtIndex = atIdx;
+    if (window.bridge && bridge.on_search_files) {
+        bridge.on_search_files(query || '');
+    }
+    var dd = document.getElementById('mention-dropdown');
+    if (dd) dd.style.display = 'block';
+}
+
+function hideMentionDropdown() {
+    var dd = document.getElementById('mention-dropdown');
+    if (dd) dd.style.display = 'none';
+    _mentionAtIndex = -1;
+}
+
+// Called FROM Python with matching files
+function populateMentionResults(files) {
+    var results = document.getElementById('mention-results');
+    if (!results) return;
+    results.innerHTML = '';
+    
+    (files || []).slice(0, 8).forEach(function(file) {
+        var item = document.createElement('div');
+        item.className = 'mention-item';
+        item.setAttribute('role', 'option');
+        item.innerHTML = 
+            '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>' +
+            '<span class="mention-filename">' + escapeHtml(file.name || '') + '</span>' +
+            '<span class="mention-path">' + escapeHtml(file.rel_path || '') + '</span>';
+        item.onclick = function() { selectMention(file); };
+        results.appendChild(item);
+    });
+    
+    var dd = document.getElementById('mention-dropdown');
+    if (dd) dd.style.display = (files && files.length > 0) ? 'block' : 'none';
+}
+
+function selectMention(file) {
+    addContextPill(file.name, file.path);
+    // Remove @query from input
+    var input = document.getElementById('chatInput');
+    if (input && _mentionAtIndex !== -1) {
+        var val = input.value;
+        input.value = val.substring(0, _mentionAtIndex);
+    }
+    hideMentionDropdown();
+    if (input) input.focus();
+}
+
+function addContextPill(name, path) {
+    var bar = document.getElementById('context-bar');
+    if (!bar) return;
+    var itemsEl = bar.querySelector('.context-items');
+    if (!itemsEl) return;
+    // Don't add duplicates
+    if (document.querySelector('.context-pill[data-path="' + path + '"]')) return;
+    
+    var pill = document.createElement('div');
+    pill.className = 'context-pill';
+    pill.dataset.path = path;
+    pill.innerHTML = 
+        '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/></svg>' +
+        '<span>' + escapeHtml(name) + '</span>' +
+        '<button onclick="removeContextPill(\'' + path.replace(/'/g, "\\'") + '\', this)" aria-label="Remove">&times;</button>';
+    
+    itemsEl.appendChild(pill);
+    bar.style.display = 'flex';
+    
+    if (window.bridge && bridge.on_add_context_file) bridge.on_add_context_file(path);
+}
+
+function removeContextPill(path, buttonEl) {
+    var pill = buttonEl ? buttonEl.closest('.context-pill') : document.querySelector('.context-pill[data-path="' + path + '"]');
+    if (pill) pill.remove();
+    // Hide bar if no more pills
+    var bar = document.getElementById('context-bar');
+    if (bar && bar.querySelectorAll('.context-pill').length === 0) bar.style.display = 'none';
+}
+
+var _mentionSelectedIndex = -1;
+
+function navigateMentionDropdown(direction) {
+    var results = document.getElementById('mention-results');
+    if (!results) return;
+    var items = results.querySelectorAll('.mention-item');
+    if (!items.length) return;
+    
+    _mentionSelectedIndex = Math.max(-1, Math.min(items.length - 1, _mentionSelectedIndex + direction));
+    items.forEach(function(it, i) {
+        it.classList.toggle('active', i === _mentionSelectedIndex);
+    });
+}
+
+function selectActiveMentionItem() {
+    var results = document.getElementById('mention-results');
+    if (!results) return;
+    var active = results.querySelector('.mention-item.active');
+    if (!active) {
+        active = results.querySelector('.mention-item');
+    }
+    if (active) active.click();
+}
+
+// ── TOKEN COUNTER ────────────────────────────────────────────────
+function updateTokenCounter() {
+    var input = document.getElementById('chatInput');
+    if (!input) return;
+    var text = input.value;
+    var estimate = Math.ceil(text.length / 4);
+    var counter = document.getElementById('token-counter');
+    if (!counter) {
+        counter = document.createElement('span');
+        counter.id = 'token-counter';
+        counter.className = 'token-counter';
+        var container = document.getElementById('input-container');
+        if (container) container.appendChild(counter);
+    }
+    if (estimate > 10) {
+        counter.textContent = '~' + estimate + ' tokens';
+        counter.style.display = 'inline';
+    } else {
+        counter.style.display = 'none';
+    }
+}
+
+// ── SCROLL JUMP BUTTON ───────────────────────────────────────────
+function showScrollJumpBtn() {
+    if (document.getElementById('scroll-jump-btn')) return;
+    var btn = document.createElement('button');
+    btn.id = 'scroll-jump-btn';
+    btn.className = 'scroll-jump-btn';
+    btn.textContent = '\u2193 Jump to latest';
+    btn.onclick = function() {
+        userScrolled = false;
+        var msgs = document.getElementById('chatMessages');
+        if (msgs) msgs.scrollTo({ top: msgs.scrollHeight, behavior: 'smooth' });
+        btn.remove();
+    };
+    var chatContainer = document.getElementById('chat-container');
+    if (chatContainer) chatContainer.appendChild(btn);
+}
+
+function hideScrollJumpBtn() {
+    var btn = document.getElementById('scroll-jump-btn');
+    if (btn) btn.remove();
+}
+
+// ── LIVE TOOL ACTIVITY (onToolActivity from Python bridge) ───────
+var TOOL_ICONS = {
+    'read_file':      '\ud83d\udcc4',
+    'write_file':     '\u270f\ufe0f',
+    'edit_file':      '\u270f\ufe0f',
+    'list_directory': '\ud83d\udcc1',
+    'run_command':    '\u26a1',
+    'search_code':    '\ud83d\udd0d',
+    'git_status':     '\ud83c\udf3f',
+    'git_diff':       '\ud83d\udd00',
+    'delete_path':    '\ud83d\uddd1\ufe0f',
+    'inject_after':   '\ud83d\udc89',
+    'add_import':     '\ud83d\udce6'
+};
+
+function onToolActivity(toolType, info, status) {
+    // Use existing showToolActivity for compatibility
+    if (typeof showToolActivity === 'function') {
+        showToolActivity(toolType, info, status);
+    }
+}
+
+// ── INPUT ENHANCEMENTS: @ DETECTION + TOKEN COUNTER ─────────────
+(function setupInputEnhancements() {
+    function init() {
+        var input = document.getElementById('chatInput');
+        if (!input) { setTimeout(init, 100); return; }
+        
+        input.addEventListener('input', function() {
+            updateTokenCounter();
+            
+            var val = input.value;
+            var cursorPos = input.selectionStart;
+            var atIdx = val.lastIndexOf('@', cursorPos - 1);
+            
+            if (atIdx !== -1 && (atIdx === 0 || /\s/.test(val[atIdx - 1]))) {
+                var query = val.substring(atIdx + 1, cursorPos);
+                if (!query.includes(' ')) {
+                    showMentionDropdown(query, atIdx);
+                } else {
+                    hideMentionDropdown();
+                }
+            } else {
+                hideMentionDropdown();
+            }
+        });
+        
+        input.addEventListener('keydown', function(e) {
+            var dd = document.getElementById('mention-dropdown');
+            if (dd && dd.style.display !== 'none') {
+                if (e.key === 'ArrowDown') { e.preventDefault(); navigateMentionDropdown(1); return; }
+                if (e.key === 'ArrowUp')   { e.preventDefault(); navigateMentionDropdown(-1); return; }
+                if (e.key === 'Enter')     { e.preventDefault(); selectActiveMentionItem(); return; }
+                if (e.key === 'Escape')    { hideMentionDropdown(); return; }
+            }
+        });
+        
+        // Close dropdown when clicking outside
+        document.addEventListener('click', function(e) {
+            var dd = document.getElementById('mention-dropdown');
+            var inputArea = document.getElementById('input-area');
+            if (dd && inputArea && !inputArea.contains(e.target)) {
+                hideMentionDropdown();
+            }
+        });
+    }
+    init();
+})();
+
+// ── SCROLL JUMP BUTTON: show when user scrolls up during streaming ─
+(function setupScrollJump() {
+    function init() {
+        var msgs = document.getElementById('chatMessages');
+        if (!msgs) { setTimeout(init, 100); return; }
+        msgs.addEventListener('scroll', function() {
+            var isNearBottom = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 100;
+            if (!isNearBottom && typeof isGenerating !== 'undefined' && isGenerating) {
+                showScrollJumpBtn();
+            } else if (isNearBottom) {
+                hideScrollJumpBtn();
+            }
+        });
+    }
+    init();
+})();

@@ -9,6 +9,22 @@
     <!-- External Libraries (Local for reliability) -->
     <script src="../../components/assets/marked.min.js"></script>
     <script src="../../components/assets/highlight.min.js"></script>
+    <!-- highlight.js configuration -->
+    <script>
+      if (window.hljs) {
+        hljs.configure({
+          ignoreUnescapedHTML: true,
+          languages: ['python','javascript','typescript','bash','json','html','css','sql','cpp','java','rust','go']
+        });
+      }
+    </script>
+    <!-- PyQt6 WebView viewport fix -->
+    <style>
+      html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; }
+      #app-container { height: 100%; display: flex; }
+      #chat-container { height: 100%; display: flex; flex-direction: column; flex: 1; min-width: 0; }
+      #chatMessages { flex: 1; overflow-y: auto; min-height: 0; }
+    </style>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/dracula.min.css">
     
     <!-- Optional: Math rendering (lazy loaded) -->
@@ -131,7 +147,68 @@
             <div id="chatMessages" role="log" aria-live="polite" aria-atomic="false" aria-relevant="additions">
                 <div id="empty-state">
                     <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto 20px auto; display: block; opacity: 0.6;" aria-hidden="true"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-2.54Z"></path><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-2.54Z"></path></svg>
-                    <p>Start a new conversation with Cortex AI</p>
+                    <p>Start a conversation with Cortex AI</p>
+                    <div class="shortcut-hints">
+                        <div class="hint"><kbd>Enter</kbd> Send</div>
+                        <div class="hint"><kbd>Ctrl+Enter</kbd> New line</div>
+                        <div class="hint"><kbd>@</kbd> Add file</div>
+                        <div class="hint"><kbd>Esc</kbd> Stop</div>
+                    </div>
+                </div>
+                <!-- Thinking Indicator (shown while AI is processing) -->
+                <div id="thinking-indicator-bar" style="display:none;" aria-live="polite">
+                  <div class="thinking-avatar">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-2.54Z"></path><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-2.54Z"></path></svg>
+                  </div>
+                  <div class="thinking-dots-ani">
+                    <span></span><span></span><span></span>
+                  </div>
+                  <span class="thinking-label">Cortex is working...</span>
+                </div>
+            </div>
+
+            <!-- Todo Section (above input, Qoder style) -->
+            <div id="todo-section" class="todo-section" style="display:none;">
+                <div class="todo-header" onclick="toggleTodoSection()">
+                    <div class="todo-header-left">
+                        <svg class="todo-chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <polyline points="9 18 15 12 9 6"></polyline>
+                        </svg>
+                        <span class="todo-label">To-dos</span>
+                        <span class="todo-preview" id="todo-preview-text"></span>
+                    </div>
+                    <div class="todo-header-right">
+                        <span class="todo-count" id="todo-progress-count">0/0</span>
+                    </div>
+                </div>
+                <div class="todo-body" id="todo-body" style="display:none;">
+                    <div class="todo-list" id="todo-list"></div>
+                </div>
+            </div>
+
+            <!-- Changed Files Section (above input) -->
+            <div id="changed-files-section" class="cfs-section" style="display:none;">
+                <div class="cfs-header" onclick="toggleChangedFiles()">
+                    <div class="cfs-header-left">
+                        <svg class="cfs-chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <polyline points="9 18 15 12 9 6"></polyline>
+                        </svg>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:#666">
+                            <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
+                        </svg>
+                        <span class="cfs-label">Changed Files</span>
+                        <span class="cfs-count" id="cfs-count">0</span>
+                    </div>
+                    <div class="cfs-header-right" id="cfs-header-right">
+                        <span class="cfs-status-text" id="cfs-status-text" style="display:none;">Accepted</span>
+                        <div class="cfs-bulk-btns" id="cfs-bulk-btns" style="display:none;">
+                            <button class="cfs-reject-btn" onclick="rejectAllChanges(event)">Reject</button>
+                            <button class="cfs-accept-btn" onclick="acceptAllChanges(event)">Accept</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="cfs-body" id="cfs-body" style="display:none;">
+                    <div class="cfs-list" id="cfs-list"></div>
                 </div>
             </div>
 
@@ -141,47 +218,13 @@
                 <button class="context-clear" title="Clear context">×</button>
             </div>
             
-            <!-- Qoder-Style TODO Section (above input) -->
-            <div id="todo-section" class="todo-section" style="display: none;">
-                <div class="todo-header" onclick="toggleTodoSection()">
-                    <div class="todo-header-left">
-                        <svg class="todo-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
-                        <span class="todo-title">To-dos</span>
-                        <span class="todo-main-task" id="todo-main-task"></span>
-                    </div>
-                    <div class="todo-progress">
-                        <span class="todo-progress-count" id="todo-progress-count">0/0</span>
-                    </div>
-                </div>
-                <div class="todo-content" id="todo-content">
-                    <div class="todo-list" id="todo-list">
-                        <!-- Todo items will be injected here -->
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Changed Files Section (below todos) -->
-            <div id="changed-files-section" class="changed-files-section" style="display: none;">
-                <div class="changed-files-header" onclick="toggleChangedFilesSection()">
-                    <div class="changed-files-header-left">
-                        <svg class="changed-files-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
-                        <span class="changed-files-title">Changed Files</span>
-                    </div>
-                    <span class="changed-files-status" id="changed-files-status">Accepted</span>
-                </div>
-                <div class="changed-files-content" id="changed-files-content">
-                    <div class="changed-files-list" id="changed-files-list">
-                        <!-- Changed file items will be injected here -->
-                    </div>
-                    <div class="changed-files-actions" id="changed-files-actions" style="display: none;">
-                        <button class="reject-all-btn" onclick="rejectAllChanges()">Reject</button>
-                        <button class="accept-all-btn" onclick="acceptAllChanges()">Accept</button>
-                    </div>
-                </div>
-            </div>
-            
             <!-- Input Area -->
             <div id="input-area" role="form" aria-label="Message input">
+                <!-- @ Mention Dropdown -->
+                <div id="mention-dropdown" class="mention-dropdown" style="display:none;" role="listbox" aria-label="File suggestions">
+                  <div class="mention-header">Add file context</div>
+                  <div id="mention-results" class="mention-results"></div>
+                </div>
                 <div id="input-container">
                     <textarea 
                         id="chatInput" 
@@ -198,28 +241,22 @@
                         <div class="toolbar-left">
                             <div class="custom-dropdown" id="mode-selector">
                                 <button class="dropdown-trigger" title="Select Interaction Mode">
-                                    <i class="fas fa-infinity icon-agent"></i>
+                                    <svg class="icon-agent mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 4c1.93 0 3.5 1.57 3.5 3.5S13.93 13 12 13s-3.5-1.57-3.5-3.5S10.07 6 12 6zm0 14c-2.03 0-4.43-.82-6.14-2.88C7.55 15.8 9.68 15 12 15s4.45.8 6.14 2.12C16.43 19.18 14.03 20 12 20z"/></svg>
                                     <span id="current-mode">Agent</span>
-                                    <i class="fas fa-chevron-down"></i>
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="10" height="10"><polyline points="6 9 12 15 18 9"/></svg>
                                 </button>
                                 <div class="dropdown-menu">
                                     <div class="dropdown-item active" data-value="Agent" title="Autonomous Agent Mode">
-                                        <i class="fas fa-infinity"></i>
-                                        <div class="item-text">
-                                            <span>Agent</span>
-                                        </div>
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 4c1.93 0 3.5 1.57 3.5 3.5S13.93 13 12 13s-3.5-1.57-3.5-3.5S10.07 6 12 6zm0 14c-2.03 0-4.43-.82-6.14-2.88C7.55 15.8 9.68 15 12 15s4.45.8 6.14 2.12C16.43 19.18 14.03 20 12 20z"/></svg>
+                                        <div class="item-text"><span>Agent</span></div>
                                     </div>
-                                    <div class="dropdown-item" data-value="Ask" title="Pure Q&A Mode">
-                                        <i class="fas fa-comment-dots"></i>
-                                        <div class="item-text">
-                                            <span>Ask</span>
-                                        </div>
+                                    <div class="dropdown-item" data-value="Ask" title="Pure Q&amp;A Mode">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                        <div class="item-text"><span>Ask</span></div>
                                     </div>
                                     <div class="dropdown-item" data-value="Plan" title="Architectural Planning Mode">
-                                        <i class="fas fa-magic"></i>
-                                        <div class="item-text">
-                                            <span>Plan</span>
-                                        </div>
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                                        <div class="item-text"><span>Plan</span></div>
                                     </div>
                                 </div>
                             </div>

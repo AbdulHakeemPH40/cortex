@@ -39,6 +39,7 @@ class ChatBridge(QObject):
     
     # Smart paste signal
     smart_paste_check_requested = pyqtSignal(str)  # pasted_text
+    search_files_requested = pyqtSignal(str)       # @ mention file search
     
     @pyqtSlot(str)
     def on_message_submitted(self, text):
@@ -107,6 +108,83 @@ class ChatBridge(QObject):
         else:
             log.info("User denied tool execution permission")
 
+    # ── ENHANCEMENT GUIDE: Missing Bridge Slots ──────────────────────
+
+    @pyqtSlot()
+    def on_stop_generation(self):
+        """Stop AI generation — called from Escape key or stop button in JS."""
+        self.stop_requested.emit()
+
+    @pyqtSlot(str)
+    def on_search_files(self, query: str):
+        """Search project files for @ mention autocomplete."""
+        # Emit a signal so AIChatWidget can handle the view.runJavaScript call
+        self.search_files_requested.emit(query)
+
+    @pyqtSlot(str)
+    def on_add_context_file(self, file_path: str):
+        """Add a file to the AI context for this turn."""
+        log.info(f'Context file added: {file_path}')
+        # Will be picked up by agent's context manager on next message
+
+    @pyqtSlot(str)
+    def on_accept_file_edit(self, file_path: str):
+        """User accepted a file edit from the card UI."""
+        log.info(f'File edit accepted: {file_path}')
+        # Notify main window if available
+        self.show_diff_requested.emit(file_path)  # reuse existing signal
+
+    @pyqtSlot(str)
+    def on_reject_file_edit(self, file_path: str):
+        """User rejected a file edit — optionally restore from pre-edit snapshot."""
+        log.info(f'File edit rejected: {file_path}')
+
+    @pyqtSlot()
+    def on_approve_tools(self):
+        """User approved pending tool actions."""
+        self.proceed_requested.emit()
+
+    @pyqtSlot()
+    def on_deny_tools(self):
+        """User denied pending tool actions."""
+        log.info('User denied tool execution')
+
+    @pyqtSlot()
+    def on_always_allow(self):
+        """User enabled always-allow for tools."""
+        self.always_allow_changed.emit(True)
+
+    @pyqtSlot()
+    def on_undo_action(self):
+        """Undo the last AI action."""
+        log.info('Undo action requested')
+        # Will be routed through main_window to agent tool registry
+
+    @pyqtSlot(str, str)
+    def on_insert_code(self, code: str, language: str):
+        """Insert code at the editor cursor."""
+        log.info(f'Insert code requested: {len(code)} chars, lang={language}')
+        # Forwarded to main_window.insert_code_at_cursor via signal
+
+    @pyqtSlot(str)
+    def on_js_error(self, error_json: str):
+        """Handle JavaScript errors reported from the page."""
+        log.warning(f'JS Error: {error_json}')
+
+
+from PyQt6.QtWebEngineCore import QWebEnginePage
+
+class ConsolePage(QWebEnginePage):
+    """Custom page that captures JavaScript console messages."""
+    def javaScriptConsoleMessage(self, level, message, line, source):
+        # level is an enum: InfoMessageLevel=0, WarningMessageLevel=1, ErrorMessageLevel=2
+        level_val = level.value if hasattr(level, 'value') else int(level)
+        level_names = {0: 'INFO', 1: 'WARN', 2: 'ERROR'}
+        level_name = level_names.get(level_val, 'LOG')
+        # Show [CHAT] tagged messages or errors
+        if '[CHAT]' in message or level_val >= 2:
+            print(f"[JS {level_name}] {message}")
+
 
 class AIChatWidget(QWidget):
     """Web-based AI chat widget using QWebEngineView."""
@@ -132,6 +210,7 @@ class AIChatWidget(QWidget):
         self._get_code_context = None
         self._terminal_process = None
         self._pty_process = None
+        self._project_root = None  # Set via set_project_root() for @ mention search
         self._build_ui()
         self._start_terminal_backend()
         
@@ -139,8 +218,10 @@ class AIChatWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         
-        # Web View
+        # Web View with custom page for console logging
         self._view = QWebEngineView()
+        self._page = ConsolePage(self._view)
+        self._view.setPage(self._page)
         
         # Enable standard context menu and selection features
         self._view.settings().setAttribute(
@@ -161,9 +242,10 @@ class AIChatWidget(QWidget):
         self._bridge.open_file_requested.connect(self.open_file_requested.emit)
         self._bridge.open_file_at_line_requested.connect(self.open_file_at_line_requested.emit)
         self._bridge.show_diff_requested.connect(self.show_diff_requested.emit)
+        self._bridge.search_files_requested.connect(self._on_search_files)
         self._channel.registerObject("bridge", self._bridge)
 
-        self._view.page().setWebChannel(self._channel)
+        self._page.setWebChannel(self._channel)
         
         # Load local HTML
         html_path = os.path.join(os.path.dirname(__file__), "..", "html", "ai_chat", "aichat.html")
@@ -177,6 +259,34 @@ class AIChatWidget(QWidget):
         if self._get_code_context:
             context = self._get_code_context()
         self.message_sent.emit(text, context)
+
+    def _on_search_files(self, query: str):
+        """Handle @ mention file search from JS."""
+        try:
+            from pathlib import Path
+            results = []
+            root = getattr(self, '_project_root', None) or '.'
+            root_path = Path(root)
+            for p in root_path.rglob('*'):
+                if p.is_file() and (not query or query.lower() in p.name.lower()):
+                    parts = str(p)
+                    if not any(skip in parts for skip in ['.git', '__pycache__', 'node_modules', '.pyc']):
+                        try:
+                            results.append({
+                                'name': p.name,
+                                'path': str(p),
+                                'rel_path': str(p.relative_to(root_path))
+                            })
+                        except ValueError:
+                            results.append({'name': p.name, 'path': str(p), 'rel_path': p.name})
+                if len(results) >= 10:
+                    break
+            safe_results = json.dumps(results)
+            self._view.page().runJavaScript(
+                f'if(window.populateMentionResults) populateMentionResults({safe_results});'
+            )
+        except Exception as e:
+            log.warning(f'_on_search_files error: {e}')
         
     def on_chunk(self, chunk):
         """Handle AI streaming chunk - async to prevent UI blocking."""
@@ -253,18 +363,46 @@ class AIChatWidget(QWidget):
         """Clear the TODO list from the UI."""
         self._view.page().runJavaScript("if(window.clearTodos) window.clearTodos();")
 
+    def on_file_edited_diff(self, path: str, original: str, new_content: str):
+        """
+        Called when the agent edits a file.
+        Calculates +/- diff line counts and updates the Changed Files panel in JS.
+        Connect to agent.file_edited_diff signal (or call directly).
+        """
+        import difflib
+        orig_lines = original.splitlines()
+        new_lines  = new_content.splitlines()
+        diff = list(difflib.ndiff(orig_lines, new_lines))
+        added   = sum(1 for l in diff if l.startswith('+ '))
+        removed = sum(1 for l in diff if l.startswith('- '))
+        p = json.dumps(path)
+        self._view.page().runJavaScript(
+            f"if(window.addChangedFile) addChangedFile({p}, {added}, {removed}, 'M');"
+        )
+        log.debug(f'File edited diff: {path} +{added} -{removed}')
+
     def set_code_context_callback(self, callback):
         self._get_code_context = callback
 
+    def set_project_root(self, root_path: str):
+        """Set project root for @ mention file search."""
+        self._project_root = root_path
+
     def set_project_info(self, name: str, path: str = ""):
-        """Update the project indicator in the chat header."""
-        safe_name = name.replace("'", "\\'").replace("\\", "\\\\")
-        safe_path = path.replace("'", "\\'").replace("\\", "\\\\")
-        self._view.page().runJavaScript(f"if(window.setProjectInfo) window.setProjectInfo('{safe_name}', '{safe_path}');")
+        """Update the project indicator in the chat header and switch to project-specific chat history."""
+        import json
+        safe_name = json.dumps(name)
+        safe_path = json.dumps(path)
+        print(f"[PYTHON] set_project_info called: {name}, {path}")
+        # Longer delay to ensure DOM and JS are fully loaded
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(800, lambda: self._page.runJavaScript(
+            f"if(window.setProjectInfo) {{ console.log('[CHAT] Python calling setProjectInfo'); window.setProjectInfo({safe_name}, {safe_path}); }} else {{ console.log('[CHAT] ERROR: setProjectInfo not ready'); }}"
+        ))
 
     def clear_project_info(self):
         """Hide the project indicator."""
-        self._view.page().runJavaScript("if(window.clearProjectInfo) window.clearProjectInfo();")
+        self._page.runJavaScript("if(window.clearProjectInfo) window.clearProjectInfo();")
 
     def _start_terminal_backend(self):
         """Initialize the backend shell process (PowerShell by default on Windows)."""

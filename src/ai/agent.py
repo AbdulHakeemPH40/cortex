@@ -1,4 +1,5 @@
 """
+agent.py - AI Agent
 AI Agent — Gateway to OpenAI / Anthropic / Mock responses.
 Runs in a QThread to keep the UI responsive.
 Uses Provider Registry and Key Manager for secure API key handling.
@@ -436,6 +437,7 @@ Be concise, direct, and responsive. Do what the user asks — no more, no less."
         self._active_file_path = None
         self._cursor_position = None
         self._change_orchestrator = get_change_orchestrator()
+        self._pre_edit_snapshots: dict = {}  # Capture file content before edits for diff
 
     def set_interaction_mode(self, mode: str):
         """Set the interaction mode (Agent or Ask)."""
@@ -1075,6 +1077,16 @@ Be concise, direct, and responsive. Do what the user asks — no more, no less."
         if "path" in args:
             path = str(args["path"])
             display_path = path.split('\\')[-1] or path.split('/')[-1] or path
+        
+        # Capture pre-edit snapshot for diff support
+        if name in ["write_file", "edit_file", "inject_after", "add_import"]:
+            path = str(args.get("path", ""))
+            if path and os.path.exists(path):
+                try:
+                    from pathlib import Path
+                    self._pre_edit_snapshots[path] = Path(path).read_text(encoding="utf-8", errors="replace")
+                except Exception:
+                    self._pre_edit_snapshots[path] = ""
             
         if name == "run_command":
             self.tool_activity.emit("run_command", args.get("command", "")[:60], "running")
@@ -1116,6 +1128,16 @@ Be concise, direct, and responsive. Do what the user asks — no more, no less."
                 self.tool_activity.emit(name, info, "complete")
                 # Manual metadata emission for exploration section
                 self.response_chunk.emit(f"\n</exploration>\n<file_edited>\n{path}\nModified\n</file_edited>\n<exploration>\n")
+                # Emit file_edited_diff signal for diff viewer
+                try:
+                    from pathlib import Path as _Path
+                    if path and os.path.exists(path):
+                        new_content = _Path(path).read_text(encoding="utf-8", errors="replace")
+                        original = self._pre_edit_snapshots.pop(path, "")
+                        if original != new_content and hasattr(self, 'file_edited_diff'):
+                            self.file_edited_diff.emit(path, original, new_content)
+                except Exception as _e:
+                    log.warning(f"Could not emit file_edited_diff: {_e}")
             else:
                 self.tool_activity.emit(name, "Completed", "complete")
         else:
@@ -1126,6 +1148,7 @@ Be concise, direct, and responsive. Do what the user asks — no more, no less."
         """Called when ALL tools in the batch are finished."""
         log.info(f"All {len(results)} tools completed")
         self.response_chunk.emit("\n</exploration>\n")
+        self.thinking_stopped.emit()  # Hide spinner after tool execution
         
         # Add assistant message and tool responses to history
         self._history.append({
