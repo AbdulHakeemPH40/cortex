@@ -174,7 +174,31 @@ class ChatBridge(QObject):
     def on_js_error(self, error_json: str):
         """Handle JavaScript errors reported from the page."""
         log.warning(f'JS Error: {error_json}')
-        
+
+    # ── THREE FEATURES: Project Tree, Terminal, Todo Bridge Slots ─────
+
+    @pyqtSlot(str)
+    def on_open_folder(self, folder_path: str):
+        """Open folder in OS file explorer."""
+        try:
+            if sys.platform == 'win32':
+                import subprocess
+                subprocess.Popen(['explorer', folder_path])
+            elif sys.platform == 'darwin':
+                import subprocess
+                subprocess.Popen(['open', folder_path])
+            else:
+                import subprocess
+                subprocess.Popen(['xdg-open', folder_path])
+        except Exception as e:
+            log.error(f"Cannot open folder: {e}")
+
+    @pyqtSlot()
+    def on_open_terminal(self):
+        """Open terminal panel - lazily starts backend if needed."""
+        self._ensure_terminal_backend()
+        log.info("Open terminal requested from chat")
+
     # ── CHAT PERSISTENCE: File-based storage fallback ─────────────────
     
     @pyqtSlot(str, str, result=str)
@@ -266,9 +290,10 @@ class AIChatWidget(QWidget):
         self._get_code_context = None
         self._terminal_process = None
         self._pty_process = None
+        self._terminal_reader = None
         self._project_root = None  # Set via set_project_root() for @ mention search
         self._build_ui()
-        self._start_terminal_backend()
+        # Terminal backend starts lazily when first requested
         
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -481,6 +506,118 @@ class AIChatWidget(QWidget):
         )
         log.debug(f'File edited diff: {path} +{added} -{removed}')
 
+    # ── THREE FEATURES: Project Tree Card, Terminal Card, Todo Updates ─
+
+    def emit_directory_tree(self, root_path: str, listing_text: str):
+        """
+        Parse listing_text from list_directory tool result
+        and send structured data to JS for tree card rendering.
+        """
+        items = self._parse_listing(root_path, listing_text)
+        root_js  = json.dumps(root_path)
+        items_js = json.dumps(items)
+        self._view.page().runJavaScript(
+            f"if(window.showDirectoryTree) window.showDirectoryTree({root_js}, {items_js});"
+        )
+
+    def _parse_listing(self, root_path: str, text: str) -> list:
+        """Convert list_directory output to hierarchical tree structure [{name, path, size, isDir, isLast, depth, parentIdx}]"""
+        lines = [l for l in text.split('\n') if l.strip()]
+        items = []
+        root = root_path.rstrip('/\\')
+        sep = '\\' if '\\' in root else '/'
+
+        # Stack to track parent paths at each depth level
+        parent_stack = [root]
+
+        for i, line in enumerate(lines):
+            # Calculate depth by counting leading spaces or tree characters
+            leading = len(line) - len(line.lstrip())
+            depth = leading // 2  # Assume 2 spaces per indent level
+
+            # Remove tree branch characters and get clean name
+            stripped = line.strip()
+            if not stripped:
+                continue
+
+            # Check for tree branch characters
+            is_dir = stripped.startswith('📁') or stripped.endswith('/')
+            
+            # Remove tree branch characters (├──, └──, │, etc.)
+            name = stripped
+            for prefix in ['├──', '└──', '│', '├──', '└──']:
+                name = name.replace(prefix, '')
+            name = name.lstrip('📁📄').strip()
+
+            size = ''
+            desc = ''
+
+            # Parse "(4KB) - description" pattern
+            import re
+            m = re.match(r'^(.*?)\s*\(([^)]+)\)\s*(?:-\s*(.+))?$', name)
+            if m:
+                name = m.group(1).strip().rstrip('/')
+                size = m.group(2)
+                desc = m.group(3) or ''
+            else:
+                name = name.rstrip('/')
+
+            # Adjust parent stack based on depth
+            while len(parent_stack) > depth + 1:
+                parent_stack.pop()
+
+            # Build full path
+            current_path = sep.join(parent_stack) + sep + name
+
+            # Check if next item is at same depth (to determine isLast)
+            is_last = True
+            if i < len(lines) - 1:
+                next_line = lines[i + 1]
+                next_leading = len(next_line) - len(next_line.lstrip())
+                next_depth = next_leading // 2
+                # If next item is at same depth, this one is not last
+                if next_depth == depth:
+                    is_last = False
+                # If next item is deeper, this one has children (so not last in its group)
+                elif next_depth > depth:
+                    is_last = False
+
+            items.append({
+                'name':        name,
+                'path':        current_path,
+                'size':        size,
+                'description': desc,
+                'isDir':       is_dir,
+                'isLast':      is_last,
+                'depth':       depth,
+                'hasChildren': False  # Will be set in second pass
+            })
+
+            # If this is a directory, add it to parent stack for children
+            if is_dir:
+                if len(parent_stack) <= depth + 1:
+                    parent_stack.append(name)
+                else:
+                    parent_stack[depth + 1] = name
+
+        # Second pass: mark which items have children
+        for i, item in enumerate(items):
+            for j in range(i + 1, len(items)):
+                if items[j]['depth'] == item['depth'] + 1:
+                    item['hasChildren'] = True
+                    break
+                elif items[j]['depth'] <= item['depth']:
+                    break
+
+        return items
+
+    def emit_terminal_result(self, card_id: str, output: str, exit_code: int):
+        """Update the terminal card in chat with result."""
+        self._view.page().runJavaScript(
+            f"if(window.setTerminalOutput) window.setTerminalOutput({json.dumps(card_id)}, "
+            f"{json.dumps(output[:3000])}, {exit_code});"
+        )
+
     def set_code_context_callback(self, callback):
         self._get_code_context = callback
 
@@ -553,33 +690,98 @@ class AIChatWidget(QWidget):
         """Hide the project indicator."""
         self._page.runJavaScript("if(window.clearProjectInfo) window.clearProjectInfo();")
 
-    def _start_terminal_backend(self):
-        """Initialize the backend shell process (PowerShell by default on Windows)."""
+    def _ensure_terminal_backend(self):
+        """Lazy initialization of terminal backend - only starts when first requested."""
+        if self._pty_process is not None or self._terminal_process is not None:
+            return  # Already started
+            
         shell = "powershell.exe" if platform.system() == "Windows" else "bash"
         
         try:
             import winpty
-            self._pty_process = winpty.PtyProcess.spawn(shell)
+            # Configure winpty with larger buffer for better performance
+            self._pty_process = winpty.PtyProcess.spawn(
+                shell,
+                dimensions=(24, 80),
+                backend=winpty.Backend.WinPTY  # Use WinPTY for better performance
+            )
             
-            from PyQt6.QtCore import QThread
+            from PyQt6.QtCore import QThread, QTimer, QMutex
             class Reader(QThread):
                 data = pyqtSignal(str)
                 def __init__(self, pty):
                     super().__init__()
                     self.pty = pty
+                    self._running = True
+                    self._buffer = ""
+                    self._buffer_mutex = QMutex()
+                    self._buffer_timer = None
+                    self._max_buffer_size = 16384  # Larger buffer for batching
+                    self._flush_interval_ms = 33   # ~30fps for smoother output
+                    self._last_flush_time = 0
+                    
                 def run(self):
-                    while self.pty.isalive():
+                    import time
+                    while self._running and self.pty.isalive():
                         try:
+                            # Use shorter timeout for more responsive reads
+                            import select
+                            if hasattr(self.pty, 'fd'):
+                                ready, _, _ = select.select([self.pty.fd], [], [], 0.02)
+                                if not ready:
+                                    # Check if we need to flush stale buffer
+                                    current_time = time.time() * 1000
+                                    if self._buffer and (current_time - self._last_flush_time) > self._flush_interval_ms:
+                                        self._flush_buffer()
+                                    continue
+                            
+                            # Read available data
                             d = self.pty.read()
-                            if d: self.data.emit(d)
-                        except EOFError: break
-                        except: pass
+                            if d:
+                                self._buffer_mutex.lock()
+                                self._buffer += d
+                                buffer_len = len(self._buffer)
+                                self._buffer_mutex.unlock()
+                                
+                                # Flush if buffer is large enough or timer not set
+                                if buffer_len > self._max_buffer_size:
+                                    self._flush_buffer()
+                                elif not self._buffer_timer:
+                                    from PyQt6.QtCore import QTimer
+                                    self._buffer_timer = True
+                                    QTimer.singleShot(self._flush_interval_ms, self._flush_buffer)
+                            else:
+                                time.sleep(0.005)  # Shorter sleep for lower latency
+                        except EOFError:
+                            break
+                        except Exception:
+                            time.sleep(0.005)
+                            
+                def _flush_buffer(self):
+                    self._buffer_mutex.lock()
+                    if self._buffer:
+                        data_to_emit = self._buffer
+                        self._buffer = ""
+                        self._buffer_mutex.unlock()
+                        self.data.emit(data_to_emit)
+                    else:
+                        self._buffer_mutex.unlock()
+                    self._buffer_timer = None
+                    import time
+                    self._last_flush_time = time.time() * 1000
+                    
+                def stop(self):
+                    self._running = False
+                    self._flush_buffer()
             
-            self._reader = Reader(self._pty_process)
-            self._reader.data.connect(lambda d: self._bridge.terminal_output.emit(d))
-            self._reader.start()
+            self._terminal_reader = Reader(self._pty_process)
+            self._terminal_reader.data.connect(
+                lambda d: self._bridge.terminal_output.emit(d), 
+                Qt.ConnectionType.QueuedConnection
+            )
+            self._terminal_reader.start()
             
-            self._bridge.terminal_input.connect(lambda d: self._pty_process.write(d))
+            self._bridge.terminal_input.connect(lambda d: self._pty_process.write(d) if self._pty_process else None)
             self._bridge.terminal_resize.connect(lambda c, r: self._pty_process.setwinsize(r, c) if self._pty_process else None)
             
         except Exception as e:
@@ -587,12 +789,13 @@ class AIChatWidget(QWidget):
             self._terminal_process = QProcess(self)
             self._terminal_process.readyReadStandardOutput.connect(self._on_stdout)
             self._terminal_process.start(shell)
-            self._bridge.terminal_input.connect(lambda d: self._terminal_process.write(d.encode()))
+            self._bridge.terminal_input.connect(lambda d: self._terminal_process.write(d.encode()) if self._terminal_process else None)
 
     def _on_stdout(self):
         if self._terminal_process:
             data = self._terminal_process.readAllStandardOutput().data().decode(errors="replace")
-            self._bridge.terminal_output.emit(data)
+            if data:
+                self._bridge.terminal_output.emit(data)
 
     def closeEvent(self, event):
         if self._pty_process:

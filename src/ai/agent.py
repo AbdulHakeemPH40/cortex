@@ -362,6 +362,7 @@ You operate like a senior software engineer: read before you write, verify after
   2. `read_file` with `start_line` and `end_line` for the relevant section to get current context with line numbers.
 - NEVER edit a file you haven't read in this session.
 - NEVER hallucinate files, paths, or features.
+- NEVER read files inside dependency directories (performance killer) — see EXCLUSION RULES below
 
   ### RULE 3: THE 10 INDUSTRIAL EDIT RULES (E1-E10)
   - E1 (Explore): NEVER edit without `read_file`. Use `get_file_outline` for files >200 lines.
@@ -412,6 +413,83 @@ You operate like a senior software engineer: read before you write, verify after
 }
 </task_summary>
 ```
+
+## EXCLUSION RULES — NEVER ENTER THESE DIRECTORIES
+
+These directories contain framework dependencies, NOT user code. Entering them freezes the terminal and wastes your context window.
+
+### BLOCKED — Python Virtual Environments
+- venv/, .venv/, env/, ENV/, virtualenv/ — Python interpreter + packages
+- __pycache__/, .eggs/, .tox/, .nox/ — Python cache/build
+- .mypy_cache/, .pytest_cache/, .ruff_cache/ — Tool caches
+- site-packages/, dist-packages/ — Inside venv
+
+### BLOCKED — Node.js / JavaScript
+- node_modules/ — NPM/Yarn packages (50,000–200,000 files!)
+- .npm/, .yarn/, .pnpm-store/, .pnp/ — Package manager caches
+- .next/, .nuxt/, .svelte-kit/ — Framework build output
+- .parcel-cache/, .turbo/, .vercel/ — Bundler caches
+- coverage/ — Test coverage reports
+
+### BLOCKED — Flutter / Dart
+- .dart_tool/, .pub-cache/ — Dart tooling cache
+- .flutter-plugins/ — Plugin list
+- build/ — Flutter build output (GBs)
+- ios/Pods/, ios/.symlinks/ — CocoaPods (100,000+ files)
+- android/.gradle/, android/app/build/ — Gradle cache
+
+### BLOCKED — Java / Kotlin / Android
+- .gradle/, build/, out/ — Gradle/IntelliJ output
+- .idea/ — IDE config
+- *.class, *.jar, *.war — Compiled Java
+
+### BLOCKED — Rust
+- target/ — Cargo build output (2–10 GB!)
+- .cargo/registry/ — Downloaded crates
+
+### BLOCKED — Go
+- vendor/, Godeps/ — Vendored dependencies
+- bin/, pkg/ — Compiled binaries
+
+### BLOCKED — iOS / Swift
+- Pods/, .cocoapods/ — CocoaPods dependencies
+- .build/, DerivedData/ — Swift build output
+- *.xcworkspace/, Carthage/ — Generated workspaces
+
+### BLOCKED — Ruby
+- vendor/bundle/, .bundle/ — Bundler gems
+
+### BLOCKED — .NET / C#
+- bin/, obj/ — Compiled output
+- .vs/, packages/ — Visual Studio cache
+
+### BLOCKED — Haskell
+- .stack-work/, dist-newstyle/ — Stack build output
+
+### BLOCKED — Elixir
+- _build/, deps/, .elixir_ls/ — Build and language server
+
+### BLOCKED — PHP
+- vendor/ — Composer packages
+
+### BLOCKED — Version Control & Generic
+- .git/objects/, .git/refs/, .svn/, .hg/ — VCS internals
+- dist/, build/, .cache/, .tmp/ — Generic build output
+
+### BLOCKED — Binary/File Types
+- *.pyc, *.pyo, *.pyd, *.so, *.dylib, *.dll — Compiled Python/libraries
+- *.exe, *.bin, *.wasm, *.class, *.jar — Binaries
+- *.png, *.jpg, *.gif, *.mp4, *.mp3 — Media files
+- *.zip, *.tar, *.gz, *.7z — Archives
+- *.min.js, *.min.css, *.map — Minified files
+
+### WHAT YOU SHOULD EXPLORE
+✅ Source files: *.py, *.js, *.ts, *.jsx, *.tsx, *.html, *.css
+✅ Config files: package.json, pyproject.toml, requirements.txt, Cargo.toml
+✅ Documentation: README.md, docs/
+✅ Tests: test_*.py, *.test.js, *.spec.ts
+
+If you see a blocked directory in a listing, report: "Found [dirname] — dependency directory, skipping"
 
 Be concise, direct, and responsive. Do what the user asks — no more, no less."""
 
@@ -606,7 +684,40 @@ Be concise, direct, and responsive. Do what the user asks — no more, no less."
         
         # On first interaction, add instruction to explore project
         if not self._warmup_shown and self._project_root:
-            system_content += f"\n\n## FIRST INTERACTION - EXPLORE PROJECT\nThis is the first message. Use `list_directory` on '{self._project_root}' to understand the project structure before responding."
+            system_content += f"""\n\n## FIRST INTERACTION - EXPLORE PROJECT
+This is the first message. Use `list_directory` on '{self._project_root}' to understand the project structure.
+
+IMPORTANT RULES:
+1. After exploring, you MUST provide a clear summary to the user including:
+   - What type of project this is (e.g., web app, Python package, etc.)
+   - Main technologies used
+   - Key files and their purposes
+   - Current state (what's working, what's incomplete)
+
+2. Do NOT keep reading files indefinitely. After 3-5 key files, STOP and provide your analysis.
+
+3. NEVER explore or read files inside these directories (performance killer):
+   # Virtual Environments (ALL frameworks)
+   - venv/, .venv/, env/, virtualenv/, ENV/ (Python)
+   - node_modules/, .pnpm-store/, .yarn/, .pnp/ (Node.js)
+   - vendor/, Godeps/ (Go)
+   - target/, .cargo/, Cargo.lock (Rust)
+   - .gradle/, build/, out/ (Java/Kotlin/Gradle)
+   - bin/, obj/, packages/ (C#/.NET)
+   - Pods/, .cocoapods/ (iOS/Swift)
+   - .bundle/, vendor/bundle/ (Ruby)
+   - .stack-work/, dist-newstyle/ (Haskell)
+   - _build/, deps/, .elixir_ls/ (Elixir)
+   - .dart_tool/, build/, .packages/ (Dart/Flutter)
+   
+   # Cache & Build Artifacts
+   - __pycache__/, .pytest_cache/, .mypy_cache/, .ruff_cache/ (Python cache)
+   - .git/, .svn/, .hg/ (Version control)
+   - dist/, build/, .egg-info/, .tox/, .nox/, pip-wheel-metadata/ (Build artifacts)
+   - .next/, .nuxt/, .svelte-kit/, .vercel/, .netlify/ (Framework build output)
+   - coverage/, .coverage/, htmlcov/, .hypothesis/ (Test coverage)
+   
+   If you need to check dependencies, ask user for permission first."""
             self._warmup_shown = True
             
         # Use trimmed history to prevent orphaned tool messages (Error 400)
@@ -1112,7 +1223,14 @@ Be concise, direct, and responsive. Do what the user asks — no more, no less."
                 # Emit directory contents for UI display
                 if dir_content and not dir_content.startswith("Not a directory") and not dir_content.startswith("Directory is empty"):
                     print(f"[AGENT-DEBUG] Emitting directory_contents signal")
-                    self.directory_contents.emit(args.get('path', '.'), dir_content)
+                    # Resolve to absolute path using project root
+                    import os
+                    rel_path = args.get('path', '.')
+                    if self._project_root and not os.path.isabs(rel_path):
+                        abs_path = os.path.join(self._project_root, rel_path)
+                    else:
+                        abs_path = rel_path
+                    self.directory_contents.emit(abs_path, dir_content)
                 else:
                     print(f"[AGENT-DEBUG] NOT emitting - content empty or error: {dir_content[:50] if dir_content else 'empty'}")
             elif name == "read_file":

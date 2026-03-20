@@ -766,6 +766,7 @@ class CortexMainWindow(QMainWindow):
         self._ai_agent.file_edited_diff.connect(self._file_tracker.add_edit)
         self._ai_agent.tool_activity.connect(self._ai_chat.show_tool_activity)
         self._ai_agent.directory_contents.connect(self._ai_chat.show_directory_contents)
+        self._ai_agent.directory_contents.connect(self._on_directory_contents_for_tree)
         self._ai_agent.thinking_started.connect(self._ai_chat.show_thinking)
         self._ai_agent.thinking_stopped.connect(self._ai_chat.hide_thinking)
         self._ai_agent.todos_updated.connect(self._ai_chat.update_todos)
@@ -1121,14 +1122,18 @@ class CortexMainWindow(QMainWindow):
         # Ensure terminal is visible
         self._terminal_tabs.setCurrentIndex(self._terminal_tabs.indexOf(term))
 
+    def _on_directory_contents_for_tree(self, path: str, contents: str):
+        """Handle directory contents for project tree card display."""
+        self._ai_chat.emit_directory_tree(path, contents)
+
     def _on_ai_chat_message(self, message: str):
         """Handle user message from AI chat with project context."""
         context = []
-        
+
         # 1. Project Root Info
         if self._project_manager.root:
             context.append(f"Project path: {self._project_manager.root}")
-            
+
         # 2. Current File Context
         editor = self._editor_tabs.current_editor()
         if editor:
@@ -1140,7 +1145,7 @@ class CortexMainWindow(QMainWindow):
                 if len(content) > 5000:
                     content = content[:5000] + "... (truncated)"
                 context.append(f"Current file ({name}):\n```\n{content}\n```")
-        
+
         full_context = "\n\n".join(context)
         self._ai_agent.chat(message, full_context)
 

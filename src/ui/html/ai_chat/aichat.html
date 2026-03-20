@@ -64,6 +64,7 @@
 
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="model_selector.css">
+    <link rel="stylesheet" href="features.css">
     
     <!-- Qt WebChannel -->
     <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
@@ -233,6 +234,23 @@
                 <div class="cfs-body" id="cfs-body" style="display:none;">
                     <div class="cfs-list" id="cfs-list"></div>
                 </div>
+            </div>
+
+            <!-- Message Queue Bar (above input) -->
+            <div id="msg-queue-bar" class="msg-queue-bar" style="display:none;">
+                <div class="mq-header">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="8" y1="6" x2="21" y2="6"/>
+                        <line x1="8" y1="12" x2="21" y2="12"/>
+                        <line x1="8" y1="18" x2="21" y2="18"/>
+                        <line x1="3" y1="6" x2="3.01" y2="6"/>
+                        <line x1="3" y1="12" x2="3.01" y2="12"/>
+                        <line x1="3" y1="18" x2="3.01" y2="18"/>
+                    </svg>
+                    <span class="mq-label">Queued</span>
+                    <span class="mq-count" id="mq-count">0</span>
+                </div>
+                <div class="mq-list" id="mq-list"></div>
             </div>
 
             <!-- Context Bar (shows active context like @mentions) -->

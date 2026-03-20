@@ -152,11 +152,25 @@ function saveProjectChats(chatList) {
     // Method 2: File-based storage (reliable fallback)
     try {
         if (bridge && typeof bridge.save_chats_to_file === 'function') {
-            var result = bridge.save_chats_to_file(key, data);
-            if (result === "OK") {
-                console.log('[CHAT] SAVE - File backup: SUCCESS');
+            // PyQt slots return promises, handle asynchronously
+            var promise = bridge.save_chats_to_file(key, data);
+            if (promise && typeof promise.then === 'function') {
+                promise.then(function(result) {
+                    if (result === "OK") {
+                        console.log('[CHAT] SAVE - File backup: SUCCESS');
+                    } else {
+                        console.error('[CHAT] SAVE - File backup: FAILED:', result);
+                    }
+                }).catch(function(err) {
+                    console.error('[CHAT] SAVE - File backup: ERROR:', err);
+                });
             } else {
-                console.error('[CHAT] SAVE - File backup: FAILED:', result);
+                // Synchronous fallback
+                if (promise === "OK") {
+                    console.log('[CHAT] SAVE - File backup: SUCCESS');
+                } else {
+                    console.error('[CHAT] SAVE - File backup: FAILED:', promise);
+                }
             }
         } else {
             console.warn('[CHAT] SAVE - File backup: Bridge not ready');
@@ -306,6 +320,11 @@ function initTerminal() {
 function toggleTerminal() {
     var container = document.getElementById('terminal-container');
     if (!container) return;
+    
+    // Lazy init terminal on first open
+    if (!term && container.style.display !== 'flex') {
+        initTerminal();
+    }
     
     // Show the container if hidden
     if (container.style.display === 'none') {
@@ -576,7 +595,97 @@ function initBridge() {
             }
 
             bridge.clear_chat_requested.connect(clearMessages);
-            bridge.terminal_output.connect(function (data) { if (term) term.write(data); });
+            
+            // Terminal output with advanced throttling to prevent UI freezing
+            var _terminalOutputBuffer = '';
+            var _terminalOutputTimeout = null;
+            var _terminalOutputFrameId = null;
+            var _terminalLastWrite = 0;
+            var _terminalMaxBufferSize = 8192; // Max buffer before forced flush
+            var _terminalPendingData = []; // Queue for burst handling
+            
+            function _flushTerminalOutput() {
+                _terminalOutputFrameId = null;
+                if (!term) {
+                    _terminalOutputBuffer = '';
+                    _terminalPendingData = [];
+                    return;
+                }
+                
+                // Process pending data queue first
+                if (_terminalPendingData.length > 0) {
+                    _terminalOutputBuffer += _terminalPendingData.join('');
+                    _terminalPendingData = [];
+                }
+                
+                if (_terminalOutputBuffer) {
+                    // When terminal is hidden, accumulate in paused buffer instead
+                    if (!_terminalVisible) {
+                        _terminalPausedBuffer += _terminalOutputBuffer;
+                        if (_terminalPausedBuffer.length > _terminalMaxPausedBuffer) {
+                            _terminalPausedBuffer = _terminalPausedBuffer.slice(-_terminalMaxPausedBuffer);
+                        }
+                        _terminalOutputBuffer = '';
+                        _terminalOutputTimeout = null;
+                        return;
+                    }
+                    
+                    // Limit buffer size to prevent memory issues
+                    if (_terminalOutputBuffer.length > _terminalMaxBufferSize) {
+                        _terminalOutputBuffer = _terminalOutputBuffer.slice(-_terminalMaxBufferSize);
+                    }
+                    term.write(_terminalOutputBuffer);
+                    _terminalOutputBuffer = '';
+                    _terminalLastWrite = Date.now();
+                }
+                _terminalOutputTimeout = null;
+            }
+            
+            bridge.terminal_output.connect(function (data) {
+                if (!term) return;
+                
+                // Add to pending queue for burst handling
+                _terminalPendingData.push(data);
+                
+                // If terminal is not visible, process less frequently
+                if (!_terminalVisible) {
+                    if (_terminalPendingData.length > 50) { // Higher threshold when hidden
+                        _flushTerminalOutput();
+                    } else if (!_terminalOutputTimeout) {
+                        _terminalOutputTimeout = setTimeout(_flushTerminalOutput, 100); // Slower update when hidden
+                    }
+                    return;
+                }
+                
+                // If we have too many pending items, flush immediately
+                if (_terminalPendingData.length > 10) {
+                    if (_terminalOutputTimeout) {
+                        clearTimeout(_terminalOutputTimeout);
+                        _terminalOutputTimeout = null;
+                    }
+                    if (_terminalOutputFrameId) {
+                        cancelAnimationFrame(_terminalOutputFrameId);
+                        _terminalOutputFrameId = null;
+                    }
+                    _flushTerminalOutput();
+                    return;
+                }
+                
+                // Use requestAnimationFrame for smoother rendering when possible
+                if (!_terminalOutputTimeout && !_terminalOutputFrameId) {
+                    var now = Date.now();
+                    var timeSinceLastWrite = now - _terminalLastWrite;
+                    
+                    // If last write was recent, use timeout; otherwise use rAF
+                    if (timeSinceLastWrite < 32) {
+                        _terminalOutputTimeout = setTimeout(function() {
+                            _terminalOutputFrameId = requestAnimationFrame(_flushTerminalOutput);
+                        }, 16);
+                    } else {
+                        _terminalOutputFrameId = requestAnimationFrame(_flushTerminalOutput);
+                    }
+                }
+            });
 
             console.log("Cortex: Bridge Successfully Connected.");
             bridgeReady = true;
@@ -619,7 +728,7 @@ window.trySetProjectInfo = function(name, path, retryCount, callback) {
 
 document.addEventListener('DOMContentLoaded', function () {
     initMarked();
-    initTerminal();
+    // Terminal is initialized lazily when first shown
     initBridge();
     initScrollTracking(); // Initialize scroll tracking
     
@@ -768,6 +877,14 @@ function saveChats() {
         return;
     }
     console.log('[CHAT] saveChats called, saving', chats.length, 'chats for path:', currentProjectPath);
+    
+    // Save changed files and todos with current chat
+    var currentChat = chats.find(function(c) { return c.id === currentChatId; });
+    if (currentChat) {
+        currentChat.changedFiles = _changedFiles;
+        currentChat.todos = currentTodoList;
+    }
+    
     saveProjectChats(chats);
     renderHistoryList();
 }
@@ -842,6 +959,10 @@ function loadChat(id) {
     if (!chat) return;
     currentChatId = id;
     clearMessages();
+    
+    // Clear changed files panel before loading
+    clearChangedFiles();
+    
     chat.messages.forEach(function (msg) {
         appendMessage(msg.text, msg.sender, false);
         // Restore tool activities (like directory listings) if present
@@ -859,6 +980,29 @@ function loadChat(id) {
             });
         }
     });
+    
+    // Restore changed files if present
+    if (chat.changedFiles && Object.keys(chat.changedFiles).length > 0) {
+        _changedFiles = chat.changedFiles;
+        // Re-render changed files panel
+        Object.keys(_changedFiles).forEach(function(filePath) {
+            var file = _changedFiles[filePath];
+            if (file.status !== 'rejected') {
+                renderChangedFileRow(filePath, file.added, file.removed, file.editType, file.status);
+            }
+        });
+        _refreshCfsHeader();
+    }
+    
+    // Restore todos if present
+    if (chat.todos && chat.todos.length > 0) {
+        currentTodoList = chat.todos;
+        updateTodos(currentTodoList, '');
+    } else {
+        currentTodoList = [];
+        updateTodos([], '');
+    }
+    
     renderHistoryList();
     
     // Auto-close sidebar on mobile/small screens or whenever a chat is selected
@@ -988,29 +1132,19 @@ function sendMessage() {
     var text = input.value.trim();
     if (!text) return;
 
+    input.value = '';
+    input.style.height = 'auto';
+
     if (!bridge) {
         console.warn("Cortex: Bridge connection not ready.");
         return;
     }
 
-    // Start tracking this task
-    startTaskTracking(text);
-
-    appendMessage(text, 'user', true);
-    
-    // Show AI thinking animation
-    showThinkingIndicator();
-    
-    bridge.on_message_submitted(text);
-
-    input.value = '';
-    input.style.height = 'auto';
-    
-    // Show stop button, hide send button
-    var sendBtn = document.getElementById('sendBtn');
-    var stopBtn = document.getElementById('stopBtn');
-    if (sendBtn) sendBtn.style.display = 'none';
-    if (stopBtn) stopBtn.style.display = 'flex';
+    if (_isGenerating) {
+        _enqueueMessage(text);
+    } else {
+        _sendNow(text);
+    }
 }
 
 // --- AI Thinking Grid Animation ---
@@ -1043,8 +1177,9 @@ function showThinkingAnimation() {
             <div class="thinking-orb-core"></div>
         </div>
         <div class="thinking-content">
-            <span class="thinking-title">Cortex is thinking</span>
+            <span class="thinking-title">Cortex is working</span>
             <span class="thinking-subtitle" id="thinking-main-text">Analyzing your request...</span>
+            <span class="thinking-status" id="thinking-status" style="font-size: 11px; color: #666; margin-top: 4px; display: block;"></span>
         </div>
         <span class="thinking-timer" id="thinking-timer">0s</span>
     `;
@@ -1243,7 +1378,67 @@ var fileCount = 0;
 function showToolActivity(type, info, status) {
     var container = document.getElementById('chatMessages');
     if (!container) return;
-    
+
+    // Update thinking indicator with current activity
+    var statusEl = document.getElementById('thinking-status');
+    if (statusEl) {
+        var activityText = '';
+        if (type === 'read_file') activityText = 'Reading: ' + info;
+        else if (type === 'list_directory') activityText = 'Exploring: ' + info;
+        else if (type === 'run_command') activityText = 'Running: ' + info;
+        else if (type === 'git_status') activityText = 'Checking git status...';
+        else activityText = type + '...';
+        statusEl.textContent = activityText;
+    }
+
+    // ── Terminal command card handling ──────────────────────────────
+    if (type === 'run_command') {
+        if (!currentAssistantMessage) {
+            currentAssistantMessage = document.createElement('div');
+            currentAssistantMessage.className = 'message-bubble assistant';
+            var ce = document.createElement('div');
+            ce.className = 'message-content';
+            currentAssistantMessage.appendChild(ce);
+            currentContent = "";
+            container.appendChild(currentAssistantMessage);
+            var es = document.getElementById('empty-state');
+            if (es) es.remove();
+        }
+
+        var cardsEl = currentAssistantMessage.querySelector('.fec-cards-container');
+        if (!cardsEl) {
+            cardsEl = document.createElement('div');
+            cardsEl.className = 'fec-cards-container';
+            currentAssistantMessage.appendChild(cardsEl);
+        }
+
+        if (status === 'running') {
+            var cardId = 'term-cmd-' + Date.now();
+            currentAssistantMessage.dataset.lastTermCardId = cardId;
+            var card = buildTerminalCard(info, '', 'running', null, cardId);
+            cardsEl.appendChild(card);
+        } else {
+            var lastId = currentAssistantMessage.dataset.lastTermCardId;
+            if (lastId) {
+                updateTerminalCard(
+                    lastId,
+                    status === 'error' ? 'error' : 'success',
+                    status === 'error' ? 1 : 0,
+                    ''
+                );
+            }
+        }
+
+        smartScroll(container);
+        return;
+    }
+
+    // ── list_directory tree card ────────────────────────────────────
+    if (type === 'list_directory' && status === 'complete') {
+        // Tree card is rendered via showDirectoryTree from Python
+        smartScroll(container);
+    }
+
     // Always create a fresh activity section or use the current one
     if (!currentActivitySection || !document.body.contains(currentActivitySection)) {
         currentActivitySection = document.createElement('div');
@@ -1490,11 +1685,17 @@ function renderDirectoryContents(path, contents) {
     list.className = 'simple-file-list';
     list.style.cssText = 'margin: 8px 0; padding: 8px 12px; background: var(--bg-secondary, #1e1e2e); border-radius: 6px; border: 1px solid var(--border-color, #3d3d5c);';
     
+    // Normalize base path
+    var basePath = path.replace(/\\/g, '/');
+    if (!basePath.endsWith('/')) basePath += '/';
+    
     lines.forEach(function(line) {
         if (!line.trim()) return;
         
         var item = document.createElement('div');
-        item.style.cssText = 'display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; color: var(--text-secondary, #b0b0b0);';
+        item.style.cssText = 'display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; color: var(--text-secondary, #b0b0b0); cursor: pointer; transition: background 0.15s;';
+        item.onmouseover = function() { this.style.background = 'rgba(255,255,255,0.05)'; };
+        item.onmouseout = function() { this.style.background = 'transparent'; };
         
         // Check if it's a folder (ends with / or has 📁 in the line from backend)
         var isFolder = line.includes('📁') || line.trim().endsWith('/');
@@ -1516,6 +1717,17 @@ function renderDirectoryContents(path, contents) {
             } else {
                 icon = '📄';
             }
+        }
+        
+        // Build full path for click handler
+        var fullPath = basePath + name;
+        var escapedPath = fullPath.replace(/'/g, "\\'");
+        
+        // Add click handler
+        if (isFolder) {
+            item.onclick = function() { openFolderInExplorer(escapedPath); };
+        } else {
+            item.onclick = function() { openFileInEditor(escapedPath); };
         }
         
         var iconSpan = '<span style="font-size: 14px; display: inline-flex; align-items: center;">' + icon + '</span>';
@@ -2332,6 +2544,9 @@ function onComplete() {
     var stopBtn = document.getElementById('stopBtn');
     if (sendBtn) sendBtn.style.display = 'flex';
     if (stopBtn) stopBtn.style.display = 'none';
+
+    // ── Trigger queue processing ────────────────────────────────────
+    _onGenerationComplete();
 }
 
 
@@ -3112,17 +3327,43 @@ document.addEventListener('DOMContentLoaded', function() {
         if (bridge) bridge.on_open_file(filePath);
     };
 
+    // Terminal visibility state for performance optimization
+    var _terminalVisible = false;
+    var _terminalPausedBuffer = '';
+    var _terminalMaxPausedBuffer = 32768; // Max size when paused
+    
     window.showTerminal = function() {
         var container = document.getElementById('terminal-container');
         if (container && !container.classList.contains('open')) {
             // Make sure container is visible
             container.style.display = 'flex';
             container.classList.add('open');
+            _terminalVisible = true;
+            
+            // Flush any paused buffer
+            if (_terminalPausedBuffer && term) {
+                term.write(_terminalPausedBuffer);
+                _terminalPausedBuffer = '';
+            }
+            
             setTimeout(function () {
                 if (fitAddon) fitAddon.fit();
                 if (term) term.focus();
             }, 280);
         }
+    };
+    
+    window.hideTerminal = function() {
+        var container = document.getElementById('terminal-container');
+        if (container && container.classList.contains('open')) {
+            container.classList.remove('open');
+            container.style.display = 'none';
+            _terminalVisible = false;
+        }
+    };
+    
+    window.isTerminalVisible = function() {
+        return _terminalVisible;
     };
 
     window.showDiff = function(filePath) {
@@ -3298,14 +3539,14 @@ document.addEventListener('DOMContentLoaded', function() {
                     currentChatId = null;
                     clearMessages();
                     loadChat(chats[0].id);
-                    updateChatList();
+                    renderHistoryList();
                     console.log('[CHAT] Loaded chat with', chats[0].messages.length, 'messages');
                 } else {
                     // No saved chats, start fresh
                     // No saved chats, start fresh
                     chats = [];
                     startNewChat();
-                    updateChatList();
+                    renderHistoryList();
                     console.log('[CHAT] Started fresh chat for new project');
                 }
             }
@@ -3425,18 +3666,18 @@ document.addEventListener('DOMContentLoaded', function() {
 // ================================================================
 var _changedFiles = {};  // path -> {added, removed, status, editType}
 
-function addChangedFile(filePath, added, removed, editType) {
+function clearChangedFiles() {
+    _changedFiles = {};
+    var list = document.getElementById('cfs-list');
+    var section = document.getElementById('changed-files-section');
+    if (list) list.innerHTML = '';
+    if (section) section.style.display = 'none';
+}
+
+function renderChangedFileRow(filePath, added, removed, editType, status) {
     editType = editType || 'M';
-
-    if (_changedFiles[filePath]) {
-        _changedFiles[filePath].added   = added;
-        _changedFiles[filePath].removed = removed;
-        _refreshCfsHeader();
-        return;
-    }
-
-    _changedFiles[filePath] = { added: added, removed: removed, status: 'pending', editType: editType };
-
+    status = status || 'pending';
+    
     var section = document.getElementById('changed-files-section');
     var list    = document.getElementById('cfs-list');
     if (!section || !list) return;
@@ -3450,8 +3691,21 @@ function addChangedFile(filePath, added, removed, editType) {
     var removedHtml = removed > 0 ? '<span class="cfs-stat-removed">-' + removed + '</span>' : '';
 
     var row = document.createElement('div');
-    row.className = 'cfs-row';
+    row.className = 'cfs-row' + (status === 'accepted' ? ' cfs-accepted' : '');
     row.dataset.path = filePath;
+    
+    var rightContent = '';
+    if (status === 'accepted') {
+        rightContent = '<span class="cfs-row-applied">Applied</span>';
+    } else if (status === 'rejected') {
+        rightContent = '<span class="cfs-row-rejected">Rejected</span>';
+    } else {
+        rightContent = '<div class="cfs-row-pending-actions">' +
+            '<button class="cfs-row-accept-btn" onclick="acceptChangedFile(\'' + esc + '\',this)">\u2713</button>' +
+            '<button class="cfs-row-reject-btn" onclick="rejectChangedFile(\'' + esc + '\',this)">\u2717</button>' +
+        '</div>';
+    }
+    
     row.innerHTML =
         '<div class="cfs-row-left">' +
             '<div class="cfs-file-icon">' +
@@ -3467,13 +3721,24 @@ function addChangedFile(filePath, added, removed, editType) {
             '<span class="cfs-badge ' + badgeClass + '">' + editType + '</span>' +
         '</div>' +
         '<div class="cfs-row-right" id="cfs-row-right-' + _escapeId(filePath) + '">' +
-            '<div class="cfs-row-pending-actions">' +
-                '<button class="cfs-row-accept-btn" onclick="acceptChangedFile(\'' + esc + '\',this)">\u2713</button>' +
-                '<button class="cfs-row-reject-btn" onclick="rejectChangedFile(\'' + esc + '\',this)">\u2717</button>' +
-            '</div>' +
+            rightContent +
         '</div>';
 
     list.appendChild(row);
+}
+
+function addChangedFile(filePath, added, removed, editType) {
+    editType = editType || 'M';
+
+    if (_changedFiles[filePath]) {
+        _changedFiles[filePath].added   = added;
+        _changedFiles[filePath].removed = removed;
+        _refreshCfsHeader();
+        return;
+    }
+
+    _changedFiles[filePath] = { added: added, removed: removed, status: 'pending', editType: editType };
+    renderChangedFileRow(filePath, added, removed, editType, 'pending');
     _refreshCfsHeader();
 }
 
@@ -4117,3 +4382,449 @@ function onToolActivity(toolType, info, status) {
     }
     init();
 })();
+
+
+// ══════════════════════════════════════════════════════════════
+// THREE FEATURES IMPLEMENTATION
+// ══════════════════════════════════════════════════════════════
+
+// ── State variables for features ──────────────────────────────
+var _todoExpanded = false;
+var _msgQueue     = [];
+var _isGenerating = false;
+var _queueIdSeq   = 0;
+
+// ══════════════════════════════════════════════════════════════
+// FEATURE 1 — PROJECT TREE CARD
+// ══════════════════════════════════════════════════════════════
+
+function buildProjectTreeCard(rootPath, items) {
+    var card = document.createElement('div');
+    card.className = 'ptree-card';
+    card.dataset.root = rootPath;
+
+    var rootEl = document.createElement('div');
+    rootEl.className = 'ptree-root';
+    rootEl.textContent = rootPath;
+    rootEl.dataset.path = rootPath;
+    rootEl.title = 'Open folder';
+    rootEl.onclick = function() {
+        if (window.bridge) bridge.on_open_folder(this.dataset.path);
+    };
+    card.appendChild(rootEl);
+
+    var list = document.createElement('div');
+    list.className = 'ptree-list';
+
+    // Build tree structure with proper connectors
+    items.forEach(function(item, idx) {
+        var depth = item.depth || 0;
+        var isLast = item.isLast;
+        var hasChildren = item.hasChildren;
+
+        var row = document.createElement('div');
+        row.className = 'ptree-item' + (isLast ? ' ptree-last' : '');
+        row.style.paddingLeft = (depth * 16) + 'px';  // Indent based on depth
+
+        // Determine the branch connector
+        var branch = isLast ? '└──' : '├──';
+
+        // Use SVG icons instead of emoji
+        var icon = item.isDir
+            ? FILE_ICONS.folder(14)
+            : getFileExtensionIcon(item.name.split('.').pop().toLowerCase(), 14);
+
+        var esc = (item.path || '').replace(/'/g, "\\'").replace(/\\/g, '\\\\');
+
+        var sizeHtml = item.size
+            ? '<span class="ptree-size">(' + escapeHtml(item.size) + ')</span>'
+            : '';
+        var descHtml = item.description
+            ? '<span class="ptree-desc">- ' + escapeHtml(item.description) + '</span>'
+            : '';
+
+        row.innerHTML =
+            '<span class="ptree-branch">' + branch + '</span>' +
+            '<span class="ptree-icon">' + icon + '</span>' +
+            '<button class="ptree-filename" onclick="' +
+                (item.isDir
+                    ? 'openFolderInExplorer(\'' + esc + '\')'
+                    : 'openFileInEditor(\'' + esc + '\')') +
+            '\">' + escapeHtml(item.name) + '</button>' +
+            sizeHtml + descHtml;
+
+        list.appendChild(row);
+    });
+
+    card.appendChild(list);
+    return card;
+}
+
+function getFileEmoji(filename) {
+    var ext = (filename || '').split('.').pop().toLowerCase();
+    var map = {
+        'html': '📄', 'htm': '📄',
+        'js':   '📄', 'ts':  '📄', 'jsx': '📄', 'tsx': '📄',
+        'css':  '📄', 'scss': '📄',
+        'py':   '📄', 'java': '📄', 'go':  '📄', 'rs':  '📄',
+        'json': '📄', 'yaml': '📄', 'yml': '📄',
+        'md':   '📄', 'txt':  '📄',
+        'png':  '🖼️', 'jpg': '🖼️', 'svg': '🖼️',
+        'mp4':  '🎬', 'mp3':  '🎵',
+        'zip':  '📦', 'tar':  '📦',
+        'sh':   '⚙️', 'bat':  '⚙️',
+    };
+    return map[ext] || '📄';
+}
+
+function showProjectTreeCard(rootPath, items) {
+    var container = document.getElementById('chatMessages');
+    if (!container) return;
+
+    var card = buildProjectTreeCard(rootPath, items);
+
+    if (currentAssistantMessage) {
+        var cardsEl = currentAssistantMessage.querySelector('.fec-cards-container');
+        if (!cardsEl) {
+            cardsEl = document.createElement('div');
+            cardsEl.className = 'fec-cards-container';
+            currentAssistantMessage.appendChild(cardsEl);
+        }
+        cardsEl.appendChild(card);
+    } else {
+        container.appendChild(card);
+    }
+
+    smartScroll(container);
+}
+
+function openFolderInExplorer(path) {
+    if (window.bridge) bridge.on_open_folder(path);
+}
+
+window.showDirectoryTree = function(rootPath, items) {
+    showProjectTreeCard(rootPath, items);
+};
+
+// ══════════════════════════════════════════════════════════════
+// FEATURE 2 — TERMINAL COMMAND CARD
+// ══════════════════════════════════════════════════════════════
+
+function buildTerminalCard(command, output, status, exitCode, cardId) {
+    var card = document.createElement('div');
+    card.className = 'term-card term-' + status;
+    card.id = cardId || ('term-' + Date.now());
+    card.dataset.command = command;
+    card.dataset.status  = status;
+
+    var headerIcon = {
+        'running': '▷',
+        'success': '<span style="color:#22c55e">✓</span>',
+        'error':   '<span style="color:#ef4444">⊗</span>'
+    }[status] || '▷';
+
+    var exitCodeHtml = (status === 'error' && exitCode !== undefined && exitCode !== null)
+        ? '<span class="term-exit-code">Exit Code: ' + exitCode + '</span>'
+        : '';
+
+    var formattedCmd = formatTerminalCommand(command);
+
+    var outputId = (cardId || 'term-' + Date.now()) + '-output';
+    var outputHtml = output
+        ? '<div class="term-output-body" id="' + outputId + '" style="display:none;">' +
+              '<pre class="term-output-text">' + escapeHtml(output) + '</pre>' +
+          '</div>'
+        : '';
+
+    card.innerHTML =
+        '<div class="term-header">' +
+            '<span class="term-status-icon">' + headerIcon + '</span>' +
+            '<span class="term-title">Run in terminal</span>' +
+            exitCodeHtml +
+        '</div>' +
+        '<div class="term-body">' +
+            '<pre class="term-command">' + formattedCmd + '</pre>' +
+        '</div>' +
+        '<div class="term-footer">' +
+            '<button class="term-output-toggle" onclick="toggleTerminalOutput(\'' + outputId + '\', this)">' +
+                'Terminal Output <span class="term-chevron">›</span>' +
+            '</button>' +
+            '<button class="term-view-btn" onclick="openTerminalPanel()">' +
+                '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" ' +
+                    'stroke="currentColor" stroke-width="2">' +
+                    '<polyline points="15 3 21 3 21 9"/>' +
+                    '<path d="M21 3L9 15"/>' +
+                    '<polyline points="9 21 3 21 3 15"/>' +
+                '</svg>' +
+                ' View in terminal' +
+            '</button>' +
+        '</div>' +
+        (outputHtml || '');
+
+    return card;
+}
+
+function formatTerminalCommand(command) {
+    if (!command) return '';
+
+    var parts = command.split(/\s*;\s*/);
+    var lines = [];
+
+    parts.forEach(function(part) {
+        part = part.trim();
+        if (!part) return;
+
+        var html = escapeHtml(part);
+
+        html = html.replace(
+            /(c:\\\\[^\s&|"'<>]+)/gi,
+            '<span class="term-path">$1</span>'
+        );
+        html = html.replace(
+            /(\/(?:home|usr|var|opt|etc|tmp)[^\s&|"'<>]*)/g,
+            '<span class="term-path">$1</span>'
+        );
+        html = html.replace(
+            /^(\s*)(cd|python|python3|node|npm|pip|dir|ls|mkdir|rm|cp|mv|git|cargo|go|java|javac|pytest|php|ruby|perl)(\s)/,
+            '$1<span class="term-keyword">$2</span>$3'
+        );
+
+        lines.push(html);
+    });
+
+    return lines.join('\n');
+}
+
+function toggleTerminalOutput(outputId, btn) {
+    var output = document.getElementById(outputId);
+    if (!output) return;
+    var isHidden = output.style.display === 'none';
+    output.style.display = isHidden ? 'block' : 'none';
+    var chevron = btn.querySelector('.term-chevron');
+    if (chevron) chevron.textContent = isHidden ? '⌄' : '›';
+}
+
+function updateTerminalCard(cardId, status, exitCode, output) {
+    var card = document.getElementById(cardId);
+    if (!card) return;
+
+    card.className = 'term-card term-' + status;
+    card.dataset.status = status;
+
+    var iconEl = card.querySelector('.term-status-icon');
+    if (iconEl) {
+        if (status === 'success') iconEl.innerHTML = '<span style="color:#22c55e">✓</span>';
+        if (status === 'error')   iconEl.innerHTML = '<span style="color:#ef4444">⊗</span>';
+    }
+
+    if (status === 'error' && exitCode !== undefined) {
+        var titleEl = card.querySelector('.term-title');
+        if (titleEl && !card.querySelector('.term-exit-code')) {
+            var exitEl = document.createElement('span');
+            exitEl.className = 'term-exit-code';
+            exitEl.textContent = 'Exit Code: ' + exitCode;
+            titleEl.insertAdjacentElement('afterend', exitEl);
+        }
+    }
+
+    if (output) {
+        var outputId = cardId + '-output';
+        var existingOutput = document.getElementById(outputId);
+        if (existingOutput) {
+            existingOutput.querySelector('.term-output-text').textContent = output;
+        } else {
+            var outputDiv = document.createElement('div');
+            outputDiv.className = 'term-output-body';
+            outputDiv.id = outputId;
+            outputDiv.style.display = 'none';
+            outputDiv.innerHTML = '<pre class="term-output-text">' + escapeHtml(output) + '</pre>';
+            card.appendChild(outputDiv);
+        }
+    }
+}
+
+function openTerminalPanel() {
+    if (window.bridge && bridge.on_open_terminal) {
+        bridge.on_open_terminal();
+    } else if (window.showTerminal) {
+        window.showTerminal();
+    }
+}
+
+window.setTerminalOutput = function(cardId, output, exitCode) {
+    var status = exitCode === 0 ? 'success' : 'error';
+    updateTerminalCard(cardId, status, exitCode, output);
+};
+
+// ══════════════════════════════════════════════════════════════
+// FEATURE 3 — TODO PANEL
+// ══════════════════════════════════════════════════════════════
+
+function updateTodos(todos, mainTask) {
+    var section   = document.getElementById('todo-section');
+    var list      = document.getElementById('todo-list');
+    var countEl   = document.getElementById('todo-progress-count');
+    var previewEl = document.getElementById('todo-preview-text');
+
+    if (!section || !list) return;
+
+    if (!todos || todos.length === 0) {
+        section.style.display = 'none';
+        list.innerHTML = '';
+        _todoExpanded = false;
+        return;
+    }
+
+    section.style.display = 'flex';
+
+    var total     = todos.length;
+    var completed = todos.filter(function(t) { return t.status === 'COMPLETE'; }).length;
+    if (countEl) countEl.textContent = completed + '/' + total;
+
+    if (previewEl) {
+        var firstPending = todos.find(function(t) {
+            return t.status !== 'COMPLETE' && t.status !== 'CANCELLED';
+        });
+        previewEl.textContent = (firstPending || todos[0]).content;
+    }
+
+    list.innerHTML = '';
+    todos.forEach(function(todo) {
+        var item = document.createElement('div');
+        var statusCls = 'todo-' + todo.status.toLowerCase().replace('_', '');
+        item.className = 'todo-item ' + statusCls;
+        item.dataset.id = todo.id;
+
+        var iconHtml = buildTodoIcon(todo.status);
+        item.innerHTML = iconHtml +
+            '<span class="todo-text">' + escapeHtml(todo.content) + '</span>';
+
+        list.appendChild(item);
+    });
+}
+
+function buildTodoIcon(status) {
+    switch (status) {
+        case 'COMPLETE':
+            return '<div class="todo-icon todo-icon-done">' +
+                '<svg width="8" height="8" viewBox="0 0 24 24" fill="none" ' +
+                    'stroke="currentColor" stroke-width="3.5">' +
+                    '<polyline points="20 6 9 17 4 12"/>' +
+                '</svg></div>';
+        case 'IN_PROGRESS':
+            return '<div class="todo-icon todo-icon-progress">' +
+                '<svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor">' +
+                    '<circle cx="12" cy="12" r="5"/>' +
+                '</svg></div>';
+        case 'CANCELLED':
+            return '<div class="todo-icon todo-icon-cancelled">' +
+                '<svg width="8" height="8" viewBox="0 0 24 24" fill="none" ' +
+                    'stroke="currentColor" stroke-width="3">' +
+                    '<line x1="18" y1="6" x2="6" y2="18"/>' +
+                    '<line x1="6" y1="6" x2="18" y2="18"/>' +
+                '</svg></div>';
+        default:
+            return '<div class="todo-icon todo-icon-pending"></div>';
+    }
+}
+
+function toggleTodoSection() {
+    _todoExpanded = !_todoExpanded;
+    var section = document.getElementById('todo-section');
+    var body    = document.getElementById('todo-body');
+    if (section) section.classList.toggle('expanded', _todoExpanded);
+    if (body)    body.style.display = _todoExpanded ? 'block' : 'none';
+}
+
+window.updateTodos = updateTodos;
+window.toggleTodoSection = toggleTodoSection;
+
+// ══════════════════════════════════════════════════════════════
+// FEATURE 4 — MESSAGE QUEUE SYSTEM
+// ══════════════════════════════════════════════════════════════
+
+function _sendNow(text) {
+    _isGenerating = true;
+
+    appendMessage(text, 'user', true);
+
+    showThinkingIndicator();
+
+    var sendBtn = document.getElementById('sendBtn');
+    var stopBtn = document.getElementById('stopBtn');
+    if (sendBtn) sendBtn.style.display = 'none';
+    if (stopBtn) stopBtn.style.display = 'flex';
+
+    bridge.on_message_submitted(text);
+}
+
+function _enqueueMessage(text) {
+    var id = ++_queueIdSeq;
+    _msgQueue.push({ id: id, text: text, timestamp: Date.now() });
+    _renderQueueBar();
+}
+
+function _onGenerationComplete() {
+    _isGenerating = false;
+
+    if (_msgQueue.length > 0) {
+        var next = _msgQueue.shift();
+        _renderQueueBar();
+        setTimeout(function() {
+            _sendNow(next.text);
+        }, 150);
+    } else {
+        var sendBtn = document.getElementById('sendBtn');
+        var stopBtn = document.getElementById('stopBtn');
+        if (sendBtn) sendBtn.style.display = 'flex';
+        if (stopBtn) stopBtn.style.display = 'none';
+    }
+}
+
+function _renderQueueBar() {
+    var bar     = document.getElementById('msg-queue-bar');
+    var listEl  = document.getElementById('mq-list');
+    var countEl = document.getElementById('mq-count');
+
+    if (!bar || !listEl) return;
+
+    if (_msgQueue.length === 0) {
+        bar.style.display = 'none';
+        return;
+    }
+
+    bar.style.display = 'flex';
+    if (countEl) countEl.textContent = _msgQueue.length;
+
+    listEl.innerHTML = '';
+    _msgQueue.forEach(function(msg) {
+        var item = document.createElement('div');
+        item.className = 'mq-item';
+        item.dataset.id = msg.id;
+
+        var preview = msg.text.length > 60
+            ? msg.text.slice(0, 60) + '...'
+            : msg.text;
+
+        item.innerHTML =
+            '<span class="mq-position">' + (_msgQueue.indexOf(msg) + 1) + '</span>' +
+            '<span class="mq-text">' + escapeHtml(preview) + '</span>' +
+            '<button class="mq-remove" onclick="_removeFromQueue(' + msg.id + ')" ' +
+                    'title="Remove from queue">×</button>';
+
+        listEl.appendChild(item);
+    });
+}
+
+function _removeFromQueue(id) {
+    _msgQueue = _msgQueue.filter(function(m) { return m.id !== id; });
+    _renderQueueBar();
+}
+
+function _clearQueue() {
+    _msgQueue = [];
+    _renderQueueBar();
+}
+
+window._removeFromQueue = _removeFromQueue;
+window._clearQueue = _clearQueue;

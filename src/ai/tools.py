@@ -4,17 +4,188 @@ Allows AI to use tools to interact with the IDE environment
 """
 
 import os
+import re
 import subprocess
 import time
 import shutil
 import hashlib
-from typing import Dict, List, Callable, Any, Optional
+from typing import Dict, List, Callable, Any, Optional, Tuple
 from dataclasses import dataclass, field
 from pathlib import Path
 from src.ai.precise_editor import get_editor, PreciseEditor
 from src.utils.logger import get_logger
 
 log = get_logger("tool_registry")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# VIRTUAL ENVIRONMENT & DEPENDENCY DIRECTORY EXCLUSION SYSTEM
+# Prevents AI from exploring framework dependency directories (performance killer)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Master exclusion patterns ─────────────────────────────────────────────────
+BLOCKED_DIRS = {
+    # Python virtual environments
+    'venv', '.venv', 'env', '.env', 'virtualenv', 'ENV',
+    '__pycache__', '.eggs', '.tox', '.mypy_cache',
+    '.pytest_cache', '.ruff_cache', '.nox',
+    
+    # Node.js
+    'node_modules', '.npm', '.yarn', '.pnpm-store', '.pnp',
+    '.next', '.nuxt', '.svelte-kit', '.parcel-cache',
+    '.turbo', '.vercel', 'coverage',
+    
+    # Flutter / Dart
+    '.dart_tool', '.pub-cache', '.flutter-plugins',
+    
+    # Java / Android / Kotlin
+    '.gradle', '.idea', 'out',
+    
+    # Rust
+    'target', '.cargo',
+    
+    # Go
+    'vendor', 'Godeps',
+    
+    # Ruby
+    '.bundle',
+    
+    # .NET / C#
+    'bin', 'obj',
+    
+    # iOS / Swift
+    'Pods', '.cocoapods',
+    
+    # Haskell
+    '.stack-work', 'dist-newstyle',
+    
+    # Elixir
+    '_build', 'deps', '.elixir_ls',
+    
+    # PHP
+    'vendor',
+    
+    # Generic build/cache
+    '.cache', '.temp', '.tmp', 'dist', 'build',
+    '.git', '.svn', '.hg',
+}
+
+BLOCKED_DIR_PATTERNS = [
+    r'site-packages',      # inside venv
+    r'dist-packages',      # inside venv (Debian/Ubuntu)
+    r'\.egg-info$',        # Python egg metadata
+    r'__pycache__',        # anywhere in tree
+    r'node_modules',       # anywhere in tree
+    r'ios[/\\]Pods',       # Flutter iOS
+    r'android[/\\]\.gradle',  # Flutter Android
+    r'\.dart_tool',        # anywhere in tree
+    r'\.cargo',            # Rust cargo
+    r'target[/\\]debug',   # Rust debug builds
+    r'target[/\\]release', # Rust release builds
+    r'\.stack-work',       # Haskell
+    r'dist-newstyle',      # Haskell
+    r'_build',             # Elixir
+    r'\.elixir_ls',        # Elixir LS
+    r'vendor[/\\]bundle',  # Ruby
+]
+
+BLOCKED_EXTENSIONS = {
+    # Compiled / binary
+    '.pyc', '.pyo', '.pyd', '.so', '.dylib', '.dll',
+    '.exe', '.bin', '.wasm', '.class', '.jar', '.war',
+    '.aar', '.apk', '.ipa', '.o', '.obj', '.lib', '.a',
+    
+    # Media
+    '.png', '.jpg', '.jpeg', '.gif', '.ico', '.webp',
+    '.bmp', '.tiff', '.mp4', '.mov', '.avi', '.mkv',
+    '.mp3', '.wav', '.ogg', '.flac', '.aac',
+    
+    # Archives
+    '.zip', '.tar', '.gz', '.bz2', '.7z', '.rar', '.xz',
+    
+    # Documents (binary)
+    '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+    
+    # Generated/minified
+    '.min.js', '.min.css', '.map',
+    '.tsbuildinfo', '.d.ts.map',
+}
+
+# Lock files — readable but warn
+LOCK_FILES = {
+    'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml',
+    'cargo.lock', 'poetry.lock', 'pipfile.lock',
+    'gemfile.lock', 'composer.lock', 'pubspec.lock',
+}
+
+
+def is_blocked_path(path: str) -> Tuple[bool, str]:
+    """
+    Check if a path should be blocked from tool access.
+    Returns (is_blocked: bool, reason: str)
+    """
+    path_lower = path.lower().replace('\\', '/')
+    parts = Path(path).parts
+    
+    # Check each directory component
+    for part in parts:
+        # Convert Path object to string if needed (Windows compatibility)
+        part_str = str(part)
+        part_lower = part_str.lower()
+        # Strip trailing slash
+        part_clean = part_lower.rstrip('/')
+        
+        if part_clean in BLOCKED_DIRS:
+            return True, f"Blocked directory '{part_str}' — dependency/build directory (not user code)"
+    
+    # Check pattern matches on the full path
+    for pattern in BLOCKED_DIR_PATTERNS:
+        if re.search(pattern, path_lower):
+            return True, f"Blocked path pattern '{pattern}' — dependency/generated directory"
+    
+    return False, ""
+
+
+def is_blocked_file(file_path: str) -> Tuple[bool, str]:
+    """
+    Check if a file should be blocked from being read.
+    Returns (is_blocked: bool, reason: str)
+    """
+    # First check path (is it inside a blocked directory?)
+    blocked, reason = is_blocked_path(file_path)
+    if blocked:
+        return True, reason
+    
+    path = Path(file_path)
+    name_lower = path.name.lower()
+    suffix_lower = path.suffix.lower()
+    
+    # Check extension
+    if suffix_lower in BLOCKED_EXTENSIONS:
+        return True, f"Blocked file type '{suffix_lower}' — binary/compiled/generated file"
+    
+    # Check double extensions like .min.js
+    if name_lower.endswith('.min.js') or name_lower.endswith('.min.css'):
+        return True, "Blocked minified file — auto-generated, not user code"
+    
+    # Warn on lock files but allow
+    if name_lower in LOCK_FILES:
+        return False, ""
+    
+    return False, ""
+
+
+def get_directory_size_estimate(path: str) -> int:
+    """
+    Quick estimate of number of items in a directory (non-recursive).
+    Used to warn before listing huge directories.
+    """
+    try:
+        return sum(1 for _ in Path(path).iterdir())
+    except (PermissionError, OSError):
+        return -1
+
+
+LARGE_DIR_THRESHOLD = 500  # warn if more than this many items
 
 # Simple file cache to avoid re-reading same files
 _file_cache: Dict[str, tuple] = {}
@@ -385,9 +556,9 @@ class ToolRegistry:
         # Terminal operations
         self.register_tool(
             name="run_command",
-            description="Run a terminal command",
+            description="Run a terminal command. IMPORTANT: Never modify virtual environment directories (venv/, .venv/, node_modules/) directly. Use package managers (pip, npm, etc.) instead.",
             parameters=[
-                ToolParameter("command", "string", "Command to execute", required=True),
+                ToolParameter("command", "string", "Command to execute. WARNING: Do not run commands that modify venv/, node_modules/, or other dependency directories directly.", required=True),
                 ToolParameter("timeout", "int", "Timeout in seconds", required=False, default=30)
             ],
             function=self._run_command,
@@ -505,6 +676,11 @@ class ToolRegistry:
         try:
             resolved_path = self._resolve_path(path)
             str_path = str(resolved_path)
+            
+            # ── Hard block check for dependency/binary files ─────────────────────
+            blocked, reason = is_blocked_file(str_path)
+            if blocked:
+                return f"🚫 BLOCKED: {reason}\n\nThis file is inside a dependency or build directory. Reading it would waste context and slow down the terminal. Focus on your source code files instead."
             
             if not resolved_path.exists():
                 raise FileNotFoundError(f"File not found: {path}")
@@ -733,22 +909,40 @@ class ToolRegistry:
             raise Exception(f"Failed to delete path: {e}")
             
     def _list_directory(self, path: str = ".", show_hidden: bool = False) -> str:
-        """List directory with role annotations, skipping noise dirs."""
+        """List directory with role annotations, skipping noise dirs and blocking dependency directories."""
         try:
-            path = self._resolve_path(path)
+            resolved_path = self._resolve_path(path)
+            str_path = str(resolved_path)
+            
+            # ── Hard block on known dependency dirs ──────────────────────────────
+            blocked, reason = is_blocked_path(str_path)
+            if blocked:
+                return f"🚫 BLOCKED: {reason}\n\nThis directory contains framework dependencies, not user code. Exploring it would freeze the terminal and waste context. Focus on your source files instead."
 
-            if not os.path.isdir(path):
+            if not os.path.isdir(resolved_path):
                 return f"Not a directory: {path}"
 
             items = []
-            for item in sorted(os.listdir(path)):
+            blocked_items = []
+            
+            for item in sorted(os.listdir(resolved_path)):
                 if not show_hidden and item.startswith('.'):
                     continue
                 # Skip noise directories
                 if item in self.SKIP_DIRS:
                     continue
 
-                full_path = os.path.join(path, item)
+                full_path = os.path.join(str(resolved_path), item)
+                
+                # Check if this item is a blocked dependency directory
+                item_blocked, item_reason = is_blocked_path(full_path)
+                if item_blocked:
+                    # Count items for informational display
+                    item_count = get_directory_size_estimate(full_path)
+                    count_str = f"~{item_count}" if item_count > 0 else "many"
+                    blocked_items.append(f"📁 {item}/  ({count_str} items — SKIPPED: dependency directory)")
+                    continue
+                
                 if os.path.isdir(full_path):
                     role = self.DIR_ROLES.get(item.lower(), "")
                     role_str = f"  {role}" if role else ""
@@ -760,6 +954,15 @@ class ToolRegistry:
                         items.append(f"📄 {item}  ({size_str})")
                     except Exception:
                         items.append(f"📄 {item}")
+
+            # Add separator and blocked items info
+            if blocked_items:
+                if items:
+                    items.append("")
+                items.append(f"── {len(blocked_items)} dependency/build directories excluded ──")
+                items.extend(blocked_items[:5])  # Show max 5
+                if len(blocked_items) > 5:
+                    items.append(f"... and {len(blocked_items)-5} more blocked directories")
 
             if not items:
                 return "Directory is empty (or contains only hidden/noise directories)."
@@ -786,6 +989,30 @@ class ToolRegistry:
                 log.warning("Falling back to project root or user home")
                 working_dir = self.project_root or os.path.expanduser("~")
             
+            # Check for virtual environment commands that might cause performance issues
+            venv_indicators = ['venv', 'virtualenv', '.venv', 'env/', 'node_modules']
+            dangerous_patterns = [
+                'rm -rf venv', 'rm -rf node_modules', 'del venv', 'rmdir venv',
+                'pip install -r', 'npm install', 'yarn install', 'pnpm install'
+            ]
+            
+            command_lower = command.lower()
+            warnings = []
+            
+            # Check for potentially dangerous commands
+            for pattern in dangerous_patterns:
+                if pattern in command_lower:
+                    warnings.append(f"⚠️ This command may affect dependencies: '{pattern}'")
+            
+            # Check if command targets virtual environment directories
+            for indicator in venv_indicators:
+                if indicator in command_lower:
+                    warnings.append(f"⚠️ Command references '{indicator}' - virtual environments should not be manually modified")
+                    break
+            
+            if warnings:
+                log.warning(f"Command warnings for '{command}': {'; '.join(warnings)}")
+            
             log.info(f"Running command in directory: {working_dir}")
             
             if self.terminal_widget and hasattr(self.terminal_widget, 'execute_command'):
@@ -793,7 +1020,11 @@ class ToolRegistry:
                 if hasattr(self.terminal_widget, 'set_cwd'):
                     self.terminal_widget.set_cwd(working_dir)
                 self.terminal_widget.execute_command(command)
-                return f"Command sent to terminal: {command}"
+                
+                response = f"Command sent to terminal: {command}"
+                if warnings:
+                    response += "\n\n" + "\n".join(warnings)
+                return response
             else:
                 # Fallback to subprocess with correct working directory
                 result = subprocess.run(
@@ -803,6 +1034,9 @@ class ToolRegistry:
                 output = result.stdout
                 if result.stderr:
                     output += "\n" + result.stderr
+                
+                if warnings:
+                    output = "\n".join(warnings) + "\n\n" + output
                 return output
         except subprocess.TimeoutExpired:
             raise Exception(f"Command timed out after {timeout} seconds")
