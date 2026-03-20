@@ -29,6 +29,10 @@ class ChatBridge(QObject):
     open_file_at_line_requested = pyqtSignal(str, int)  # file_path, line_number
     show_diff_requested = pyqtSignal(str)
     
+    # File edit accept/reject signals
+    accept_file_edit_requested = pyqtSignal(str)  # file_path
+    reject_file_edit_requested = pyqtSignal(str)  # file_path
+    
     # Terminal Signals
     terminal_input = pyqtSignal(str)
     terminal_output = pyqtSignal(str)
@@ -99,6 +103,13 @@ class ChatBridge(QObject):
         self.show_diff_requested.emit(file_path)
 
     @pyqtSlot(str)
+    def on_request_diff_data(self, file_path):
+        """Request diff data for a file - called when JS needs diff content."""
+        log.debug(f"Diff data requested for: {file_path}")
+        # Emit signal to main_window to provide diff data
+        self.show_diff_requested.emit(file_path)
+
+    @pyqtSlot(str)
     def on_check_smart_paste(self, pasted_text):
         """Check if pasted text matches current editor selection."""
         self.smart_paste_check_requested.emit(pasted_text)
@@ -135,13 +146,32 @@ class ChatBridge(QObject):
     def on_accept_file_edit(self, file_path: str):
         """User accepted a file edit from the card UI."""
         log.info(f'File edit accepted: {file_path}')
-        # Notify main window if available
-        self.show_diff_requested.emit(file_path)  # reuse existing signal
+        # Open file in editor and emit accept signal
+        self.open_file_requested.emit(file_path)
+        self.accept_file_edit_requested.emit(file_path)
 
     @pyqtSlot(str)
     def on_reject_file_edit(self, file_path: str):
         """User rejected a file edit — optionally restore from pre-edit snapshot."""
         log.info(f'File edit rejected: {file_path}')
+        # Open file in editor for review and emit reject signal
+        self.open_file_requested.emit(file_path)
+        self.reject_file_edit_requested.emit(file_path)
+
+    @pyqtSlot()
+    def on_accept_all_files(self):
+        """User accepted all pending file edits."""
+        log.info('Accept all files requested')
+        # Signal to main_window to accept all pending edits
+        # This will be handled by the sidebar's changed files panel
+        self.accept_file_edit_requested.emit("__ALL__")
+
+    @pyqtSlot()
+    def on_reject_all_files(self):
+        """User rejected all pending file edits."""
+        log.info('Reject all files requested')
+        # Signal to main_window to reject all pending edits
+        self.reject_file_edit_requested.emit("__ALL__")
 
     @pyqtSlot()
     def on_approve_tools(self):
@@ -195,8 +225,7 @@ class ChatBridge(QObject):
 
     @pyqtSlot()
     def on_open_terminal(self):
-        """Open terminal panel - lazily starts backend if needed."""
-        self._ensure_terminal_backend()
+        """Open terminal panel."""
         log.info("Open terminal requested from chat")
 
     # ── CHAT PERSISTENCE: File-based storage fallback ─────────────────
@@ -280,6 +309,10 @@ class AIChatWidget(QWidget):
     open_file_at_line_requested = pyqtSignal(str, int)  # file_path, line_number
     show_diff_requested = pyqtSignal(str)
     
+    # File edit accept/reject signals
+    accept_file_edit_requested = pyqtSignal(str)  # file_path
+    reject_file_edit_requested = pyqtSignal(str)  # file_path
+    
     # Smart paste signal - emitted when user pastes code, to check if it matches editor selection
     smart_paste_check_requested = pyqtSignal(str)  # pasted_text
 
@@ -353,6 +386,8 @@ class AIChatWidget(QWidget):
         self._bridge.open_file_requested.connect(self.open_file_requested.emit)
         self._bridge.open_file_at_line_requested.connect(self.open_file_at_line_requested.emit)
         self._bridge.show_diff_requested.connect(self.show_diff_requested.emit)
+        self._bridge.accept_file_edit_requested.connect(self.accept_file_edit_requested.emit)
+        self._bridge.reject_file_edit_requested.connect(self.reject_file_edit_requested.emit)
         self._bridge.search_files_requested.connect(self._on_search_files)
         self._channel.registerObject("bridge", self._bridge)
 
@@ -628,9 +663,9 @@ class AIChatWidget(QWidget):
     def set_project_info(self, name: str, path: str = ""):
         """Update the project indicator in the chat header and switch to project-specific chat history."""
         import json
+        
         safe_name = json.dumps(name)
         safe_path = json.dumps(path)
-        print(f"[PYTHON] set_project_info called: {name}, {path}")
         
         # Set the path immediately in Python so saveChats can use it
         self._current_project_path = path

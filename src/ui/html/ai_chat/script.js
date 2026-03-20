@@ -939,6 +939,7 @@ function deleteChat(id) {
 }
 
 function startNewChat() {
+    console.log('[DEBUG] === startNewChat() CALLED ===');
     currentChatId = Date.now().toString();
     var newChat = {
         id: currentChatId,
@@ -952,7 +953,64 @@ function startNewChat() {
         saveChats();
     }
     clearMessages();
+    // Clear TODOs and Changed Files for new chat
+    clearTodosAndChangedFiles();
 }
+
+// Clear TODOs and Changed Files when switching projects or starting new chat
+function clearTodosAndChangedFiles() {
+    console.log('[DEBUG] === CLEARING TODOs and Changed Files ===');
+    
+    // Clear TODO section
+    var todoSection = document.getElementById('todo-section');
+    if (todoSection) {
+        todoSection.style.display = 'none';
+        console.log('[DEBUG] TODO section display set to none');
+    }
+    var todoBody = document.getElementById('todo-body');
+    if (todoBody) {
+        todoBody.style.display = 'none';
+        todoBody.innerHTML = '';
+    }
+    var todoList = document.getElementById('todo-list');
+    if (todoList) todoList.innerHTML = '';
+    var todoPreview = document.getElementById('todo-preview-text');
+    if (todoPreview) todoPreview.textContent = '';
+    var todoCount = document.getElementById('todo-progress-count');
+    if (todoCount) todoCount.textContent = '0/0';
+    currentTodoList = [];
+    
+    // Clear Changed Files section
+    var cfsSection = document.getElementById('changed-files-section');
+    if (cfsSection) {
+        cfsSection.style.display = 'none';
+        console.log('[DEBUG] Changed Files section display set to none');
+    }
+    var cfsBody = document.getElementById('cfs-body');
+    if (cfsBody) {
+        cfsBody.style.display = 'none';
+        cfsBody.innerHTML = '';
+    }
+    var cfsList = document.getElementById('cfs-list');
+    if (cfsList) cfsList.innerHTML = '';
+    var cfsCount = document.getElementById('cfs-count');
+    if (cfsCount) cfsCount.textContent = '0';
+    var cfsStatus = document.getElementById('cfs-status-text');
+    if (cfsStatus) {
+        cfsStatus.style.display = 'none';
+        cfsStatus.textContent = '';
+    }
+    var cfsBulkBtns = document.getElementById('cfs-bulk-btns');
+    if (cfsBulkBtns) cfsBulkBtns.style.display = 'none';
+    _changedFiles = {};
+    
+    // Also collapse the sections
+    window._todoSectionCollapsed = true;
+    window._cfsCollapsed = true;
+    
+    console.log('[DEBUG] === CLEAR COMPLETE ===');
+}
+window.clearTodosAndChangedFiles = clearTodosAndChangedFiles;
 
 function loadChat(id) {
     var chat = chats.find(function (c) { return c.id === id; });
@@ -960,8 +1018,8 @@ function loadChat(id) {
     currentChatId = id;
     clearMessages();
     
-    // Clear changed files panel before loading
-    clearChangedFiles();
+    // Clear changed files and TODOs before loading new chat
+    clearTodosAndChangedFiles();
     
     chat.messages.forEach(function (msg) {
         appendMessage(msg.text, msg.sender, false);
@@ -1018,6 +1076,9 @@ function clearMessages() {
     container.innerHTML = '';
     currentAssistantMessage = null;
     currentContent = "";
+    
+    // Also clear TODOs and Changed Files when clearing messages
+    clearTodosAndChangedFiles();
 
     var chat = chats.find(function (c) { return c.id === currentChatId; });
     if (!chat || chat.messages.length === 0) {
@@ -1249,6 +1310,56 @@ function addToolResult(icon, text) {
     }
 }
 
+function _updateCurrentTerminalCard(line) {
+    /**
+     * Update the most recent running terminal card with streaming output.
+     * This allows terminal cards to show live output instead of 'running...' forever.
+     */
+    // Find the most recent running terminal card
+    var cards = document.querySelectorAll('.tc.tc-running');
+    if (cards.length === 0) return;
+    
+    var card = cards[cards.length - 1];
+    var cardId = card.id;
+    var outputId = cardId + '-out';
+    
+    var outputEl = document.getElementById(outputId);
+    if (!outputEl) {
+        // Create output section if it doesn't exist yet
+        outputEl = document.createElement('div');
+        outputEl.className = 'tc-output-body';
+        outputEl.id = outputId;
+        outputEl.style.display = 'block';  // show immediately when streaming
+        var pre = document.createElement('pre');
+        pre.className = 'tc-output-pre';
+        pre.id = outputId + '-pre';
+        outputEl.appendChild(pre);
+        card.appendChild(outputEl);
+        
+        // Update toggle button
+        var toggle = card.querySelector('.tc-toggle');
+        if (toggle) {
+            var ch = toggle.querySelector('.tc-chevron');
+            if (ch) ch.textContent = '⌄';
+        }
+    }
+    
+    // Append line to output (limit to last 200 lines to avoid memory bloat)
+    var pre = document.getElementById(outputId + '-pre');
+    if (pre) {
+        pre.textContent += line + '\n';
+        
+        // Trim if too long
+        var lines = pre.textContent.split('\n');
+        if (lines.length > 200) {
+            pre.textContent = lines.slice(-200).join('\n');
+        }
+        
+        // Auto-scroll output area
+        outputEl.scrollTop = outputEl.scrollHeight;
+    }
+}
+
 function renderPermissionBlock(permData) {
     var container = document.getElementById('chatMessages');
     if (!container) return;
@@ -1391,6 +1502,75 @@ function showToolActivity(type, info, status) {
         statusEl.textContent = activityText;
     }
 
+    // ── File read/edit cards (IMMEDIATE VISIBLE CARDS) ──────────────
+    if (type === 'read_file' || type === 'edit_file' || type === 'write_file') {
+        if (!currentAssistantMessage) {
+            currentAssistantMessage = document.createElement('div');
+            currentAssistantMessage.className = 'message-bubble assistant';
+            var ce = document.createElement('div');
+            ce.className = 'message-content';
+            currentAssistantMessage.appendChild(ce);
+            currentContent = "";
+            container.appendChild(currentAssistantMessage);
+            var es = document.getElementById('empty-state');
+            if (es) es.remove();
+        }
+
+        var cardsEl = currentAssistantMessage.querySelector('.fec-cards-container');
+        if (!cardsEl) {
+            cardsEl = document.createElement('div');
+            cardsEl.className = 'fec-cards-container';
+            currentAssistantMessage.appendChild(cardsEl);
+        }
+
+        // Parse file path from info (e.g., "hakeem.html (200 lines)")
+        var filePath = info.split(' ')[0];
+        
+        // Check if card already exists for this file
+        var existingCard = cardsEl.querySelector('[data-path*="' + filePath + '"]');
+        if (existingCard) {
+            // Update existing card status
+            if (status === 'complete') {
+                existingCard.classList.remove('fec-pending');
+                existingCard.classList.add('fec-applied');
+                existingCard.dataset.status = 'applied';
+            }
+        } else {
+            // Create new file activity card
+            var card = document.createElement('div');
+            card.className = 'fec fec-' + (status === 'running' ? 'pending' : 'applied');
+            card.dataset.path = filePath;
+            card.dataset.status = status === 'running' ? 'pending' : 'applied';
+            
+            var fileName = filePath.split('/').pop().split('\\').pop();
+            var ext = fileName.split('.').pop().toLowerCase();
+            var extClass = 'fec-ext-' + (ext || 'default');
+            
+            var icon = type === 'read_file' ? '👁' : type === 'edit_file' ? '✎' : '📝';
+            var actionText = type === 'read_file' ? 'Reading' : type === 'edit_file' ? 'Editing' : 'Creating';
+            
+            card.innerHTML = 
+                '<div class="fec-left">' +
+                    '<span class="fec-ext-badge ' + extClass + '">' + ext.toUpperCase() + '</span>' +
+                    '<button class="fec-name" onclick="openFileInEditor(\'' + filePath.replace(/'/g, "\\'") + '\')">' +
+                        fileName +
+                    '</button>' +
+                    '<span style="color:#666;margin-left:8px;font-size:11px;">' + actionText + '</span>' +
+                '</div>' +
+                '<div class="fec-right">' +
+                    (status === 'running' ? 
+                        '<span class="fec-status-text fec-status-pending">...</span>' :
+                        '<span class="fec-status-text fec-status-applied">✓</span>'
+                    ) +
+                '</div>';
+            
+            cardsEl.appendChild(card);
+        }
+
+        smartScroll(container);
+        return;
+    }
+
     // ── Terminal command card handling ──────────────────────────────
     if (type === 'run_command') {
         if (!currentAssistantMessage) {
@@ -1517,6 +1697,9 @@ function showToolActivity(type, info, status) {
         } else if (['write_file', 'edit_file', 'inject_after', 'add_import'].includes(type) || type.startsWith('terminal_create') || type.startsWith('terminal_edit')) {
             currentActivitySection.stats.edits++;
             fileCount++;
+        } else if (type === 'create_file' || type === 'create_directory' || type === 'delete_file' || type === 'delete_directory') {
+            currentActivitySection.stats.edits++;
+            fileCount++;
         } else {
             currentActivitySection.stats.other++;
         }
@@ -1585,7 +1768,7 @@ function getFileIcon(type, info) {
         return icons[opType] || '<span class="file-icon terminal">⌘</span>';
     }
     
-    if (type === 'read_file' || type === 'write_file' || type === 'edit_file' || type === 'inject_after' || type === 'add_import') {
+    if (type === 'read_file' || type === 'write_file' || type === 'edit_file' || type === 'inject_after' || type === 'add_import' || type === 'create_file') {
         var ext = info.split('.').pop().toLowerCase();
         var icons = {
             'js': '<span class="file-icon js">JS</span>',
@@ -1608,6 +1791,9 @@ function getFileIcon(type, info) {
         return icons[ext] || '<span class="file-icon">FILE</span>';
     }
     if (type === 'list_directory') return '<span class="file-icon folder">📁</span>';
+    if (type === 'create_directory') return '<span class="file-icon folder">📁+</span>';
+    if (type === 'delete_file') return '<span class="file-icon delete">🗑️</span>';
+    if (type === 'delete_directory') return '<span class="file-icon delete">🗑️</span>';
     if (type === 'run_command') return '<span class="file-icon terminal">⌘</span>';
     if (type === 'search_code') return '<span class="file-icon search">🔍</span>';
     if (type === 'git_status' || type === 'git_diff') return '<span class="file-icon git">GIT</span>';
@@ -1617,7 +1803,9 @@ function getFileIcon(type, info) {
 
 function formatActivityLabel(type, info, status) {
     var isEdit = ['write_file', 'edit_file', 'inject_after', 'add_import'].includes(type) || type.startsWith('terminal_create') || type.startsWith('terminal_edit');
-    var labelText = isEdit ? 'Editing...' : 'Running';
+    var isCreate = ['create_file', 'create_directory'].includes(type);
+    var isDelete = ['delete_file', 'delete_directory'].includes(type);
+    var labelText = isEdit ? 'Editing...' : (isCreate ? 'Creating...' : (isDelete ? 'Deleting...' : 'Running'));
     var runningPrefix = status === 'running' ? '<span class="running-label">' + labelText + '</span> ' : '';
     
     var displayInfo = escapeHtml(info);
@@ -1637,6 +1825,14 @@ function formatActivityLabel(type, info, status) {
     if (isEdit) {
         var checkmark = (status === 'complete' && !diffMatch) ? ' ✓' : '';
         return status === 'running' ? runningPrefix + displayInfo : displayInfo + checkmark;
+    }
+    if (isCreate) {
+        var action = type === 'create_directory' ? 'Created directory' : 'Created file';
+        return status === 'running' ? runningPrefix + displayInfo : action + ' ' + displayInfo + ' ✓';
+    }
+    if (isDelete) {
+        var action = type === 'delete_directory' ? 'Deleted directory' : 'Deleted file';
+        return status === 'running' ? runningPrefix + displayInfo : action + ' ' + displayInfo + ' ✓';
     }
     if (type === 'list_directory') {
         return status === 'running' ? 'Exploring ' + displayInfo : 'Exploring ' + displayInfo;
@@ -1723,11 +1919,19 @@ function renderDirectoryContents(path, contents) {
         var fullPath = basePath + name;
         var escapedPath = fullPath.replace(/'/g, "\\'");
         
+        console.log('[DEBUG] renderDirectoryContents - Folder:', name, 'Full path:', fullPath);
+        
         // Add click handler
         if (isFolder) {
-            item.onclick = function() { openFolderInExplorer(escapedPath); };
+            item.onclick = function() { 
+                console.log('[DEBUG] Opening folder in explorer:', escapedPath);
+                openFolderInExplorer(escapedPath); 
+            };
         } else {
-            item.onclick = function() { openFileInEditor(escapedPath); };
+            item.onclick = function() { 
+                console.log('[DEBUG] Opening file:', escapedPath);
+                openFileInEditor(escapedPath); 
+            };
         }
         
         var iconSpan = '<span style="font-size: 14px; display: inline-flex; align-items: center;">' + icon + '</span>';
@@ -2130,37 +2334,55 @@ function updateTodos(todos, mainTask) {
 
     if (!section || !list) return;
 
+    // If empty todos received, don't clear existing ones - persist until completed
     if (todos.length === 0) {
-        section.style.display = 'none';
-        list.innerHTML = '';
-        if (previewEl) previewEl.textContent = '';
-        if (countEl)   countEl.textContent   = '0/0';
-        currentTodoList = [];
+        // Only hide if there are no existing todos
+        if (currentTodoList.length === 0) {
+            section.style.display = 'none';
+            list.innerHTML = '';
+            if (previewEl) previewEl.textContent = '';
+            if (countEl)   countEl.textContent   = '0/0';
+        }
         return;
     }
 
-    currentTodoList = todos;
+    // Merge new todos with existing ones (avoid duplicates by id)
+    var existingIds = new Set(currentTodoList.map(function(t) { return t.id; }));
+    var newTodos = todos.filter(function(t) { return !existingIds.has(t.id); });
+    
+    // Update status of existing todos if changed
+    todos.forEach(function(todo) {
+        var existing = currentTodoList.find(function(t) { return t.id === todo.id; });
+        if (existing) {
+            existing.status = todo.status;
+            existing.content = todo.content;
+        }
+    });
+    
+    // Add new todos
+    currentTodoList = currentTodoList.concat(newTodos);
     section.style.display = 'flex';
 
-    var total     = todos.length;
-    var completed = todos.filter(function(t) { return t.status === 'COMPLETE'; }).length;
+    // Calculate stats from currentTodoList (merged list)
+    var total     = currentTodoList.length;
+    var completed = currentTodoList.filter(function(t) { return t.status === 'COMPLETE'; }).length;
 
     if (countEl) countEl.textContent = completed + '/' + total;
 
     // Header preview: first incomplete task text
     if (previewEl) {
         var firstIncomplete = null;
-        for (var i = 0; i < todos.length; i++) {
-            if (todos[i].status !== 'COMPLETE' && todos[i].status !== 'CANCELLED') {
-                firstIncomplete = todos[i];
+        for (var i = 0; i < currentTodoList.length; i++) {
+            if (currentTodoList[i].status !== 'COMPLETE' && currentTodoList[i].status !== 'CANCELLED') {
+                firstIncomplete = currentTodoList[i];
                 break;
             }
         }
-        previewEl.textContent = (firstIncomplete || todos[0]).content;
+        previewEl.textContent = (firstIncomplete || currentTodoList[0]).content;
     }
 
     list.innerHTML = '';
-    todos.forEach(function(todo) {
+    currentTodoList.forEach(function(todo) {
         var item = document.createElement('div');
         var statusLow = todo.status.toLowerCase().replace('_', '');
         item.className = 'todo-item todo-' + statusLow;
@@ -2234,8 +2456,8 @@ function startStreaming() {
     currentActivitySection = null;
     fileCount = 0;
     
-    // Clear previous todos for new response
-    clearTodos();
+    // NOTE: We no longer clear todos here - todos persist until explicitly completed
+    // The AI will send new todos via updateTodos() if needed, which will merge with existing
     
     // Create new assistant message bubble
     if (!currentAssistantMessage) {
@@ -2302,6 +2524,15 @@ function onChunk(chunk) {
         _taskSummaryBuffer += chunk;
         if (chunk.includes('</task_summary>')) _inTaskSummary = false;
         return;
+    }
+
+    // ── Terminal output streaming: route to terminal card ────────────────
+    if (chunk.includes('<terminal_output>')) {
+        var termMatch = chunk.match(/<terminal_output>(.*?)<\/terminal_output>/);
+        if (termMatch) {
+            _updateCurrentTerminalCard(termMatch[1]);
+        }
+        return;  // Don't add terminal output to AI text bubble
     }
 
     // Hide thinking on first real content
@@ -3511,6 +3742,9 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
         
+        // Clear TODOs and Changed Files when switching projects
+        clearTodosAndChangedFiles();
+        
         if (name && name.trim()) {
             projectName.textContent = name;
             indicator.title = path || name;
@@ -3569,6 +3803,9 @@ document.addEventListener('DOMContentLoaded', function() {
             }, 300);
             return;
         }
+        
+        // Clear TODOs and Changed Files when switching projects
+        clearTodosAndChangedFiles();
         
         if (name && name.trim()) {
             projectName.textContent = name;
@@ -3678,9 +3915,14 @@ function renderChangedFileRow(filePath, added, removed, editType, status) {
     editType = editType || 'M';
     status = status || 'pending';
     
+    console.log('[DEBUG] renderChangedFileRow:', filePath, 'status:', status);
+    
     var section = document.getElementById('changed-files-section');
     var list    = document.getElementById('cfs-list');
-    if (!section || !list) return;
+    if (!section || !list) {
+        console.log('[DEBUG] Missing section or list');
+        return;
+    }
 
     section.style.display = 'flex';
 
@@ -3694,16 +3936,16 @@ function renderChangedFileRow(filePath, added, removed, editType, status) {
     row.className = 'cfs-row' + (status === 'accepted' ? ' cfs-accepted' : '');
     row.dataset.path = filePath;
     
+    // Footer section shows only status (no individual Accept/Reject buttons)
+    // User uses "Accept All" / "Reject All" buttons in footer header
     var rightContent = '';
     if (status === 'accepted') {
         rightContent = '<span class="cfs-row-applied">Applied</span>';
     } else if (status === 'rejected') {
         rightContent = '<span class="cfs-row-rejected">Rejected</span>';
     } else {
-        rightContent = '<div class="cfs-row-pending-actions">' +
-            '<button class="cfs-row-accept-btn" onclick="acceptChangedFile(\'' + esc + '\',this)">\u2713</button>' +
-            '<button class="cfs-row-reject-btn" onclick="rejectChangedFile(\'' + esc + '\',this)">\u2717</button>' +
-        '</div>';
+        // Pending - show status text, user can use Accept All/Reject All in header
+        rightContent = '<span class="cfs-row-pending">Pending</span>';
     }
     
     row.innerHTML =
@@ -3725,6 +3967,7 @@ function renderChangedFileRow(filePath, added, removed, editType, status) {
         '</div>';
 
     list.appendChild(row);
+    console.log('[DEBUG] Row appended to list');
 }
 
 function addChangedFile(filePath, added, removed, editType) {
@@ -3739,7 +3982,31 @@ function addChangedFile(filePath, added, removed, editType) {
 
     _changedFiles[filePath] = { added: added, removed: removed, status: 'pending', editType: editType };
     renderChangedFileRow(filePath, added, removed, editType, 'pending');
+    
+    // Show the Changed Files section when first file is added
+    var section = document.getElementById('changed-files-section');
+    if (section && Object.keys(_changedFiles).length === 1) {
+        section.style.display = 'block';
+        // Expand the section
+        window._cfsCollapsed = false;
+        section.classList.add('expanded');
+        var body = document.getElementById('cfs-body');
+        if (body) body.style.display = 'block';
+    }
+    
     _refreshCfsHeader();
+}
+
+function resolveFilePath(filePath) {
+    // Handle relative paths by prepending project path
+    if (filePath && currentProjectPath) {
+        var isRelative = !filePath.match(/^[a-zA-Z]:\\/) && !filePath.startsWith('/');
+        if (isRelative) {
+            var separator = currentProjectPath.includes('/') ? '/' : '\\';
+            return currentProjectPath + separator + filePath;
+        }
+    }
+    return filePath;
 }
 
 function acceptChangedFile(filePath, btn) {
@@ -3751,7 +4018,13 @@ function acceptChangedFile(filePath, btn) {
         var rightEl = row.querySelector('.cfs-row-right');
         if (rightEl) rightEl.innerHTML = '<span class="cfs-row-applied">Applied</span>';
     }
-    if (window.bridge) bridge.on_accept_file_edit(filePath);
+    // Resolve relative path before sending to bridge
+    var resolvedPath = resolveFilePath(filePath);
+    // Convert backslashes to forward slashes for Windows paths
+    // This prevents backslash escape character issues in PyQt bridge
+    var safePath = resolvedPath.replace(/\\/g, '/');
+    console.log('[DEBUG] Accepting file:', safePath);
+    if (window.bridge) bridge.on_accept_file_edit(safePath);
     _refreshCfsHeader();
     markFileAccepted(filePath);
 }
@@ -3765,15 +4038,22 @@ function rejectChangedFile(filePath, btn) {
         var rightEl = row.querySelector('.cfs-row-right');
         if (rightEl) rightEl.innerHTML = '<span class="cfs-row-rejected-label">Rejected</span>';
     }
-    if (window.bridge) bridge.on_reject_file_edit(filePath);
+    // Resolve relative path before sending to bridge
+    var resolvedPath = resolveFilePath(filePath);
+    // Convert backslashes to forward slashes for Windows paths
+    var safePath = resolvedPath.replace(/\\/g, '/');
+    console.log('[DEBUG] Rejecting file:', safePath);
+    if (window.bridge) bridge.on_reject_file_edit(safePath);
     _refreshCfsHeader();
     markFileRejected(filePath);
 }
 
 function acceptAllChanges(e) {
     if (e) e.stopPropagation();
+    console.log('[DEBUG] Accept All clicked, files:', Object.keys(_changedFiles));
     Object.keys(_changedFiles).forEach(function(p) {
         if (_changedFiles[p].status === 'pending') {
+            console.log('[DEBUG] Accepting file:', p);
             var btn = document.querySelector('.cfs-row[data-path="' + p + '"] .cfs-row-accept-btn');
             if (btn) acceptChangedFile(p, btn);
         }
@@ -3782,8 +4062,10 @@ function acceptAllChanges(e) {
 
 function rejectAllChanges(e) {
     if (e) e.stopPropagation();
+    console.log('[DEBUG] Reject All clicked, files:', Object.keys(_changedFiles));
     Object.keys(_changedFiles).forEach(function(p) {
         if (_changedFiles[p].status === 'pending') {
+            console.log('[DEBUG] Rejecting file:', p);
             var btn = document.querySelector('.cfs-row[data-path="' + p + '"] .cfs-row-reject-btn');
             if (btn) rejectChangedFile(p, btn);
         }
@@ -3824,7 +4106,7 @@ function _escapeId(str) {
 // ================================================================
 // CURSOR-STYLE FILE EDIT CARD (buildFileEditCard)
 // ================================================================
-function buildFileEditCard(filePath, added, removed, editType, status) {
+function buildFileEditCard(filePath, added, removed, editType, status, original, modified) {
     editType = editType || 'M';
     status   = status   || 'pending';
 
@@ -3848,11 +4130,11 @@ function buildFileEditCard(filePath, added, removed, editType, status) {
 
     var rightHtml = '';
     if (isPending) {
+        // Only show Diff button in chat cards
+        // Accept/Reject is done via footer "Accept All" / "Reject All" buttons
         rightHtml =
             '<div class="fec-pending-actions">' +
-                '<button class="fec-btn-diff"   onclick="requestDiff(\'' + esc + '\',this)">Diff</button>' +
-                '<button class="fec-btn-accept" onclick="acceptFileEdit(\'' + esc + '\',this)">Accept</button>' +
-                '<button class="fec-btn-reject" onclick="rejectFileEdit(\'' + esc + '\',this)">Reject</button>' +
+                '<button class="fec-btn-diff" onclick="event.stopPropagation(); openFileDiff(this.closest(\'.fec\'))">Diff</button>' +
             '</div>';
     } else if (isApplied) {
         rightHtml = '<span class="fec-status-applied">Applied</span>';
@@ -3862,13 +4144,21 @@ function buildFileEditCard(filePath, added, removed, editType, status) {
 
     var card = document.createElement('div');
     card.className = 'fec fec-' + status;
-    card.dataset.path   = filePath;
-    card.dataset.status = status;
+    card.dataset.path     = filePath;
+    card.dataset.status   = status;
+    card.dataset.original = original || '';
+    card.dataset.modified = modified || '';
+
+    // Click card to open diff (except when clicking buttons)
+    card.onclick = function(e) {
+        if (e.target.tagName === 'BUTTON') return;
+        openFileDiff(card);
+    };
 
     card.innerHTML =
         '<div class="fec-left">' +
             ftBadge +
-            '<button class="fec-name" onclick="openFileInEditor(\'' + esc + '\')" title="' + escapeHtml(filePath) + '">' +
+            '<button class="fec-name" onclick="event.stopPropagation(); openFileInEditor(\'' + esc + '\')" title="' + escapeHtml(filePath) + '">' +
                 escapeHtml(fileName) +
             '</button>' +
             addedHtml + removedHtml +
@@ -3904,7 +4194,12 @@ function getFileTypeBadge(ext) {
 // RENDER CUSTOM TAGS INTO MESSAGE (renderCustomTagsInto)
 // ================================================================
 function renderCustomTagsInto(msgEl, fullText) {
-    if (!msgEl || !fullText) return;
+    if (!msgEl || !fullText) {
+        console.log('[DEBUG] renderCustomTagsInto: missing msgEl or fullText');
+        return;
+    }
+
+    console.log('[DEBUG] renderCustomTagsInto called, fullText length:', fullText.length);
 
     // ── Find or create cards container ────────────────────────────────
     // Works with BOTH .message-bubble AND .msg structures
@@ -3922,15 +4217,19 @@ function renderCustomTagsInto(msgEl, fullText) {
         } else {
             msgEl.appendChild(cardsEl);
         }
+        console.log('[DEBUG] Created new cards container');
     }
 
     // ── Parse <file_edited> tags ────────────────────────────────────
     var feRe = /<file_edited>([\s\S]*?)<\/file_edited>/g;
     var m;
+    var matchCount = 0;
     while ((m = feRe.exec(fullText)) !== null) {
+        matchCount++;
         var lines = m[1].trim().split('\n')
                         .map(function(l) { return l.trim(); })
                         .filter(Boolean);
+        console.log('[DEBUG] Found file_edited tag, lines:', lines);
         if (!lines[0]) continue;
 
         var filePath = lines[0];
@@ -3946,15 +4245,26 @@ function renderCustomTagsInto(msgEl, fullText) {
             editType = lines[2].toUpperCase();
         }
 
-        // Don't add duplicate cards for same path
-        if (cardsEl.querySelector('[data-path="' + filePath + '"]')) continue;
+        console.log('[DEBUG] File edit:', filePath, '+', added, '-', removed, editType);
 
-        var card = buildFileEditCard(filePath, added, removed, editType, 'pending');
+        // Don't add duplicate cards for same path
+        if (cardsEl.querySelector('[data-path="' + filePath + '"]')) {
+            console.log('[DEBUG] Duplicate card skipped for:', filePath);
+            continue;
+        }
+
+        // Retrieve stored diff data for this file (set by Python bridge)
+        var diffData = _fileDiffStore[filePath] || {};
+        console.log('[DEBUG] Diff data for', filePath, ':', diffData ? 'found' : 'not found');
+
+        var card = buildFileEditCard(filePath, added, removed, editType, 'pending', diffData.original, diffData.modified);
         cardsEl.appendChild(card);
+        console.log('[DEBUG] Card added for:', filePath);
 
         // Also sync to Changed Files panel
         addChangedFile(filePath, added, removed, editType);
     }
+    console.log('[DEBUG] Total file_edited tags found:', matchCount);
 }
 
 // ================================================================
@@ -4063,7 +4373,22 @@ function buildThoughtBadge(seconds) {
 
 // ── FILE EDIT CARD BRIDGE HANDLERS ──────────────────────────────
 function openFileInEditor(filePath) {
-    if (window.bridge) bridge.on_open_file(filePath);
+    // Handle relative paths by prepending project path
+    if (filePath && currentProjectPath) {
+        // Check if path is absolute (starts with drive letter like C:\ or / on Unix, or contains :\)
+        var isAbsolute = /^[a-zA-Z]:\\/.test(filePath) || filePath.startsWith('/') || filePath.includes(':\\') || filePath.includes(':/');
+        console.log('[DEBUG] openFileInEditor - filePath:', filePath, 'isAbsolute:', isAbsolute, 'currentProjectPath:', currentProjectPath);
+        if (!isAbsolute) {
+            // Normalize path separator and join with project path
+            var separator = currentProjectPath.includes('/') ? '/' : '\\';
+            filePath = currentProjectPath + separator + filePath;
+            console.log('[DEBUG] Prepended project path, new filePath:', filePath);
+        }
+    }
+    // Convert backslashes to forward slashes for safe bridge transmission
+    var safePath = filePath.replace(/\\/g, '/');
+    console.log('[DEBUG] Opening file:', safePath);
+    if (window.bridge) bridge.on_open_file(safePath);
 }
 
 function requestDiff(filePath) {
@@ -4668,28 +4993,50 @@ function updateTodos(todos, mainTask) {
 
     if (!section || !list) return;
 
+    // If empty todos received, don't clear existing ones - persist until completed
     if (!todos || todos.length === 0) {
-        section.style.display = 'none';
-        list.innerHTML = '';
-        _todoExpanded = false;
+        // Only hide if there are no existing todos
+        if (!currentTodoList || currentTodoList.length === 0) {
+            section.style.display = 'none';
+            list.innerHTML = '';
+            _todoExpanded = false;
+        }
         return;
     }
 
+    // Merge new todos with existing ones (avoid duplicates by id)
+    if (!currentTodoList) currentTodoList = [];
+    var existingIds = new Set(currentTodoList.map(function(t) { return t.id; }));
+    var newTodos = todos.filter(function(t) { return !existingIds.has(t.id); });
+    
+    // Update status of existing todos if changed
+    todos.forEach(function(todo) {
+        var existing = currentTodoList.find(function(t) { return t.id === todo.id; });
+        if (existing) {
+            existing.status = todo.status;
+            existing.content = todo.content;
+        }
+    });
+    
+    // Add new todos
+    currentTodoList = currentTodoList.concat(newTodos);
+
     section.style.display = 'flex';
 
-    var total     = todos.length;
-    var completed = todos.filter(function(t) { return t.status === 'COMPLETE'; }).length;
+    // Calculate stats from currentTodoList (merged list)
+    var total     = currentTodoList.length;
+    var completed = currentTodoList.filter(function(t) { return t.status === 'COMPLETE'; }).length;
     if (countEl) countEl.textContent = completed + '/' + total;
 
     if (previewEl) {
-        var firstPending = todos.find(function(t) {
+        var firstPending = currentTodoList.find(function(t) {
             return t.status !== 'COMPLETE' && t.status !== 'CANCELLED';
         });
-        previewEl.textContent = (firstPending || todos[0]).content;
+        previewEl.textContent = (firstPending || currentTodoList[0]).content;
     }
 
     list.innerHTML = '';
-    todos.forEach(function(todo) {
+    currentTodoList.forEach(function(todo) {
         var item = document.createElement('div');
         var statusCls = 'todo-' + todo.status.toLowerCase().replace('_', '');
         item.className = 'todo-item ' + statusCls;
@@ -4712,10 +5059,8 @@ function buildTodoIcon(status) {
                     '<polyline points="20 6 9 17 4 12"/>' +
                 '</svg></div>';
         case 'IN_PROGRESS':
-            return '<div class="todo-icon todo-icon-progress">' +
-                '<svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor">' +
-                    '<circle cx="12" cy="12" r="5"/>' +
-                '</svg></div>';
+            // Spinning circle animation (CSS handles the animation)
+            return '<div class="todo-icon todo-icon-progress"></div>';
         case 'CANCELLED':
             return '<div class="todo-icon todo-icon-cancelled">' +
                 '<svg width="8" height="8" viewBox="0 0 24 24" fill="none" ' +
@@ -4828,3 +5173,469 @@ function _clearQueue() {
 
 window._removeFromQueue = _removeFromQueue;
 window._clearQueue = _clearQueue;
+
+// ================================================================
+// DIFF VIEWER — File Edit Card Diff Overlay
+// ================================================================
+
+// Diff data store — populated by Python bridge
+var _fileDiffStore = {};  // filePath → {original, modified, added, removed}
+
+/**
+ * Store diff data from Python bridge.
+ * Called via: page.runJavaScript("storeDiffData('path', 'orig', 'new')")
+ */
+window.storeDiffData = function(filePath, original, modified) {
+    console.log('[DEBUG] storeDiffData called for:', filePath);
+    console.log('[DEBUG] Original length:', original ? original.length : 0);
+    console.log('[DEBUG] Modified length:', modified ? modified.length : 0);
+    var stats = _countDiffStats(original, modified);
+    _fileDiffStore[filePath] = {
+        original: original,
+        modified: modified,
+        added: stats.added,
+        removed: stats.removed
+    };
+    console.log('[DEBUG] Diff stats: +' + stats.added + ' -' + stats.removed);
+};
+
+/**
+ * Count added/removed lines between two texts.
+ */
+function _countDiffStats(original, modified) {
+    var origLines = (original || '').split('\n');
+    var modLines = (modified || '').split('\n');
+    var added = 0, removed = 0;
+    var origSet = new Set(origLines);
+    var modSet = new Set(modLines);
+    modLines.forEach(function(l) { if (!origSet.has(l)) added++; });
+    origLines.forEach(function(l) { if (!modSet.has(l)) removed++; });
+    return { added: added, removed: removed };
+}
+
+/**
+ * Open the diff overlay for a file edit card.
+ * @param {HTMLElement} cardEl — the .fec element or null to use stored data
+ */
+function openFileDiff(cardEl) {
+    var filePath = cardEl ? (cardEl.dataset.path || '') : '';
+    var original = cardEl ? (cardEl.dataset.original || '') : '';
+    var modified = cardEl ? (cardEl.dataset.modified || '') : '';
+    var status = cardEl ? (cardEl.dataset.status || 'applied') : 'applied';
+
+    // Fallback to diff store if card doesn't have content
+    if ((!original && !modified) && _fileDiffStore[filePath]) {
+        original = _fileDiffStore[filePath].original;
+        modified = _fileDiffStore[filePath].modified;
+    }
+
+    // If still no data, ask Python for the diff
+    if (!original && !modified && window.bridge && filePath) {
+        bridge.on_request_diff_data(filePath);
+        return;
+    }
+
+    _showDiffOverlay(filePath, original, modified, status);
+}
+window.openFileDiff = openFileDiff;
+
+/**
+ * Build and show the diff overlay.
+ */
+function _showDiffOverlay(filePath, original, modified, status) {
+    // Remove any existing overlay
+    var existing = document.getElementById('diff-overlay');
+    if (existing) existing.remove();
+
+    var fileName = filePath.split('/').pop().split('\\').pop();
+    var dirPath = filePath.replace(/[^/\\]+$/, '');
+
+    // Compute unified diff
+    var hunks = _computeUnifiedDiff(original, modified);
+    var stats = _countDiffStats(original, modified);
+
+    var isPending = (status === 'pending');
+
+    // Store current diff file path for Accept/Reject buttons
+    _currentDiffFilePath = filePath;
+
+    // Use existing overlay in aichat.html
+    var overlay = document.getElementById('diff-overlay');
+    if (!overlay) {
+        // Fallback: create dynamically if not found
+        overlay = document.createElement('div');
+        overlay.id = 'diff-overlay';
+        overlay.className = 'diff-overlay';
+        overlay.style.display = 'flex';
+        document.body.appendChild(overlay);
+    }
+
+    // Update overlay content
+    var extBadge = _getExtBadge(fileName);
+    
+    // Update header elements
+    var extBadgeEl = document.getElementById('diff-ext-badge');
+    var headerNameEl = document.getElementById('diff-header-name');
+    var headerPathEl = document.getElementById('diff-header-path');
+    var statsEl = document.getElementById('diff-header-stats');
+    var acceptBtn = document.getElementById('diff-btn-accept');
+    var rejectBtn = document.getElementById('diff-btn-reject');
+
+    if (extBadgeEl) extBadgeEl.textContent = extBadge.replace(/<[^>]*>/g, '').trim();
+    if (headerNameEl) headerNameEl.textContent = fileName;
+    if (headerPathEl) headerPathEl.textContent = dirPath;
+    if (statsEl) statsEl.innerHTML = '<span class="diff-stat-add">+' + stats.added + '</span><span class="diff-stat-del">-' + stats.removed + '</span>';
+    
+    // Show/hide Accept/Reject buttons based on status
+    if (acceptBtn) acceptBtn.style.display = isPending ? '' : 'none';
+    if (rejectBtn) rejectBtn.style.display = isPending ? '' : 'none';
+
+    // Get or create content element
+    var contentEl = document.getElementById('diff-content');
+    if (!contentEl) {
+        contentEl = document.createElement('div');
+        contentEl.id = 'diff-content';
+        var panel = overlay.querySelector('.diff-panel');
+        if (panel) panel.appendChild(contentEl);
+    }
+
+    // Store for view switching
+    window._currentDiff = { filePath: filePath, original: original, modified: modified, status: status, hunks: hunks };
+
+    _renderUnifiedDiff(contentEl, hunks);
+
+    // Show overlay
+    overlay.style.display = 'flex';
+    overlay.classList.add('visible');
+
+    // Reset view toggle
+    var unifiedBtn = document.getElementById('btn-unified');
+    var splitBtn = document.getElementById('btn-split');
+    if (unifiedBtn) unifiedBtn.classList.add('active');
+    if (splitBtn) splitBtn.classList.remove('active');
+
+    // Keyboard: Esc to close
+    document.addEventListener('keydown', _diffKeyHandler);
+}
+
+function _diffKeyHandler(e) {
+    if (e.key === 'Escape') closeDiffOverlay();
+}
+
+// Current diff file being viewed in overlay
+var _currentDiffFilePath = null;
+
+function closeDiffOverlay() {
+    var el = document.getElementById('diff-overlay');
+    if (el) el.style.display = 'none';
+    document.removeEventListener('keydown', _diffKeyHandler);
+    _currentDiffFilePath = null;
+}
+window.closeDiffOverlay = closeDiffOverlay;
+
+function switchDiffView(mode) {
+    // Update button states
+    var unifiedBtn = document.getElementById('btn-unified');
+    var splitBtn = document.getElementById('btn-split');
+    if (unifiedBtn) unifiedBtn.classList.toggle('active', mode === 'unified');
+    if (splitBtn) splitBtn.classList.toggle('active', mode === 'split');
+    
+    // Render diff in the selected view
+    var d = window._currentDiff;
+    if (!d) return;
+    
+    var contentEl = document.getElementById('diff-content');
+    if (!contentEl) return;
+
+    if (mode === 'unified') {
+        _renderUnifiedDiff(contentEl, d.hunks);
+    } else {
+        _renderSplitDiff(contentEl, d.original, d.modified);
+    }
+}
+window.switchDiffView = switchDiffView;
+
+function acceptCurrentDiff() {
+    if (_currentDiffFilePath) {
+        acceptFileEdit(_currentDiffFilePath, null);
+        closeDiffOverlay();
+    }
+}
+window.acceptCurrentDiff = acceptCurrentDiff;
+
+function rejectCurrentDiff() {
+    if (_currentDiffFilePath) {
+        rejectFileEdit(_currentDiffFilePath, null);
+        closeDiffOverlay();
+    }
+}
+window.rejectCurrentDiff = rejectCurrentDiff;
+
+function setDiffView(mode) {
+    var d = window._currentDiff;
+    if (!d) return;
+    var contentEl = document.getElementById('diff-content-area');
+    if (!contentEl) return;
+
+    var unifiedBtn = document.getElementById('diff-toggle-unified');
+    var splitBtn = document.getElementById('diff-toggle-split');
+    if (unifiedBtn) unifiedBtn.classList.toggle('active', mode === 'unified');
+    if (splitBtn) splitBtn.classList.toggle('active', mode === 'split');
+
+    if (mode === 'unified') {
+        _renderUnifiedDiff(contentEl, d.hunks);
+    } else {
+        _renderSplitDiff(contentEl, d.original, d.modified);
+    }
+}
+window.setDiffView = setDiffView;
+
+/**
+ * Get extension badge HTML for a filename.
+ */
+function _getExtBadge(filename) {
+    var parts = filename.split('.');
+    var ext = parts.length > 1 ? parts[parts.length - 1].toLowerCase() : '';
+    var label = ext.toUpperCase().slice(0, 4) || '?';
+    var cls = 'ft-' + ext;
+    return '<span class="file-type-badge ' + cls + '">' + label + '</span>';
+}
+
+/**
+ * Compute a simplified unified diff (hunks with context).
+ */
+function _computeUnifiedDiff(original, modified, context) {
+    context = context || 3;
+    var origLines = (original || '').split('\n');
+    var modLines = (modified || '').split('\n');
+
+    var lcs = _computeLCS(origLines, modLines);
+
+    var changes = [];
+    var oi = 0, mi = 0, li = 0;
+
+    while (oi < origLines.length || mi < modLines.length) {
+        if (li < lcs.length && oi === lcs[li][0] && mi === lcs[li][1]) {
+            changes.push({ type: 'ctx', oldLine: oi + 1, newLine: mi + 1, text: origLines[oi] });
+            oi++; mi++; li++;
+        } else if (oi < origLines.length && (li >= lcs.length || oi < lcs[li][0])) {
+            changes.push({ type: 'del', oldLine: oi + 1, newLine: null, text: origLines[oi] });
+            oi++;
+        } else {
+            changes.push({ type: 'add', oldLine: null, newLine: mi + 1, text: modLines[mi] });
+            mi++;
+        }
+    }
+
+    return _groupIntoHunks(changes, context);
+}
+
+/**
+ * Compute Longest Common Subsequence using DP.
+ */
+function _computeLCS(a, b) {
+    var m = a.length, n = b.length;
+    // Use hash comparison for large files
+    if (m * n > 500000) {
+        return _computeLCSHashed(a, b);
+    }
+    var dp = [];
+    for (var i = 0; i <= m; i++) {
+        dp[i] = new Array(n + 1).fill(0);
+    }
+    for (var i = 1; i <= m; i++) {
+        for (var j = 1; j <= n; j++) {
+            if (a[i-1] === b[j-1]) {
+                dp[i][j] = dp[i-1][j-1] + 1;
+            } else {
+                dp[i][j] = Math.max(dp[i-1][j], dp[i][j-1]);
+            }
+        }
+    }
+    var result = [];
+    var i = m, j = n;
+    while (i > 0 && j > 0) {
+        if (a[i-1] === b[j-1]) {
+            result.unshift([i-1, j-1]);
+            i--; j--;
+        } else if (dp[i-1][j] > dp[i][j-1]) {
+            i--;
+        } else {
+            j--;
+        }
+    }
+    return result;
+}
+
+/**
+ * Fast hash-based LCS for large files.
+ */
+function _computeLCSHashed(a, b) {
+    var bIndex = new Map();
+    b.forEach(function(line, j) { bIndex.set(line, j); });
+    var result = [];
+    var usedJ = new Set();
+    a.forEach(function(line, i) {
+        var j = bIndex.get(line);
+        if (j !== undefined && !usedJ.has(j)) {
+            result.push([i, j]);
+            usedJ.add(j);
+        }
+    });
+    return result;
+}
+
+/**
+ * Group changes into hunks with context.
+ */
+function _groupIntoHunks(changes, context) {
+    var hunks = [];
+    var changeIndices = [];
+
+    changes.forEach(function(c, i) {
+        if (c.type !== 'ctx') changeIndices.push(i);
+    });
+
+    if (changeIndices.length === 0) return hunks;
+
+    var groups = [];
+    var start = Math.max(0, changeIndices[0] - context);
+    var end = Math.min(changes.length - 1, changeIndices[0] + context);
+
+    for (var k = 1; k < changeIndices.length; k++) {
+        var nextStart = Math.max(0, changeIndices[k] - context);
+        if (nextStart <= end + 1) {
+            end = Math.min(changes.length - 1, changeIndices[k] + context);
+        } else {
+            groups.push([start, end]);
+            start = nextStart;
+            end = Math.min(changes.length - 1, changeIndices[k] + context);
+        }
+    }
+    groups.push([start, end]);
+
+    groups.forEach(function(g) {
+        var hunkChanges = changes.slice(g[0], g[1] + 1);
+        var firstOld = hunkChanges.find(function(c) { return c.oldLine; });
+        var firstNew = hunkChanges.find(function(c) { return c.newLine; });
+        var addCount = hunkChanges.filter(function(c) { return c.type === 'add'; }).length;
+        var delCount = hunkChanges.filter(function(c) { return c.type === 'del'; }).length;
+        var ctxCount = hunkChanges.filter(function(c) { return c.type === 'ctx'; }).length;
+        hunks.push({
+            header: '@@ -' + (firstOld ? firstOld.oldLine : 0) + ',' + (delCount + ctxCount) +
+                    ' +' + (firstNew ? firstNew.newLine : 0) + ',' + (addCount + ctxCount) + ' @@',
+            changes: hunkChanges
+        });
+    });
+
+    return hunks;
+}
+
+/**
+ * Render unified diff into contentEl.
+ */
+function _renderUnifiedDiff(contentEl, hunks) {
+    contentEl.innerHTML = '';
+
+    if (!hunks || hunks.length === 0) {
+        contentEl.innerHTML = '<div style="padding:20px;color:#555;text-align:center;font-size:13px">No changes detected</div>';
+        return;
+    }
+
+    hunks.forEach(function(hunk) {
+        var hunkHeader = document.createElement('div');
+        hunkHeader.className = 'diff-hunk-header';
+        hunkHeader.textContent = hunk.header;
+        contentEl.appendChild(hunkHeader);
+
+        hunk.changes.forEach(function(change) {
+            var lineEl = document.createElement('div');
+            lineEl.className = 'diff-line diff-line-' + change.type;
+
+            var lineNumOld = document.createElement('div');
+            lineNumOld.className = 'diff-line-num';
+            lineNumOld.textContent = change.oldLine || '';
+
+            var lineNumNew = document.createElement('div');
+            lineNumNew.className = 'diff-line-num';
+            lineNumNew.textContent = change.newLine || '';
+
+            var lineContent = document.createElement('div');
+            lineContent.className = 'diff-line-content';
+            lineContent.textContent = change.text;
+
+            lineEl.appendChild(lineNumOld);
+            lineEl.appendChild(lineNumNew);
+            lineEl.appendChild(lineContent);
+            contentEl.appendChild(lineEl);
+        });
+    });
+}
+
+/**
+ * Render side-by-side split diff.
+ */
+function _renderSplitDiff(contentEl, original, modified) {
+    contentEl.innerHTML = '';
+    var origLines = (original || '').split('\n');
+    var modLines = (modified || '').split('\n');
+
+    var splitEl = document.createElement('div');
+    splitEl.className = 'diff-split';
+
+    // Left pane (original)
+    var leftPane = document.createElement('div');
+    leftPane.className = 'diff-pane';
+    var leftHeader = document.createElement('div');
+    leftHeader.className = 'diff-pane-header';
+    leftHeader.textContent = 'Original';
+    leftPane.appendChild(leftHeader);
+
+    origLines.forEach(function(line, i) {
+        var lineEl = document.createElement('div');
+        lineEl.className = 'diff-line diff-line-ctx';
+        var num = document.createElement('div');
+        num.className = 'diff-line-num';
+        num.textContent = i + 1;
+        var content = document.createElement('div');
+        content.className = 'diff-line-content';
+        content.textContent = line;
+        lineEl.appendChild(num);
+        lineEl.appendChild(content);
+        leftPane.appendChild(lineEl);
+    });
+
+    // Right pane (modified)
+    var rightPane = document.createElement('div');
+    rightPane.className = 'diff-pane';
+    var rightHeader = document.createElement('div');
+    rightHeader.className = 'diff-pane-header';
+    rightHeader.textContent = 'Modified';
+    rightPane.appendChild(rightHeader);
+
+    modLines.forEach(function(line, i) {
+        var lineEl = document.createElement('div');
+        lineEl.className = 'diff-line diff-line-ctx';
+        var num = document.createElement('div');
+        num.className = 'diff-line-num';
+        num.textContent = i + 1;
+        var content = document.createElement('div');
+        content.className = 'diff-line-content';
+        content.textContent = line;
+        lineEl.appendChild(num);
+        lineEl.appendChild(content);
+        rightPane.appendChild(lineEl);
+    });
+
+    // Sync scroll between panes
+    leftPane.addEventListener('scroll', function() {
+        rightPane.scrollTop = leftPane.scrollTop;
+    });
+    rightPane.addEventListener('scroll', function() {
+        leftPane.scrollTop = rightPane.scrollTop;
+    });
+
+    splitEl.appendChild(leftPane);
+    splitEl.appendChild(rightPane);
+    contentEl.appendChild(splitEl);
+}

@@ -731,6 +731,250 @@ class AIToolsPanel(QWidget):
         return float(get_settings().get("ai", "temperature") or 0.7)
 
 
+class ChangedFilesPanel(QWidget):
+    """Panel showing AI-edited files with Accept/Reject buttons."""
+    file_accepted = pyqtSignal(str)  # file_path
+    file_rejected = pyqtSignal(str)  # file_path
+    file_opened = pyqtSignal(str)    # file_path
+    diff_requested = pyqtSignal(str) # file_path
+    accept_all_requested = pyqtSignal()
+    reject_all_requested = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._files = {}  # path -> widget
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
+
+        # Header with count and bulk actions
+        header_layout = QHBoxLayout()
+        
+        # Icon + "Changed Files" label with count
+        header_left = QWidget()
+        header_left_layout = QHBoxLayout(header_left)
+        header_left_layout.setContentsMargins(0, 0, 0, 0)
+        header_left_layout.setSpacing(4)
+        
+        folder_icon = QLabel("📁")
+        folder_icon.setStyleSheet("font-size: 12px;")
+        header_left_layout.addWidget(folder_icon)
+        
+        self._header = QLabel("Changed Files")
+        self._header.setStyleSheet("font-size: 12px; font-weight: 500;")
+        header_left_layout.addWidget(self._header)
+        
+        self._count_label = QLabel("(0)")
+        self._count_label.setStyleSheet("font-size: 11px; color: #888;")
+        header_left_layout.addWidget(self._count_label)
+        
+        header_layout.addWidget(header_left)
+        header_layout.addStretch()
+        
+        # Bulk action buttons (hidden when no files)
+        self._bulk_widget = QWidget()
+        bulk_layout = QHBoxLayout(self._bulk_widget)
+        bulk_layout.setContentsMargins(0, 0, 0, 0)
+        bulk_layout.setSpacing(6)
+        
+        self._reject_all_btn = QPushButton("Reject")
+        self._reject_all_btn.setStyleSheet("""
+            QPushButton {
+                padding: 4px 12px; 
+                font-size: 11px;
+                background: transparent;
+                border: 1px solid #555;
+                border-radius: 4px;
+                color: #ccc;
+            }
+            QPushButton:hover {
+                background: #450a0a;
+                border-color: #7f1d1d;
+                color: #f87171;
+            }
+        """)
+        self._reject_all_btn.clicked.connect(self.reject_all_requested.emit)
+        
+        self._accept_all_btn = QPushButton("Accept")
+        self._accept_all_btn.setStyleSheet("""
+            QPushButton {
+                padding: 4px 12px; 
+                font-size: 11px;
+                background: #14532d;
+                border: 1px solid #166534;
+                border-radius: 4px;
+                color: #4ade80;
+            }
+            QPushButton:hover {
+                background: #16a34a;
+                color: #fff;
+            }
+        """)
+        self._accept_all_btn.clicked.connect(self.accept_all_requested.emit)
+        
+        bulk_layout.addWidget(self._reject_all_btn)
+        bulk_layout.addWidget(self._accept_all_btn)
+        header_layout.addWidget(self._bulk_widget)
+        
+        layout.addLayout(header_layout)
+        layout.addWidget(self._make_separator())
+
+        # Files list
+        self._files_list = QListWidget()
+        self._files_list.setFrameShape(QFrame.Shape.NoFrame)
+        layout.addWidget(self._files_list)
+        
+        self._update_bulk_buttons()
+        self.set_theme(True)
+
+    def add_file(self, file_path: str, edit_type: str = "M"):
+        """Add a file to the changed files list."""
+        if file_path in self._files:
+            return
+        
+        from pathlib import Path
+        file_name = Path(file_path).name
+        
+        # Create custom widget for the file row
+        row_widget = QWidget()
+        row_layout = QHBoxLayout(row_widget)
+        row_layout.setContentsMargins(4, 4, 4, 4)
+        row_layout.setSpacing(6)
+        
+        # File icon/label
+        file_label = QLabel(f"📄 {file_name}")
+        file_label.setStyleSheet("font-size: 12px;")
+        file_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        file_label.mousePressEvent = lambda e: self.file_opened.emit(file_path)
+        row_layout.addWidget(file_label)
+        row_layout.addStretch()
+        
+        # Edit type badge
+        badge = QLabel(edit_type)
+        badge.setStyleSheet(f"""
+            font-size: 9px; 
+            padding: 1px 4px; 
+            border-radius: 2px;
+            background: {'#22c55e' if edit_type == 'C' else '#3b82f6' if edit_type == 'M' else '#ef4444'};
+            color: white;
+        """)
+        row_layout.addWidget(badge)
+        
+        # Buttons container widget
+        buttons_widget = QWidget()
+        buttons_layout = QHBoxLayout(buttons_widget)
+        buttons_layout.setContentsMargins(0, 0, 0, 0)
+        buttons_layout.setSpacing(4)
+        
+        # Accept/Reject buttons
+        accept_btn = QPushButton("✓")
+        accept_btn.setStyleSheet("padding: 2px 6px; font-size: 11px; color: #22c55e; border: 1px solid #22c55e; border-radius: 3px; background: transparent;")
+        accept_btn.setToolTip("Accept changes")
+        accept_btn.setFixedSize(24, 24)
+        accept_btn.clicked.connect(lambda: self._on_accept_clicked(file_path, buttons_widget))
+        
+        reject_btn = QPushButton("✗")
+        reject_btn.setStyleSheet("padding: 2px 6px; font-size: 11px; color: #ef4444; border: 1px solid #ef4444; border-radius: 3px; background: transparent;")
+        reject_btn.setToolTip("Reject changes")
+        reject_btn.setFixedSize(24, 24)
+        reject_btn.clicked.connect(lambda: self._on_reject_clicked(file_path, buttons_widget))
+        
+        buttons_layout.addWidget(accept_btn)
+        buttons_layout.addWidget(reject_btn)
+        row_layout.addWidget(buttons_widget)
+        
+        # Add to list
+        item = QListWidgetItem()
+        item.setData(Qt.ItemDataRole.UserRole, file_path)
+        self._files_list.addItem(item)
+        self._files_list.setItemWidget(item, row_widget)
+        
+        self._files[file_path] = item
+        self._update_bulk_buttons()
+        self._update_header()
+
+    def _on_accept_clicked(self, file_path: str, buttons_widget: QWidget):
+        """Handle accept button click - replace buttons with checkmark."""
+        # Clear the buttons layout
+        layout = buttons_widget.layout()
+        while layout.count():
+            child = layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+        
+        # Add checkmark label
+        check_label = QLabel("✓")
+        check_label.setStyleSheet("color: #22c55e; font-size: 14px; font-weight: bold;")
+        layout.addWidget(check_label)
+        
+        # Emit signal
+        self.file_accepted.emit(file_path)
+        
+        # Remove file after short delay
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(500, lambda: self.remove_file(file_path))
+
+    def _on_reject_clicked(self, file_path: str, buttons_widget: QWidget):
+        """Handle reject button click - replace buttons with X."""
+        # Clear the buttons layout
+        layout = buttons_widget.layout()
+        while layout.count():
+            child = layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+        
+        # Add X label
+        x_label = QLabel("✗")
+        x_label.setStyleSheet("color: #ef4444; font-size: 14px; font-weight: bold;")
+        layout.addWidget(x_label)
+        
+        # Emit signal
+        self.file_rejected.emit(file_path)
+        
+        # Remove file after short delay
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(500, lambda: self.remove_file(file_path))
+
+    def remove_file(self, file_path: str):
+        """Remove a file from the list."""
+        if file_path in self._files:
+            item = self._files.pop(file_path)
+            row = self._files_list.row(item)
+            self._files_list.takeItem(row)
+            self._update_bulk_buttons()
+            self._update_header()
+
+    def clear_files(self):
+        """Clear all files from the list."""
+        self._files.clear()
+        self._files_list.clear()
+        self._update_bulk_buttons()
+        self._update_header()
+
+    def _update_bulk_buttons(self):
+        """Show/hide bulk action buttons based on file count."""
+        has_files = len(self._files) > 0
+        self._bulk_widget.setVisible(has_files)
+
+    def _update_header(self):
+        """Update header with file count."""
+        count = len(self._files)
+        if self._count_label:
+            self._count_label.setText(f"({count})")
+
+    def set_theme(self, is_dark: bool):
+        color = "#858585" if is_dark else "#666666"
+        self._header.setStyleSheet(f"font-size:10px; font-weight:bold; color:{color}; letter-spacing:1px;")
+
+    def _make_separator(self) -> QFrame:
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        return line
+
+
 class SidebarWidget(QWidget):
     """
     Full left sidebar with icon strip + stacked panels.
@@ -738,6 +982,12 @@ class SidebarWidget(QWidget):
     file_opened = pyqtSignal(str)
     file_search_opened = pyqtSignal(str, int)
     ai_action_requested = pyqtSignal(str)
+    
+    # Changed files signals
+    file_accepted = pyqtSignal(str)
+    file_rejected = pyqtSignal(str)
+    accept_all_requested = pyqtSignal()
+    reject_all_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -758,7 +1008,7 @@ class SidebarWidget(QWidget):
         icon_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         self._icon_buttons: list[QPushButton] = []
-        self._panels_info = [("files", "Explorer", 0), ("search", "Search", 1), ("ai", "AI Tools", 2)]
+        self._panels_info = [("files", "Explorer", 0), ("search", "Search", 1), ("ai", "AI Tools", 2), ("git", "Changed Files", 3)]
         for icon_name, tooltip, idx in self._panels_info:
             btn = QPushButton()
             btn.setIconSize(QSize(24, 24))
@@ -777,16 +1027,25 @@ class SidebarWidget(QWidget):
         self._explorer = FileExplorerPanel()
         self._search = SearchPanel()
         self._ai_tools = AIToolsPanel()
+        self._changed_files = ChangedFilesPanel()
 
         self._stack.addWidget(self._explorer)
         self._stack.addWidget(self._search)
         self._stack.addWidget(self._ai_tools)
+        self._stack.addWidget(self._changed_files)
         layout.addWidget(self._stack)
 
         # Connect signals
         self._explorer.file_opened.connect(self.file_opened)
         self._search.file_opened.connect(self.file_search_opened)
         self._ai_tools.action_requested.connect(self.ai_action_requested)
+        
+        # Connect changed files panel signals
+        self._changed_files.file_opened.connect(self.file_opened)
+        self._changed_files.file_accepted.connect(self.file_accepted)
+        self._changed_files.file_rejected.connect(self.file_rejected)
+        self._changed_files.accept_all_requested.connect(self.accept_all_requested)
+        self._changed_files.reject_all_requested.connect(self.reject_all_requested)
 
         self.set_theme(True)
 
@@ -806,6 +1065,7 @@ class SidebarWidget(QWidget):
         self._explorer.set_theme(is_dark)
         self._search.set_theme(is_dark)
         self._ai_tools.set_theme(is_dark)
+        self._changed_files.set_theme(is_dark)
         
         icon_color = "#cccccc" if is_dark else "#555555"
         hover_bg = "rgba(255,255,255,0.10)" if is_dark else "rgba(0,0,0,0.06)"
@@ -846,3 +1106,19 @@ class SidebarWidget(QWidget):
 
     def get_ai_temperature(self) -> float:
         return self._ai_tools.get_temperature()
+
+    def add_changed_file(self, file_path: str, edit_type: str = "M"):
+        """Add a file to the changed files panel."""
+        self._changed_files.add_file(file_path, edit_type)
+
+    def remove_changed_file(self, file_path: str):
+        """Remove a file from the changed files panel."""
+        self._changed_files.remove_file(file_path)
+
+    def clear_changed_files(self):
+        """Clear all files from the changed files panel."""
+        self._changed_files.clear_files()
+
+    def show_changed_files_panel(self):
+        """Switch to the changed files panel."""
+        self._switch_panel(3)

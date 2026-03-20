@@ -42,10 +42,9 @@ def main():
     # window.show() is now called in __init__
 
     log.info("Application ready. Entering event loop...")
-    print(">>> Main: Entering app.exec()")
     
-    # Simple timer to prove the loop is at least starting
-    QTimer.singleShot(1000, lambda: print(">>> Main: Loop is ALIVE! (1s check)"))
+    # Simple timer to prove the loop is at least starting (debug only)
+    QTimer.singleShot(1000, lambda: log.debug("Main: Loop is ALIVE! (1s check)"))
     
     try:
         res = app.exec()

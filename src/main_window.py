@@ -243,7 +243,44 @@ class EditorTabWidget(QTabWidget):
         self._files[idx] = filepath
         self.setCurrentIndex(idx)
         self.setTabToolTip(idx, filepath)
+        
+        # Set file type icon on tab
+        self._set_tab_icon(idx, filepath)
+        
         return idx
+    
+    def _set_tab_icon(self, idx: int, filepath: str):
+        """Set the tab icon based on file extension."""
+        from PyQt6.QtGui import QIcon, QPixmap
+        from pathlib import Path
+        
+        ext = Path(filepath).suffix.lower()
+        icon_map = {
+            '.py': 'python.png',
+            '.js': 'javascript.png',
+            '.ts': 'typescript.png',
+            '.jsx': 'javascript.png',
+            '.tsx': 'typescript.png',
+            '.html': 'html.png',
+            '.htm': 'html.png',
+            '.css': 'css.png',
+            '.json': 'json.png',
+            '.md': 'markdown.png',
+            '.java': 'java.png',
+            '.rs': 'rust.png',
+            '.csv': 'csv.png',
+            '.env': 'env.png',
+        }
+        
+        icon_file = icon_map.get(ext)
+        if icon_file:
+            icon_path = Path(__file__).parent / 'assets' / 'icons' / icon_file
+            if icon_path.exists():
+                pixmap = QPixmap(str(icon_path))
+                if not pixmap.isNull():
+                    # Scale to appropriate size for tab (16x16)
+                    scaled = pixmap.scaled(16, 16, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                    self.setTabIcon(idx, QIcon(scaled))
 
     def _mark_modified(self, filepath: str):
         self._modified.add(filepath)
@@ -316,7 +353,7 @@ class EditorTabWidget(QTabWidget):
 class CortexMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        print(">>> MainWindow: __init__ START")
+        log.info("MainWindow: __init__ START")
         log.info("MainWindow: Initializing managers...")
         self._settings = get_settings()
         self._theme_manager = get_theme_manager()
@@ -354,11 +391,11 @@ class CortexMainWindow(QMainWindow):
         log.info("MainWindow: Restoring session...")
         self._restore_session()
         log.info("MainWindow: Initialization complete.")
-        print(">>> MainWindow: __init__ END")
+        log.info("MainWindow: Initialization complete.")
 
         # Heartbeat to check for event loop hang
         self._heartbeat_timer = QTimer(self)
-        self._heartbeat_timer.timeout.connect(lambda: print("LOOP HEARTBEAT"))
+        self._heartbeat_timer.timeout.connect(lambda: log.debug("LOOP HEARTBEAT"))
         self._heartbeat_timer.start(2000)
 
         # Window geometry
@@ -435,6 +472,9 @@ class CortexMainWindow(QMainWindow):
         self._ai_chat = AIChatWidget()
         self._ai_chat.run_command.connect(self._on_ai_run_command)
         self._ai_chat.stop_requested.connect(self._on_ai_stop_requested)
+        self._ai_chat.open_file_requested.connect(self._open_file)
+        self._ai_chat.accept_file_edit_requested.connect(self._on_accept_file_edit)
+        self._ai_chat.reject_file_edit_requested.connect(self._on_reject_file_edit)
         self._ai_chat.set_code_context_callback(self._get_code_context)
         right_layout.addWidget(self._ai_chat)
         self._main_splitter.addWidget(self._right_panel)
@@ -748,6 +788,12 @@ class CortexMainWindow(QMainWindow):
         self._sidebar.file_opened.connect(self._open_file)
         self._sidebar.file_search_opened.connect(self._open_file_at_line)
         self._sidebar.ai_action_requested.connect(self._ai_action)
+        
+        # Changed files panel signals
+        self._sidebar.file_accepted.connect(self._on_accept_file_edit)
+        self._sidebar.file_rejected.connect(self._on_reject_file_edit)
+        self._sidebar.accept_all_requested.connect(self._on_accept_all_files)
+        self._sidebar.reject_all_requested.connect(self._on_reject_all_files)
 
         # Project manager
         self._project_manager.project_opened.connect(self._on_project_opened)
@@ -764,6 +810,7 @@ class CortexMainWindow(QMainWindow):
         self._ai_agent.request_error.connect(self._ai_chat.on_error)
         self._ai_agent.file_generated.connect(self._open_file)
         self._ai_agent.file_edited_diff.connect(self._file_tracker.add_edit)
+        self._ai_agent.file_edited_diff.connect(self._on_file_edited_diff_for_js)
         self._ai_agent.tool_activity.connect(self._ai_chat.show_tool_activity)
         self._ai_agent.directory_contents.connect(self._ai_chat.show_directory_contents)
         self._ai_agent.directory_contents.connect(self._on_directory_contents_for_tree)
@@ -796,6 +843,20 @@ class CortexMainWindow(QMainWindow):
                                                str(self._project_manager.root or Path.home()))
         if path:
             self._open_file(path)
+    
+    def _find_file_in_project(self, filename: str) -> str | None:
+        """Search for a file by name in the project directory (recursive)."""
+        if not self._project_manager.root:
+            return None
+        
+        root = Path(self._project_manager.root)
+        
+        # Search recursively for the file
+        for file_path in root.rglob(filename):
+            if file_path.is_file():
+                return str(file_path)
+        
+        return None
 
     def _open_folder_dialog(self):
         folder = QFileDialog.getExistingDirectory(self, "Open Folder",
@@ -812,14 +873,22 @@ class CortexMainWindow(QMainWindow):
             self._project_manager.open(folder)
 
     def _open_file(self, filepath: str):
-
+        # Normalize path (convert forward slashes to backslashes on Windows)
+        filepath = os.path.normpath(filepath)
         path = Path(filepath)
         log.info(f"Opening file: {filepath}")
-        print(f">>> Opening file: {filepath}")
         
+        # If file doesn't exist, try to find it in the project
         if not path.exists() or not path.is_file():
-            log.warning(f"File skip (not found or dir): {filepath}")
-            return
+            # Try searching in project directory
+            found_path = self._find_file_in_project(path.name)
+            if found_path:
+                log.info(f"Found file in project: {found_path}")
+                path = Path(found_path)
+                filepath = str(found_path)
+            else:
+                log.warning(f"File skip (not found or dir): {filepath}")
+                return
             
         if self._file_manager.is_binary(filepath):
             log.info(f"File skip (binary): {filepath}")
@@ -849,22 +918,60 @@ class CortexMainWindow(QMainWindow):
             if isinstance(editor, CodeEditor):
                 editor.set_theme(is_dark)
             log.info(f"File opened successfully: {filepath}")
-            print(f">>> File opened: {filepath}")
         except Exception as e:
             log.error(f"Error opening file {filepath}: {e}", exc_info=True)
-            print(f"Error opening file {filepath}: {e}")
 
     def _on_show_diff(self, file_path: str):
         """Show diff in separate window"""
         edit_info = self._file_tracker.get_edit(file_path)
         if edit_info:
-            self._diff_window.show_diff(
-                file_path,
-                edit_info.original_content,
-                edit_info.new_content
-            )
+            # For newly created files (type "C"), show the full content as added
+            if edit_info.edit_type == "C":
+                self._diff_window.show_diff(
+                    file_path,
+                    "",  # Empty original for new files
+                    edit_info.new_content
+                )
+            else:
+                self._diff_window.show_diff(
+                    file_path,
+                    edit_info.original_content,
+                    edit_info.new_content
+                )
         else:
             log.warning(f"No edit info found for {file_path}")
+
+    def _on_file_edited_diff_for_js(self, file_path: str, original: str, new_content: str):
+        """
+        Send diff data to aichat.html JavaScript for the diff viewer overlay.
+        Called when agent emits file_edited_diff signal.
+        """
+        import json
+        try:
+            # Get the chat page
+            page = self._ai_chat._view.page()
+            if not page:
+                return
+
+            # Truncate very large files to avoid JSON size issues
+            MAX_CHARS = 200_000
+            orig_safe = original[:MAX_CHARS] if len(original) > MAX_CHARS else original
+            new_safe = new_content[:MAX_CHARS] if len(new_content) > MAX_CHARS else new_content
+
+            # Escape for JavaScript
+            path_js = json.dumps(file_path)
+            orig_js = json.dumps(orig_safe)
+            new_js = json.dumps(new_safe)
+
+            # Call JavaScript storeDiffData function
+            page.runJavaScript(f"storeDiffData({path_js}, {orig_js}, {new_js})")
+            log.debug(f"Sent diff data to JS for: {file_path}")
+            
+            # Add to sidebar changed files panel
+            edit_type = "C" if not original else "M"
+            self._sidebar.add_changed_file(file_path, edit_type)
+        except Exception as e:
+            log.warning(f"Failed to send diff data to JS: {e}")
 
     def _open_file_at_line(self, file_path: str, line_number: int):
         """Open file and navigate to specific line."""
@@ -879,6 +986,64 @@ class CortexMainWindow(QMainWindow):
             editor.setCursorPosition(line_index, 0)
             editor.ensureLineVisible(line_index)
             log.info(f"Navigated to line {line_number} in {file_path}")
+
+    def _on_accept_file_edit(self, file_path: str):
+        """Handle user accepting a file edit from the chat UI."""
+        if file_path == "__ALL__":
+            self._on_accept_all_files()
+            return
+        # Normalize path (convert forward slashes to backslashes on Windows)
+        file_path = os.path.normpath(file_path)
+        log.info(f"User accepted file edit: {file_path}")
+        
+        # For new files (type "C"), we need to create them first
+        edit_info = self._file_tracker.get_edit(file_path)
+        if edit_info and edit_info.edit_type == "C":
+            # This is a newly created file - write it to disk first
+            from pathlib import Path
+            path = Path(file_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                path.write_text(edit_info.new_content, encoding="utf-8")
+                log.info(f"Created new file: {file_path}")
+            except Exception as e:
+                log.error(f"Failed to create file: {e}")
+                self.statusBar().showMessage(f"✗ Failed to create {path.name}", 3000)
+                return
+        
+        # Open the file in editor
+        self._open_file(file_path)
+        # Future: Could add to git staging or show success notification
+        self.statusBar().showMessage(f"✓ Accepted changes to {Path(file_path).name}", 3000)
+        # Remove from sidebar panel
+        self._sidebar.remove_changed_file(file_path)
+
+    def _on_reject_file_edit(self, file_path: str):
+        """Handle user rejecting a file edit from the chat UI."""
+        if file_path == "__ALL__":
+            self._on_reject_all_files()
+            return
+        # Normalize path (convert forward slashes to backslashes on Windows)
+        file_path = os.path.normpath(file_path)
+        log.info(f"User rejected file edit: {file_path}")
+        # Open the file in editor for review
+        self._open_file(file_path)
+        # Future: Could restore from pre-edit snapshot
+        self.statusBar().showMessage(f"✗ Rejected changes to {Path(file_path).name} - review file", 5000)
+        # Remove from sidebar panel
+        self._sidebar.remove_changed_file(file_path)
+
+    def _on_accept_all_files(self):
+        """Handle user accepting all pending file edits."""
+        log.info("User accepted all file edits")
+        self.statusBar().showMessage("✓ Accepted all changes", 3000)
+        self._sidebar.clear_changed_files()
+
+    def _on_reject_all_files(self):
+        """Handle user rejecting all pending file edits."""
+        log.info("User rejected all file edits")
+        self.statusBar().showMessage("✗ Rejected all changes - review files", 5000)
+        self._sidebar.clear_changed_files()
 
     def _on_smart_paste_check(self, pasted_text: str):
         """Check if pasted text matches current editor selection. Send result to chat."""

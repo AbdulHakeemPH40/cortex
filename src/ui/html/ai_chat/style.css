@@ -5122,9 +5122,30 @@ body.light .permission-block {
     border-radius: 50%;
 }
 .todo-icon-pending  { border: 1.5px solid #3a3a3a; }
-.todo-icon-progress { border: 1.5px solid #888; background: #222; color: #888; }
+.todo-icon-progress { 
+    border: 1.5px solid #3b82f6; 
+    background: transparent; 
+    color: #3b82f6;
+    position: relative;
+}
+.todo-icon-progress::before {
+    content: '';
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    border: 1.5px solid transparent;
+    border-top-color: #3b82f6;
+    border-right-color: #3b82f6;
+    border-radius: 50%;
+    animation: todo-spin 0.8s linear infinite;
+}
 .todo-icon-done     { border: 1.5px solid #22c55e; background: #14532d55; color: #22c55e; }
 .todo-icon-cancelled { border: 1.5px solid #333; color: #444; }
+
+@keyframes todo-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
 
 .todo-text { flex: 1; }
 .todo-item.todo-complete    .todo-text { color: #444; text-decoration: line-through; }
@@ -5268,8 +5289,9 @@ body.light .permission-block {
 .cfs-badge-d { background: #991b1b; color: #fca5a5; }
 
 .cfs-row-right     { display: flex; align-items: center; gap: 4px; flex-shrink: 0; margin-left: 8px; }
-.cfs-row-applied   { font-size: 11.5px; color: #555; }
-.cfs-row-rejected-label { font-size: 11.5px; color: #4a4a4a; }
+.cfs-row-applied   { font-size: 11.5px; color: #22c55e; }
+.cfs-row-rejected-label { font-size: 11.5px; color: #ef4444; }
+.cfs-row-pending { font-size: 11.5px; color: #888; }
 
 .cfs-row-accept-btn, .cfs-row-reject-btn {
     width: 20px; height: 20px; border-radius: 4px;
@@ -6113,9 +6135,30 @@ body.light .permission-block {
     border-radius: 50%;
 }
 .todo-icon-pending  { border: 1.5px solid #333; }
-.todo-icon-progress { border: 1.5px solid #777; background: #1a1a1a; color: #888; }
+.todo-icon-progress { 
+    border: 1.5px solid #3b82f6; 
+    background: transparent; 
+    color: #3b82f6;
+    position: relative;
+}
+.todo-icon-progress::before {
+    content: '';
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    border: 1.5px solid transparent;
+    border-top-color: #3b82f6;
+    border-right-color: #3b82f6;
+    border-radius: 50%;
+    animation: todo-spin 0.8s linear infinite;
+}
 .todo-icon-done     { border: 1.5px solid #22c55e; background: #14532d44; color: #22c55e; }
 .todo-icon-cancelled { border: 1.5px solid #2a2a2a; color: #3a3a3a; }
+
+@keyframes todo-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
 
 .todo-text { flex: 1; }
 .todo-item.todo-complete   .todo-text { color: #3a3a3a; text-decoration: line-through; }
@@ -6211,3 +6254,464 @@ body.light .permission-block {
     transition: color 0.12s;
 }
 .mq-remove:hover { color: #ef4444; }
+
+/* ================================================================
+   DIFF OVERLAY VIEWER — File Edit Card Diff Display
+   ================================================================ */
+
+/* Full-screen overlay backdrop */
+#diff-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.72);
+    z-index: 9000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    animation: diffOverlayIn 0.18s ease;
+}
+#diff-overlay.visible {
+    display: flex;
+}
+@keyframes diffOverlayIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+/* Diff window panel */
+.diff-panel {
+    background: #111;
+    border: 1px solid #2a2a2a;
+    border-radius: 10px;
+    width: 92vw;
+    max-width: 1200px;
+    height: 85vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: diffPanelIn 0.2s ease;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+}
+@keyframes diffPanelIn {
+    from { transform: translateY(16px) scale(0.98); opacity: 0; }
+    to   { transform: translateY(0)    scale(1);    opacity: 1; }
+}
+
+/* Diff header */
+.diff-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    border-bottom: 1px solid #1e1e1e;
+    flex-shrink: 0;
+}
+.diff-header-file {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+}
+.diff-header-path {
+    font-family: 'JetBrains Mono', Consolas, monospace;
+    font-size: 12px;
+    color: #888;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.diff-header-name {
+    font-family: 'JetBrains Mono', Consolas, monospace;
+    font-size: 13px;
+    font-weight: 600;
+    color: #d4d4d4;
+    flex-shrink: 0;
+}
+.diff-header-stats {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+}
+.diff-stat-add { font-size: 12px; color: #22c55e; font-weight: 600; }
+.diff-stat-del { font-size: 12px; color: #ef4444; font-weight: 600; }
+
+/* Diff header buttons */
+.diff-header-btns {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+}
+.diff-btn-accept {
+    padding: 5px 14px;
+    background: #14532d;
+    color: #4ade80;
+    border: 1px solid #166534;
+    border-radius: 5px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.14s;
+    font-family: inherit;
+}
+.diff-btn-accept:hover { background: #16a34a; color: #fff; }
+
+.diff-btn-reject {
+    padding: 5px 14px;
+    background: #1c1c1c;
+    color: #888;
+    border: 1px solid #333;
+    border-radius: 5px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.14s;
+    font-family: inherit;
+}
+.diff-btn-reject:hover { background: #450a0a; color: #f87171; border-color: #7f1d1d; }
+
+.diff-btn-close {
+    width: 28px;
+    height: 28px;
+    background: transparent;
+    border: none;
+    color: #555;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.12s;
+}
+.diff-btn-close:hover { background: #1e1e1e; color: #d4d4d4; }
+
+/* Diff view mode toggle */
+.diff-view-toggle {
+    display: flex;
+    gap: 0;
+    border: 1px solid #2a2a2a;
+    border-radius: 5px;
+    overflow: hidden;
+    flex-shrink: 0;
+}
+.diff-view-btn {
+    padding: 4px 10px;
+    background: transparent;
+    border: none;
+    color: #666;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.12s;
+    font-family: inherit;
+}
+.diff-view-btn.active { background: #1e1e1e; color: #d4d4d4; }
+.diff-view-btn:hover  { color: #aaa; }
+
+/* Diff content area */
+.diff-content {
+    flex: 1;
+    overflow: auto;
+    font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.55;
+}
+
+/* Side-by-side diff view */
+.diff-split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    height: 100%;
+}
+.diff-pane {
+    overflow: auto;
+    border-right: 1px solid #1a1a1a;
+}
+.diff-pane:last-child { border-right: none; }
+.diff-pane-header {
+    position: sticky;
+    top: 0;
+    padding: 4px 12px;
+    background: #0e0e0e;
+    border-bottom: 1px solid #1a1a1a;
+    font-size: 11px;
+    color: #555;
+    z-index: 1;
+}
+
+/* Unified diff lines */
+.diff-line {
+    display: flex;
+    min-height: 20px;
+    white-space: pre;
+}
+.diff-line:hover { background: rgba(255,255,255,0.025); }
+
+.diff-line-num {
+    width: 44px;
+    padding: 0 8px;
+    text-align: right;
+    color: #3a3a3a;
+    border-right: 1px solid #1a1a1a;
+    flex-shrink: 0;
+    user-select: none;
+    font-size: 11px;
+    line-height: 20px;
+}
+
+.diff-line-content {
+    flex: 1;
+    padding: 0 12px;
+    overflow-x: auto;
+    line-height: 20px;
+}
+
+/* Line types */
+.diff-line-add {
+    background: rgba(34, 197, 94, 0.10);
+}
+.diff-line-add .diff-line-num { color: #22c55e66; background: rgba(34,197,94,0.06); }
+.diff-line-add .diff-line-content { color: #d4d4d4; }
+.diff-line-add .diff-line-content::before {
+    content: '+';
+    color: #22c55e;
+    margin-right: 4px;
+    font-weight: 700;
+}
+
+.diff-line-del {
+    background: rgba(239, 68, 68, 0.10);
+}
+.diff-line-del .diff-line-num { color: #ef444466; background: rgba(239,68,68,0.06); }
+.diff-line-del .diff-line-content { color: #d4d4d4; text-decoration: line-through; opacity: 0.7; }
+.diff-line-del .diff-line-content::before {
+    content: '-';
+    color: #ef4444;
+    margin-right: 4px;
+    font-weight: 700;
+}
+
+.diff-line-ctx .diff-line-content::before {
+    content: ' ';
+    margin-right: 4px;
+}
+.diff-line-ctx .diff-line-num { color: #2a2a2a; }
+.diff-line-ctx .diff-line-content { color: #888; }
+
+/* Hunk header */
+.diff-hunk-header {
+    background: #0a0a1a;
+    color: #3b82f6;
+    font-size: 11px;
+    padding: 3px 12px;
+    border-top: 1px solid #1a1a1a;
+    border-bottom: 1px solid #1a1a1a;
+    user-select: none;
+}
+
+/* ================================================================
+   DIFF OVERLAY (Main Window)
+   ================================================================ */
+.diff-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.72);
+    z-index: 9000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: diffIn 0.18s ease;
+}
+
+@keyframes diffIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.diff-panel {
+    background: #111;
+    border: 1px solid #2a2a2a;
+    border-radius: 10px;
+    width: 92vw;
+    max-width: 1100px;
+    height: 85vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: diffPanelIn 0.2s ease;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+
+@keyframes diffPanelIn {
+    from { transform: translateY(16px) scale(0.98); opacity: 0; }
+    to { transform: none; opacity: 1; }
+}
+
+.diff-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    border-bottom: 1px solid #1e1e1e;
+    flex-shrink: 0;
+}
+
+.diff-header-file {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+}
+
+.diff-ext-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 700;
+    font-family: 'JetBrains Mono', Consolas, monospace;
+    min-width: 22px;
+    flex-shrink: 0;
+    background: #f7df1e22;
+    color: #f7df1e;
+    border: 1px solid #f7df1e44;
+}
+
+.diff-header-path {
+    font-family: 'JetBrains Mono', Consolas, monospace;
+    font-size: 11.5px;
+    color: #555;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.diff-header-name {
+    font-family: 'JetBrains Mono', Consolas, monospace;
+    font-size: 13px;
+    font-weight: 600;
+    color: #d4d4d4;
+    flex-shrink: 0;
+}
+
+.diff-header-stats {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.diff-stat-add {
+    font-size: 12px;
+    color: #22c55e;
+    font-weight: 600;
+}
+
+.diff-stat-del {
+    font-size: 12px;
+    color: #ef4444;
+    font-weight: 600;
+}
+
+.diff-view-toggle {
+    display: flex;
+    border: 1px solid #2a2a2a;
+    border-radius: 5px;
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.diff-view-btn {
+    padding: 4px 10px;
+    background: transparent;
+    border: none;
+    color: #666;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.12s;
+    font-family: inherit;
+}
+
+.diff-view-btn.active {
+    background: #1e1e1e;
+    color: #d4d4d4;
+}
+
+.diff-view-btn:hover {
+    color: #aaa;
+}
+
+.diff-header-btns {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.diff-btn-accept {
+    padding: 5px 14px;
+    background: #14532d;
+    color: #4ade80;
+    border: 1px solid #166534;
+    border-radius: 5px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.14s;
+    font-family: inherit;
+}
+
+.diff-btn-accept:hover {
+    background: #16a34a;
+    color: #fff;
+}
+
+.diff-btn-reject {
+    padding: 5px 14px;
+    background: #1c1c1c;
+    color: #888;
+    border: 1px solid #333;
+    border-radius: 5px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.14s;
+    font-family: inherit;
+}
+
+.diff-btn-reject:hover {
+    background: #450a0a;
+    color: #f87171;
+    border-color: #7f1d1d;
+}
+
+.diff-btn-close {
+    width: 28px;
+    height: 28px;
+    background: transparent;
+    border: none;
+    color: #555;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.12s;
+}
+
+.diff-btn-close:hover {
+    background: #1e1e1e;
+    color: #d4d4d4;
+}
+
+.diff-content {
+    flex: 1;
+    overflow: auto;
+    font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.55;
+}

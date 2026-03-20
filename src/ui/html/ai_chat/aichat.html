@@ -236,6 +236,33 @@
                 </div>
             </div>
 
+            <!-- Diff Viewer Overlay -->
+            <div id="diff-overlay" class="diff-overlay" style="display:none;">
+                <div class="diff-panel">
+                    <div class="diff-header">
+                        <div class="diff-header-file">
+                            <span class="diff-ext-badge" id="diff-ext-badge">JS</span>
+                            <span class="diff-header-name" id="diff-header-name">filename.js</span>
+                            <span class="diff-header-path" id="diff-header-path">/path/to/file</span>
+                        </div>
+                        <div class="diff-header-stats" id="diff-header-stats">
+                            <span class="diff-stat-add">+0</span>
+                            <span class="diff-stat-del">-0</span>
+                        </div>
+                        <div class="diff-view-toggle">
+                            <button class="diff-view-btn active" id="btn-unified" onclick="switchDiffView('unified')">Unified</button>
+                            <button class="diff-view-btn" id="btn-split" onclick="switchDiffView('split')">Split</button>
+                        </div>
+                        <div class="diff-header-btns">
+                            <button class="diff-btn-accept" id="diff-btn-accept" onclick="acceptCurrentDiff()">Accept</button>
+                            <button class="diff-btn-reject" id="diff-btn-reject" onclick="rejectCurrentDiff()">Reject</button>
+                            <button class="diff-btn-close" onclick="closeDiffOverlay()">×</button>
+                        </div>
+                    </div>
+                    <div class="diff-content" id="diff-content"></div>
+                </div>
+            </div>
+
             <!-- Message Queue Bar (above input) -->
             <div id="msg-queue-bar" class="msg-queue-bar" style="display:none;">
                 <div class="mq-header">
@@ -358,6 +385,50 @@
         </div>
     </div>
 
+    <!-- Debug Console Panel (toggle with Ctrl+Shift+D) -->
+    <div id="debug-console" style="display:none; position:fixed; bottom:0; left:0; right:0; height:200px; background:#1a1a1a; border-top:2px solid #333; z-index:10000; font-family:monospace; font-size:11px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 10px; background:#252525; border-bottom:1px solid #333;">
+            <span style="color:#888;">Debug Console</span>
+            <button onclick="document.getElementById('debug-console').style.display='none'" style="background:none; border:none; color:#888; cursor:pointer;">×</button>
+        </div>
+        <div id="debug-console-content" style="padding:10px; overflow-y:auto; height:calc(100% - 35px); color:#aaa;"></div>
+    </div>
+    <script>
+        // Debug console capture
+        (function() {
+            var debugContent = document.getElementById('debug-console-content');
+            var originalLog = console.log;
+            var originalError = console.error;
+            var originalWarn = console.warn;
+            
+            function addToDebug(type, args) {
+                if (!debugContent) return;
+                var line = document.createElement('div');
+                line.style.marginBottom = '3px';
+                line.style.color = type === 'error' ? '#ff6b6b' : type === 'warn' ? '#ffd93d' : '#aaa';
+                line.textContent = '[' + type.toUpperCase() + '] ' + Array.from(args).join(' ');
+                debugContent.appendChild(line);
+                debugContent.scrollTop = debugContent.scrollHeight;
+            }
+            
+            console.log = function() { addToDebug('log', arguments); originalLog.apply(console, arguments); };
+            console.error = function() { addToDebug('error', arguments); originalError.apply(console, arguments); };
+            console.warn = function() { addToDebug('warn', arguments); originalWarn.apply(console, arguments); };
+            
+            window.onerror = function(msg, url, line, col, err) {
+                addToDebug('error', [msg + ' at line ' + line]);
+                return false;
+            };
+            
+            // Toggle debug console with Ctrl+Shift+D
+            document.addEventListener('keydown', function(e) {
+                if (e.ctrlKey && e.shiftKey && e.key === 'D') {
+                    var dc = document.getElementById('debug-console');
+                    dc.style.display = dc.style.display === 'none' ? 'block' : 'none';
+                }
+            });
+        })();
+    </script>
     <script src="script.js"></script>
 </body>
 </html>

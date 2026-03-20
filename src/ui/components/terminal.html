@@ -41,11 +41,16 @@
 <body>
     <div id="terminal-container"></div>
     <script>
-        // Initialize xterm.js
+        // Initialize xterm.js with performance optimizations
         const term = new Terminal({
             fontFamily: "'Cascadia Code', 'Consolas', monospace",
             fontSize: 13,
             cursorBlink: true,
+            // PERFORMANCE: Limit scrollback to prevent memory bloat
+            scrollback: 3000,
+            // PERFORMANCE: Disable features we don't need
+            allowTransparency: false,
+            fastScrollModifier: 'alt',
             theme: {
                 background: '#0c0c0c',
                 foreground: '#cccccc',
@@ -76,14 +81,70 @@
         term.open(document.getElementById('terminal-container'));
         fitAddon.fit();
 
-        // Handle window resizing
+        // OPTIMIZATION 1: Resize debounce — prevents 100 resize events
+        let _resizeTimer = null;
         window.addEventListener('resize', () => {
-            fitAddon.fit();
-            if (window.pyTerminal) {
-                // Notify python of the new dimensions
-                window.pyTerminal.resize(term.cols, term.rows);
-            }
+            if (_resizeTimer) clearTimeout(_resizeTimer);
+            _resizeTimer = setTimeout(() => {
+                fitAddon.fit();
+                if (window.pyTerminal) {
+                    window.pyTerminal.resize(term.cols, term.rows);
+                }
+                _resizeTimer = null;
+            }, 100);   // debounce 100ms — not every pixel change
         });
+
+        // OPTIMIZATION 2: Write queue with requestAnimationFrame — prevents bridge flooding
+        let _writeQueue = [];
+        let _rafId = null;
+        const _MAX_BATCH = 65536;   // 64KB per frame max
+
+        function _flushWrites() {
+            _rafId = null;
+            if (_writeQueue.length === 0) return;
+
+            const batch = _writeQueue.join('');
+            _writeQueue = [];
+
+            if (batch.length <= _MAX_BATCH) {
+                term.write(batch);
+            } else {
+                // Write in chunks across multiple frames to stay responsive
+                term.write(batch.slice(0, _MAX_BATCH));
+                let offset = _MAX_BATCH;
+                function writeRest() {
+                    if (offset >= batch.length) return;
+                    const end = Math.min(offset + _MAX_BATCH, batch.length);
+                    term.write(batch.slice(offset, end));
+                    offset = end;
+                    if (offset < batch.length) requestAnimationFrame(writeRest);
+                }
+                requestAnimationFrame(writeRest);
+            }
+        }
+
+        function writeToTerm(text) {
+            _writeQueue.push(text);
+            if (!_rafId) {
+                _rafId = requestAnimationFrame(_flushWrites);
+            }
+        }
+
+        // OPTIMIZATION 3: Input debounce for fast typing/paste
+        let _inputBuffer = '';
+        let _inputTimer = null;
+        function sendInput(data) {
+            _inputBuffer += data;
+            if (!_inputTimer) {
+                _inputTimer = setTimeout(() => {
+                    if (window.pyTerminal && _inputBuffer) {
+                        window.pyTerminal.receive_input(_inputBuffer);
+                        _inputBuffer = '';
+                    }
+                    _inputTimer = null;
+                }, 1);   // 1ms — imperceptible but batches paste operations
+            }
+        }
 
         // Handle custom keyboard shortcuts (Copy & Paste)
         term.attachCustomKeyEventHandler(e => {
@@ -126,14 +187,12 @@
             // Initial resize event to Python
             window.pyTerminal.resize(term.cols, term.rows);
 
-            // When user types in xterm, send to Python
-            term.onData(data => {
-                window.pyTerminal.receive_input(data);
-            });
+            // When user types in xterm, send to Python (batched)
+            term.onData(data => sendInput(data));
             
-            // Connect Python -> JS (incoming text from stdout)
+            // Connect Python -> JS (incoming text from stdout) — use write queue
             window.pyTerminal.send_output.connect(function(text) {
-                term.write(text);
+                writeToTerm(text);
             });
             
             // Connect Python -> JS (theme update)

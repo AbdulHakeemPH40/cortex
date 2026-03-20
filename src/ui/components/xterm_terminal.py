@@ -76,6 +76,7 @@ class XTermWidget(QWidget):
     
     command_executed = pyqtSignal(str, int)  # command, exit_code
     terminal_output_received = pyqtSignal(str) # For AI to listen to
+    terminal_line_for_chat = pyqtSignal(str)   # clean line for chat card streaming display
     file_operation_detected = pyqtSignal(str, str, str)  # operation_type, file_path, status
     
     def __init__(self, parent=None):
@@ -90,6 +91,13 @@ class XTermWidget(QWidget):
         # Buffer to hold text if xterm.js isn't loaded yet
         self._output_buffer = ""
         self._is_ready = False
+        
+        # OPTIMIZATION: Output emit throttle — accumulate for 16ms before sending to JS
+        self._emit_buffer = ""
+        self._emit_timer = QTimer(self)
+        self._emit_timer.setSingleShot(True)
+        self._emit_timer.timeout.connect(self._flush_emit_buffer)
+        self._emit_debounce_ms = 16   # ~60fps
         
         self._build_ui()
         self._update_header_style()
@@ -220,7 +228,11 @@ class XTermWidget(QWidget):
                 log.error(f"Failed to resize pty: {e}")
                 
     def _write_to_terminal(self, text: str):
-        """Send text to xterm.js to be rendered on screen."""
+        """
+        Buffer output and flush in batches instead of emitting each chunk separately.
+        Prevents QWebChannel from being flooded with hundreds of small messages.
+        Also emits clean lines for chat card streaming display.
+        """
         # Store in buffer for AI feedback (clean ANSI codes first)
         clean_text = self._clean_ansi(text)
         if clean_text:
@@ -228,11 +240,27 @@ class XTermWidget(QWidget):
             if len(self._terminal_buffer) > self._max_buffer:
                 self._terminal_buffer = self._terminal_buffer[-self._max_buffer:]
             self.terminal_output_received.emit(clean_text)
+            
+            # Emit lines for chat card streaming display
+            # Only emit non-empty, non-whitespace lines
+            for line in clean_text.splitlines():
+                line = line.strip()
+                if line and len(line) > 1:
+                    self.terminal_line_for_chat.emit(line)
 
         if self._is_ready:
-            self._bridge.send_output.emit(text)
+            self._emit_buffer += text
+            # Start/restart debounce timer
+            if not self._emit_timer.isActive():
+                self._emit_timer.start(self._emit_debounce_ms)
         else:
             self._output_buffer += text
+    
+    def _flush_emit_buffer(self):
+        """Emit accumulated output as a single signal."""
+        if self._emit_buffer:
+            self._bridge.send_output.emit(self._emit_buffer)
+            self._emit_buffer = ""
 
     def _clean_ansi(self, text: str) -> str:
         """Remove ANSI escape sequences."""
@@ -300,24 +328,79 @@ class XTermWidget(QWidget):
                     dimensions=(24, 80) # Default size, will be resized by JS
                 )
                 
-                # Start background thread to read from PTY
+                # Start background thread to read from PTY with batching
                 from PyQt6.QtCore import QThread
+                import time
+                
                 class WinptyReader(QThread):
                     data_received = pyqtSignal(str)
+                    
+                    # Emit at most this often (ms) — prevents signal flood
+                    EMIT_INTERVAL_MS = 16    # ~60fps
+                    
                     def __init__(self, pty):
                         super().__init__()
                         self.pty = pty
                         self.running = True
+                    
                     def run(self):
-                        while self.running and self.pty.isalive():
+                        accumulated = ""
+                        last_emit = time.time()
+                        
+                        while self.running:
                             try:
-                                data = self.pty.read()
+                                if not self.pty.isalive():
+                                    break
+                                
+                                # Read with a short timeout (non-blocking feel)
+                                try:
+                                    import select
+                                    if hasattr(self.pty, 'fd'):
+                                        ready, _, _ = select.select([self.pty.fd], [], [], 0.01)
+                                        if not ready:
+                                            # No data — check if we should emit accumulated
+                                            now = time.time()
+                                            elapsed_ms = (now - last_emit) * 1000
+                                            if accumulated and elapsed_ms >= self.EMIT_INTERVAL_MS:
+                                                self.data_received.emit(accumulated)
+                                                accumulated = ""
+                                                last_emit = now
+                                            time.sleep(0.005)  # 5ms sleep = max 200 iterations/sec
+                                            continue
+                                    data = self.pty.read()
+                                except Exception:
+                                    data = None
+                                
                                 if data:
-                                    self.data_received.emit(data)
+                                    accumulated += data
+                                
+                                now = time.time()
+                                elapsed_ms = (now - last_emit) * 1000
+                                
+                                # Emit accumulated data every 16ms OR when buffer is large
+                                should_emit = (
+                                    accumulated and (
+                                        elapsed_ms >= self.EMIT_INTERVAL_MS or
+                                        len(accumulated) > 4096   # flush large chunks immediately
+                                    )
+                                )
+                                
+                                if should_emit:
+                                    self.data_received.emit(accumulated)
+                                    accumulated = ""
+                                    last_emit = now
+                                elif not data:
+                                    # No data — small sleep to avoid busy-looping
+                                    time.sleep(0.005)  # 5ms sleep = max 200 iterations/sec
+                            
                             except EOFError:
                                 break
                             except Exception:
-                                pass
+                                time.sleep(0.01)
+                        
+                        # Flush any remaining data
+                        if accumulated:
+                            self.data_received.emit(accumulated)
                                 
                 self._pty_reader = WinptyReader(self._pty_process)
                 self._pty_reader.data_received.connect(self._write_to_terminal)
@@ -369,7 +452,12 @@ class XTermWidget(QWidget):
                      if not found:
                          self._process.start("bash.exe", ["--login", "-i"])
                          
-            self._render_timer.start(30)
+            # OPTIMIZATION: Adaptive render timer — starts at 30ms, slows when idle
+            self._render_interval = 30
+            self._last_render_had_data = False
+            self._consecutive_empty = 0
+            self._max_render_bytes_per_tick = 16 * 1024  # 16KB per render tick
+            self._render_timer.start(self._render_interval)
             
     def showEvent(self, event):
         super().showEvent(event)
@@ -386,22 +474,60 @@ class XTermWidget(QWidget):
             self._stderr_buffer.extend(self._process.readAllStandardError().data())
             
     def _render_buffers(self):
-        """Render any buffered stdout/stderr text for QProcess."""
-        if self._stdout_buffer:
-            text = self._stdout_buffer.decode("utf-8", errors="replace")
-            # Convert simple \n to \r\n for xterm.js if needed
-            if "\n" in text and "\r\n" not in text:
-                text = text.replace("\n", "\r\n")
-            self._stdout_buffer.clear()
-            self._write_to_terminal(text)
+        """
+        Adaptive render: fast when output is flowing, slow when idle.
+        Limits bytes per tick to prevent UI freeze on heavy output.
+        """
+        has_data = bool(self._stdout_buffer or self._stderr_buffer)
+        
+        if has_data:
+            self._consecutive_empty = 0
+            self._last_render_had_data = True
             
-        if self._stderr_buffer:
-            text = self._stderr_buffer.decode("utf-8", errors="replace")
-            if "\n" in text and "\r\n" not in text:
-                text = text.replace("\n", "\r\n")
-            self._stderr_buffer.clear()
-            # Wrap stderr in ansi red
-            self._write_to_terminal(f"\x1b[31m{text}\x1b[0m")
+            # Process stdout with size limit
+            if self._stdout_buffer:
+                stdout_data = bytes(self._stdout_buffer)
+                # Limit per-tick processing to avoid freezing
+                if len(stdout_data) > self._max_render_bytes_per_tick:
+                    # Process only the first 16KB this tick, leave rest for next
+                    self._stdout_buffer = bytearray(stdout_data[self._max_render_bytes_per_tick:])
+                    stdout_data = stdout_data[:self._max_render_bytes_per_tick]
+                else:
+                    self._stdout_buffer.clear()
+                
+                text = stdout_data.decode("utf-8", errors="replace")
+                if "\n" in text and "\r\n" not in text:
+                    text = text.replace("\n", "\r\n")
+                self._write_to_terminal(text)
+            
+            # Process stderr with size limit
+            if self._stderr_buffer:
+                stderr_data = bytes(self._stderr_buffer)
+                if len(stderr_data) > self._max_render_bytes_per_tick:
+                    self._stderr_buffer = bytearray(stderr_data[self._max_render_bytes_per_tick:])
+                    stderr_data = stderr_data[:self._max_render_bytes_per_tick]
+                else:
+                    self._stderr_buffer.clear()
+                
+                text = stderr_data.decode("utf-8", errors="replace")
+                if "\n" in text and "\r\n" not in text:
+                    text = text.replace("\n", "\r\n")
+                self._write_to_terminal(f"\x1b[31m{text}\x1b[0m")
+            
+            # Speed up timer when data is flowing
+            if self._render_interval != 30:
+                self._render_interval = 30
+                self._render_timer.setInterval(self._render_interval)
+        
+        else:
+            self._consecutive_empty += 1
+            # Slow down timer when idle (saves CPU)
+            if self._consecutive_empty > 20 and self._render_interval < 150:
+                self._render_interval = 150
+                self._render_timer.setInterval(self._render_interval)
+            elif self._consecutive_empty > 5 and self._render_interval < 60:
+                self._render_interval = 60
+                self._render_timer.setInterval(self._render_interval)
             
     def _on_process_finished(self):
         self._write_to_terminal("\r\n\x1b[90m[ Process exited ]\x1b[0m\r\n")

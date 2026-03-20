@@ -978,16 +978,21 @@ class ToolRegistry:
         return "Nothing to undo."
             
     def _run_command(self, command: str, timeout: int = 30) -> str:
-        """Run terminal command in the project directory."""
+        """Run terminal command with streaming output — never blocks UI."""
+        import threading
+        import queue as queue_module
+        
         try:
-            # Determine the working directory - MUST be project root, not IDE directory
-            working_dir = self.project_root or os.getcwd()
+            # Determine the working directory safely
+            working_dir = None
+            if self.project_root and os.path.isdir(self.project_root):
+                working_dir = str(self.project_root)
+            else:
+                working_dir = os.getcwd()
             
-            # Security check: Ensure we're not running in the IDE directory
-            if 'Cortex_Ai_Agent' in working_dir or 'Cortex' in working_dir.split(os.sep)[-3:]:
-                log.warning(f"Terminal attempting to run in IDE directory: {working_dir}")
-                log.warning("Falling back to project root or user home")
-                working_dir = self.project_root or os.path.expanduser("~")
+            # Safety: ensure working_dir exists and is accessible
+            if not os.path.isdir(working_dir):
+                working_dir = os.path.expanduser("~")
             
             # Check for virtual environment commands that might cause performance issues
             venv_indicators = ['venv', 'virtualenv', '.venv', 'env/', 'node_modules']
@@ -1013,33 +1018,106 @@ class ToolRegistry:
             if warnings:
                 log.warning(f"Command warnings for '{command}': {'; '.join(warnings)}")
             
-            log.info(f"Running command in directory: {working_dir}")
+            log.info(f"Running command '{command}' in: {working_dir}")
             
+            # ── Send to terminal widget if available (preferred path) ────────────
             if self.terminal_widget and hasattr(self.terminal_widget, 'execute_command'):
-                # Ensure terminal is set to the correct directory first
                 if hasattr(self.terminal_widget, 'set_cwd'):
                     self.terminal_widget.set_cwd(working_dir)
                 self.terminal_widget.execute_command(command)
-                
-                response = f"Command sent to terminal: {command}"
+                response = f"Command sent to terminal: {command}\n[Output appears in the terminal panel]"
                 if warnings:
                     response += "\n\n" + "\n".join(warnings)
                 return response
-            else:
-                # Fallback to subprocess with correct working directory
-                result = subprocess.run(
-                    command, shell=True, capture_output=True, text=True,
-                    timeout=timeout, cwd=working_dir
-                )
-                output = result.stdout
-                if result.stderr:
-                    output += "\n" + result.stderr
-                
-                if warnings:
-                    output = "\n".join(warnings) + "\n\n" + output
-                return output
-        except subprocess.TimeoutExpired:
-            raise Exception(f"Command timed out after {timeout} seconds")
+
+            # ── Fallback: streaming subprocess ───────────────────────────────────
+            output_lines = []
+            output_queue = queue_module.Queue()
+            process_ref = [None]  # mutable ref so thread can set it
+
+            def _run_in_thread():
+                """Run subprocess in separate thread, queue output line by line."""
+                try:
+                    proc = subprocess.Popen(
+                        command,
+                        shell=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,    # merge stderr into stdout
+                        text=True,
+                        encoding='utf-8',
+                        errors='replace',
+                        cwd=working_dir,
+                        bufsize=1                    # line-buffered
+                    )
+                    process_ref[0] = proc
+
+                    for line in proc.stdout:
+                        output_queue.put(('line', line))
+
+                    proc.wait()
+                    output_queue.put(('done', proc.returncode))
+
+                except Exception as e:
+                    output_queue.put(('error', str(e)))
+
+            # Start subprocess in daemon thread (dies if app dies)
+            t = threading.Thread(target=_run_in_thread, daemon=True)
+            t.start()
+
+            # ── Collect output with timeout ───────────────────────────────────────
+            deadline = time.time() + timeout
+            MAX_OUTPUT_LINES = 500        # hard cap — prevents memory explosion
+            MAX_LINE_LEN = 500            # truncate very long lines (minified output)
+
+            while True:
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    # Kill the process if it's still running
+                    if process_ref[0]:
+                        try:
+                            process_ref[0].kill()
+                        except Exception:
+                            pass
+                    output_lines.append(f"\n[TIMEOUT after {timeout}s — process killed]")
+                    break
+
+                try:
+                    msg_type, value = output_queue.get(timeout=min(remaining, 0.5))
+                except queue_module.Empty:
+                    # Not done yet, continue waiting
+                    continue
+
+                if msg_type == 'line':
+                    line = value
+                    if len(line) > MAX_LINE_LEN:
+                        line = line[:MAX_LINE_LEN] + ' ...[line truncated]\n'
+                    output_lines.append(line)
+                    if len(output_lines) >= MAX_OUTPUT_LINES:
+                        output_lines.append(f"\n[Output truncated at {MAX_OUTPUT_LINES} lines]")
+                        if process_ref[0]:
+                            try:
+                                process_ref[0].kill()
+                            except Exception:
+                                pass
+                        break
+
+                elif msg_type == 'done':
+                    exit_code = value
+                    if exit_code != 0:
+                        output_lines.append(f"\n[Exit code: {exit_code}]")
+                    break
+
+                elif msg_type == 'error':
+                    output_lines.append(f"\n[Error: {value}]")
+                    break
+
+            t.join(timeout=1.0)  # Brief join — thread should be done by now
+
+            result = ''.join(output_lines) or f"[Command completed: {command}]"
+            if warnings:
+                result = "\n".join(warnings) + "\n\n" + result
+            return result
+
         except Exception as e:
             raise Exception(f"Failed to run command: {e}")
 

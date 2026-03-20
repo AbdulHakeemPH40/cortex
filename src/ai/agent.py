@@ -122,11 +122,24 @@ class ToolWorker(QThread):
                 # Execute tool
                 result = self.tool_registry.execute_tool(name, args)
                 
-                # Store result
+                # Store result with truncation to prevent context window overflow
+                MAX_TOOL_CONTENT = 4000  # ~1000 tokens — enough for AI to understand result
+                
+                content = str(result.result) if result.success else f"Error: {result.error}"
+                
+                # Truncate long outputs — keep first + last portion (most informative)
+                if len(content) > MAX_TOOL_CONTENT:
+                    half = MAX_TOOL_CONTENT // 2
+                    content = (
+                        content[:half]
+                        + f"\n\n... [output truncated: {len(content)} chars total, showing first and last {half}] ...\n\n"
+                        + content[-half:]
+                    )
+                
                 self._results.append({
                     "tool_call_id": tool_call["id"],
                     "name": name,
-                    "content": str(result.result) if result.success else f"Error: {result.error}",
+                    "content": content,
                     "success": result.success,
                     "duration_ms": result.duration_ms
                 })
@@ -564,6 +577,12 @@ Be concise, direct, and responsive. Do what the user asks — no more, no less."
     def set_terminal(self, terminal_widget):
         """Connect a terminal widget to the AI agent's tool registry."""
         self._tool_registry.terminal_widget = terminal_widget
+        
+        # Forward terminal output lines to chat as streaming chunks
+        if hasattr(terminal_widget, 'terminal_line_for_chat'):
+            terminal_widget.terminal_line_for_chat.connect(
+                self._on_terminal_line_for_chat
+            )
 
     def set_project_root(self, path: str):
         """Set project root and load project-specific history."""
@@ -607,6 +626,16 @@ Be concise, direct, and responsive. Do what the user asks — no more, no less."
         if self._context_manager:
             self._context_manager.set_active_file(None)
         log.debug("Active file cleared")
+
+    def _on_terminal_line_for_chat(self, line: str):
+        """
+        Forward terminal output to aichat.html so the terminal card
+        updates in real time instead of showing 'running...' forever.
+        Only forward if a tool is currently running.
+        """
+        if hasattr(self, '_tool_worker') and self._tool_worker and self._tool_worker.isRunning():
+            # Wrap in special tag so JS can route it to the terminal card
+            self.response_chunk.emit(f"<terminal_output>{line}</terminal_output>")
 
     def chat(self, user_message: Optional[str], code_context: str = ""):
         """Send a message and get a streamed response."""
@@ -1252,10 +1281,18 @@ IMPORTANT RULES:
                     info += " ✓"
                     
                 self.tool_activity.emit(name, info, "complete")
-                # Manual metadata emission for exploration section
-                self.response_chunk.emit(f"\n</exploration>\n<file_edited>\n{path}\nModified\n</file_edited>\n<exploration>\n")
+                
+                # Get original content before emitting (for determining edit type)
+                original_content = self._pre_edit_snapshots.get(path, "")
+                edit_type = 'C' if not original_content else 'M'
+                
+                # Emit file_edited tag at the end of response (outside exploration)
+                # Format: path\n+X -Y\nM (Modified/Created/Deleted)
+                self.response_chunk.emit(f"\n<file_edited>\n{path}\n+{added} -{removed}\n{edit_type}\n</file_edited>\n")
+                
                 # Emit file_edited_diff signal for diff viewer
                 try:
+                    import os
                     from pathlib import Path as _Path
                     if path and os.path.exists(path):
                         new_content = _Path(path).read_text(encoding="utf-8", errors="replace")
