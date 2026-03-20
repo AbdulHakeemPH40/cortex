@@ -844,6 +844,20 @@ function loadChat(id) {
     clearMessages();
     chat.messages.forEach(function (msg) {
         appendMessage(msg.text, msg.sender, false);
+        // Restore tool activities (like directory listings) if present
+        if (msg.toolActivities && msg.toolActivities.length > 0) {
+            msg.toolActivities.forEach(function (activity) {
+                if (activity.type === 'directory' && activity.contents) {
+                    // Temporarily set currentAssistantMessage to last bubble for appending
+                    var container = document.getElementById('chatMessages');
+                    var bubbles = container.querySelectorAll('.message-bubble.assistant');
+                    if (bubbles.length > 0) {
+                        currentAssistantMessage = bubbles[bubbles.length - 1];
+                        renderDirectoryContents(activity.path, activity.contents);
+                    }
+                }
+            });
+        }
     });
     renderHistoryList();
     
@@ -944,7 +958,13 @@ function appendMessage(text, sender, shouldSave) {
     if (shouldSave) {
         var chat = chats.find(function (c) { return c.id === currentChatId; });
         if (chat) {
-            chat.messages.push({ text: text, sender: sender });
+            // Include any pending tool activities with the message
+            var messageData = { text: text, sender: sender };
+            if (window._pendingToolActivities && window._pendingToolActivities.length > 0) {
+                messageData.toolActivities = window._pendingToolActivities;
+                window._pendingToolActivities = []; // Clear after saving
+            }
+            chat.messages.push(messageData);
             if (chat.messages.length === 1 && sender === 'user') {
                 chat.title = text.substring(0, 30) + (text.length > 30 ? '...' : '');
             }
@@ -1457,8 +1477,8 @@ function getStatusBadge(type, info) {
     return '';
 }
 
-// Display directory contents with file/folder icons
-function showDirectoryContents(path, contents) {
+// Render directory contents HTML (used for both live display and restoration)
+function renderDirectoryContents(path, contents) {
     var container = document.getElementById('chatMessages');
     if (!container || !contents) return;
     
@@ -1510,6 +1530,20 @@ function showDirectoryContents(path, contents) {
         container.appendChild(list);
     }
     smartScroll(container);
+}
+
+// Display directory contents with file/folder icons (live display with persistence)
+function showDirectoryContents(path, contents) {
+    // Store tool activity for persistence
+    if (!window._pendingToolActivities) window._pendingToolActivities = [];
+    window._pendingToolActivities.push({
+        type: 'directory',
+        path: path,
+        contents: contents
+    });
+    
+    // Render the directory contents
+    renderDirectoryContents(path, contents);
 }
 
 // Test function - can be called from console
