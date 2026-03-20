@@ -417,14 +417,28 @@ class AIChatWidget(QWidget):
         self._view.page().runJavaScript("if(window.startStreaming) window.startStreaming();")
     
     def show_tool_activity(self, tool_type: str, info: str, status: str = "running"):
-        """Show tool activity card in the chat UI."""
+        """Show tool activity card in the chat UI and track for completion summary."""
         safe_info = json.dumps(info)
-        # Use runJavaScript with callback to make it async/non-blocking
+        # Track this activity for the completion summary
+        self._view.page().runJavaScript(
+            f"if(window.trackActivity) window.trackActivity('{tool_type}', {safe_info}, '{status}');",
+            lambda result: None
+        )
+        # Show tool activity card
         self._view.page().runJavaScript(
             f"if(window.showToolActivity) window.showToolActivity('{tool_type}', {safe_info}, '{status}');",
-            lambda result: None  # Callback makes it async
+            lambda result: None
         )
     
+    def show_directory_contents(self, path: str, contents: str):
+        """Show directory contents in the chat UI with file/folder icons."""
+        import json
+        print(f"[DIR-DEBUG] Python: show_directory_contents called path={path}, content_len={len(contents) if contents else 0}")
+        safe_path = json.dumps(path)
+        safe_contents = json.dumps(contents)
+        js = f"console.log('[DIR-DEBUG] JS: showDirectoryContents called'); if(window.showDirectoryContents) {{ window.showDirectoryContents({safe_path}, {safe_contents}); console.log('[DIR-DEBUG] JS: showDirectoryContents executed'); }} else {{ console.error('[DIR-DEBUG] JS: showDirectoryContents NOT FOUND'); }}"
+        self._view.page().runJavaScript(js, lambda result: None)
+
     def clear_tool_activity(self):
         """Clear tool activity cards."""
         self._view.page().runJavaScript("if(window.clearToolActivity) window.clearToolActivity();")

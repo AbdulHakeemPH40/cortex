@@ -29,29 +29,58 @@ def _get_icon_name(path: str) -> str:
         return "folder"
     suffix = p.suffix.lower()
     mapping = {
-        ".py": "python", ".pyw": "python",
-        ".js": "javascript", ".mjs": "javascript", ".jsx": "javascript",
-        ".ts": "typescript", ".tsx": "typescript",
+        # Python
+        ".py": "python", ".pyw": "python", ".pyi": "python",
+        # JavaScript/TypeScript
+        ".js": "javascript", ".mjs": "javascript", ".cjs": "javascript",
+        ".ts": "typescript", ".tsx": "react", ".jsx": "react",
+        # Web
         ".html": "html", ".htm": "html",
-        ".css": "css", ".scss": "css",
-        ".md": "markdown", ".markdown": "markdown",
-        ".json": "json",
-        ".java": "java",
-        ".cpp": "cpp", ".cc": "cpp", ".h": "cpp", ".hpp": "cpp",
-        ".rs": "rust", ".go": "go", ".php": "php", ".rb": "ruby", ".sql": "sql",
+        ".css": "css", ".scss": "scss", ".sass": "scss", ".less": "scss",
+        # Java/Kotlin
+        ".java": "java", ".jar": "java", ".groovy": "java",
+        ".kt": "java", ".kts": "java",
+        # C/C++
+        ".cpp": "cpp", ".cc": "cpp", ".cxx": "cpp", ".h": "c", ".hpp": "cpp",
+        # C#
+        ".cs": "csharp",
+        # Rust
+        ".rs": "rust",
+        # Go
+        ".go": "go",
+        # PHP
+        ".php": "php",
+        # Ruby
+        ".rb": "ruby", ".erb": "ruby", ".rake": "ruby",
+        # Shell
+        ".sh": "shell", ".bash": "shell", ".zsh": "shell", ".bat": "shell", ".cmd": "shell", ".ps1": "shell",
+        # Data/Config
+        ".json": "json", ".json5": "json",
+        ".yaml": "yaml", ".yml": "yaml",
+        ".toml": "config", ".ini": "config", ".cfg": "config", ".env": "config",
+        ".xml": "config",
+        # SQL
+        ".sql": "sql", ".sqlite": "sql",
+        # Markdown
+        ".md": "markdown", ".mdx": "markdown", ".markdown": "markdown",
+        # Git
+        ".git": "git", ".gitignore": "git",
+        # Docker
+        ".dockerfile": "docker", ".dockerignore": "docker",
+        # Vue/Svelte
+        ".vue": "vue",
+        ".svelte": "svelte",
+        # Images
         ".pdf": "pdf",
         ".jpg": "image", ".jpeg": "image", ".png": "image", ".gif": "image", ".svg": "image",
         ".doc": "word", ".docx": "word",
         ".xlsx": "excel", ".xls": "excel",
         ".pptx": "powerpoint", ".ppt": "powerpoint",
         ".csv": "csv",
-        ".xml": "json", # XML often uses same icon as JSON in modern IDEs
         ".log": "files",
-        ".env": "env",
-        ".sh": "terminal", ".bat": "terminal", ".ps1": "terminal",
         ".txt": "files"
     }
-    return mapping.get(suffix, "files")
+    return mapping.get(suffix, "default")
 
 
 # ── Custom delegate for VS Code-style rows ─────────────────────────────────────
@@ -101,32 +130,12 @@ class FileTreeDelegate(QStyledItemDelegate):
             painter.restore()
             x += 14  # shift rest right
 
-        # ── Premium Icons (One Dark inspired) ───────────────────────────────
+        # ── VS Code-style SVG Icons ───────────────────────────────
         icon_name = _get_icon_name(filepath)
-        icon_color = "#98c379" # Default green (Strings)
         
-        # Language-specific One Dark colors
-        colors = {
-            "python":   "#c678dd", # Purple
-            "html":     "#e06c75", # Red
-            "css":      "#61afef", # Blue
-            "javascript": "#d19a66", # Orange
-            "typescript": "#61afef", # Blue
-            "markdown": "#61afef", # Blue
-            "json":     "#d19a66", # Orange
-            "java":     "#e06c75", # Red
-            "rust":     "#d19a66", # Orange
-            "go":       "#61afef", # Blue
-            "folder":   "#61afef", # Folder Blue
-            "files":    "#abb2bf", # Grey
-            "terminal": "#98c379", # Green
-            "sql":      "#e5c07b", # Yellow
-        }
-        icon_color = colors.get(icon_name, "#98c379")
-        
-        # Increased size to 18px for better "brand" recognition
+        # Use 18px size for better visibility
         icon_size = 18
-        icon = make_icon(icon_name, icon_color, icon_size)
+        icon = make_icon(icon_name, "", icon_size)
         pixmap = icon.pixmap(icon_size, icon_size)
         
         icon_rect = QRect(x, option.rect.top() + (option.rect.height() - icon_size) // 2, icon_size, icon_size)

@@ -5721,3 +5721,177 @@ body.light .permission-block {
     margin: 10px 0 0;
     display: inline-flex;
 }
+/* ── TASK COMPLETION CARD ───────────────────────────────────────────── */
+.task-completion-card {
+    margin: 12px 0;
+    padding: 12px 16px;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    border: 1px solid #2a3f5f;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.tcc-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #2a3f5f44;
+}
+
+.tcc-header.success {
+    color: #4ade80;
+}
+
+.tcc-header.has-errors {
+    color: #fbbf24;
+}
+
+.tcc-icon {
+    font-size: 16px;
+}
+
+.tcc-title {
+    flex: 1;
+    font-weight: 600;
+    font-size: 13px;
+}
+
+.tcc-duration {
+    font-size: 11px;
+    color: #6b7280;
+    background: #1f2937;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+
+.tcc-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.tcc-stat {
+    font-size: 11px;
+    color: #9ca3af;
+    background: #1f2937;
+    padding: 4px 10px;
+    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.tcc-files {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid #2a3f5f44;
+}
+
+.tcc-files-title {
+    font-size: 11px;
+    color: #6b7280;
+    margin-bottom: 6px;
+}
+
+.tcc-file-btn {
+    background: #2563eb22;
+    border: 1px solid #2563eb44;
+    color: #60a5fa;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    margin-right: 6px;
+    margin-bottom: 4px;
+    transition: all 0.2s;
+}
+
+.tcc-file-btn:hover {
+    background: #2563eb44;
+    color: #93c5fd;
+}
+
+.tcc-more {
+    font-size: 11px;
+    color: #6b7280;
+    margin-left: 4px;
+}
+
+/* Directory Contents Card */
+.directory-card {
+    background: var(--bg-secondary, #1e1e2e);
+    border: 1px solid var(--border-color, #3d3d5c);
+    border-radius: 8px;
+    margin: 8px 0;
+    overflow: hidden;
+    max-width: 400px;
+}
+
+.dir-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    background: var(--bg-tertiary, #252538);
+    border-bottom: 1px solid var(--border-color, #3d3d5c);
+}
+
+.dir-icon {
+    font-size: 16px;
+}
+
+.dir-path {
+    flex: 1;
+    font-weight: 500;
+    color: var(--text-primary, #e0e0e0);
+    font-size: 13px;
+}
+
+.dir-count {
+    font-size: 11px;
+    color: var(--text-muted, #888);
+    background: var(--bg-secondary, #1e1e2e);
+    padding: 2px 8px;
+    border-radius: 10px;
+}
+
+.dir-list {
+    padding: 6px 0;
+    max-height: 250px;
+    overflow-y: auto;
+}
+
+.dir-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    font-size: 12px;
+    color: var(--text-secondary, #b0b0b0);
+    transition: background 0.15s;
+}
+
+.dir-item:hover {
+    background: var(--bg-hover, #2a2a3e);
+}
+
+.dir-item-icon {
+    font-size: 14px;
+    width: 18px;
+    text-align: center;
+}
+
+.dir-item-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}

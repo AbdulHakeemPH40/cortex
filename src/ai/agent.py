@@ -335,6 +335,7 @@ class AIAgent(QObject):
     file_generated = pyqtSignal(str)
     file_edited_diff = pyqtSignal(str, str, str)  # file_path, original_content, new_content
     tool_activity = pyqtSignal(str, str, str)  # tool_type, info, status
+    directory_contents = pyqtSignal(str, str)  # path, contents
     thinking_started = pyqtSignal()
     thinking_stopped = pyqtSignal()
     todos_updated = pyqtSignal(list, str)  # todos_list, main_task
@@ -1104,9 +1105,16 @@ Be concise, direct, and responsive. Do what the user asks — no more, no less."
 
         if result.success:
             if name == "list_directory":
-                content = str(result.result)
-                file_count = content.count('\n') + 1 if content else 0
+                dir_content = str(result.result)
+                file_count = dir_content.count('\n') + 1 if dir_content else 0
+                print(f"[AGENT-DEBUG] list_directory completed: path={args.get('path', '.')}, items={file_count}")
                 self.tool_activity.emit("list_directory", f"Found {file_count} items", "complete")
+                # Emit directory contents for UI display
+                if dir_content and not dir_content.startswith("Not a directory") and not dir_content.startswith("Directory is empty"):
+                    print(f"[AGENT-DEBUG] Emitting directory_contents signal")
+                    self.directory_contents.emit(args.get('path', '.'), dir_content)
+                else:
+                    print(f"[AGENT-DEBUG] NOT emitting - content empty or error: {dir_content[:50] if dir_content else 'empty'}")
             elif name == "read_file":
                 content = str(result.result)
                 line_count = content.count('\n') + 1 if content else 0

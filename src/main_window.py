@@ -765,6 +765,7 @@ class CortexMainWindow(QMainWindow):
         self._ai_agent.file_generated.connect(self._open_file)
         self._ai_agent.file_edited_diff.connect(self._file_tracker.add_edit)
         self._ai_agent.tool_activity.connect(self._ai_chat.show_tool_activity)
+        self._ai_agent.directory_contents.connect(self._ai_chat.show_directory_contents)
         self._ai_agent.thinking_started.connect(self._ai_chat.show_thinking)
         self._ai_agent.thinking_stopped.connect(self._ai_chat.hide_thinking)
         self._ai_agent.todos_updated.connect(self._ai_chat.update_todos)
