@@ -543,6 +543,7 @@ class CortexMainWindow(QMainWindow):
         self._ai_chat.open_file_requested.connect(self._open_file)
         self._ai_chat.accept_file_edit_requested.connect(self._on_accept_file_edit)
         self._ai_chat.reject_file_edit_requested.connect(self._on_reject_file_edit)
+        self._ai_chat.open_terminal_requested.connect(self._show_terminal_panel)
         self._ai_chat.set_code_context_callback(self._get_code_context)
         right_layout.addWidget(self._ai_chat)
         self._main_splitter.addWidget(self._right_panel)
@@ -1378,6 +1379,15 @@ class CortexMainWindow(QMainWindow):
         self._apply_welcome_theme(is_dark)
         self._apply_toolbar_theme(is_dark)
 
+
+    def _show_terminal_panel(self):
+        """Show terminal panel (called from AI chat 'View in terminal' button)."""
+        self._terminal_tabs.setVisible(True)
+        if self._terminal_tabs.count() == 0:
+            self._new_terminal()
+        term = self._current_terminal()
+        if term:
+            term.setFocus()
 
     def _toggle_terminal(self):
         self._terminal_tabs.setVisible(not self._terminal_tabs.isVisible())

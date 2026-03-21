@@ -6040,6 +6040,8 @@ body.light .permission-block {
     border-top: 1px solid #1a1a1a;
     padding: 8px 12px;
     background: #0a0a0a;
+    max-height: 200px;
+    overflow-y: auto;
 }
 .term-output-text {
     margin: 0;
@@ -6048,8 +6050,6 @@ body.light .permission-block {
     white-space: pre-wrap;
     word-break: break-word;
     line-height: 1.5;
-    max-height: 200px;
-    overflow-y: auto;
     font-family: inherit;
 }
 .term-card.term-error .term-output-text { color: #fca5a5; }

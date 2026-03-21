@@ -1340,31 +1340,27 @@ function _updateCurrentTerminalCard(line) {
     
     var outputEl = document.getElementById(outputId);
     if (!outputEl) {
-        // Create output section if it doesn't exist yet
+        // Create output section if it doesn't exist yet (legacy fallback)
         outputEl = document.createElement('div');
         outputEl.className = 'term-output-body';
         outputEl.id = outputId;
-        outputEl.style.display = 'block';  // show immediately when streaming
+        outputEl.style.display = 'block';
+        outputEl.style.maxHeight = '200px';
+        outputEl.style.overflowY = 'auto';
         var pre = document.createElement('pre');
         pre.className = 'term-output-text';
-        pre.id = outputId + '-pre';
         outputEl.appendChild(pre);
-        card.appendChild(outputEl);
-
-        // Update toggle button if exists (old style cards)
-        var toggle = card.querySelector('.tc-toggle, .term-toggle');
-        if (toggle) {
-            var ch = toggle.querySelector('.tc-chevron, .term-chevron');
-            if (ch) ch.textContent = '⌄';
+        // Insert before footer
+        var footer = card.querySelector('.term-footer');
+        if (footer) {
+            card.insertBefore(outputEl, footer);
+        } else {
+            card.appendChild(outputEl);
         }
     }
-    
+
     // Append line to output (limit to last 200 lines to avoid memory bloat)
-    var pre = document.getElementById(outputId + '-pre');
-    if (!pre) {
-        // Fallback: try to find any pre inside the output element
-        pre = outputEl.querySelector('pre');
-    }
+    var pre = outputEl.querySelector('pre');
     if (pre) {
         pre.textContent += line + '\n';
 
@@ -4928,11 +4924,10 @@ function buildTerminalCard(command, output, status, exitCode, cardId) {
     var formattedCmd = formatTerminalCommand(command);
 
     var outputId = (cardId || 'term-' + Date.now()) + '-output';
-    var outputHtml = output
-        ? '<div class="term-output-body" id="' + outputId + '" style="display:none;">' +
-              '<pre class="term-output-text">' + escapeHtml(output) + '</pre>' +
-          '</div>'
-        : '';
+    // Output div always visible (no dropdown)
+    var outputHtml = '<div class="term-output-body" id="' + outputId + '" style="display:block; max-height: 200px; overflow-y: auto;">' +
+              '<pre class="term-output-text">' + (output ? escapeHtml(output) : '') + '</pre>' +
+          '</div>';
 
     card.innerHTML =
         '<div class="term-header">' +
@@ -4943,10 +4938,8 @@ function buildTerminalCard(command, output, status, exitCode, cardId) {
         '<div class="term-body">' +
             '<pre class="term-command">' + formattedCmd + '</pre>' +
         '</div>' +
-        '<div class="term-footer">' +
-            '<button class="term-output-toggle" onclick="toggleTerminalOutput(\'' + outputId + '\', this)">' +
-                'Terminal Output <span class="term-chevron">›</span>' +
-            '</button>' +
+        (outputHtml || '') +
+        '<div class="term-footer" style="justify-content: flex-end; border-top: 1px solid #1a1a1a;">' +
             '<button class="term-view-btn" onclick="openTerminalPanel()">' +
                 '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" ' +
                     'stroke="currentColor" stroke-width="2">' +
@@ -4956,8 +4949,7 @@ function buildTerminalCard(command, output, status, exitCode, cardId) {
                 '</svg>' +
                 ' View in terminal' +
             '</button>' +
-        '</div>' +
-        (outputHtml || '');
+        '</div>';
 
     return card;
 }

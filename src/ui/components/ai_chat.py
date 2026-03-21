@@ -37,6 +37,7 @@ class ChatBridge(QObject):
     terminal_input = pyqtSignal(str)
     terminal_output = pyqtSignal(str)
     terminal_resize = pyqtSignal(int, int)
+    open_terminal_requested = pyqtSignal()  # Request to open terminal panel
     
     # Navigation
     navigate_to_line = pyqtSignal(str, int)  # file_path, line_number
@@ -227,6 +228,7 @@ class ChatBridge(QObject):
     def on_open_terminal(self):
         """Open terminal panel."""
         log.info("Open terminal requested from chat")
+        self.open_terminal_requested.emit()
 
     # ── CHAT PERSISTENCE: File-based storage fallback ─────────────────
     
@@ -308,11 +310,14 @@ class AIChatWidget(QWidget):
     open_file_requested = pyqtSignal(str)
     open_file_at_line_requested = pyqtSignal(str, int)  # file_path, line_number
     show_diff_requested = pyqtSignal(str)
-    
+
     # File edit accept/reject signals
     accept_file_edit_requested = pyqtSignal(str)  # file_path
     reject_file_edit_requested = pyqtSignal(str)  # file_path
-    
+
+    # Terminal panel signal
+    open_terminal_requested = pyqtSignal()  # Request main window to open terminal panel
+
     # Smart paste signal - emitted when user pastes code, to check if it matches editor selection
     smart_paste_check_requested = pyqtSignal(str)  # pasted_text
 
@@ -393,6 +398,7 @@ class AIChatWidget(QWidget):
         self._bridge.show_diff_requested.connect(self.show_diff_requested.emit)
         self._bridge.accept_file_edit_requested.connect(self.accept_file_edit_requested.emit)
         self._bridge.reject_file_edit_requested.connect(self.reject_file_edit_requested.emit)
+        self._bridge.open_terminal_requested.connect(self.open_terminal_requested.emit)
         self._bridge.search_files_requested.connect(self._on_search_files)
         self._channel.registerObject("bridge", self._bridge)
 

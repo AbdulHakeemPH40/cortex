@@ -700,11 +700,10 @@ Be concise, direct, and responsive. Do what the user asks — no more, no less."
         """
         Forward terminal output to aichat.html so the terminal card
         updates in real time instead of showing 'running...' forever.
-        Only forward if a tool is currently running.
         """
-        if hasattr(self, '_tool_worker') and self._tool_worker and self._tool_worker.isRunning():
-            # Wrap in special tag so JS can route it to the terminal card
-            self.response_chunk.emit(f"<terminal_output>{line}</terminal_output>")
+        # Always emit terminal output for display in chat card
+        # (The terminal widget handles the actual command execution)
+        self.response_chunk.emit(f"<terminal_output>{line}</terminal_output>")
 
     def chat(self, user_message: Optional[str], code_context: str = ""):
         """Send a message and get a streamed response."""
