@@ -565,34 +565,42 @@ class CortexMainWindow(QMainWindow):
 
     def _show_welcome(self):
         """Show a welcome screen in the editor tabs."""
+        from PyQt6.QtWidgets import QScrollArea
+        
+        self._welcome_scroll = QScrollArea()
+        self._welcome_scroll.setWidgetResizable(True)
+        self._welcome_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._welcome_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        
         self._welcome_widget = QWidget()
         welcome = self._welcome_widget
         wlay = QVBoxLayout(welcome)
         wlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        wlay.setSpacing(20)
+        wlay.setSpacing(16)
+        wlay.setContentsMargins(30, 30, 30, 30)
 
-        title = QLabel("🧠 Cortex AI Agent")
-        title.setStyleSheet("font-size:32px; font-weight:bold; color:#007acc;")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        wlay.addWidget(title)
+        self._welcome_title = QLabel("🧠 Cortex AI Agent")
+        self._welcome_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._welcome_title.setObjectName("welcome_title")
+        wlay.addWidget(self._welcome_title)
 
         self._welcome_subtitle = QLabel("Your AI-powered development environment")
         self._welcome_subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._welcome_subtitle.setObjectName("welcome_subtitle")
         wlay.addWidget(self._welcome_subtitle)
 
         self._welcome_sep = QFrame()
         self._welcome_sep.setFrameShape(QFrame.Shape.HLine)
+        self._welcome_sep.setObjectName("welcome_sep")
         wlay.addWidget(self._welcome_sep)
 
         # Dynamic Project Info
         self._welcome_project_info = QLabel()
         self._welcome_project_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._welcome_project_info.setStyleSheet("font-size:14px; color:#c678dd; margin: 10px 0;")
+        self._welcome_project_info.setObjectName("welcome_project_info")
         wlay.addWidget(self._welcome_project_info)
         self._welcome_hints = []
         self._update_welcome_project_info()
-
-
 
         hints = [
             ("📂 Open Project", "File → Open Folder  or  Ctrl+O"),
@@ -605,6 +613,7 @@ class CortexMainWindow(QMainWindow):
         for icon_title, shortcut in hints:
             row = ClickableLabel(f"<b>{icon_title}</b>   <span class='shortcut'>{shortcut}</span>")
             row.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            row.setObjectName("welcome_hint")
             
             # Connect actions
             if icon_title == "✨ New Project":
@@ -621,8 +630,11 @@ class CortexMainWindow(QMainWindow):
             wlay.addWidget(row)
             self._welcome_hints.append(row)
 
+        # Add stretch to center content vertically
+        wlay.addStretch()
 
-        idx = self._editor_tabs.addTab(welcome, "Welcome")
+        self._welcome_scroll.setWidget(self._welcome_widget)
+        idx = self._editor_tabs.addTab(self._welcome_scroll, "Welcome")
         self._editor_tabs.setCurrentIndex(idx)
         # Apply background immediately so no white flash at startup
         self._apply_welcome_theme(self._theme_manager.is_dark)
@@ -638,19 +650,64 @@ class CortexMainWindow(QMainWindow):
         sep_color = "#3e3e42" if is_dark else "#dee2e6"
         subtitle_color = "#858585" if is_dark else "#6c757d"
 
+        # Base stylesheet with responsive sizing
+        sw = self.width()
+        # Scale fonts based on window width (min 800, max 1920)
+        scale = min(max(sw / 1920.0, 0.6), 1.0)
+        title_size = max(int(32 * scale), 18)
+        subtitle_size = max(int(16 * scale), 12)
+        hint_size = max(int(14 * scale), 11)
+        project_size = max(int(14 * scale), 11)
+
         self._welcome_widget.setStyleSheet(
             f"background-color:{bg}; color:{fg};"
         )
+        
+        # Use object names for centralized styling
+        styles = f"""
+            QLabel#welcome_title {{
+                font-size: {title_size}px;
+                font-weight: bold;
+                color: #007acc;
+            }}
+            QLabel#welcome_subtitle {{
+                font-size: {subtitle_size}px;
+                color: {subtitle_color};
+            }}
+            QFrame#welcome_sep {{
+                color: {sep_color};
+                margin: 10px 20%;
+            }}
+            QLabel#welcome_project_info {{
+                font-size: {project_size}px;
+                color: {'#c678dd' if is_dark else '#9b30ff'};
+                margin: 8px 0;
+            }}
+            ClickableLabel#welcome_hint {{
+                font-size: {hint_size}px;
+                color: {hint_fg};
+                padding: 6px 12px;
+            }}
+            ClickableLabel#welcome_hint:hover {{
+                background-color: {'#3e3e42' if is_dark else '#e9ecef'};
+                border-radius: 4px;
+            }}
+        """
+        
+        if hasattr(self, '_welcome_scroll') and self._welcome_scroll:
+            self._welcome_scroll.setStyleSheet(f"background-color:{bg};")
+        
+        if hasattr(self, '_welcome_title'):
+            self._welcome_title.setStyleSheet(f"font-size:{title_size}px; font-weight:bold; color:#007acc;")
         if hasattr(self, '_welcome_subtitle'):
-            self._welcome_subtitle.setStyleSheet(f"font-size:16px; color:{subtitle_color};")
+            self._welcome_subtitle.setStyleSheet(f"font-size:{subtitle_size}px; color:{subtitle_color};")
         if hasattr(self, '_welcome_sep'):
-            self._welcome_sep.setStyleSheet(f"color:{sep_color}; margin:10px 80px;")
+            self._welcome_sep.setStyleSheet(f"color:{sep_color}; margin:10px 20%;")
         if hasattr(self, '_welcome_hints'):
             for row in self._welcome_hints:
-                row.setStyleSheet(f"font-size:14px; color:{hint_fg};")
+                row.setStyleSheet(f"font-size:{hint_size}px; color:{hint_fg}; padding:6px 12px; border-radius:4px;")
         if hasattr(self, '_welcome_project_info') and self._welcome_project_info:
-            project_color = "#c678dd" if is_dark else "#9b30ff"
-            self._welcome_project_info.setStyleSheet(f"font-size:14px; color:{project_color}; margin: 10px 0;")
+            self._welcome_project_info.setStyleSheet(f"font-size:{project_size}px; color:{'#c678dd' if is_dark else '#9b30ff'}; margin: 8px 0;")
 
 
     # ------------------------------------------------------------------
@@ -1586,6 +1643,12 @@ class CortexMainWindow(QMainWindow):
             if isinstance(term, XTermWidget):
                 term._kill_process()
         event.accept()
+
+    def resizeEvent(self, event):
+        """Handle window resize to update welcome panel font sizes responsively."""
+        super().resizeEvent(event)
+        if hasattr(self, '_welcome_widget') and self._welcome_widget is not None:
+            self._apply_welcome_theme(self._theme_manager.is_dark)
 
 
 def QApplication_instance():
