@@ -757,77 +757,101 @@ class AIChatWidget(QWidget):
                 backend=winpty.Backend.WinPTY  # Use WinPTY for better performance
             )
             
-            from PyQt6.QtCore import QThread, QTimer, QMutex
+            from PyQt6.QtCore import QThread, QMutex
+            import threading
+
             class Reader(QThread):
                 data = pyqtSignal(str)
+
                 def __init__(self, pty):
                     super().__init__()
                     self.pty = pty
                     self._running = True
                     self._buffer = ""
                     self._buffer_mutex = QMutex()
-                    self._buffer_timer = None
-                    self._max_buffer_size = 16384  # Larger buffer for batching
-                    self._flush_interval_ms = 33   # ~30fps for smoother output
-                    self._last_flush_time = 0
-                    
+                    self._max_buffer_size = 8192
+                    self._read_timeout = 0.05  # 50ms max wait per read
+
                 def run(self):
+                    """Non-blocking read loop with periodic flushing."""
                     import time
+                    last_flush = time.time()
+                    flush_interval = 0.1  # Flush every 100ms max
+
                     while self._running and self.pty.isalive():
                         try:
-                            # Use shorter timeout for more responsive reads
-                            import select
-                            if hasattr(self.pty, 'fd'):
-                                ready, _, _ = select.select([self.pty.fd], [], [], 0.02)
-                                if not ready:
-                                    # Check if we need to flush stale buffer
-                                    current_time = time.time() * 1000
-                                    if self._buffer and (current_time - self._last_flush_time) > self._flush_interval_ms:
-                                        self._flush_buffer()
-                                    continue
-                            
-                            # Read available data
-                            d = self.pty.read()
+                            # Non-blocking read with small chunk size
+                            d = None
+                            if self.pty.isalive():
+                                try:
+                                    # Check if data available without blocking
+                                    d = self.pty.read(timeout=self._read_timeout)
+                                except Exception:
+                                    pass
+
                             if d:
                                 self._buffer_mutex.lock()
                                 self._buffer += d
-                                buffer_len = len(self._buffer)
+                                should_flush = len(self._buffer) > self._max_buffer_size
                                 self._buffer_mutex.unlock()
-                                
-                                # Flush if buffer is large enough or timer not set
-                                if buffer_len > self._max_buffer_size:
+
+                                if should_flush:
                                     self._flush_buffer()
-                                elif not self._buffer_timer:
-                                    from PyQt6.QtCore import QTimer
-                                    self._buffer_timer = True
-                                    QTimer.singleShot(self._flush_interval_ms, self._flush_buffer)
-                            else:
-                                time.sleep(0.005)  # Shorter sleep for lower latency
+                                    last_flush = time.time()
+
+                            # Periodic flush for small data
+                            current_time = time.time()
+                            if current_time - last_flush > flush_interval:
+                                self._flush_buffer()
+                                last_flush = current_time
+
+                            # Small sleep to prevent CPU spinning
+                            time.sleep(0.01)
+
                         except EOFError:
                             break
                         except Exception:
-                            time.sleep(0.005)
-                            
+                            time.sleep(0.01)
+
+                    # Final flush on exit
+                    self._flush_buffer()
+
                 def _flush_buffer(self):
+                    """Emit buffered data safely."""
                     self._buffer_mutex.lock()
-                    if self._buffer:
-                        data_to_emit = self._buffer
-                        self._buffer = ""
-                        self._buffer_mutex.unlock()
+                    data_to_emit = self._buffer if self._buffer else None
+                    self._buffer = ""
+                    self._buffer_mutex.unlock()
+
+                    if data_to_emit:
                         self.data.emit(data_to_emit)
-                    else:
-                        self._buffer_mutex.unlock()
-                    self._buffer_timer = None
-                    import time
-                    self._last_flush_time = time.time() * 1000
-                    
+
                 def stop(self):
                     self._running = False
-                    self._flush_buffer()
+                    self.wait(500)  # Wait up to 500ms for clean shutdown
             
             self._terminal_reader = Reader(self._pty_process)
+
+            # Rate-limited emitter to prevent UI freezing
+            self._terminal_output_buffer = ""
+            self._terminal_last_emit = 0
+            self._terminal_emit_interval = 0.05  # 50ms minimum between emits
+
+            def _emit_terminal_data(data):
+                import time
+                now = time.time()
+                self._terminal_output_buffer += data
+
+                # Emit if enough time passed or buffer is large
+                if (now - self._terminal_last_emit > self._terminal_emit_interval or
+                    len(self._terminal_output_buffer) > 2048):
+                    if self._terminal_output_buffer:
+                        self._bridge.terminal_output.emit(self._terminal_output_buffer)
+                        self._terminal_output_buffer = ""
+                        self._terminal_last_emit = now
+
             self._terminal_reader.data.connect(
-                lambda d: self._bridge.terminal_output.emit(d), 
+                _emit_terminal_data,
                 Qt.ConnectionType.QueuedConnection
             )
             self._terminal_reader.start()
@@ -849,6 +873,10 @@ class AIChatWidget(QWidget):
                 self._bridge.terminal_output.emit(data)
 
     def closeEvent(self, event):
+        # Flush any pending terminal output before closing
+        if hasattr(self, '_terminal_output_buffer') and self._terminal_output_buffer:
+            self._bridge.terminal_output.emit(self._terminal_output_buffer)
+            self._terminal_output_buffer = ""
         if self._pty_process:
             self._pty_process.terminate()
         if self._terminal_process:

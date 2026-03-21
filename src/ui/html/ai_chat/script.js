@@ -1330,46 +1330,50 @@ function _updateCurrentTerminalCard(line) {
      * Update the most recent running terminal card with streaming output.
      * This allows terminal cards to show live output instead of 'running...' forever.
      */
-    // Find the most recent running terminal card
-    var cards = document.querySelectorAll('.tc.tc-running');
+    // Find the most recent running terminal card (supports both old and new class names)
+    var cards = document.querySelectorAll('.term-card.term-running, .tc.tc-running');
     if (cards.length === 0) return;
-    
+
     var card = cards[cards.length - 1];
     var cardId = card.id;
-    var outputId = cardId + '-out';
+    var outputId = cardId + '-output';  // buildTerminalCard uses '-output' suffix
     
     var outputEl = document.getElementById(outputId);
     if (!outputEl) {
         // Create output section if it doesn't exist yet
         outputEl = document.createElement('div');
-        outputEl.className = 'tc-output-body';
+        outputEl.className = 'term-output-body';
         outputEl.id = outputId;
         outputEl.style.display = 'block';  // show immediately when streaming
         var pre = document.createElement('pre');
-        pre.className = 'tc-output-pre';
+        pre.className = 'term-output-text';
         pre.id = outputId + '-pre';
         outputEl.appendChild(pre);
         card.appendChild(outputEl);
-        
-        // Update toggle button
-        var toggle = card.querySelector('.tc-toggle');
+
+        // Update toggle button if exists (old style cards)
+        var toggle = card.querySelector('.tc-toggle, .term-toggle');
         if (toggle) {
-            var ch = toggle.querySelector('.tc-chevron');
+            var ch = toggle.querySelector('.tc-chevron, .term-chevron');
             if (ch) ch.textContent = '⌄';
         }
     }
     
     // Append line to output (limit to last 200 lines to avoid memory bloat)
     var pre = document.getElementById(outputId + '-pre');
+    if (!pre) {
+        // Fallback: try to find any pre inside the output element
+        pre = outputEl.querySelector('pre');
+    }
     if (pre) {
         pre.textContent += line + '\n';
-        
+
         // Trim if too long
         var lines = pre.textContent.split('\n');
         if (lines.length > 200) {
             pre.textContent = lines.slice(-200).join('\n');
         }
-        
+
         // Auto-scroll output area
         outputEl.scrollTop = outputEl.scrollHeight;
     }
