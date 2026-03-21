@@ -6718,3 +6718,992 @@ body.light .permission-block {
     font-size: 12.5px;
     line-height: 1.55;
 }
+
+/* ================================================
+   COMPREHENSIVE LIGHT MODE OVERRIDES
+   Fixes hardcoded dark backgrounds and light text
+   ================================================ */
+
+body.light {
+    --hover-bg: rgba(0, 0, 0, 0.05);
+}
+
+body.light .diff-btn-close:hover {
+    background: #e5e5e5;
+    color: #333333;
+}
+
+body.light .exploration-block {
+    background: rgba(0, 0, 0, 0.03);
+}
+
+body.light .exploration-header {
+    background: rgba(0, 0, 0, 0.02);
+}
+
+body.light .feature-list li {
+    background: rgba(0, 0, 0, 0.02);
+}
+
+body.light .key-value-item .value code {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+body.light .code-block-container {
+    background: #f6f8fa;
+}
+
+body.light .section-card {
+    background: #ffffff;
+    border-color: #e0e0e0;
+}
+
+body.light .collapsible-header {
+    background: #f5f5f5;
+}
+
+body.light .collapsible-header:hover {
+    background: #e8e8e8;
+}
+
+body.light .task-item {
+    background: #ffffff;
+    border-color: #e0e0e0;
+}
+
+body.light .task-item:hover {
+    background: #f8f9fa;
+}
+
+body.light .file-edit-card {
+    background: #ffffff;
+    border-color: #e0e0e0;
+}
+
+body.light .file-edit-card:hover {
+    background: #f8f9fa;
+}
+
+body.light .fec-row:hover {
+    background: #f5f5f5;
+}
+
+body.light .fec-btn-diff {
+    background: #f0f0f0;
+    border-color: #d0d0d0;
+    color: #333;
+}
+
+body.light .fec-btn-accept {
+    background: #dcfce7;
+    border-color: #86efac;
+    color: #166534;
+}
+
+body.light .fec-btn-accept:hover {
+    background: #22c55e;
+    color: #fff;
+}
+
+body.light .fec-accept {
+    background: #dcfce7;
+    color: #166534;
+}
+
+body.light .fec-accept:hover {
+    background: #22c55e;
+    color: #fff;
+}
+
+body.light .perm-card {
+    background: #ffffff;
+    border-color: #e0e0e0;
+}
+
+body.light .perm-cmd {
+    background: #f5f5f5;
+    color: #333;
+}
+
+body.light .perm-approve {
+    background: #dcfce7;
+    color: #166534;
+}
+
+body.light .perm-yes {
+    background: #dcfce7;
+    color: #166534;
+}
+
+body.light .perm-yes:hover {
+    background: #22c55e;
+    color: #fff;
+}
+
+body.light .perm-no {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+body.light .perm-no:hover {
+    background: #ef4444;
+    color: #fff;
+}
+
+body.light .todo-header:hover {
+    background: #f0f0f0;
+}
+
+body.light .todo-item:hover {
+    background: #f5f5f5;
+}
+
+body.light .todo-body {
+    background: #ffffff;
+}
+
+body.light .cfs-header:hover {
+    background: #f0f0f0;
+}
+
+body.light .cfs-row:hover {
+    background: #f5f5f5;
+}
+
+body.light .cfs-row {
+    background: #ffffff;
+    border-bottom-color: #e5e5e5;
+}
+
+body.light .cfs-body {
+    background: #ffffff;
+}
+
+body.light .cfs-reject-btn:hover {
+    background: #fee2e2;
+    border-color: #ef4444;
+    color: #dc2626;
+}
+
+body.light .cfs-accept-btn:hover {
+    background: #22c55e;
+    color: #fff;
+}
+
+body.light .cfs-row-accept-btn {
+    background: #dcfce7;
+    border-color: #86efac;
+    color: #166534;
+}
+
+body.light .cfs-row-accept-btn:hover {
+    background: #16a34a;
+    color: #fff;
+}
+
+body.light .fec-row {
+    background: #ffffff;
+    border-bottom-color: #f0f0f0;
+}
+
+body.light .terminal-output-block {
+    background: #f6f8fa;
+    border-color: #e0e0e0;
+}
+
+body.light .terminal-output-header {
+    background: #e8e8e8;
+    color: #333;
+}
+
+body.light .terminal-command {
+    color: #1a1a1a;
+}
+
+body.light .terminal-content pre {
+    color: #1a1a1a;
+}
+
+body.light .file-reference-block {
+    background: #f6f8fa;
+    border-color: #e0e0e0;
+}
+
+body.light .file-reference-header {
+    background: #e8e8e8;
+    color: #1a1a1a;
+}
+
+body.light .file-reference-content {
+    color: #1a1a1a;
+}
+
+body.light .change-action-block {
+    background: #f6f8fa;
+    border-color: #e0e0e0;
+}
+
+body.light .exploration-block {
+    background: #f6f8fa;
+    border-color: #e0e0e0;
+}
+
+body.light .diff-block {
+    background: #f6f8fa;
+    border-color: #e0e0e0;
+}
+
+body.light .project-tree {
+    background: #ffffff;
+}
+
+body.light .tree-container {
+    background: #ffffff;
+}
+
+body.light .tree-header {
+    background: #f5f5f5;
+}
+
+body.light .tree-branch {
+    color: #333;
+}
+
+body.light .tree-line:hover {
+    background: #f0f0f0;
+}
+
+body.light #thinking-indicator-bar {
+    background: #f5f5f5;
+    color: #333;
+}
+
+body.light .thinking-label {
+    color: #666;
+}
+
+body.light .mention-dropdown {
+    background: #ffffff;
+    border-color: #e0e0e0;
+}
+
+body.light .mention-item {
+    color: #333;
+}
+
+body.light .mention-item:hover,
+body.light .mention-item.active {
+    background: #f0f0f0;
+}
+
+body.light .created-files-card {
+    background: #f6f8fa;
+    border-color: #e0e0e0;
+}
+
+body.light .cfc-badge-created {
+    background: rgba(34, 197, 94, 0.1);
+    color: #16a34a;
+}
+
+body.light .cfc-badge-modified {
+    background: rgba(59, 130, 246, 0.1);
+    color: #2563eb;
+}
+
+body.light .cfc-badge-deleted {
+    background: rgba(239, 68, 68, 0.1);
+    color: #dc2626;
+}
+
+body.light .cfc-footer {
+    background: #f5f5f5;
+    border-top-color: #e0e0e0;
+}
+
+body.light .task-summary-card {
+    background: #ffffff;
+    border-color: #e0e0e0;
+}
+
+body.light .task-summary-message {
+    background: #f5f5f5;
+}
+
+body.light .task-summary-list li code {
+    background: #e8e8e8;
+    color: #333;
+}
+
+body.light #workflow-tabs {
+    background: #f8f9fa;
+}
+
+body.light .tab-btn {
+    color: #666;
+}
+
+body.light .tab-btn.active {
+    background: #e7f3ff;
+    color: #0066cc;
+}
+
+body.light .tab-content {
+    background: #ffffff;
+}
+
+body.light .activity-item {
+    color: #333;
+}
+
+body.light .activity-item.running {
+    color: #1a1a1a;
+}
+
+body.light .activity-item.error {
+    color: #dc2626;
+}
+
+body.light .activity-badge {
+    background: #e8e8e8;
+    color: #333;
+}
+
+body.light .activity-badge.applied {
+    background: rgba(34, 197, 94, 0.1);
+    color: #16a34a;
+}
+
+body.light .status-badge.success {
+    background: rgba(34, 197, 94, 0.1);
+    color: #16a34a;
+}
+
+body.light .status-badge.warning {
+    background: rgba(245, 158, 11, 0.1);
+    color: #b45309;
+}
+
+body.light .status-badge.error {
+    background: rgba(220, 53, 69, 0.1);
+    color: #b91c1c;
+}
+
+body.light .status-badge.info {
+    background: rgba(59, 130, 246, 0.1);
+    color: #2563eb;
+}
+
+body.light .numbered-card {
+    background: #ffffff;
+    border-color: #e0e0e0;
+}
+
+body.light .numbered-card .card-content {
+    color: #1a1a1a;
+}
+
+body.light .smart-paste-reference {
+    background: #f5f5f5;
+    border-color: #e0e0e0;
+}
+
+body.light .smart-paste-reference:hover {
+    background: #e8e8e8;
+}
+
+body.light .dropdown-item small {
+    color: #666;
+}
+
+body.light .diff-line-added {
+    background: #dcfce7;
+}
+
+body.light .diff-line-removed {
+    background: #fee2e2;
+}
+
+body.light .diff-line-number {
+    background: #f0f0f0;
+    color: #666;
+}
+
+body.light .ts-file-action {
+    color: #333;
+}
+
+body.light .ts-file-action.modified {
+    background: #dbeafe;
+    color: #1d4ed8;
+}
+
+body.light .ts-file-action.deleted {
+    background: #fee2e2;
+    color: #dc2626;
+}
+
+body.light .ts-file-action.added {
+    background: #dcfce7;
+    color: #16a34a;
+}
+
+body.light .message-content a {
+    color: #0066cc;
+}
+
+body.light .message-content a:hover {
+    color: #004499;
+}
+
+body.light .message-content code:not(pre code) {
+    background: rgba(0, 0, 0, 0.05);
+    color: #c7254e;
+}
+
+body.light .message-content blockquote {
+    background: rgba(0, 102, 204, 0.05);
+    border-left-color: #0066cc;
+    color: #1a1a1a;
+}
+
+body.light .message-content th {
+    background: #f5f5f5;
+    color: #1a1a1a;
+}
+
+body.light .message-content td {
+    background: #ffffff;
+    color: #1a1a1a;
+}
+
+body.light .message-content li::marker {
+    color: #0066cc;
+}
+
+body.light ::selection {
+    background: rgba(59, 130, 246, 0.3);
+}
+
+body.light ::-webkit-scrollbar-thumb {
+    background: #c0c0c0;
+}
+
+body.light ::-webkit-scrollbar-thumb:hover {
+    background: #a0a0a0;
+}
+
+/* Additional hardcoded dark backgrounds - Light mode overrides */
+
+body.light .code-block-header {
+    background: #f0f0f0;
+    border-bottom-color: #e0e0e0;
+}
+
+body.light .code-copy-btn:hover,
+body.light .code-insert-btn:hover {
+    background: #e0e0e0;
+    color: #333;
+    border-color: #aaa;
+}
+
+body.light .msg-user {
+    background: #e7f3ff;
+}
+
+body.light .todo-header:hover {
+    background: #f0f0f0;
+}
+
+body.light .todo-item:hover {
+    background: #f5f5f5;
+}
+
+body.light .mq-item:hover {
+    background: #f0f0f0;
+}
+
+body.light .diff-view-btn.active {
+    background: #e0e0e0;
+    color: #333;
+}
+
+body.light .diff-btn-accept:hover {
+    background: #dcfce7;
+    color: #166534;
+}
+
+body.light .diff-btn-reject:hover {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+body.light .diff-view-btn {
+    background: #f0f0f0;
+    border-color: #d0d0d0;
+    color: #333;
+}
+
+body.light .diff-view-btn:hover {
+    background: #e0e0e0;
+}
+
+body.light .diff-btn-close:hover {
+    background: #e5e5e5;
+    color: #333;
+}
+
+/* Message queue bar */
+body.light .msg-queue-bar {
+    background: #f5f5f5;
+    border-top-color: #e0e0e0;
+}
+
+body.light .mq-item {
+    background: #ffffff;
+    border-bottom-color: #f0f0f0;
+}
+
+/* User message overrides */
+body.light .msg-user .message-content {
+    background: #007acc;
+    color: #ffffff;
+}
+
+/* Assistant message in light mode */
+body.light .message-bubble.assistant .message-content {
+    background: #ffffff;
+    border-color: #e0e0e0;
+    color: #1a1a1a;
+}
+
+/* Thinking indicator bar in light mode */
+body.light #thinking-indicator-bar {
+    background: #f5f5f5;
+    border-top-color: #e0e0e0;
+}
+
+body.light .thinking-dots .dot {
+    background: #007acc;
+}
+
+body.light .thinking-icon {
+    color: #007acc;
+}
+
+/* Tool activity cards */
+body.light .tool-activity-card {
+    background: #ffffff;
+    border-color: #e0e0e0;
+}
+
+body.light .tool-activity-header {
+    background: #f5f5f5;
+}
+
+/* File tree in light mode */
+body.light .file-tree {
+    background: #ffffff;
+}
+
+body.light .file-tree-item {
+    color: #333;
+}
+
+body.light .file-tree-item:hover {
+    background: #f0f0f0;
+}
+
+body.light .file-tree-item.selected {
+    background: #e7f3ff;
+    color: #007acc;
+}
+
+/* Inline diff viewer */
+body.light .inline-diff-view {
+    background: #ffffff;
+    border-color: #e0e0e0;
+}
+
+body.light .diff-gutter {
+    background: #f5f5f5;
+    border-right-color: #e0e0e0;
+}
+
+body.light .diff-gutter .added {
+    background: #dcfce7;
+    color: #166534;
+}
+
+body.light .diff-gutter .removed {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+/* Search highlights */
+body.light .search-highlight {
+    background: #fff3cd;
+    color: #333;
+}
+
+body.light .search-highlight.selected {
+    background: #cce5ff;
+}
+
+/* Breadcrumb navigation */
+body.light .breadcrumb {
+    background: #f5f5f5;
+    color: #333;
+}
+
+body.light .breadcrumb-item {
+    color: #666;
+}
+
+body.light .breadcrumb-item:hover {
+    color: #007acc;
+}
+
+/* Tabs in light mode */
+body.light .tab-item {
+    background: #f0f0f0;
+    color: #666;
+    border-color: #d0d0d0;
+}
+
+body.light .tab-item:hover {
+    background: #e8e8e8;
+}
+
+body.light .tab-item.active {
+    background: #ffffff;
+    color: #007acc;
+    border-bottom-color: #007acc;
+}
+
+/* Slider/Range inputs */
+body.light input[type="range"] {
+    background: #d0d0d0;
+}
+
+body.light input[type="range"]::-webkit-slider-thumb {
+    background: #007acc;
+}
+
+/* Checkboxes */
+body.light input[type="checkbox"]:checked {
+    background: #007acc;
+    border-color: #007acc;
+}
+
+/* Select dropdowns */
+body.light select {
+    background: #ffffff;
+    border-color: #d0d0d0;
+    color: #333;
+}
+
+body.light select:hover {
+    border-color: #007acc;
+}
+
+/* Modal/Dialog overlays */
+body.light .modal-overlay {
+    background: rgba(0, 0, 0, 0.5);
+}
+
+body.light .modal-content {
+    background: #ffffff;
+    border-color: #e0e0e0;
+}
+
+/* Tooltip */
+body.light .tooltip {
+    background: #333;
+    color: #fff;
+}
+
+body.light .tooltip::before {
+    border-color: #333 transparent transparent transparent;
+}
+
+/* Context menu */
+body.light .context-menu {
+    background: #ffffff;
+    border-color: #e0e0e0;
+}
+
+body.light .context-menu-item {
+    color: #333;
+}
+
+body.light .context-menu-item:hover {
+    background: #f0f0f0;
+}
+
+body.light .context-menu-item.disabled {
+    color: #999;
+}
+
+/* Notification toast */
+body.light .toast {
+    background: #ffffff;
+    border-color: #e0e0e0;
+    color: #333;
+}
+
+body.light .toast.success {
+    border-left-color: #22c55e;
+}
+
+body.light .toast.error {
+    border-left-color: #ef4444;
+}
+
+body.light .toast.warning {
+    border-left-color: #f59e0b;
+}
+
+body.light .toast.info {
+    border-left-color: #007acc;
+}
+
+/* Loading spinner */
+body.light .loading-spinner {
+    border-color: #e0e0e0;
+    border-top-color: #007acc;
+}
+
+/* Empty state */
+body.light .empty-state {
+    color: #666;
+}
+
+body.light .empty-state-icon {
+    color: #999;
+}
+
+/* Badge styles */
+body.light .badge {
+    background: #e0e0e0;
+    color: #333;
+}
+
+body.light .badge.primary {
+    background: #007acc;
+    color: #fff;
+}
+
+body.light .badge.success {
+    background: #22c55e;
+    color: #fff;
+}
+
+body.light .badge.warning {
+    background: #f59e0b;
+    color: #fff;
+}
+
+body.light .badge.error {
+    background: #ef4444;
+    color: #fff;
+}
+
+/* Progress bar */
+body.light .progress-bar {
+    background: #e0e0e0;
+}
+
+body.light .progress-bar-fill {
+    background: #007acc;
+}
+
+/* Switch/Toggle */
+body.light .switch {
+    background: #d0d0d0;
+}
+
+body.light .switch.active {
+    background: #007acc;
+}
+
+body.light .switch-knob {
+    background: #fff;
+}
+
+/* Step indicator */
+body.light .step-item.complete .step-marker {
+    background: #22c55e;
+    color: #fff;
+}
+
+body.light .step-item.active .step-marker {
+    background: #007acc;
+    color: #fff;
+}
+
+body.light .step-item.pending .step-marker {
+    background: #e0e0e0;
+    color: #666;
+}
+
+/* Chat input send button */
+body.light .primary-btn {
+    background: #007acc;
+    color: #fff;
+}
+
+body.light .primary-btn:hover {
+    background: #005999;
+}
+
+body.light .stop-btn {
+    background: #fee2e2;
+    color: #dc2626;
+    border-color: #fca5a5;
+}
+
+body.light .stop-btn:hover {
+    background: #ef4444;
+    color: #fff;
+}
+
+/* Icon buttons in light mode */
+body.light .icon-btn {
+    color: #666;
+}
+
+body.light .icon-btn:hover {
+    background: #f0f0f0;
+    color: #333;
+}
+
+/* Sidebar in light mode */
+body.light #history-sidebar {
+    background: #f5f5f5;
+    border-right-color: #e0e0e0;
+}
+
+body.light .sidebar-header {
+    border-bottom-color: #e0e0e0;
+}
+
+body.light .history-item:hover {
+    background: #e8e8e8;
+}
+
+body.light .history-item.active {
+    background: #e7f3ff;
+    color: #007acc;
+}
+
+/* Header in light mode */
+body.light #header {
+    background: #ffffff;
+    border-bottom-color: #e0e0e0;
+}
+
+body.light #header .logo {
+    color: #007acc;
+}
+
+body.light #header .title {
+    color: #333;
+}
+
+body.light #toggle-history-btn,
+body.light .actions button {
+    color: #666;
+}
+
+body.light #toggle-history-btn:hover,
+body.light .actions button:hover {
+    background: #f0f0f0;
+    color: #333;
+}
+
+/* Main chat area */
+body.light #chatMessages {
+    background: #f5f5f5;
+}
+
+body.light #empty-state {
+    color: #666;
+}
+
+body.light #empty-state svg {
+    opacity: 0.4;
+}
+
+/* Input container */
+body.light #input-container {
+    background: #ffffff;
+    border-color: #d0d0d0;
+}
+
+body.light #input-container:focus-within {
+    border-color: #007acc;
+}
+
+body.light #chatInput {
+    color: #333;
+}
+
+body.light #chatInput::placeholder {
+    color: #999;
+}
+
+/* Message content in light mode */
+body.light .message-content {
+    color: #1a1a1a;
+}
+
+body.light .message-content strong {
+    color: #1a1a1a;
+}
+
+body.light .message-content em {
+    color: #1a1a1a;
+}
+
+/* Link styles in light mode */
+body.light a {
+    color: #007acc;
+}
+
+body.light a:hover {
+    color: #005999;
+}
+
+/* List markers in light mode */
+body.light li::marker {
+    color: #007acc;
+}
+
+/* Code blocks */
+body.light pre {
+    background: #f6f8fa;
+    border-color: #e0e0e0;
+    color: #1a1a1a;
+}
+
+body.light code {
+    background: rgba(0, 0, 0, 0.05);
+    color: #c7254e;
+}
+
+/* Horizontal rule */
+body.light hr {
+    background: #e0e0e0;
+    border-color: #e0e0e0;
+}
+
+/* Images */
+body.light img {
+    opacity: 1;
+}
+
+/* Selection */
+body.light ::selection {
+    background: rgba(0, 122, 204, 0.3);
+}
