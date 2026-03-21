@@ -39,7 +39,8 @@ def _get_icon_name(path: str) -> str:
         ".css": "css", ".scss": "scss", ".sass": "scss", ".less": "scss",
         # Java/Kotlin
         ".java": "java", ".jar": "java", ".groovy": "java",
-        ".kt": "java", ".kts": "java",
+        ".kt": "kotlin", ".kts": "kotlin",
+        ".swift": "swift",
         # C/C++
         ".cpp": "cpp", ".cc": "cpp", ".cxx": "cpp", ".h": "c", ".hpp": "cpp",
         # C#
@@ -52,19 +53,35 @@ def _get_icon_name(path: str) -> str:
         ".php": "php",
         # Ruby
         ".rb": "ruby", ".erb": "ruby", ".rake": "ruby",
+        # Dart
+        ".dart": "dart",
+        # Lua
+        ".lua": "lua",
+        # R
+        ".r": "r", ".R": "r",
+        # Julia
+        ".jl": "julia",
+        # Zig
+        ".zig": "zig",
+        # Elixir
+        ".ex": "elixir", ".exs": "elixir",
+        # Haskell
+        ".hs": "haskell", ".lhs": "haskell",
+        # Clojure
+        ".clj": "clojure", ".cljs": "clojure", ".cljc": "clojure",
         # Shell
         ".sh": "shell", ".bash": "shell", ".zsh": "shell", ".bat": "shell", ".cmd": "shell", ".ps1": "shell",
         # Data/Config
         ".json": "json", ".json5": "json",
         ".yaml": "yaml", ".yml": "yaml",
-        ".toml": "config", ".ini": "config", ".cfg": "config", ".env": "config",
+        ".toml": "config", ".ini": "config", ".cfg": "config",
         ".xml": "config",
         # SQL
         ".sql": "sql", ".sqlite": "sql",
         # Markdown
         ".md": "markdown", ".mdx": "markdown", ".markdown": "markdown",
         # Git
-        ".git": "git", ".gitignore": "git",
+        ".git": "git", ".gitignore": "git", ".gitattributes": "git",
         # Docker
         ".dockerfile": "docker", ".dockerignore": "docker",
         # Vue/Svelte
@@ -78,7 +95,9 @@ def _get_icon_name(path: str) -> str:
         ".pptx": "powerpoint", ".ppt": "powerpoint",
         ".csv": "csv",
         ".log": "files",
-        ".txt": "files"
+        ".txt": "txt",
+        ".env": "env",
+        ".zip": "zip", ".tar": "zip", ".gz": "zip", ".rar": "zip", ".7z": "zip",
     }
     return mapping.get(suffix, "default")
 

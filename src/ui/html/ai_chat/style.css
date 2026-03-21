@@ -5728,6 +5728,9 @@ body.light .permission-block {
 .ft-rs      { background: #de4e3422; color: #e87e6a; border: 1px solid #de4e3444; }
 .ft-java    { background: #f8981d22; color: #f8b06a; border: 1px solid #f8981d44; }
 .ft-sh      { background: #4caf5022; color: #7dd57f; border: 1px solid #4caf5044; }
+.ft-txt     { background: #9aaabb22; color: #9aaabb; border: 1px solid #9aaabb44; }
+.ft-env     { background: #4a9b4f22; color: #5dba5f; border: 1px solid #4a9b4f44; }
+.ft-zip     { background: #8e44ad22; color: #c78eeb; border: 1px solid #8e44ad44; }
 .ft-default { background: #33333322; color: #888;    border: 1px solid #33333344; }
 
 /* ── FILE EDIT CARD (.fec) — Cursor exact match ───────────────────── */
