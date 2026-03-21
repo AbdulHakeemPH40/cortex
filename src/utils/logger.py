@@ -17,15 +17,17 @@ def get_logger(name: str = "cortex") -> logging.Logger:
         log_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_dir / "cortex.log"
         
-        # File handler - writes to rotating log file
-        from logging.handlers import RotatingFileHandler
-        file_handler = RotatingFileHandler(
+        # File handler - Windows-safe: use TimedRotatingFileHandler with delay
+        # RotatingFileHandler causes WinError 32 (file locked) on Windows rollover
+        from logging.handlers import TimedRotatingFileHandler
+        file_handler = TimedRotatingFileHandler(
             log_file,
-            maxBytes=5*1024*1024,  # 5MB max
+            when='midnight',   # rotate at midnight instead of by size
             backupCount=3,
-            encoding='utf-8'
+            encoding='utf-8',
+            delay=True         # don't open file until first log write
         )
-        file_handler.setLevel(logging.DEBUG)
+        file_handler.setLevel(logging.INFO)  # INFO not DEBUG - prevents heartbeat/debug spam
         file_handler.setFormatter(
             logging.Formatter(
                 "[%(asctime)s] %(levelname)s %(name)s: %(message)s",

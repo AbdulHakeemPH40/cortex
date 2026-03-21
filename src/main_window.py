@@ -226,6 +226,74 @@ class EditorTabWidget(QTabWidget):
         self._files: dict[int, str] = {}   # tab_index -> filepath
         self._modified: set[str] = set()
 
+    def open_diff_tab(self, file_path: str, original: str, modified: str, is_dark: bool = True):
+        """Open a read-only diff tab next to the file tab. Tab name: '⟷ filename'."""
+        import difflib
+        from PyQt6.QtWidgets import QTextBrowser
+        from PyQt6.QtGui import QFont
+        from pathlib import Path as _P
+
+        file_name = _P(file_path).name
+        tab_label = f'⟷ {file_name}'
+
+        # If a diff tab for this file already exists, switch to it
+        for idx in range(self.count()):
+            if self.tabText(idx) == tab_label:
+                self.setCurrentIndex(idx)
+                return
+
+        # Build unified diff HTML
+        diff_lines = list(difflib.unified_diff(
+            original.splitlines(keepends=True),
+            modified.splitlines(keepends=True),
+            fromfile='Original',
+            tofile='Modified',
+            n=3
+        ))
+
+        bg   = '#1e1e1e' if is_dark else '#ffffff'
+        fg   = '#cccccc' if is_dark else '#333333'
+        add_bg = 'rgba(46,160,67,0.2)'  if is_dark else 'rgba(46,160,67,0.15)'
+        add_fg = '#56d364'              if is_dark else '#1a7f37'
+        rem_bg = 'rgba(248,81,73,0.2)' if is_dark else 'rgba(255,129,130,0.15)'
+        rem_fg = '#f85149'              if is_dark else '#cf222e'
+        info_fg = '#8b949e'             if is_dark else '#6e7781'
+
+        def esc(t): return t.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+
+        parts = [f"<div style='background:{bg};color:{fg};white-space:pre;"
+                 f"font-family:\"Cascadia Code\",Consolas,monospace;font-size:13px;line-height:1.5;padding:10px;'>"]
+
+        if not diff_lines:
+            parts.append(f"<div style='color:{info_fg};padding:20px;'>No changes detected.</div>")
+        else:
+            for line in diff_lines:
+                line = line.rstrip('\n')
+                s = esc(line)
+                if line.startswith('+++') or line.startswith('---'):
+                    parts.append(f"<div style='color:{info_fg};font-weight:bold;background:rgba(128,128,128,0.1);padding-left:6px;'>{s}</div>")
+                elif line.startswith('@@'):
+                    parts.append(f"<div style='color:{info_fg};padding-left:6px;margin-top:6px;'>{s}</div>")
+                elif line.startswith('+'):
+                    parts.append(f"<div style='color:{add_fg};background:{add_bg};padding-left:6px;'>{s}</div>")
+                elif line.startswith('-'):
+                    parts.append(f"<div style='color:{rem_fg};background:{rem_bg};padding-left:6px;'>{s}</div>")
+                else:
+                    parts.append(f"<div style='color:{fg};padding-left:6px;'>{s}</div>")
+        parts.append('</div>')
+
+        browser = QTextBrowser()
+        browser.setReadOnly(True)
+        browser.setOpenExternalLinks(False)
+        font = QFont('Cascadia Code', 10)
+        font.setStyleHint(QFont.StyleHint.Monospace)
+        browser.setFont(font)
+        browser.setStyleSheet(f'background:{bg};border:none;')
+        browser.setHtml(''.join(parts))
+
+        idx = self.addTab(browser, tab_label)
+        self.setCurrentIndex(idx)
+
     def open_file(self, filepath: str, content: str, language: str) -> int:
         """Open a file in a new tab (or switch to existing)."""
         # Check if already open
@@ -395,7 +463,7 @@ class CortexMainWindow(QMainWindow):
 
         # Heartbeat to check for event loop hang
         self._heartbeat_timer = QTimer(self)
-        self._heartbeat_timer.timeout.connect(lambda: log.debug("LOOP HEARTBEAT"))
+        self._heartbeat_timer.timeout.connect(lambda: None)  # keep event loop alive, no logging
         self._heartbeat_timer.start(2000)
 
         # Window geometry
@@ -929,56 +997,48 @@ class CortexMainWindow(QMainWindow):
             log.error(f"Error opening file {filepath}: {e}", exc_info=True)
 
     def _on_show_diff(self, file_path: str):
-        """Show diff in separate window"""
-        edit_info = self._file_tracker.get_edit(file_path)
-        if edit_info:
-            # For newly created files (type "C"), show the full content as added
-            if edit_info.edit_type == "C":
-                self._diff_window.show_diff(
-                    file_path,
-                    "",  # Empty original for new files
-                    edit_info.new_content
-                )
-            else:
-                self._diff_window.show_diff(
-                    file_path,
-                    edit_info.original_content,
-                    edit_info.new_content
-                )
+        """Show diff in Qt dialog window — triggered by Diff button click in chat."""
+        original, modified = '', ''
+
+        # 1. Try the Python diff data store (most reliable)
+        if hasattr(self, '_diff_data_store') and file_path in self._diff_data_store:
+            original, modified = self._diff_data_store[file_path]
         else:
-            log.warning(f"No edit info found for {file_path}")
+            # 2. Normalize path and try again (Windows backslash vs forward slash)
+            norm = file_path.replace('\\', '/')
+            if hasattr(self, '_diff_data_store'):
+                for k, v in self._diff_data_store.items():
+                    if k.replace('\\', '/') == norm:
+                        original, modified = v
+                        break
+
+        # 3. Fallback to file_tracker
+        if not modified:
+            edit_info = self._file_tracker.get_edit(file_path)
+            if edit_info:
+                original = edit_info.original_content if edit_info.edit_type != 'C' else ''
+                modified = edit_info.new_content
+
+        if not modified:
+            log.warning(f"No diff data found for {file_path}")
+            return
+
+        is_dark = self._theme_manager.is_dark
+        self._editor_tabs.open_diff_tab(file_path, original, modified, is_dark)
 
     def _on_file_edited_diff_for_js(self, file_path: str, original: str, new_content: str):
-        """
-        Send diff data to aichat.html JavaScript for the diff viewer overlay.
-        Called when agent emits file_edited_diff signal.
-        """
-        import json
+        """Store diff data in Python dict for the Qt dialog viewer."""
+        if not hasattr(self, '_diff_data_store'):
+            self._diff_data_store = {}
+        self._diff_data_store[file_path] = (original, new_content)
+        log.debug(f"Stored diff data for: {file_path}")
+
+        # Update sidebar changed files panel
         try:
-            # Get the chat page
-            page = self._ai_chat._view.page()
-            if not page:
-                return
-
-            # Truncate very large files to avoid JSON size issues
-            MAX_CHARS = 200_000
-            orig_safe = original[:MAX_CHARS] if len(original) > MAX_CHARS else original
-            new_safe = new_content[:MAX_CHARS] if len(new_content) > MAX_CHARS else new_content
-
-            # Escape for JavaScript
-            path_js = json.dumps(file_path)
-            orig_js = json.dumps(orig_safe)
-            new_js = json.dumps(new_safe)
-
-            # Call JavaScript storeDiffData function
-            page.runJavaScript(f"storeDiffData({path_js}, {orig_js}, {new_js})")
-            log.debug(f"Sent diff data to JS for: {file_path}")
-            
-            # Add to sidebar changed files panel
             edit_type = "C" if not original else "M"
             self._sidebar.add_changed_file(file_path, edit_type)
         except Exception as e:
-            log.warning(f"Failed to send diff data to JS: {e}")
+            log.debug(f"Sidebar update skipped: {e}")
 
     def _open_file_at_line(self, file_path: str, line_number: int):
         """Open file and navigate to specific line."""

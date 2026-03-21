@@ -1222,11 +1222,18 @@ IMPORTANT RULES:
         # Capture pre-edit snapshot for diff support
         if name in ["write_file", "edit_file", "inject_after", "add_import"]:
             path = str(args.get("path", ""))
-            if path and os.path.exists(path):
+            # Resolve relative path against project root
+            snap_path = path
+            if path and self._project_root and not os.path.isabs(path):
+                snap_path = os.path.join(str(self._project_root), path)
+            if snap_path and os.path.exists(snap_path):
                 try:
-                    from pathlib import Path
-                    self._pre_edit_snapshots[path] = Path(path).read_text(encoding="utf-8", errors="replace")
+                    from pathlib import Path as _SnapPath
+                    self._pre_edit_snapshots[snap_path] = _SnapPath(snap_path).read_text(encoding="utf-8", errors="replace")
+                    # Also store under relative key as fallback
+                    self._pre_edit_snapshots[path] = self._pre_edit_snapshots[snap_path]
                 except Exception:
+                    self._pre_edit_snapshots[snap_path] = ""
                     self._pre_edit_snapshots[path] = ""
             
         if name == "run_command":
@@ -1253,7 +1260,6 @@ IMPORTANT RULES:
                 if dir_content and not dir_content.startswith("Not a directory") and not dir_content.startswith("Directory is empty"):
                     print(f"[AGENT-DEBUG] Emitting directory_contents signal")
                     # Resolve to absolute path using project root
-                    import os
                     rel_path = args.get('path', '.')
                     if self._project_root and not os.path.isabs(rel_path):
                         abs_path = os.path.join(self._project_root, rel_path)
@@ -1273,48 +1279,66 @@ IMPORTANT RULES:
                     removed = res_obj.get("removed_lines", 0)
                 except:
                     added, removed = 0, 0
-                
-                # Get original content before emitting (for determining edit type)
-                original_content = self._pre_edit_snapshots.get(path, "")
+
+                # ── Resolve absolute path (tool args often give relative paths) ──
+                from pathlib import Path as _Path
+                resolved_path = path
+                if self._project_root and not os.path.isabs(path):
+                    resolved_path = os.path.join(str(self._project_root), path)
+
+                # ── Get original content (try both relative & absolute key) ─────
+                original_content = (self._pre_edit_snapshots.get(resolved_path, '') or
+                                    self._pre_edit_snapshots.get(path, ''))
                 edit_type = 'C' if not original_content else 'M'
-                
-                # For new files (C), calculate line count directly from the content arg
-                if edit_type == 'C' and added == 0:
+
+                # ── Get new file content (from args first, then disk) ─────────
+                new_file_content = str(args.get("content", "") or "")
+                if not new_file_content and os.path.exists(resolved_path):
                     try:
-                        file_content = args.get("content", "")
-                        if file_content:
-                            added = len(str(file_content).split('\n'))
-                        else:
-                            # Fallback: read from disk with resolved path
-                            from pathlib import Path as _Path
-                            resolved = path if os.path.isabs(path) else os.path.join(str(self._project_root or ''), path)
-                            if os.path.exists(resolved):
-                                added = len(_Path(resolved).read_text(encoding='utf-8', errors='replace').split('\n'))
-                        log.debug(f"New file line count: {added} for {path}")
-                    except Exception as e:
-                        log.debug(f"Could not calculate line count for new file: {e}")
-                
+                        new_file_content = _Path(resolved_path).read_text(encoding="utf-8", errors="replace")
+                    except Exception:
+                        pass
+
+                # ── Calculate line counts ──────────────────────────────────────
+                if edit_type == 'C' and added == 0:
+                    # New file: count lines in content
+                    if new_file_content:
+                        added = len(new_file_content.split('\n'))
+                elif edit_type == 'M' and added == 0 and removed == 0:
+                    # Modified file: compute diff stats from original vs new
+                    try:
+                        import difflib
+                        orig_lines = original_content.splitlines()
+                        new_lines  = new_file_content.splitlines()
+                        diff = list(difflib.ndiff(orig_lines, new_lines))
+                        added   = sum(1 for l in diff if l.startswith('+ '))
+                        removed = sum(1 for l in diff if l.startswith('- '))
+                    except Exception as _de:
+                        log.debug(f"Diff stats error: {_de}")
+
+                log.debug(f"File {edit_type}: {resolved_path} +{added} -{removed}")
+
                 info = display_path
                 if added > 0 or removed > 0:
                     info += f" +{added} -{removed}"
                 else:
                     info += " ✓"
-                    
+
                 self.tool_activity.emit(name, info, "complete")
-                
-                # Emit file_edited tag at the end of response (outside exploration)
-                # Format: path\n+X -Y\nM (Modified/Created/Deleted)
-                self.response_chunk.emit(f"\n<file_edited>\n{path}\n+{added} -{removed}\n{edit_type}\n</file_edited>\n")
-                
-                # Emit file_edited_diff signal for diff viewer
+
+                # Emit <file_edited> tag using RESOLVED (absolute) path so JS
+                # storeDiffData key matches renderCustomTagsInto lookup key
+                self.response_chunk.emit(
+                    f"\n<file_edited>\n{resolved_path}\n+{added} -{removed}\n{edit_type}\n</file_edited>\n"
+                )
+
+                # Emit file_edited_diff signal for diff viewer overlay
                 try:
-                    import os
-                    from pathlib import Path as _Path
-                    if path and os.path.exists(path):
-                        new_content = _Path(path).read_text(encoding="utf-8", errors="replace")
-                        original = self._pre_edit_snapshots.pop(path, "")
-                        if original != new_content and hasattr(self, 'file_edited_diff'):
-                            self.file_edited_diff.emit(path, original, new_content)
+                    if new_file_content and hasattr(self, 'file_edited_diff'):
+                        original_snap = (self._pre_edit_snapshots.pop(resolved_path, '') or
+                                         self._pre_edit_snapshots.pop(path, ''))
+                        self.file_edited_diff.emit(resolved_path, original_snap, new_file_content)
+                        log.debug(f"Emitted file_edited_diff for {resolved_path}")
                 except Exception as _e:
                     log.warning(f"Could not emit file_edited_diff: {_e}")
             else:

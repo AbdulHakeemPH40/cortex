@@ -236,32 +236,6 @@
                 </div>
             </div>
 
-            <!-- Diff Viewer Overlay -->
-            <div id="diff-overlay" class="diff-overlay" style="display:none;">
-                <div class="diff-panel">
-                    <div class="diff-header">
-                        <div class="diff-header-file">
-                            <span class="diff-ext-badge" id="diff-ext-badge">JS</span>
-                            <span class="diff-header-name" id="diff-header-name">filename.js</span>
-                            <span class="diff-header-path" id="diff-header-path">/path/to/file</span>
-                        </div>
-                        <div class="diff-header-stats" id="diff-header-stats">
-                            <span class="diff-stat-add">+0</span>
-                            <span class="diff-stat-del">-0</span>
-                        </div>
-                        <div class="diff-view-toggle">
-                            <button class="diff-view-btn active" id="btn-unified" onclick="switchDiffView('unified')">Unified</button>
-                            <button class="diff-view-btn" id="btn-split" onclick="switchDiffView('split')">Split</button>
-                        </div>
-                        <div class="diff-header-btns">
-                            <button class="diff-btn-accept" id="diff-btn-accept" onclick="acceptCurrentDiff()">Accept</button>
-                            <button class="diff-btn-reject" id="diff-btn-reject" onclick="rejectCurrentDiff()">Reject</button>
-                            <button class="diff-btn-close" onclick="closeDiffOverlay()">×</button>
-                        </div>
-                    </div>
-                    <div class="diff-content" id="diff-content"></div>
-                </div>
-            </div>
 
             <!-- Message Queue Bar (above input) -->
             <div id="msg-queue-bar" class="msg-queue-bar" style="display:none;">
@@ -430,5 +404,6 @@
         })();
     </script>
     <script src="script.js"></script>
+
 </body>
 </html>
