@@ -319,7 +319,12 @@ class AIChatWidget(QWidget):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._is_dark = True
+        # Initialize with actual current theme from theme manager
+        try:
+            from src.config.theme_manager import get_theme_manager
+            self._is_dark = get_theme_manager().is_dark
+        except Exception:
+            self._is_dark = True  # fallback to dark
         self._get_code_context = None
         self._terminal_process = None
         self._pty_process = None
@@ -396,9 +401,18 @@ class AIChatWidget(QWidget):
         # Load local HTML
         html_path = os.path.join(os.path.dirname(__file__), "..", "html", "ai_chat", "aichat.html")
         self._view.setUrl(QUrl.fromLocalFile(os.path.abspath(html_path)))
+
+        # Apply initial theme once the page has finished loading
+        self._view.loadFinished.connect(self._on_page_loaded)
         
         layout.addWidget(self._view)
         
+    def _on_page_loaded(self, ok):
+        """Apply the current theme immediately after the page finishes loading."""
+        if ok:
+            js_bool = 'true' if self._is_dark else 'false'
+            self._view.page().runJavaScript(f"if(window.setTheme) window.setTheme({js_bool});")
+
     def _on_js_message(self, text):
         """Handle message from JS."""
         context = ""
@@ -459,9 +473,11 @@ class AIChatWidget(QWidget):
         self._view.page().runJavaScript("const msg = document.getElementById('chatMessages'); if(msg) msg.innerHTML = '';")
         
     def set_theme(self, is_dark):
-        """Update theme."""
+        """Update theme — called from main_window toggle and on page load."""
         self._is_dark = is_dark
-        self._view.page().runJavaScript(f"if(window.setTheme) window.setTheme({str(is_dark).lower()});")
+        # Python True/False must become JS true/false (lowercase)
+        js_bool = 'true' if is_dark else 'false'
+        self._view.page().runJavaScript(f"if(window.setTheme) window.setTheme({js_bool});")
         
     def focus_input(self):
         """Focus the input field in web view."""

@@ -65,6 +65,13 @@ body.light {
     --text-muted: #737373;
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.1);
     --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.1);
+    /* Legacy compatibility vars — override dark-mode fallbacks */
+    --hover-bg: rgba(0, 0, 0, 0.05);
+    --bg-header: #ffffff;
+    --bg-input: #f0f0f0;
+    --bg-sidebar: #f5f5f5;
+    --bubble-assistant: #ffffff;
+    --bubble-user: var(--accent-primary);
 }
 
 * {
@@ -482,6 +489,11 @@ body.light .message-content strong {
 body.light .message-content em {
     color: #1a1a1a;
 }
+
+/* Light mode additional overrides */
+body.light .fec-filename { color: #0d6efd; }
+body.light .fec-icon { color: #525252; }
+body.light .exploration-item { background: rgba(0, 0, 0, 0.03); color: #525252; }
 
 /* Light mode numbered cards */
 body.light .numbered-card {
@@ -7270,11 +7282,81 @@ body.light .msg-user .message-content {
     color: #ffffff;
 }
 
-/* Assistant message in light mode */
+/* ── LIGHT MODE: ASSISTANT BUBBLE (full override with !important) ── */
+body.light .message-bubble.assistant {
+    background: #ffffff !important;
+    border-bottom: 1px solid #e8e8e8 !important;
+}
 body.light .message-bubble.assistant .message-content {
-    background: #ffffff;
-    border-color: #e0e0e0;
-    color: #1a1a1a;
+    background: transparent !important;
+    border-color: #e0e0e0 !important;
+    color: #1a1a1a !important;
+}
+
+/* Text colors */
+body.light .message-bubble.assistant .message-content p {
+    color: #1a1a1a !important;
+}
+body.light .message-bubble.assistant .message-content strong,
+body.light .message-bubble.assistant .message-content b {
+    color: #111111 !important;
+}
+body.light .message-bubble.assistant .message-content li {
+    color: #333333 !important;
+}
+body.light .message-bubble.assistant .message-content li::marker {
+    color: #555555 !important;
+}
+body.light .message-bubble.assistant .message-content h1,
+body.light .message-bubble.assistant .message-content h2,
+body.light .message-bubble.assistant .message-content h3,
+body.light .message-bubble.assistant .message-content h4 {
+    color: #111111 !important;
+}
+
+/* Inline code */
+body.light .message-bubble.assistant .message-content code:not(pre code) {
+    background: rgba(0, 0, 0, 0.06) !important;
+    border: 1px solid #d0d0d0 !important;
+    color: #c7254e !important;
+}
+
+/* Code block (pre) */
+body.light .message-bubble.assistant .message-content pre {
+    background: #f6f8fa !important;
+    border: 1px solid #d0d0d0 !important;
+}
+body.light .message-bubble.assistant .message-content pre .code-header {
+    background: #eaecef !important;
+    border-bottom: 1px solid #d0d0d0 !important;
+}
+body.light .message-bubble.assistant .message-content pre .code-lang {
+    color: #555555 !important;
+}
+body.light .message-bubble.assistant .message-content pre .code-copy-btn,
+body.light .message-bubble.assistant .message-content pre .code-insert-btn,
+body.light .message-bubble.assistant .message-content pre .code-run-btn {
+    background: transparent !important;
+    border: 1px solid #c0c0c0 !important;
+    color: #555555 !important;
+}
+body.light .message-bubble.assistant .message-content pre code {
+    background: transparent !important;
+    color: #24292e !important;
+}
+
+/* ── LIGHT MODE: USER BUBBLE ─────────────────────────────────────── */
+body.light .message-bubble.user {
+    border-bottom: 1px solid #e8e8e8 !important;
+}
+body.light .user-copy-btn {
+    background: #f0f0f0 !important;
+    border: 1px solid #d0d0d0 !important;
+    color: #555555 !important;
+}
+body.light .user-copy-btn:hover {
+    border-color: #3b82f6 !important;
+    color: #3b82f6 !important;
 }
 
 /* Thinking indicator bar in light mode */

@@ -293,8 +293,17 @@ class PathResolver:
             base = self.root or Path.cwd()
             p = base / p
         resolved = p.resolve()
-        if self.root and not str(resolved).startswith(str(self.root)):
-            raise PermissionError(f"Path '{path}' escapes the project root. Access denied.")
+        if self.root and not str(resolved).lower().startswith(str(self.root).lower()):
+            # Log the attempted escape so we can diagnose wrong-directory calls
+            log.warning(
+                f"PathResolver BLOCKED: '{path}' resolved to '{resolved}' "
+                f"which is outside project root '{self.root}'. "
+                f"AI should use paths relative to project root only."
+            )
+            raise PermissionError(
+                f"Path '{path}' escapes the project root '{self.root}'. "
+                f"Use a path relative to the project root, e.g. 'src/main.py'."
+            )
         return resolved
 
     def display(self, path: str) -> str:
@@ -993,15 +1002,55 @@ class ToolRegistry:
             # Safety: ensure working_dir exists and is accessible
             if not os.path.isdir(working_dir):
                 working_dir = os.path.expanduser("~")
-            
+
+            # ── HARD PATH ISOLATION: Block commands that try to leave project root ──
+            command_lower = command.lower()
+            project_root_lower = working_dir.lower() if working_dir else ""
+
+            # Block any cd/change directory that goes outside project root
+            if project_root_lower:
+                # Check for cd commands to other locations
+                if 'cd ' in command_lower:
+                    # Extract the target directory from cd command
+                    import re
+                    cd_matches = re.findall(r'cd\s+([a-zA-Z]:[^\s;&|]+)', command, re.IGNORECASE)
+                    cd_matches += re.findall(r'cd\s+"?([a-zA-Z]:[^\s;&|]+)', command, re.IGNORECASE)
+                    for cd_target in cd_matches:
+                        # Resolve the target path
+                        try:
+                            target_abs = os.path.abspath(os.path.join(working_dir, cd_target))
+                            if not target_abs.lower().startswith(project_root_lower):
+                                log.warning(f"BLOCKED: Command tries to cd outside project: {cd_target}")
+                                return (
+                                    f"❌ BLOCKED: Cannot run commands outside the project directory.\n"
+                                    f"The project root is: {working_dir}\n"
+                                    f"You attempted to access: {cd_target}\n"
+                                    f"Stay within the project folder."
+                                )
+                        except Exception:
+                            pass
+
+                # Block common destructive commands targeting system areas
+                dangerous_system_paths = [
+                    r'c:\windows', r'c:\program files', r'c:\programdata',
+                    r'/etc', r'/usr/bin', r'/usr/sbin', r'/bin', r'/sbin',
+                    r'd:\windows', r'd:\program files'
+                ]
+                for sys_path in dangerous_system_paths:
+                    if sys_path in command_lower:
+                        log.warning(f"BLOCKED: Command targets system directory: {sys_path}")
+                        return (
+                            f"❌ BLOCKED: Cannot run commands that target system directories.\n"
+                            f"This command was blocked for safety."
+                        )
+
             # Check for virtual environment commands that might cause performance issues
             venv_indicators = ['venv', 'virtualenv', '.venv', 'env/', 'node_modules']
             dangerous_patterns = [
                 'rm -rf venv', 'rm -rf node_modules', 'del venv', 'rmdir venv',
                 'pip install -r', 'npm install', 'yarn install', 'pnpm install'
             ]
-            
-            command_lower = command.lower()
+
             warnings = []
             
             # Check for potentially dangerous commands

@@ -31,7 +31,10 @@ class ToolWorker(QThread):
     tool_completed = pyqtSignal(str, dict, object)  # name, args, result
     all_tools_completed = pyqtSignal(list)  # all tool results
     error_occurred = pyqtSignal(str)
-    
+    tool_timeout = pyqtSignal(str, str)  # tool_name, recovery_hint
+
+    TOOL_TIMEOUT_SECONDS = 30  # Hard limit per tool call
+
     def __init__(self, tool_registry, tool_calls: list, parent=None):
         super().__init__(parent)
         self.tool_registry = tool_registry
@@ -95,8 +98,13 @@ class ToolWorker(QThread):
         return json_str
 
     def run(self):
-        """Execute all tools sequentially in background thread."""
+        """Execute all tools sequentially in background thread with per-tool timeout."""
+        import threading
+        import time as _time
+
         try:
+            completed_tools = []  # track for recovery hint
+
             for tool_call in self.tool_calls:
                 name = tool_call["function"]["name"]
                 try:
@@ -115,18 +123,66 @@ class ToolWorker(QThread):
                 except Exception as e:
                     log.error(f"Error preparing tool arguments: {e}")
                     args = {}
-                
+
                 # Emit started signal
                 self.tool_started.emit(name, args)
-                
-                # Execute tool
-                result = self.tool_registry.execute_tool(name, args)
-                
+
+                # ── Run tool in a sub-thread so we can apply a hard timeout ────────
+                result_holder = [None]
+                exc_holder = [None]
+
+                def _run_tool():
+                    try:
+                        result_holder[0] = self.tool_registry.execute_tool(name, args)
+                    except Exception as exc:
+                        exc_holder[0] = exc
+
+                t = threading.Thread(target=_run_tool, daemon=True)
+                t.start()
+                t.join(timeout=self.TOOL_TIMEOUT_SECONDS)
+
+                if t.is_alive():
+                    # Tool timed out — build a recovery hint and fail gracefully
+                    completed_str = ", ".join(completed_tools) if completed_tools else "none"
+                    recovery_hint = (
+                        f"⚠️ Tool `{name}` exceeded {self.TOOL_TIMEOUT_SECONDS}s and was aborted.\n"
+                        f"Completed tools so far: [{completed_str}].\n"
+                        f"RECOVERY: resume the task from the next pending step."
+                    )
+                    log.warning(f"Tool timeout: {name} after {self.TOOL_TIMEOUT_SECONDS}s")
+                    self.tool_timeout.emit(name, recovery_hint)
+
+                    # Inject a timeout result so the AI knows what happened
+                    timeout_result_content = (
+                        f"TOOL_TIMEOUT: `{name}` did not respond within "
+                        f"{self.TOOL_TIMEOUT_SECONDS} seconds. "
+                        f"This usually means a subprocess or network call hung. "
+                        f"Skip this step and continue with the remaining tasks."
+                    )
+                    from src.ai.tools import ToolResult
+                    result = ToolResult(
+                        success=False,
+                        result=None,
+                        error=timeout_result_content,
+                        duration_ms=self.TOOL_TIMEOUT_SECONDS * 1000
+                    )
+                elif exc_holder[0] is not None:
+                    from src.ai.tools import ToolResult
+                    result = ToolResult(
+                        success=False,
+                        result=None,
+                        error=str(exc_holder[0]),
+                        duration_ms=0
+                    )
+                else:
+                    result = result_holder[0]
+                    completed_tools.append(name)
+
                 # Store result with truncation to prevent context window overflow
                 MAX_TOOL_CONTENT = 4000  # ~1000 tokens — enough for AI to understand result
-                
+
                 content = str(result.result) if result.success else f"Error: {result.error}"
-                
+
                 # Truncate long outputs — keep first + last portion (most informative)
                 if len(content) > MAX_TOOL_CONTENT:
                     half = MAX_TOOL_CONTENT // 2
@@ -135,7 +191,7 @@ class ToolWorker(QThread):
                         + f"\n\n... [output truncated: {len(content)} chars total, showing first and last {half}] ...\n\n"
                         + content[-half:]
                     )
-                
+
                 self._results.append({
                     "tool_call_id": tool_call["id"],
                     "name": name,
@@ -143,13 +199,13 @@ class ToolWorker(QThread):
                     "success": result.success,
                     "duration_ms": result.duration_ms
                 })
-                
+
                 # Emit completed signal
                 self.tool_completed.emit(name, args, result)
-            
+
             # Emit all completed
             self.all_tools_completed.emit(self._results)
-            
+
         except Exception as e:
             log.error(f"ToolWorker error: {e}")
             self.error_occurred.emit(str(e))
@@ -391,6 +447,19 @@ You operate like a senior software engineer: read before you write, verify after
   - For complex tasks, ALWAYS use `<tasklist>` with `- [ ]` checkboxes.
   - Mark items `[x]` as you complete them in subsequent turns.
   - This populates the user's progress tracker.
+
+  ### RULE 14: PATH DISCIPLINE — ALWAYS USE PROJECT-RELATIVE PATHS
+  - NEVER construct paths by guessing directory names. Always start from the project root provided in the session context.
+  - Correct:  `src/main.py`  or  `{project_root}/src/main.py`
+  - Wrong:    `C:/Users/SomeOtherFolder/src/main.py`  or  `/home/user/projects/other/main.py`
+  - When you receive a PermissionError saying "escapes the project root", it means you used a wrong path. Fix it by using the relative path from the project root.
+  - If you are unsure of the correct path, call `list_directory` on the project root first.
+
+  ### RULE 15: STUCK / TIMEOUT RECOVERY
+  - If you receive a `TOOL_TIMEOUT` or `[SYSTEM RECOVERY]` message, it means a tool timed out (hung subprocess).
+  - Do NOT retry the same timed-out tool immediately.
+  - Instead: acknowledge the timeout, check your `<tasklist>`, mark the failed step, and move to the NEXT pending step.
+  - If git or shell commands time out repeatedly, inform the user: "Git/shell appears unresponsive. You may need to check the repository manually."
 
   ### RULE 10: EDIT EXACTNESS (E11)
   - Your `old_string` MUST match the file content exactly, including whitespace, comments, and empty lines.
@@ -1208,6 +1277,7 @@ IMPORTANT RULES:
         self._tool_worker.tool_completed.connect(lambda n, a, r: self._on_tool_completed(n, a, r))
         self._tool_worker.all_tools_completed.connect(lambda res: self._on_all_tools_completed(res, tool_calls, assistant_content))
         self._tool_worker.error_occurred.connect(self._on_tool_error)
+        self._tool_worker.tool_timeout.connect(self._on_tool_timeout)
         
         self._tool_worker.start()
 
@@ -1389,6 +1459,27 @@ IMPORTANT RULES:
         self.response_chunk.emit("\n</exploration>\n")
         self._continue_after_tools_flag = False
         self.response_complete.emit("Error during tool execution")
+
+    def _on_tool_timeout(self, tool_name: str, recovery_hint: str):
+        """
+        Called when a single tool exceeds TOOL_TIMEOUT_SECONDS.
+        Injects a recovery message into conversation history so the AI
+        can understand what happened and resume from the next step.
+        """
+        log.warning(f"Tool timeout handler: {tool_name}")
+        # Show warning in chat UI
+        self.response_chunk.emit(
+            f"\n⏱️ **Tool `{tool_name}` timed out** (>{ToolWorker.TOOL_TIMEOUT_SECONDS}s). "
+            f"Recovering automatically...\n"
+        )
+        # Inject a synthetic system recovery note into history so AI knows what happened
+        recovery_note = (
+            f"[SYSTEM RECOVERY] Tool `{tool_name}` was aborted after "
+            f"{ToolWorker.TOOL_TIMEOUT_SECONDS} seconds (subprocess/network hang). "
+            f"The task is NOT complete. Review the tasklist and continue from the next "
+            f"incomplete step. Do NOT retry the same timed-out tool immediately."
+        )
+        self._history.append({"role": "user", "content": recovery_note})
 
     def _continue_chat_after_tools(self):
         """Continue chat after tools have been executed."""
