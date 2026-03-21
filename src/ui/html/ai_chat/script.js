@@ -349,95 +349,72 @@ function initMarked() {
         return;
     }
     
-    // Use marked's built-in renderer with minimal overrides
-    // marked v15+ uses a different API - we use extensions instead of renderer overrides
-    
-    // First, let's create a simple extension for code blocks
+    // marked v4.3.0 renderer API:
+    // heading(text, depth, raw, slugger) - text is already parsed HTML
+    // listitem(text, task, checked)      - text is already parsed HTML
+    // table(header, body)               - both are rendered HTML strings
+    // code(code, lang, escaped)         - code is the raw code text
+    // codespan(code)                    - code is the raw inline code
+    // link(href, title, text)           - three strings
+    // blockquote(quote)                 - rendered HTML string
     marked.use({
         renderer: {
-            code: function(token) {
-                var code = token.text || '';
-                var lang = (token.lang || 'text').toLowerCase();
+            code: function(code, lang, escaped) {
+                code = code || '';
+                lang = (lang || 'text').toLowerCase();
 
                 // Specialized Tree Rendering
-                if (lang === 'tree' || (lang === 'plaintext' && (code.includes('├──') || code.includes('└──')))) {
+                if (lang === 'tree' || (lang === 'plaintext' && (code.includes('\u251C\u2500\u2500') || code.includes('\u2514\u2500\u2500')))) {
                     return renderProjectTree(code);
                 }
 
-                // Just render <pre><code> — let injectCodeBlockHeader() add the header
                 var highlighted;
                 try {
                     highlighted = hljs.highlight(code, { language: hljs.getLanguage(lang) ? lang : 'plaintext' }).value;
                 } catch (e) {
                     highlighted = escapeHtml(code);
                 }
-                // Store lang as data attribute so injectCodeBlockHeader can read it
                 return '<pre data-lang="' + escapeHtml(lang) + '"><code class="hljs language-' + lang + '">' + highlighted + '</code></pre>';
             },
-            
-            table: function(token) {
-                var header = token.header ? '<tr>' + token.header.map(cell => '<th>' + this.parser.parseInline(cell.tokens) + '</th>').join('') + '</tr>' : '';
-                var body = token.rows ? token.rows.map(row => '<tr>' + row.map(cell => '<td>' + this.parser.parseInline(cell.tokens) + '</td>').join('') + '</tr>').join('') : '';
-                return '<div class="table-wrapper"><table><thead>' + header + '</thead><tbody>' + body + '</tbody></table></div>';
+
+            table: function(header, body) {
+                return '<div class="table-wrapper"><table><thead>' + (header || '') + '</thead><tbody>' + (body || '') + '</tbody></table></div>';
             },
-            
-            heading: function(token) {
-                var text = this.parser.parseInline(token.tokens);
-                var depth = token.depth;
+
+            heading: function(text, depth) {
+                text = text || '';
                 var cleanText = text.replace(/<[^>]+>/g, '');
                 var id = cleanText.toLowerCase().replace(/[^\w]+/g, '-');
                 return '<h' + depth + ' id="' + id + '" class="md-heading md-h' + depth + '">' + text + '</h' + depth + '>';
             },
-            
 
-            
-            listitem: function(token) {
-                var text = this.parser.parseInline(token.tokens);
-                
+            listitem: function(text, task, checked) {
+                text = text || '';
                 // Check for task list pattern
                 var taskMatch = text.match(/^\s*\[([ xX])\]\s*/);
                 if (taskMatch) {
                     var isChecked = taskMatch[1].toLowerCase() === 'x';
                     var checkedClass = isChecked ? 'checked' : '';
                     var taskText = text.replace(/^\s*\[([ xX])\]\s*/, '');
-                    var checkedIcon = isChecked 
+                    var checkedIcon = isChecked
                         ? '<svg class="task-check" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>'
                         : '<svg class="task-circle" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg>';
                     return '<li class="task-item ' + checkedClass + '">' + checkedIcon + '<span class="task-text">' + taskText + '</span></li>';
                 }
-                
-                // Regular list item - text is already parsed by parseInline
                 return '<li>' + text + '</li>';
             },
-            
-            codespan: function(token) {
-                return '<code class="inline-code">' + escapeHtml(token.text) + '</code>';
+
+            codespan: function(code) {
+                return '<code class="inline-code">' + (code || '') + '</code>';
             },
-            
-            link: function(token) {
-                var text = this.parser.parseInline(token.tokens);
-                var title = token.title ? ' title="' + escapeHtml(token.title) + '"' : '';
-                return '<a href="' + token.href + '"' + title + ' target="_blank" rel="noopener">' + text + '</a>';
+
+            link: function(href, title, text) {
+                var titleAttr = title ? ' title="' + escapeHtml(title) + '"' : '';
+                return '<a href="' + (href || '#') + '"' + titleAttr + ' target="_blank" rel="noopener">' + (text || href || '') + '</a>';
             },
-            
-            blockquote: function(token) {
-                var text = this.parser.parse(token.tokens);
-                return '<blockquote class="md-blockquote">' + text + '</blockquote>';
-            }
-        },
-        tokenizer: {
-            inlineText: function(src) {
-                // Default inline text handling
-                var defaultTokenizer = marked.Renderer.prototype;
-                var match = src.match(/^([^\n]+)/);
-                if (match) {
-                    return {
-                        type: 'text',
-                        raw: match[0],
-                        text: match[0]
-                    };
-                }
-                return false;
+
+            blockquote: function(quote) {
+                return '<blockquote class="md-blockquote">' + (quote || '') + '</blockquote>';
             }
         }
     });
@@ -445,16 +422,13 @@ function initMarked() {
     // Add extension for file link detection (runs after default parsing)
     marked.use({
         renderer: {
-            text: function(token) {
-                var text = token.text;
-                if (typeof text !== 'string') return text;
-                
-                // First process inline markdown (bold, italic, code)
-                text = processInlineMarkdownNoEscape(text);
-                
+            // In v4.3.0: text(text) receives a string, not a token object
+            text: function(text) {
+                if (typeof text !== 'string') return text || '';
+                    
                 // Pattern to detect file paths with optional line numbers
-                var filePattern = /(`?)([\w\-/.\\]+\.(?:py|js|ts|jsx|tsx|html|css|scss|java|cpp|c|go|rs|php|rb|swift|kt|json|xml|yaml|yml|md|vue))(?::(\d+))?(`?)/gi;
-                
+                var filePattern = /(`?)([\.w\-/.\\]+\.(?:py|js|ts|jsx|tsx|html|css|scss|java|cpp|c|go|rs|php|rb|swift|kt|json|xml|yaml|yml|md|vue))(?::(\d+))?(`?)/gi;
+                    
                 return text.replace(filePattern, function(match, backtick1, filePath, lineNum, backtick2) {
                     if (backtick1 === '`' && backtick2 === '`') {
                         return match;
@@ -1022,6 +996,8 @@ function loadChat(id) {
     clearTodosAndChangedFiles();
     
     chat.messages.forEach(function (msg) {
+        // Skip messages with undefined/empty text
+        if (!msg.text || msg.text === 'undefined' || msg.text.trim() === '') return;
         appendMessage(msg.text, msg.sender, false);
         // Restore tool activities (like directory listings) if present
         if (msg.toolActivities && msg.toolActivities.length > 0) {
@@ -1093,6 +1069,13 @@ function appendMessage(text, sender, shouldSave) {
     var container = document.getElementById('chatMessages');
     if (!container) return null;
 
+    // Guard: skip undefined, null, or literal 'undefined' string
+    if (text === undefined || text === null || text === 'undefined' || String(text).trim() === '') {
+        console.warn('[CHAT] appendMessage: skipping undefined/empty message');
+        return null;
+    }
+    text = String(text); // Ensure text is always a string
+
     var emptyState = document.getElementById('empty-state');
     if (emptyState) emptyState.remove();
 
@@ -1129,16 +1112,19 @@ function appendMessage(text, sender, shouldSave) {
         row.appendChild(av);
         bubble.appendChild(row);
     } else {
+        var parsedHtml = '';
         try {
             if (typeof marked !== 'undefined' && marked.parse) {
-                content.innerHTML = marked.parse(text);
+                parsedHtml = marked.parse(text) || '';
             } else {
-                content.innerHTML = formatMarkdownFallback(text);
+                parsedHtml = formatMarkdownFallback(text);
             }
         } catch (e) {
-            console.error('Markdown parse error in appendMessage:', e);
-            content.innerHTML = formatMarkdownFallback(text);
+            console.warn('[MARKDOWN] Parse error in appendMessage (using fallback):', e.message);
+            parsedHtml = formatMarkdownFallback(text);
         }
+        // Ensure we never set undefined
+        content.innerHTML = parsedHtml || text || '';
 
         // Copy button for assistant messages
         var copyBtn = document.createElement('button');
@@ -2585,11 +2571,19 @@ function updateStreamingUI() {
 
         // ── 2. Parse markdown ────────────────────────────────────────────
         var html = '';
-        if (typeof marked !== 'undefined' && marked.parse) {
-            html = marked.parse(cleanText);
-        } else {
+        try {
+            if (typeof marked !== 'undefined' && marked.parse) {
+                html = marked.parse(cleanText) || '';
+            } else {
+                html = formatMarkdownFallback(cleanText);
+            }
+        } catch (parseError) {
+            console.warn('[MARKDOWN] Parse error, using fallback:', parseError.message);
             html = formatMarkdownFallback(cleanText);
         }
+
+        // Ensure html is never undefined or null
+        if (!html) html = cleanText || '';
 
         // Highlight file creation mentions
         html = highlightFileCreations(html);
@@ -2712,9 +2706,9 @@ function onComplete() {
             .replace(/<permission>[\s\S]*?<\/permission>/g, '')
             .trim();
 
-        // ── Save to history ────────────────────────────────────────────
+        // ── Save to history (only if content is valid) ─────────────────────
         var chat = chats.find(function(c) { return c.id === currentChatId; });
-        if (chat) {
+        if (chat && displayText && displayText.trim() !== '' && displayText !== 'undefined') {
             chat.messages.push({ text: displayText, sender: 'assistant' });
             saveChats();
         }
@@ -2722,13 +2716,15 @@ function onComplete() {
         // ── Final markdown render ───────────────────────────────────────
         var contentDiv = currentAssistantMessage.querySelector('.message-content');
         if (contentDiv) {
+            var finalHtml = '';
             try {
-                contentDiv.innerHTML = (typeof marked !== 'undefined' && marked.parse)
-                    ? marked.parse(displayText)
+                finalHtml = (typeof marked !== 'undefined' && marked.parse)
+                    ? (marked.parse(displayText) || '')
                     : formatMarkdownFallback(displayText);
             } catch (e) {
-                contentDiv.innerHTML = formatMarkdownFallback(displayText);
+                finalHtml = formatMarkdownFallback(displayText);
             }
+            contentDiv.innerHTML = finalHtml || '';
 
             // ── Code block headers + syntax highlight ───────────────────
             contentDiv.querySelectorAll('pre code').forEach(function(block) {
@@ -2844,7 +2840,9 @@ function handleOptionsTag() {
         var data = currentContent.substring(startIndex + startTag.length, endIndex);
         var textAfter = currentContent.substring(endIndex + endTag.length);
         
-        contentDiv.innerHTML = marked.parse(textBefore) + renderOptionsBlock(data) + marked.parse(textAfter);
+        var optBeforeHtml = (marked.parse(textBefore) || '');
+        var optAfterHtml = (marked.parse(textAfter) || '');
+        contentDiv.innerHTML = optBeforeHtml + renderOptionsBlock(data) + optAfterHtml;
     }
 }
 
@@ -2886,10 +2884,13 @@ function handleExplorationTag() {
         if (endIndex !== -1) {
             explorationData = currentContent.substring(startIndex + startTag.length, endIndex);
             var textAfter = currentContent.substring(endIndex + endTag.length);
-            contentDiv.innerHTML = marked.parse(textBefore) + renderExplorationBlock(explorationData) + marked.parse(textAfter);
+            var beforeHtml = (marked.parse(textBefore) || '');
+            var afterHtml = (marked.parse(textAfter) || '');
+            contentDiv.innerHTML = beforeHtml + renderExplorationBlock(explorationData) + afterHtml;
         } else {
             explorationData = currentContent.substring(startIndex + startTag.length);
-            contentDiv.innerHTML = marked.parse(textBefore) + renderExplorationBlock(explorationData, true);
+            var beforeHtml2 = (marked.parse(textBefore) || '');
+            contentDiv.innerHTML = beforeHtml2 + renderExplorationBlock(explorationData, true);
         }
     }
 }
@@ -2906,8 +2907,9 @@ function handleFileEditedTag() {
         .replace(/<file_edited>[\s\S]*?<\/file_edited>/g, '')
         .trim();
     try {
-        contentDiv.innerHTML = (typeof marked !== 'undefined' && marked.parse)
-            ? marked.parse(cleanText) : cleanText;
+        var parsed = (typeof marked !== 'undefined' && marked.parse)
+            ? (marked.parse(cleanText) || cleanText) : cleanText;
+        contentDiv.innerHTML = parsed || cleanText;
     } catch(e) { contentDiv.innerHTML = cleanText; }
 
     // Inject code block headers
@@ -2932,7 +2934,9 @@ function handleTaskSummaryTag() {
         var textBefore = currentContent.substring(0, startIndex);
         var summaryData = currentContent.substring(startIndex + startTag.length, endIndex);
         var textAfter = currentContent.substring(endIndex + endTag.length);
-        contentDiv.innerHTML = marked.parse(textBefore) + renderTaskSummary(summaryData) + marked.parse(textAfter);
+        var beforeHtml3 = (marked.parse(textBefore) || '');
+        var afterHtml3 = (marked.parse(textAfter) || '');
+        contentDiv.innerHTML = beforeHtml3 + renderTaskSummary(summaryData) + afterHtml3;
     }
 }
 
@@ -2951,10 +2955,13 @@ function handleDiffTag() {
         if (endIndex !== -1) {
             diffData = currentContent.substring(startIndex + startTag.length, endIndex);
             var textAfter = currentContent.substring(endIndex + endTag.length);
-            contentDiv.innerHTML = marked.parse(textBefore) + renderDiffBlock(diffData) + marked.parse(textAfter);
+            var diffBeforeHtml = (marked.parse(textBefore) || '');
+            var diffAfterHtml = (marked.parse(textAfter) || '');
+            contentDiv.innerHTML = diffBeforeHtml + renderDiffBlock(diffData) + diffAfterHtml;
         } else {
             diffData = currentContent.substring(startIndex + startTag.length);
-            contentDiv.innerHTML = marked.parse(textBefore) + renderDiffBlock(diffData, true);
+            var diffBeforeHtml2 = (marked.parse(textBefore) || '');
+            contentDiv.innerHTML = diffBeforeHtml2 + renderDiffBlock(diffData, true);
         }
     }
 }
@@ -4118,7 +4125,9 @@ function buildFileEditCard(filePath, added, removed, editType, status, original,
     var ftBadge = getFileTypeBadge(ext);
 
     // ── Diff stats ─────────────────────────────────────────────
-    var addedHtml   = added   > 0 ? '<span class="fec-added">+'  + added   + '</span>' : '';
+    // For new files (C), always show added count even if 0
+    // For modified files (M), show both added and removed
+    var addedHtml   = (added > 0 || editType === 'C') ? '<span class="fec-added">+'  + added   + '</span>' : '';
     var removedHtml = removed > 0 ? '<span class="fec-removed">-' + removed + '</span>' : '';
 
     // ── M/C/D badge ─────────────────────────────────────────────
@@ -4130,12 +4139,14 @@ function buildFileEditCard(filePath, added, removed, editType, status, original,
 
     var rightHtml = '';
     if (isPending) {
-        // Only show Diff button in chat cards
-        // Accept/Reject is done via footer "Accept All" / "Reject All" buttons
-        rightHtml =
-            '<div class="fec-pending-actions">' +
-                '<button class="fec-btn-diff" onclick="event.stopPropagation(); openFileDiff(this.closest(\'.fec\'))">Diff</button>' +
-            '</div>';
+        // Only show Diff button for MODIFIED files (M), not for CREATED files (C)
+        // For new files, no diff needed since it's all new content
+        if (editType === 'M') {
+            rightHtml =
+                '<div class="fec-pending-actions">' +
+                    '<button class="fec-btn-diff" onclick="event.stopPropagation(); openFileDiff(this.closest(\'.fec\'))">Diff</button>' +
+                '</div>';
+        }
     } else if (isApplied) {
         rightHtml = '<span class="fec-status-applied">Applied</span>';
     } else if (isRejected) {
@@ -4824,7 +4835,9 @@ function showProjectTreeCard(rootPath, items) {
 }
 
 function openFolderInExplorer(path) {
-    if (window.bridge) bridge.on_open_folder(path);
+    // Convert forward slashes back to backslashes for Windows
+    var windowsPath = path.replace(/\//g, '\\');
+    if (window.bridge) bridge.on_open_folder(windowsPath);
 }
 
 window.showDirectoryTree = function(rootPath, items) {

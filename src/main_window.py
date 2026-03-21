@@ -849,12 +849,19 @@ class CortexMainWindow(QMainWindow):
         if not self._project_manager.root:
             return None
         
+        # Extract just the filename (remove any directory components)
+        from pathlib import Path as PathLib
+        clean_filename = PathLib(filename).name
+        
         root = Path(self._project_manager.root)
         
         # Search recursively for the file
-        for file_path in root.rglob(filename):
-            if file_path.is_file():
-                return str(file_path)
+        try:
+            for file_path in root.rglob(clean_filename):
+                if file_path.is_file():
+                    return str(file_path)
+        except Exception:
+            pass
         
         return None
 

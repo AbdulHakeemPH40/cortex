@@ -1274,6 +1274,26 @@ IMPORTANT RULES:
                 except:
                     added, removed = 0, 0
                 
+                # Get original content before emitting (for determining edit type)
+                original_content = self._pre_edit_snapshots.get(path, "")
+                edit_type = 'C' if not original_content else 'M'
+                
+                # For new files (C), calculate line count directly from the content arg
+                if edit_type == 'C' and added == 0:
+                    try:
+                        file_content = args.get("content", "")
+                        if file_content:
+                            added = len(str(file_content).split('\n'))
+                        else:
+                            # Fallback: read from disk with resolved path
+                            from pathlib import Path as _Path
+                            resolved = path if os.path.isabs(path) else os.path.join(str(self._project_root or ''), path)
+                            if os.path.exists(resolved):
+                                added = len(_Path(resolved).read_text(encoding='utf-8', errors='replace').split('\n'))
+                        log.debug(f"New file line count: {added} for {path}")
+                    except Exception as e:
+                        log.debug(f"Could not calculate line count for new file: {e}")
+                
                 info = display_path
                 if added > 0 or removed > 0:
                     info += f" +{added} -{removed}"
@@ -1281,10 +1301,6 @@ IMPORTANT RULES:
                     info += " ✓"
                     
                 self.tool_activity.emit(name, info, "complete")
-                
-                # Get original content before emitting (for determining edit type)
-                original_content = self._pre_edit_snapshots.get(path, "")
-                edit_type = 'C' if not original_content else 'M'
                 
                 # Emit file_edited tag at the end of response (outside exploration)
                 # Format: path\n+X -Y\nM (Modified/Created/Deleted)
