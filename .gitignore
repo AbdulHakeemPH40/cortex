@@ -1,6 +1,10 @@
 ﻿# Environment
 .env
 .env.example
+venv/
+.venv/
+env/
+ENV/
 
 # Logs
 *.log
