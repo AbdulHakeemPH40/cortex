@@ -18,6 +18,7 @@ class ProviderType(Enum):
     """Supported LLM providers."""
     DEEPSEEK = "deepseek"
     TOGETHER = "together"  # Qwen, Kimi, MiniMax, DeepSeek-R1
+    OPENAI = "openai"
 
 
 @dataclass
@@ -359,6 +360,13 @@ class ProviderRegistry:
             self._providers[ProviderType.TOGETHER] = TogetherProvider()
         except ImportError:
             log.warning("Together provider not available")
+        
+        # Register OpenAI provider
+        try:
+            from src.ai.providers.openai_provider import OpenAIProvider
+            self._providers[ProviderType.OPENAI] = OpenAIProvider()
+        except ImportError:
+            log.warning("OpenAI provider not available")
         
     def _register_provider(self, provider_type: ProviderType, provider: BaseProvider):
         """Register a provider."""

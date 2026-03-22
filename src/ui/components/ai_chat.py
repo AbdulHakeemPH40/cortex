@@ -296,10 +296,18 @@ class ConsolePage(QWebEnginePage):
         # Show [CHAT] tagged messages or errors - these are important for debugging
         if '[CHAT]' in message or level_val >= 2:
             # Use bright colors for [CHAT] messages to make them visible
-            if '[CHAT]' in message:
-                print(f"\033[96m[JS {level_name}] {message}\033[0m")  # Cyan color
-            else:
-                print(f"[JS {level_name}] {message}")
+            try:
+                if '[CHAT]' in message:
+                    print(f"\033[96m[JS {level_name}] {message}\033[0m")  # Cyan color
+                else:
+                    print(f"[JS {level_name}] {message}")
+            except UnicodeEncodeError:
+                # Fallback for Windows console encoding issues
+                safe_message = message.encode('ascii', 'ignore').decode('ascii')
+                if '[CHAT]' in message:
+                    print(f"[JS {level_name}] {safe_message}")
+                else:
+                    print(f"[JS {level_name}] {safe_message}")
 
 
 class AIChatWidget(QWidget):
