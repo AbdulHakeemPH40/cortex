@@ -17,10 +17,23 @@ from src.ai.providers import get_provider_registry, ProviderType, ChatMessage
 
 log = get_logger("ai_agent")
 
-# Load .env if available
+# Load .env if available - check multiple locations for dev and packaged modes
 try:
     from dotenv import load_dotenv
-    load_dotenv(Path(__file__).parent.parent.parent / ".env")
+    import sys
+    
+    # Possible locations for .env file
+    env_paths = [
+        Path(__file__).parent.parent.parent / ".env",  # Development
+        Path.cwd() / ".env",  # Current working directory
+        Path(sys.executable).parent / ".env",  # Next to EXE (packaged)
+    ]
+    
+    for env_path in env_paths:
+        if env_path.exists():
+            load_dotenv(env_path)
+            log.info(f"Loaded .env from: {env_path}")
+            break
 except ImportError:
     pass
 
@@ -871,15 +884,12 @@ IMPORTANT RULES:
             estimated_tokens = self._estimate_token_count(messages)
             log.info(f"After summarization: {estimated_tokens} est. tokens")
 
-        # FOR TESTING: Force deepseek if not mock
+        # Get provider and model from settings
         provider = self._settings.get("ai", "provider") or "deepseek"
-        if provider != "mock":
-            provider = "deepseek"
-            
         model = self._settings.get("ai", "model") or "deepseek-chat"
-        # Ensure deepseek model is used for deepseek provider
-        if provider == "deepseek" and "deepseek" not in model.lower():
-            model = "deepseek-chat"
+        
+        # Log which provider and model are being used
+        log.info(f"[AI Agent] Using provider: {provider}, model: {model}")
         temperature = float(self._settings.get("ai", "temperature") or 0.7)
         # Increase max_tokens to 8192 for large code generation
         max_tokens = int(self._settings.get("ai", "max_tokens") or 8192)

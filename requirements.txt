@@ -9,4 +9,5 @@ chardet>=5.2.0
 gitpython>=3.1.41
 cryptography>=42.0.0
 pywin32>=306; platform_system=='Windows'
+pywinpty>=0.4.3; platform_system=='Windows'
 

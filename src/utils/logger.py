@@ -36,9 +36,9 @@ def get_logger(name: str = "cortex") -> logging.Logger:
         )
         logger.addHandler(file_handler)
         
-        # Console handler - only WARNING and above (no INFO/DEBUG in terminal)
+        # Console handler - show INFO and above (includes model usage logs)
         console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setLevel(logging.WARNING)  # Only show warnings/errors in terminal
+        console_handler.setLevel(logging.INFO)  # Show INFO for model/provider logs
         console_handler.setFormatter(
             logging.Formatter(
                 "[%(asctime)s] %(levelname)s %(name)s: %(message)s",

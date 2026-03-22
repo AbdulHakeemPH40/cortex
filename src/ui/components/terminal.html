@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <title>Cortex Terminal</title>
-    <!-- Load xterm.js styles and scripts locally -->
+    <!-- Load xterm.js locally -->
     <link rel="stylesheet" href="assets/xterm/xterm.css" />
     <script src="assets/xterm/xterm.js"></script>
     <script src="assets/xterm/xterm-addon-fit.js"></script>
@@ -39,11 +39,63 @@
     </style>
 </head>
 <body>
+    <div id="loading-message" style="color: #00ff00; padding: 20px; background: #0c0c0c;">Terminal loading...</div>
     <div id="terminal-container"></div>
+    <div id="error-message" style="color: red; padding: 20px; display: none;"></div>
     <script>
+        // Store logs until pyTerminal is available
+        let logQueue = [];
+        const originalLog = console.log;
+        const originalError = console.error;
+        
+        function flushLogQueue() {
+            if (window.pyTerminal && logQueue.length > 0) {
+                logQueue.forEach(msg => window.pyTerminal.js_log(msg));
+                logQueue = [];
+            }
+        }
+        
+        console.log = function(...args) {
+            originalLog.apply(console, args);
+            const msg = '[LOG] ' + args.join(' ');
+            if (window.pyTerminal) {
+                window.pyTerminal.js_log(msg);
+            } else {
+                logQueue.push(msg);
+            }
+        };
+        
+        console.error = function(...args) {
+            originalError.apply(console, args);
+            const msg = '[ERROR] ' + args.join(' ');
+            if (window.pyTerminal) {
+                window.pyTerminal.js_log(msg);
+            } else {
+                logQueue.push(msg);
+            }
+        };
+        
+        console.log('[TERMINAL] Script starting...');
+        console.log('[TERMINAL] qt.webChannelTransport available:', typeof qt !== 'undefined' && qt.webChannelTransport);
+        console.log('[TERMINAL] QWebChannel available:', typeof QWebChannel !== 'undefined');
+        
+        // Check if xterm.js loaded
+        if (typeof Terminal === 'undefined') {
+            console.error('[TERMINAL] ERROR: Terminal class not found!');
+            document.getElementById('error-message').style.display = 'block';
+            document.getElementById('error-message').textContent = 'Error: xterm.js failed to load. Terminal class not found.';
+        } else {
+            console.log('[TERMINAL] Terminal class found, initializing...');
+        }
+        
+        // Hide loading message
+        document.getElementById('loading-message').style.display = 'none';
+        
         // Initialize xterm.js with performance optimizations
-        const term = new Terminal({
-            fontFamily: "'Cascadia Code', 'Consolas', monospace",
+        let term;
+        try {
+            term = new Terminal({
+                fontFamily: "'Cascadia Code', 'Consolas', monospace",
             fontSize: 13,
             cursorBlink: true,
             // PERFORMANCE: Limit scrollback to prevent memory bloat
@@ -180,9 +232,20 @@
             }
         });
 
-        // Initialize QWebChannel bridge
-        new QWebChannel(qt.webChannelTransport, function(channel) {
+        // Initialize QWebChannel bridge - wait for qt to be ready
+        function initQWebChannel() {
+            if (typeof qt === 'undefined' || !qt.webChannelTransport) {
+                console.log('[TERMINAL] Waiting for qt.webChannelTransport...');
+                setTimeout(initQWebChannel, 100);
+                return;
+            }
+            console.log('[TERMINAL] qt.webChannelTransport available, initializing QWebChannel...');
+            new QWebChannel(qt.webChannelTransport, function(channel) {
             window.pyTerminal = channel.objects.pyTerminal;
+            console.log('[TERMINAL] QWebChannel connected, pyTerminal available');
+            
+            // Flush any queued logs
+            flushLogQueue();
             
             // Initial resize event to Python
             window.pyTerminal.resize(term.cols, term.rows);
@@ -232,7 +295,16 @@
             
             // Let Python know we are ready
             window.pyTerminal.ready();
-        });
+            });
+        }
+        
+        // Start waiting for QWebChannel
+        initQWebChannel();
+        } catch (e) {
+            console.error('[TERMINAL] ERROR initializing terminal:', e);
+            document.getElementById('error-message').style.display = 'block';
+            document.getElementById('error-message').textContent = 'Error initializing terminal: ' + e.message;
+        }
     </script>
 </body>
 </html>

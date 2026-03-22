@@ -24,6 +24,7 @@ class ChatBridge(QObject):
     generate_plan_requested = pyqtSignal()
     mode_changed = pyqtSignal(str)
     always_allow_changed = pyqtSignal(bool)
+    model_changed = pyqtSignal(str, str, str)  # model_id, perf, cost
     
     open_file_requested = pyqtSignal(str)
     open_file_at_line_requested = pyqtSignal(str, int)  # file_path, line_number
@@ -49,6 +50,10 @@ class ChatBridge(QObject):
     # Chat persistence signals
     save_chats_requested = pyqtSignal(str, str)  # storage_key, json_data
     load_chats_requested = pyqtSignal(str)       # storage_key
+    
+    @pyqtSlot(str, str, str)
+    def on_model_changed(self, model_id, perf, cost):
+        self.model_changed.emit(model_id, perf, cost)
     
     @pyqtSlot(str)
     def on_message_submitted(self, text):
@@ -306,6 +311,7 @@ class AIChatWidget(QWidget):
     always_allow_changed = pyqtSignal(bool)
     generate_plan_requested = pyqtSignal()
     mode_changed = pyqtSignal(str)
+    model_changed = pyqtSignal(str, str, str)  # model_id, perf, cost
     
     open_file_requested = pyqtSignal(str)
     open_file_at_line_requested = pyqtSignal(str, int)  # file_path, line_number
@@ -393,6 +399,7 @@ class AIChatWidget(QWidget):
         self._bridge.always_allow_changed.connect(self.always_allow_changed.emit)
         self._bridge.generate_plan_requested.connect(self.generate_plan_requested.emit)
         self._bridge.mode_changed.connect(self.mode_changed.emit)
+        self._bridge.model_changed.connect(self.model_changed.emit)
         self._bridge.open_file_requested.connect(self.open_file_requested.emit)
         self._bridge.open_file_at_line_requested.connect(self.open_file_at_line_requested.emit)
         self._bridge.show_diff_requested.connect(self.show_diff_requested.emit)

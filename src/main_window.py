@@ -451,6 +451,7 @@ class CortexMainWindow(QMainWindow):
         except Exception as e:
             log.error(f"UI Build Error: {e}", exc_info=True)
             print(f"UI Build Error: {e}")
+            raise  # Re-raise to stop execution
 
         log.info("MainWindow: Connecting signals...")
         self._connect_signals()
@@ -931,6 +932,7 @@ class CortexMainWindow(QMainWindow):
 
         # AI chat - ONLY connect signals here to avoid duplicates
         self._ai_chat.message_sent.connect(self._on_ai_chat_message)
+        self._ai_chat.model_changed.connect(self._on_model_changed)
         self._ai_agent.response_chunk.connect(self._ai_chat.on_chunk)
         self._ai_agent.response_complete.connect(self._ai_chat.on_complete)
         self._ai_agent.request_error.connect(self._ai_chat.on_error)
@@ -1447,6 +1449,19 @@ class CortexMainWindow(QMainWindow):
 
         full_context = "\n\n".join(context)
         self._ai_agent.chat(message, full_context)
+
+    def _on_model_changed(self, model_id: str, perf: str, cost: str):
+        """Handle model selection change from AI chat."""
+        # Determine provider from model_id
+        if model_id.startswith("openai/") or model_id.startswith("llama-") or model_id.startswith("mixtral-") or model_id.startswith("gemma"):
+            provider = "groq"
+        elif model_id.startswith("deepseek-"):
+            provider = "deepseek"
+        else:
+            provider = "groq"  # Default
+        
+        log.info(f"[MainWindow] Model changed to: {model_id} (provider: {provider})")
+        self._ai_agent.update_settings(provider, model_id)
 
     def _on_ai_stop_requested(self):
         """Handle stop request from AI (via web bridge)."""

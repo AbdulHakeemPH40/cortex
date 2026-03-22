@@ -2464,8 +2464,12 @@ function clearTodos() {
 }
 
 function startStreaming() {
+    console.log('[JS] startStreaming called');
     var container = document.getElementById('chatMessages');
-    if (!container) return;
+    if (!container) {
+        console.error('[JS] chatMessages container not found');
+        return;
+    }
     
     // Remove thinking indicator
     removeThinkingIndicator();
@@ -2479,6 +2483,7 @@ function startStreaming() {
     
     // Create new assistant message bubble
     if (!currentAssistantMessage) {
+        console.log('[JS] Creating new assistant message bubble');
         currentAssistantMessage = document.createElement('div');
         currentAssistantMessage.className = 'message-bubble assistant';
         var content = document.createElement('div');
@@ -2486,14 +2491,23 @@ function startStreaming() {
         currentAssistantMessage.appendChild(content);
         container.appendChild(currentAssistantMessage);
         currentContent = "";
+        
+        // Remove empty state if present
+        var emptyState = document.getElementById('empty-state');
+        if (emptyState) emptyState.remove();
     }
     
     smartScroll(container);
+    console.log('[JS] startStreaming completed');
 }
 
 function onChunk(chunk) {
+    console.log('[JS] onChunk received:', chunk.substring(0, 50));
     var container = document.getElementById('chatMessages');
-    if (!container) return;
+    if (!container) {
+        console.error('[JS] chatMessages container not found in onChunk');
+        return;
+    }
 
     // ── Set thinking start time on first real content chunk ──────────────
     if (!_thinkingStartTime && chunk.trim() && !chunk.startsWith('<')) {
@@ -3425,7 +3439,7 @@ document.addEventListener('DOMContentLoaded', function() {
         var modelTrigger = modelDropdown.querySelector('.dropdown-trigger');
         var modelMenu = modelDropdown.querySelector('.dropdown-menu');
         var modelItems = modelDropdown.querySelectorAll('.dropdown-item');
-        var modelText = document.getElementById('current-model');
+        var modelText = document.getElementById('selected-model');
         var modelCostDisplay = document.getElementById('current-model-cost');
 
         modelTrigger.onclick = function(e) {
@@ -3497,7 +3511,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 
                 // Update display text
                 if (modelText) {
-                    var modelName = this.querySelector('.item-text span').textContent.split(' ')[0];
+                    var fullText = this.querySelector('.item-text span').textContent;
+                    // Remove the "Active" tag text if present
+                    var modelName = fullText.replace(/\s*Active\s*$/, '').trim();
                     modelText.innerText = modelName;
                 }
                 

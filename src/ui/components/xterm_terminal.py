@@ -66,6 +66,11 @@ class TerminalBridge(QObject):
     def ready(self):
         """Called by JS when xterm is fully loaded"""
         self.ready_received.emit()
+    
+    @pyqtSlot(str)
+    def js_log(self, message):
+        """Receive console logs from JavaScript"""
+        log.info(f"[JS] {message}")
 
 
 class XTermWidget(QWidget):
@@ -177,13 +182,74 @@ class XTermWidget(QWidget):
         self._bridge.resize_requested.connect(self._on_js_resize)
         self._bridge.ready_received.connect(self._on_js_ready)
         
+        # Debug logging to file for troubleshooting (define first!)
+        debug_log_path = os.path.join(os.path.expanduser("~"), "cortex_terminal_debug.log")
+        def debug_log(msg):
+            with open(debug_log_path, 'a', encoding='utf-8') as f:
+                f.write(f"[{__import__('datetime').datetime.now()}] {msg}\n")
+        
         self._channel = QWebChannel(self)
         self._channel.registerObject("pyTerminal", self._bridge)
         self._webview.page().setWebChannel(self._channel)
         
-        # Load terminal.html
-        html_path = os.path.join(os.path.dirname(__file__), "terminal.html")
-        self._webview.setUrl(QUrl.fromLocalFile(html_path))
+        debug_log("QWebChannel setup complete")
+        
+        debug_log("=" * 60)
+        debug_log("Terminal initialization started")
+        
+        # Load terminal.html - handle both dev and PyInstaller bundled paths
+        # CRITICAL: Always use setUrl(), never setHtml() - QWebChannel needs file:// origin
+        if getattr(sys, 'frozen', False):
+            # Running in PyInstaller bundle
+            bundle_dir = sys._MEIPASS
+            debug_log(f"Bundle dir (sys._MEIPASS): {bundle_dir}")
+            debug_log(f"Bundle dir exists: {os.path.exists(bundle_dir)}")
+            if os.path.exists(bundle_dir):
+                debug_log(f"Bundle dir contents: {os.listdir(bundle_dir)[:20]}")
+            
+            html_path = os.path.join(bundle_dir, "src", "ui", "components", "terminal.html")
+            debug_log(f"Expected html_path: {html_path}")
+            debug_log(f"html_path exists: {os.path.exists(html_path)}")
+            
+            # Search for terminal.html if not at expected path
+            if not os.path.exists(html_path):
+                log.error(f"[BUNDLE] terminal.html not found at: {html_path}")
+                debug_log(f"terminal.html not found at expected path, searching...")
+                for root, dirs, files in os.walk(bundle_dir):
+                    if 'terminal.html' in files:
+                        html_path = os.path.join(root, 'terminal.html')
+                        log.info(f"[BUNDLE] Found terminal.html at: {html_path}")
+                        debug_log(f"Found terminal.html at: {html_path}")
+                        break
+                else:
+                    debug_log("terminal.html NOT FOUND anywhere in bundle!")
+            else:
+                log.info(f"[BUNDLE] terminal.html found at: {html_path}")
+                debug_log(f"terminal.html found at expected path")
+                
+            # Check for assets
+            assets_path = os.path.join(bundle_dir, "src", "ui", "components", "assets", "xterm")
+            debug_log(f"Assets path: {assets_path}")
+            debug_log(f"Assets exists: {os.path.exists(assets_path)}")
+            if os.path.exists(assets_path):
+                debug_log(f"Assets contents: {os.listdir(assets_path)}")
+        else:
+            # Running in development
+            html_path = os.path.join(os.path.dirname(__file__), "terminal.html")
+            log.info(f"[DEV] Loading terminal from: {html_path}")
+            debug_log(f"[DEV] html_path: {html_path}")
+        
+        # ALWAYS use setUrl (not setHtml) - required for QWebChannel to work
+        if os.path.exists(html_path):
+            file_url = QUrl.fromLocalFile(html_path)
+            log.info(f"Loading terminal from URL: {file_url.toString()}")
+            debug_log(f"Loading terminal from URL: {file_url.toString()}")
+            self._webview.setUrl(file_url)
+            debug_log("setUrl() called successfully")
+        else:
+            log.error(f"terminal.html not found: {html_path}")
+            debug_log(f"ERROR: terminal.html not found: {html_path}")
+            self._webview.setHtml("<html><body style='background:#0c0c0c;color:#ef4444;padding:20px'><h3>Terminal Error</h3><p>terminal.html not found in bundle. Check log at: " + debug_log_path + "</p></body></html>")
         
         layout.addWidget(self._webview)
         

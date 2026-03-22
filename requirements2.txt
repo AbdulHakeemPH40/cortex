@@ -1,1 +1,3 @@
- pip install together
+pip install together
+
+pip install pywinpty

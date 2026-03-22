@@ -72,6 +72,9 @@ class DeepSeekProvider:
              stream: bool = True, **kwargs) -> Generator[str, None, None]:
         """Send chat request to DeepSeek API"""
         
+        # Log which model is being used
+        log.info(f"[DeepSeek] Using model: {model}")
+        
         if not self.api_key:
             raise ValueError("DEEPSEEK_API_KEY not configured. Please add it to .env file.")
         
