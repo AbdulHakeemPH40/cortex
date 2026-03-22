@@ -227,8 +227,20 @@ class PreciseEditor:
         try:
             content = full_path.read_text(encoding="utf-8")
         except FileNotFoundError:
-            return EditResult(False, path=path, error=f"File not found: {path}",
-                             action="Use list_directory to verify the path exists")
+            # Try to find similar files to suggest
+            suggestions = self._find_similar_files(path)
+            error_msg = f"File not found: {path}"
+            error_msg += f"\n\nProject root: {self.root}"
+            error_msg += f"\nResolved path: {full_path}"
+            if suggestions:
+                error_msg += f"\n\nSimilar files in project:"
+                for s in suggestions[:5]:
+                    error_msg += f"\n  • {s}"
+            else:
+                error_msg += f"\n\nNo similar files found."
+            error_msg += f"\n\nIMPORTANT: Use list_directory('.') to see project structure first."
+            action = "Use list_directory('.') to explore the project structure, then use the correct relative path."
+            return EditResult(False, path=path, error=error_msg, action=action)
         except Exception as e:
             return EditResult(False, path=path, error=str(e))
         
@@ -536,6 +548,57 @@ class PreciseEditor:
         if not p.is_absolute():
             p = self.root / p
         return p
+    
+    def _find_similar_files(self, path: str) -> list:
+        """Find files with similar names in the project to suggest correct paths."""
+        try:
+            if not self.root or not self.root.exists():
+                return []
+            
+            filename = Path(path).name.lower()
+            basename = Path(path).stem.lower()  # filename without extension
+            
+            # Extensions to search (source code files)
+            search_extensions = {'.py', '.js', '.ts', '.jsx', '.tsx', '.html', '.css', 
+                                '.json', '.md', '.txt', '.vue', '.svelte', '.go', '.rs',
+                                '.java', '.kt', '.swift', '.c', '.cpp', '.h', '.hpp'}
+            
+            similar = []
+            seen = set()
+            
+            for file_path in self.root.rglob('*'):
+                # Skip directories
+                if file_path.is_dir():
+                    continue
+                
+                # Only search source code files
+                if file_path.suffix.lower() not in search_extensions:
+                    continue
+                
+                rel_path = str(file_path.relative_to(self.root))
+                file_name = file_path.name.lower()
+                file_stem = file_path.stem.lower()
+                
+                # Exact filename match
+                if file_name == filename and rel_path not in seen:
+                    similar.append(rel_path)
+                    seen.add(rel_path)
+                # Similar name (basename match)
+                elif basename and file_stem and basename in file_stem and rel_path not in seen:
+                    similar.append(rel_path)
+                    seen.add(rel_path)
+                # Partial match on filename
+                elif filename and file_name and (filename in file_name or file_name in filename) and rel_path not in seen:
+                    similar.append(rel_path)
+                    seen.add(rel_path)
+                
+                if len(similar) >= 10:
+                    break
+            
+            return similar
+        except Exception as e:
+            log.warning(f"Error finding similar files: {e}")
+            return []
     
     def _generate_diff(self, old: str, new: str, path: str) -> str:
         diff = difflib.unified_diff(

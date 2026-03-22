@@ -367,20 +367,27 @@ class AIWorker(QThread):
                     final_tool_calls = []
                     for idx in sorted(tool_call_buffer.keys()):
                         tc = tool_call_buffer[idx]
-                        # Validate tool call has all required fields including non-empty arguments
+                        # Validate tool call has all required fields
                         if tc["id"] and tc["name"]:
                             args = tc["arguments"].strip() if tc["arguments"] else ""
-                            # Skip tool calls with empty or invalid arguments
-                            if not args or args == "{}" or args == "":
-                                log.warning(f"Skipping incomplete tool call {tc['name']}: id={tc['id']}, args='{args[:100] if args else 'EMPTY'}'")
-                                continue
+                            # Tools that don't require arguments (can be called with empty {})
+                            no_args_tools = {"git_status", "read_terminal", "undo_last_action", 
+                                            "get_problems"}  # git_diff, list_directory need args
+                            # Skip only if args are completely missing AND tool requires args
+                            if not args or args == "":
+                                # Empty args - only allow for tools that don't need args
+                                if tc["name"] not in no_args_tools:
+                                    log.warning(f"Skipping tool call {tc['name']}: missing required arguments")
+                                    continue
+                                # For no-args tools, use empty object
+                                args = "{}"
                             log.debug(f"Valid tool call: {tc['name']} with args length {len(args)}")
                             final_tool_calls.append({
                                 "id": tc["id"],
                                 "type": "function",
                                 "function": {
                                     "name": tc["name"],
-                                    "arguments": tc["arguments"]
+                                    "arguments": args
                                 }
                             })
                     if final_tool_calls:
@@ -457,7 +464,9 @@ You operate like a senior software engineer: read before you write, verify after
   - E7 (Verification): Immediately `read_file` the changed lines after an edit to confirm success.
   - E8 (Style): Match indentation (2 vs 4 spaces) EXACTLY.
   - E9 (Failure): If an edit fails due to multiple matches, look at the line numbers provided in the error. Choose a match and add more context from that specific line to make your `old_string` unique. DO NOT retry with the same parameters.
-  - E10 (Atomic): Every tool call MUST be followed by its result before the next  ### RULE 9: TASK MANAGEMENT
+  - E10 (Atomic): Execute one tool at a time. Wait for the result before planning the next action.
+
+### RULE 9: TASK MANAGEMENT
   - For complex tasks, ALWAYS use `<tasklist>` with `- [ ]` checkboxes.
   - Mark items `[x]` as you complete them in subsequent turns.
   - This populates the user's progress tracker.
@@ -485,15 +494,37 @@ You operate like a senior software engineer: read before you write, verify after
   - `edit_file` → path, old_string, new_string, expected_occurrences
   - `inject_after` → path, anchor, new_code
   - `add_import` → path, import_statement
-  - `get_file_outline` → path
+  - `get_file_outline` → path (DO THIS FIRST for files >100 lines!)
+  - `analyze_file` → path, analysis_type (USE BEFORE editing complex files!)
+  - `find_usages` → symbol, file_pattern (USE to understand impact of changes!)
+  - `delete_lines` → path, start_line, end_line (USE for removing code blocks!)
+  - `replace_lines` → path, start_line, end_line, new_code (USE for replacing functions!)
   - `undo_last_action` → ()
 
-  ### RULE 12: TASK COMPLETION — MANDATORY SUMMARY
+  ### RULE 12: LARGE FILE EDITING — MANDATORY WORKFLOW
+  For files >100 lines, ALWAYS follow this workflow:
+  1. CALL `get_file_outline` or `analyze_file` FIRST to understand structure
+  2. IDENTIFY the exact line numbers for your changes using the outline
+  3. USE `read_file` with start_line and end_line to see ONLY the relevant section
+  4. For removing functions/blocks: USE `delete_lines` with exact line numbers
+  5. For replacing functions: USE `replace_lines` with start/end line numbers
+  6. For small changes: USE `edit_file` with unique 3-line context
+  
+  ### RULE 13: SURGICAL EDITS — AVOID REWRITING ENTIRE FILES
+  - NEVER rewrite a file >50 lines in one `write_file` call
+  - Use `delete_lines` to remove unwanted code (specify exact line range)
+  - Use `replace_lines` to replace entire functions (use outline to find line numbers)
+  - Use `inject_after` to add new code after specific anchors
+  - Use `edit_file` only for find/replace of small text blocks (<20 lines)
+
+  ### RULE 14: TASK COMPLETION — MANDATORY SUMMARY
   - End your response with a `<task_summary>` JSON block.
 
-  ### RULE 13: INCREMENTAL DEVELOPMENT (LARGE FILES)
-  - Skeleton First → `write_file`
-  - Detail Addition → `edit_file` / `inject_after`
+  ### RULE 15: UNDERSTAND BEFORE MODIFYING
+  - For complex changes: Call `analyze_file` to understand dependencies
+  - For function changes: Call `find_usages` to understand impact
+  - For class changes: Search for inheritance patterns first
+  - NEVER assume you understand the code without reading it
 
 ```
 <tasklist>

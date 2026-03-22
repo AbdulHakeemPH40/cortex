@@ -528,11 +528,57 @@ class ToolRegistry:
 
         self.register_tool(
             name="get_file_outline",
-            description="Get a high-level summary of functions and classes in a file with line numbers.",
+            description="Get a high-level summary of functions and classes in a file with line numbers. Use BEFORE editing files >100 lines.",
             parameters=[
                 ToolParameter("path", "string", "Path to the file", required=True)
             ],
             function=self._get_file_outline
+        )
+        
+        # Surgical editing tools
+        self.register_tool(
+            name="delete_lines",
+            description="Delete lines from start_line to end_line (inclusive). Use for removing code blocks precisely. Line numbers are 1-indexed.",
+            parameters=[
+                ToolParameter("path", "string", "Path to the file", required=True),
+                ToolParameter("start_line", "int", "First line to delete (1-indexed)", required=True),
+                ToolParameter("end_line", "int", "Last line to delete (1-indexed)", required=True)
+            ],
+            function=self._delete_lines,
+            requires_confirmation=True
+        )
+        
+        self.register_tool(
+            name="replace_lines",
+            description="Replace lines from start_line to end_line with new code. Use for replacing entire functions or code blocks. Line numbers are 1-indexed.",
+            parameters=[
+                ToolParameter("path", "string", "Path to the file", required=True),
+                ToolParameter("start_line", "int", "First line to replace (1-indexed)", required=True),
+                ToolParameter("end_line", "int", "Last line to replace (1-indexed)", required=True),
+                ToolParameter("new_code", "string", "New code to insert", required=True)
+            ],
+            function=self._replace_lines,
+            requires_confirmation=True
+        )
+        
+        self.register_tool(
+            name="find_usages",
+            description="Find all usages of a symbol (function, class, variable) across the codebase. Use to understand impact of changes before editing.",
+            parameters=[
+                ToolParameter("symbol", "string", "Symbol name to search for (e.g., function name, class name)", required=True),
+                ToolParameter("file_pattern", "string", "File pattern to search (e.g., '*.py', '*.js')", required=False, default="*")
+            ],
+            function=self._find_usages
+        )
+        
+        self.register_tool(
+            name="analyze_file",
+            description="Deep analysis of a file including dependencies, structure, and complexity. Use BEFORE making large changes to understand the file.",
+            parameters=[
+                ToolParameter("path", "string", "Path to the file", required=True),
+                ToolParameter("analysis_type", "string", "Type of analysis: 'full', 'dependencies', 'structure', 'complexity'", required=False, default="full")
+            ],
+            function=self._analyze_file
         )
 
         self.register_tool(
@@ -894,42 +940,614 @@ class ToolRegistry:
         except Exception as e:
             raise Exception(f"Failed to insert: {e}")
 
-    def _get_file_outline(self, path: str) -> str:
-        """Simple regex-based outline of classes and functions."""
+    def _get_file_outline(self, path: str, detailed: bool = False) -> str:
+        """
+        Enhanced file outline extraction with deep code structure analysis.
+        Extracts imports, classes, functions, and their signatures.
+        
+        Args:
+            path: File path to analyze
+            detailed: If True, include method bodies preview
+        """
         try:
             resolved_path = self._resolve_path(path)
             if not resolved_path.exists():
                 return f"File not found: {path}"
 
-            import re
-            # Patterns for Python, JS/TS, CSS
-            patterns = [
-                (r'^(class\s+[a-zA-Z0-9_]+)', 'Class'),
-                (r'^(def\s+[a-zA-Z0-9_]+)', 'Function'),
-                (r'^(async\s+function\s+[a-zA-Z0-9_]+)', 'Async Function'),
-                (r'^(function\s+[a-zA-Z0-9_]+)', 'Function'),
-                (r'^([a-zA-Z0-9_]+\s*:\s*function)', 'Method'),
-                (r'^(\.[a-zA-Z0-9_-]+\s*\{)', 'CSS Selector'),
-                (r'^(# [^#].*)', 'Markdown H1'),
-                (r'^(## [^#].*)', 'Markdown H2'),
+            ext = Path(resolved_path).suffix.lower()
+            content = Path(resolved_path).read_text(encoding='utf-8', errors='ignore')
+            lines = content.split('\n')
+            total_lines = len(lines)
+            
+            sections = []
+            sections.append(f"📁 {Path(path).name} ({total_lines} lines)")
+            sections.append("=" * 50)
+            
+            # 1. Extract IMPORTS
+            imports = []
+            import_patterns = [
+                (r'^import\s+([a-zA-Z0-9_\.]+)', 'import'),
+                (r'^from\s+([a-zA-Z0-9_\.]+)\s+import', 'from'),
+                (r'^#include\s*[<"]([^>"]+)[>"]', 'c_include'),
+                (r'^require\([\'"]([^\'"]+)[\'"]\)', 'js_require'),
+                (r'^import\s+[\'"]([^\'"]+)[\'"]', 'es_import'),
             ]
             
-            outline = []
-            with open(resolved_path, 'r', encoding='utf-8', errors='ignore') as f:
-                for i, line in enumerate(f, 1):
-                    for pattern, kind in patterns:
-                        match = re.search(pattern, line)
-                        if match:
-                            outline.append(f"{i:4d}| {kind}: {match.group(1).strip()}")
-                            break
+            for i, line in enumerate(lines, 1):
+                stripped = line.strip()
+                for pattern, kind in import_patterns:
+                    match = re.match(pattern, stripped)
+                    if match:
+                        module = match.group(1)
+                        imports.append(f"   L{i:4d}: {kind} {module}")
+                        break
             
-            if not outline:
-                return "No major structures (classes/functions) detected."
-            return "\n".join(outline)
+            if imports:
+                sections.append("\n📦 IMPORTS:")
+                sections.extend(imports[:30])  # Limit to first 30 imports
+                if len(imports) > 30:
+                    sections.append(f"   ... and {len(imports) - 30} more imports")
+            
+            # 2. Extract CODE STRUCTURE (Language-specific)
+            if ext in ('.py',):
+                structure = self._extract_python_structure(lines, detailed)
+            elif ext in ('.js', '.ts', '.jsx', '.tsx'):
+                structure = self._extract_js_structure(lines, detailed)
+            elif ext in ('.java', '.kt'):
+                structure = self._extract_java_structure(lines, detailed)
+            elif ext in ('.go',):
+                structure = self._extract_go_structure(lines, detailed)
+            elif ext in ('.rs',):
+                structure = self._extract_rust_structure(lines, detailed)
+            elif ext in ('.c', '.cpp', '.h', '.hpp'):
+                structure = self._extract_c_structure(lines, detailed)
+            else:
+                structure = self._extract_generic_structure(lines)
+            
+            sections.extend(structure)
+            
+            # 3. Dependencies summary
+            if imports:
+                sections.append("\n📊 SUMMARY:")
+                sections.append(f"   Imports: {len(imports)} modules")
+                sections.append(f"   Classes: {len([s for s in structure if 'CLASS' in s])}")
+                sections.append(f"   Functions: {len([s for s in structure if 'DEF' in s or 'FUNC' in s])}")
+            
+            return "\n".join(sections)
+            
         except Exception as e:
             return f"Failed to get outline: {e}"
+    
+    def _extract_python_structure(self, lines: list, detailed: bool = False) -> list:
+        """Extract Python classes, functions, and methods with signatures."""
+        structure = []
+        current_class = None
+        current_class_indent = 0
+        current_function = None
+        current_function_indent = 0
+        
+        for i, line in enumerate(lines, 1):
+            stripped = line.strip()
+            indent = len(line) - len(line.lstrip())
+            
+            # Skip comments and empty lines
+            if stripped.startswith('#') or not stripped:
+                continue
+            
+            # Class definition
+            class_match = re.match(r'^class\s+([A-Za-z0-9_]+)(?:\s*\(([^)]*)\))?:', stripped)
+            if class_match:
+                class_name = class_match.group(1)
+                bases = class_match.group(2) or ""
+                bases_str = f"({bases})" if bases else ""
+                structure.append(f"\n🏛️  CLASS: {class_name}{bases_str} (line {i})")
+                current_class = class_name
+                current_class_indent = indent
+                continue
+            
+            # Function/method definition
+            func_match = re.match(r'^(async\s+)?def\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)', stripped)
+            if func_match:
+                is_async = func_match.group(1) is not None
+                func_name = func_match.group(2)
+                params = func_match.group(3)
+                
+                # Determine if method or function
+                if current_class and indent > current_class_indent:
+                    prefix = "   📎method" if indent <= current_class_indent + 4 else "   📎method"
+                else:
+                    prefix = "⚡ func"
+                    current_class = None
+                    current_class_indent = 0
+                
+                async_str = "async " if is_async else ""
+                structure.append(f"{prefix}: {async_str}{func_name}({params}) → line {i}")
+                current_function = func_name
+                current_function_indent = indent
+                continue
+            
+            # Detect class end (indent returns to class level or less)
+            if current_class and indent <= current_class_indent and not stripped.startswith('@'):
+                current_class = None
+        
+        return structure
+    
+    def _extract_js_structure(self, lines: list, detailed: bool = False) -> list:
+        """Extract JS/TS classes, functions, and exports."""
+        structure = []
+        
+        for i, line in enumerate(lines, 1):
+            stripped = line.strip()
+            
+            # Skip comments
+            if stripped.startswith('//') or stripped.startswith('/*') or stripped.startswith('*'):
+                continue
+            
+            # Class definition
+            class_match = re.match(r'^(export\s+)?(default\s+)?class\s+([A-Za-z0-9_]+)', stripped)
+            if class_match:
+                is_export = class_match.group(1) is not None
+                class_name = class_match.group(3)
+                export_str = "export " if is_export else ""
+                structure.append(f"\n🏛️  {export_str}CLASS: {class_name} (line {i})")
+                continue
+            
+            # Function declarations
+            func_match = re.match(r'^(export\s+)?(async\s+)?function\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)', stripped)
+            if func_match:
+                is_export = func_match.group(1) is not None
+                is_async = func_match.group(2) is not None
+                func_name = func_match.group(3)
+                params = func_match.group(4)
+                export_str = "export " if is_export else ""
+                async_str = "async " if is_async else ""
+                structure.append(f"⚡ {export_str}{async_str}func {func_name}({params}) → line {i}")
+                continue
+            
+            # Arrow functions and const declarations
+            arrow_match = re.match(r'^(export\s+)?(const|let|var)\s+([A-Za-z0-9_]+)\s*=\s*(async\s+)?\([^)]*\)\s*=>', stripped)
+            if arrow_match:
+                is_export = arrow_match.group(1) is not None
+                kind = arrow_match.group(2)
+                name = arrow_match.group(3)
+                is_async = arrow_match.group(4) is not None
+                export_str = "export " if is_export else ""
+                async_str = "async " if is_async else ""
+                structure.append(f"⚡ {export_str}{async_str}{kind} {name} = () =>  → line {i}")
+                continue
+            
+            # Interface (TypeScript)
+            interface_match = re.match(r'^(export\s+)?interface\s+([A-Za-z0-9_]+)', stripped)
+            if interface_match:
+                is_export = interface_match.group(1) is not None
+                name = interface_match.group(2)
+                export_str = "export " if is_export else ""
+                structure.append(f"📋 {export_str}interface {name} → line {i}")
+                continue
+            
+            # Type (TypeScript)
+            type_match = re.match(r'^(export\s+)?type\s+([A-Za-z0-9_]+)', stripped)
+            if type_match:
+                is_export = type_match.group(1) is not None
+                name = type_match.group(2)
+                export_str = "export " if is_export else ""
+                structure.append(f"📋 {export_str}type {name} → line {i}")
+                continue
+        
+        return structure
+    
+    def _extract_java_structure(self, lines: list, detailed: bool = False) -> list:
+        """Extract Java/Kotlin classes and methods."""
+        structure = []
+        
+        for i, line in enumerate(lines, 1):
+            stripped = line.strip()
+            
+            if stripped.startswith('//') or stripped.startswith('/*'):
+                continue
+            
+            # Class definition
+            class_match = re.match(r'^(public|private|protected)?\s*(abstract|final|class|interface|enum)\s+([A-Za-z0-9_]+)', stripped)
+            if class_match:
+                visibility = class_match.group(1) or ""
+                kind = class_match.group(2)
+                name = class_match.group(3)
+                structure.append(f"\n🏛️  {visibility} {kind} {name} (line {i})")
+                continue
+            
+            # Method definition
+            method_match = re.match(r'^(public|private|protected)?\s*(static\s+)?([A-Za-z0-9_<>]+)\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)', stripped)
+            if method_match:
+                visibility = method_match.group(1) or ""
+                is_static = method_match.group(2) is not None
+                return_type = method_match.group(3)
+                name = method_match.group(4)
+                params = method_match.group(5)
+                static_str = "static " if is_static else ""
+                structure.append(f"   📎{visibility} {static_str}{return_type} {name}({params}) → line {i}")
+        
+        return structure
+    
+    def _extract_go_structure(self, lines: list, detailed: bool = False) -> list:
+        """Extract Go structs and functions."""
+        structure = []
+        
+        for i, line in enumerate(lines, 1):
+            stripped = line.strip()
+            
+            if stripped.startswith('//'):
+                continue
+            
+            # Struct definition
+            struct_match = re.match(r'^type\s+([A-Za-z0-9_]+)\s+struct', stripped)
+            if struct_match:
+                name = struct_match.group(1)
+                structure.append(f"\n🏛️  struct {name} (line {i})")
+                continue
+            
+            # Interface definition
+            iface_match = re.match(r'^type\s+([A-Za-z0-9_]+)\s+interface', stripped)
+            if iface_match:
+                name = iface_match.group(1)
+                structure.append(f"\n📋 interface {name} (line {i})")
+                continue
+            
+            # Function definition
+            func_match = re.match(r'^func\s+(?:\([A-Za-z0-9_]+\s+\*?[A-Za-z0-9_]+\)\s+)?([A-Za-z0-9_]+)\s*\(([^)]*)\)', stripped)
+            if func_match:
+                name = func_match.group(1)
+                params = func_match.group(2)
+                structure.append(f"⚡ func {name}({params}) → line {i}")
+        
+        return structure
+    
+    def _extract_rust_structure(self, lines: list, detailed: bool = False) -> list:
+        """Extract Rust structs, enums, and functions."""
+        structure = []
+        
+        for i, line in enumerate(lines, 1):
+            stripped = line.strip()
+            
+            if stripped.startswith('//'):
+                continue
+            
+            # Struct definition
+            struct_match = re.match(r'^(pub\s+)?struct\s+([A-Za-z0-9_]+)', stripped)
+            if struct_match:
+                is_pub = struct_match.group(1) is not None
+                name = struct_match.group(2)
+                pub_str = "pub " if is_pub else ""
+                structure.append(f"\n🏛️  {pub_str}struct {name} (line {i})")
+                continue
+            
+            # Enum definition
+            enum_match = re.match(r'^(pub\s+)?enum\s+([A-Za-z0-9_]+)', stripped)
+            if enum_match:
+                is_pub = enum_match.group(1) is not None
+                name = enum_match.group(2)
+                pub_str = "pub " if is_pub else ""
+                structure.append(f"\n📋 {pub_str}enum {name} (line {i})")
+                continue
+            
+            # Function definition
+            func_match = re.match(r'^(pub\s+)?(async\s+)?fn\s+([A-Za-z0-9_]+)\s*[<(]', stripped)
+            if func_match:
+                is_pub = func_match.group(1) is not None
+                is_async = func_match.group(2) is not None
+                name = func_match.group(3)
+                pub_str = "pub " if is_pub else ""
+                async_str = "async " if is_async else ""
+                structure.append(f"⚡ {pub_str}{async_str}fn {name} → line {i}")
+        
+        return structure
+    
+    def _extract_c_structure(self, lines: list, detailed: bool = False) -> list:
+        """Extract C/C++ classes, functions, and structs."""
+        structure = []
+        
+        for i, line in enumerate(lines, 1):
+            stripped = line.strip()
+            
+            if stripped.startswith('//') or stripped.startswith('/*'):
+                continue
+            
+            # Class definition
+            class_match = re.match(r'^class\s+([A-Za-z0-9_]+)', stripped)
+            if class_match:
+                name = class_match.group(1)
+                structure.append(f"\n🏛️  class {name} (line {i})")
+                continue
+            
+            # Struct definition
+            struct_match = re.match(r'^(typedef\s+)?struct\s+([A-Za-z0-9_]+)?\s*\{?', stripped)
+            if struct_match:
+                name = struct_match.group(2) or "(anonymous)"
+                structure.append(f"📋 struct {name} → line {i}")
+                continue
+            
+            # Function definition (simplified)
+            func_match = re.match(r'^([A-Za-z0-9_]+)\s+([A-Za-z0-9_]+)\s*\([^)]*\)\s*\{', stripped)
+            if func_match:
+                return_type = func_match.group(1)
+                name = func_match.group(2)
+                structure.append(f"⚡ {return_type} {name}() → line {i}")
+        
+        return structure
+    
+    def _extract_generic_structure(self, lines: list) -> list:
+        """Generic structure extraction for unknown file types."""
+        structure = []
+        
+        for i, line in enumerate(lines, 1):
+            stripped = line.strip()
+            
+            # Skip empty lines and comments
+            if not stripped or stripped.startswith('#') or stripped.startswith('//'):
+                continue
+            
+            # Look for function-like patterns
+            func_patterns = [
+                r'function\s+([A-Za-z0-9_]+)',
+                r'def\s+([A-Za-z0-9_]+)',
+                r'func\s+([A-Za-z0-9_]+)',
+                r'fn\s+([A-Za-z0-9_]+)',
+                r'class\s+([A-Za-z0-9_]+)',
+            ]
+            
+            for pattern in func_patterns:
+                match = re.search(pattern, stripped)
+                if match:
+                    structure.append(f"   L{i:4d}: {stripped[:60]}")
+                    break
+        
+        return structure
 
-    # PROTECTED PATHS - Cannot be deleted
+    # ─── SURGICAL EDITING TOOLS ─────────────────────────────────────────────────
+    
+    def _delete_lines(self, path: str, start_line: int, end_line: int) -> str:
+        """
+        Delete lines from start_line to end_line (inclusive, 1-indexed).
+        Use for removing code blocks precisely.
+        """
+        try:
+            resolved_path = self._resolve_path(path)
+            str_path = str(resolved_path)
+            
+            if not resolved_path.exists():
+                raise FileNotFoundError(f"File not found: {path}")
+            
+            with open(resolved_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            
+            original_content = "".join(lines)
+            total_lines = len(lines)
+            
+            # Validate line range
+            if start_line < 1:
+                return f"❌ Invalid start_line: {start_line}. Line numbers are 1-indexed."
+            if end_line > total_lines:
+                return f"❌ Invalid end_line: {end_line}. File has {total_lines} lines."
+            if start_line > end_line:
+                return f"❌ Invalid range: start_line ({start_line}) > end_line ({end_line})."
+            
+            # Record for undo
+            self._editor.undo_stack.push(str_path, original_content, f"delete lines {start_line}-{end_line}")
+            
+            # Delete lines (convert to 0-indexed)
+            deleted_lines = lines[start_line-1:end_line]
+            del lines[start_line-1:end_line]
+            
+            new_content = "".join(lines)
+            with open(resolved_path, 'w', encoding='utf-8') as f:
+                f.write(new_content)
+            
+            _set_cached_file(str_path, new_content)
+            
+            deleted_preview = "".join(deleted_lines[:3])
+            if len(deleted_lines) > 3:
+                deleted_preview += f"... ({len(deleted_lines)} lines total)"
+            
+            return f"✅ Deleted lines {start_line}-{end_line} from {Path(path).name}\nDeleted:\n{deleted_preview}"
+            
+        except Exception as e:
+            raise Exception(f"Failed to delete lines: {e}")
+    
+    def _replace_lines(self, path: str, start_line: int, end_line: int, new_code: str) -> str:
+        """
+        Replace lines from start_line to end_line with new_code.
+        Use for replacing entire code blocks precisely.
+        """
+        try:
+            resolved_path = self._resolve_path(path)
+            str_path = str(resolved_path)
+            
+            if not resolved_path.exists():
+                raise FileNotFoundError(f"File not found: {path}")
+            
+            with open(resolved_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            
+            original_content = "".join(lines)
+            total_lines = len(lines)
+            
+            # Validate line range
+            if start_line < 1:
+                return f"❌ Invalid start_line: {start_line}. Line numbers are 1-indexed."
+            if end_line > total_lines:
+                return f"❌ Invalid end_line: {end_line}. File has {total_lines} lines."
+            if start_line > end_line:
+                return f"❌ Invalid range: start_line ({start_line}) > end_line ({end_line})."
+            
+            # Record for undo
+            self._editor.undo_stack.push(str_path, original_content, f"replace lines {start_line}-{end_line}")
+            
+            # Ensure new_code ends with newline
+            if not new_code.endswith('\n'):
+                new_code += '\n'
+            
+            # Replace lines
+            old_lines = lines[start_line-1:end_line]
+            lines[start_line-1:end_line] = [new_code]
+            
+            new_content = "".join(lines)
+            with open(resolved_path, 'w', encoding='utf-8') as f:
+                f.write(new_content)
+            
+            _set_cached_file(str_path, new_content)
+            
+            return f"✅ Replaced lines {start_line}-{end_line} ({len(old_lines)} lines) with {len(new_code.splitlines())} lines in {Path(path).name}"
+            
+        except Exception as e:
+            raise Exception(f"Failed to replace lines: {e}")
+    
+    def _find_usages(self, symbol: str, file_pattern: str = "*") -> str:
+        """
+        Find all usages of a symbol (function, class, variable) across the codebase.
+        Returns file paths and line numbers where the symbol is used.
+        """
+        try:
+            import re
+            from pathlib import Path as PathLib
+            
+            if not self.project_root:
+                return "❌ No project root set. Open a project first."
+            
+            root = PathLib(self.project_root)
+            results = []
+            files_scanned = 0
+            pattern = re.compile(rf'\b{re.escape(symbol)}\b')
+            
+            # Walk through source files
+            source_extensions = {'.py', '.js', '.ts', '.jsx', '.tsx', '.java', '.kt', 
+                                '.go', '.rs', '.c', '.cpp', '.h', '.hpp', '.rb', '.php'}
+            
+            for file_path in root.rglob(file_pattern):
+                # Skip excluded directories
+                if any(skip in str(file_path) for skip in ['node_modules', 'venv', '__pycache__', 
+                                                            '.git', 'dist', 'build', 'target']):
+                    continue
+                
+                if file_path.suffix.lower() not in source_extensions:
+                    continue
+                
+                try:
+                    content = file_path.read_text(encoding='utf-8', errors='ignore')
+                    lines = content.split('\n')
+                    matches_in_file = []
+                    
+                    for i, line in enumerate(lines, 1):
+                        if pattern.search(line):
+                            # Skip the definition itself (look for usage patterns)
+                            stripped = line.strip()
+                            if stripped.startswith('def ') or stripped.startswith('class ') or stripped.startswith('func '):
+                                # Include definition
+                                pass
+                            matches_in_file.append((i, line.strip()[:80]))
+                    
+                    if matches_in_file:
+                        rel_path = str(file_path.relative_to(root))
+                        results.append(f"\n📄 {rel_path}")
+                        for line_num, line_content in matches_in_file[:10]:  # Limit to 10 matches per file
+                            results.append(f"   L{line_num}: {line_content}")
+                        if len(matches_in_file) > 10:
+                            results.append(f"   ... and {len(matches_in_file) - 10} more matches")
+                    
+                    files_scanned += 1
+                    
+                except Exception:
+                    continue
+            
+            if not results:
+                return f"No usages found for '{symbol}' in {files_scanned} files."
+            
+            return f"Found {sum(len(r.split('\\n'))-1 for r in results)} usages of '{symbol}' in {files_scanned} files:\n" + "\n".join(results)
+            
+        except Exception as e:
+            return f"Error searching for usages: {e}"
+    
+    def _analyze_file(self, path: str, analysis_type: str = "full") -> str:
+        """
+        Deep analysis of a file for better understanding before editing.
+        analysis_type: 'full' | 'dependencies' | 'structure' | 'complexity'
+        """
+        try:
+            resolved_path = self._resolve_path(path)
+            if not resolved_path.exists():
+                return f"File not found: {path}"
+            
+            content = Path(resolved_path).read_text(encoding='utf-8', errors='ignore')
+            lines = content.split('\n')
+            ext = Path(path).suffix.lower()
+            
+            results = [f"📊 Analysis of {Path(path).name} ({len(lines)} lines)"]
+            results.append("=" * 50)
+            
+            # Import analysis
+            imports = []
+            import_patterns = [
+                r'^import\s+([a-zA-Z0-9_\.]+)',
+                r'^from\s+([a-zA-Z0-9_\.]+)\s+import',
+                r'^const\s+[a-zA-Z0-9_]+\s*=\s*require\([\'"]([^\'"]+)[\'"]',
+                r'^import\s+[a-zA-Z0-9_{}\s,]+\s+from\s+[\'"]([^\'"]+)[\'"]',
+            ]
+            
+            for i, line in enumerate(lines, 1):
+                stripped = line.strip()
+                for pattern in import_patterns:
+                    match = re.match(pattern, stripped)
+                    if match:
+                        imports.append((i, match.group(1)))
+                        break
+            
+            # Extract structure using existing method
+            if ext in ('.py',):
+                structure = self._extract_python_structure(lines)
+            elif ext in ('.js', '.ts', '.jsx', '.tsx'):
+                structure = self._extract_js_structure(lines)
+            else:
+                structure = self._extract_generic_structure(lines)
+            
+            # Complexity estimate
+            complexity_indicators = {
+                'classes': len([s for s in structure if 'CLASS' in s]),
+                'functions': len([s for s in structure if 'func' in s.lower() or 'DEF' in s]),
+                'lines': len(lines),
+                'imports': len(imports),
+            }
+            
+            # Output
+            results.append("\n📦 DEPENDENCIES:")
+            if imports:
+                for line_num, module in imports[:15]:
+                    results.append(f"   L{line_num}: {module}")
+                if len(imports) > 15:
+                    results.append(f"   ... and {len(imports) - 15} more")
+            else:
+                results.append("   No imports found")
+            
+            results.append("\n🏗️ STRUCTURE:")
+            results.extend(structure[:30])
+            if len(structure) > 30:
+                results.append(f"   ... and {len(structure) - 30} more items")
+            
+            results.append("\n📈 COMPLEXITY:")
+            results.append(f"   Classes: {complexity_indicators['classes']}")
+            results.append(f"   Functions/Methods: {complexity_indicators['functions']}")
+            results.append(f"   Total lines: {complexity_indicators['lines']}")
+            
+            # Edit recommendations
+            results.append("\n💡 RECOMMENDATIONS:")
+            if complexity_indicators['lines'] > 500:
+                results.append("   ⚠️ Large file - use get_file_outline before editing")
+            if complexity_indicators['functions'] > 20:
+                results.append("   ⚠️ Many functions - search for specific function before editing")
+            if complexity_indicators['imports'] > 20:
+                results.append("   ⚠️ Many dependencies - check import order")
+            
+            return "\n".join(results)
+            
+        except Exception as e:
+            return f"Analysis failed: {e}"
     PROTECTED_PATHS = [
         # System directories
         "c:\\", "c:/", "/", "/bin", "/boot", "/dev", "/etc", "/lib", "/lib64",
