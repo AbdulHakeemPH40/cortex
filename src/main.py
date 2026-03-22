@@ -45,8 +45,11 @@ def main():
     
     # Simple timer to prove the loop is at least starting (debug only)
     QTimer.singleShot(1000, lambda: log.debug("Main: Loop is ALIVE! (1s check)"))
+    QTimer.singleShot(2000, lambda: log.debug("Main: Loop is ALIVE! (2s check)"))
+    QTimer.singleShot(3000, lambda: log.debug("Main: Loop is ALIVE! (3s check)"))
     
     try:
+        log.info("Calling app.exec()...")
         res = app.exec()
         log.info(f"Application exited with code {res}")
         sys.exit(res)

@@ -5254,3 +5254,33 @@ function _clearQueue() {
 
 window._removeFromQueue = _removeFromQueue;
 window._clearQueue = _clearQueue;
+
+// Indexing status bar functions
+function showIndexingStatus(message, autoHide) {
+    var bar = document.getElementById('indexing-bar');
+    var text = document.getElementById('indexing-text');
+    if (!bar || !text) return;
+    
+    text.textContent = message;
+    bar.style.display = 'flex';
+    bar.style.opacity = '1';
+    
+    if (autoHide) {
+        clearTimeout(bar._hideTimer);
+        bar._hideTimer = setTimeout(function() {
+            bar.style.opacity = '0';
+            setTimeout(function() {
+                if (bar) bar.style.display = 'none';
+                if (bar) bar.style.opacity = '1';
+            }, 400);
+        }, 3000);
+    }
+}
+
+function hideIndexingStatus() {
+    var bar = document.getElementById('indexing-bar');
+    if (bar) bar.style.display = 'none';
+}
+
+window.showIndexingStatus = showIndexingStatus;
+window.hideIndexingStatus = hideIndexingStatus;

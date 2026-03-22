@@ -116,6 +116,7 @@ class DeepSeekProvider:
                                     # Handle both content and reasoning_content (for R1 model)
                                     content = delta.get('content', '')
                                     reasoning = delta.get('reasoning_content', '')
+                                    tool_calls = delta.get('tool_calls', [])
                                     
                                     # Yield content if available
                                     if content:
@@ -123,6 +124,21 @@ class DeepSeekProvider:
                                     # Yield reasoning content separately (prefix with [THINK])
                                     elif reasoning:
                                         yield f"[THINK] {reasoning}"
+                                    
+                                    # Handle tool calls
+                                    if tool_calls:
+                                        tool_call_data = []
+                                        for tc in tool_calls:
+                                            tc_info = {
+                                                'index': tc.get('index', 0),
+                                                'id': tc.get('id', ''),
+                                                'function': {
+                                                    'name': tc.get('function', {}).get('name', ''),
+                                                    'arguments': tc.get('function', {}).get('arguments', '')
+                                                }
+                                            }
+                                            tool_call_data.append(tc_info)
+                                        yield f"__TOOL_CALL_DELTA__:{json.dumps(tool_call_data)}"
                                     
                                     # Track tokens if available
                                     if 'usage' in data:

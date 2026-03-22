@@ -754,6 +754,21 @@ class AIChatWidget(QWidget):
         """Hide the project indicator."""
         self._page.runJavaScript("if(window.clearProjectInfo) window.clearProjectInfo();")
 
+    def show_indexing_status(self, message: str, auto_hide: bool = False):
+        """Show project indexing status bar."""
+        import json
+        safe_msg = json.dumps(message)
+        safe_hide = 'true' if auto_hide else 'false'
+        self._view.page().runJavaScript(
+            f"if(window.showIndexingStatus) showIndexingStatus({safe_msg}, {safe_hide});"
+        )
+
+    def hide_indexing_status(self):
+        """Hide project indexing status bar."""
+        self._view.page().runJavaScript(
+            "if(window.hideIndexingStatus) hideIndexingStatus();"
+        )
+
     def _ensure_terminal_backend(self):
         """Lazy initialization of terminal backend - only starts when first requested."""
         if self._pty_process is not None or self._terminal_process is not None:

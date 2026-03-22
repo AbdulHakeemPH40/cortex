@@ -14,6 +14,7 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal
 from src.utils.logger import get_logger
 from src.core.key_manager import get_key_manager
 from src.ai.providers import get_provider_registry, ProviderType, ChatMessage
+from src.ai.decision_framework import get_decision_framework, reset_decision_framework, ActionType
 
 log = get_logger("ai_agent")
 
@@ -586,7 +587,44 @@ These directories contain framework dependencies, NOT user code. Entering them f
 
 If you see a blocked directory in a listing, report: "Found [dirname] — dependency directory, skipping"
 
-Be concise, direct, and responsive. Do what the user asks — no more, no less."""
+Be concise, direct, and responsive. Do what the user asks — no more, no less.
+
+### RULE FOR PROJECT OVERVIEW RESPONSES
+When presenting a project overview (first message, "index this", "what is this"):
+
+ALWAYS include these sections in order:
+1. **Project Type** — one line: "This is a [type] application built with [stack]"
+2. **Structure** — show the key directories/files as a tree or bullet list
+3. **Tech Stack** — frameworks, languages, key dependencies
+4. **Entry Points** — where execution starts (main.py, index.js, etc.)
+5. **What I can help with** — 3-4 specific things relevant to this project
+6. **Next step question** — "What would you like to work on?"
+
+Example format:
+```
+## 📁 MyProject
+
+This is a **FastAPI backend** with **React frontend**.
+
+### Structure
+src/
+├── api/         ← REST endpoints
+├── models/      ← SQLAlchemy models
+└── services/    ← business logic
+
+### Tech Stack
+- Backend: Python 3.11, FastAPI, SQLAlchemy, PostgreSQL
+- Frontend: React 18, TypeScript, Vite, Tailwind CSS
+- Tests: pytest (backend), Vitest (frontend)
+
+### I can help you with:
+- Adding new API endpoints
+- Writing or fixing database migrations
+- Frontend component development
+- Debugging test failures
+
+What would you like to work on?
+```"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -608,10 +646,12 @@ Be concise, direct, and responsive. Do what the user asks — no more, no less."
         self._always_allowed = True  # Agent mode has full autonomy by default
         self._warmup_shown = False  # Track if warmup has been shown
         self._context_manager = None  # Will be initialized when project is set
+        self._project_context = None  # ProjectContext when ready
         self._active_file_path = None
         self._cursor_position = None
         self._change_orchestrator = get_change_orchestrator()
         self._pre_edit_snapshots: dict = {}  # Capture file content before edits for diff
+        self._decision_framework = None  # Initialized when project is set
 
     def set_interaction_mode(self, mode: str):
         """Set the interaction mode (Agent or Ask)."""
@@ -633,6 +673,43 @@ Be concise, direct, and responsive. Do what the user asks — no more, no less."
         # This method is kept for compatibility but should not be called
         # All messages now go through the AI for intelligent, context-aware responses
         pass
+
+    def _analyze_and_plan(self, user_message: str) -> Optional[str]:
+        """
+        Use decision framework to analyze problem and create action plan.
+        Returns enhanced system prompt with analysis, or None if not applicable.
+        """
+        if not self._decision_framework:
+            return None
+        
+        # Check if message indicates a problem to solve
+        problem_indicators = [
+            "error", "crash", "bug", "fix", "broken", "not working",
+            "failed", "exception", "traceback", "stuck", "infinite",
+            "loop", "hang", "slow", "performance", "memory", "blank"
+        ]
+        
+        is_problem = any(indicator in user_message.lower() for indicator in problem_indicators)
+        
+        if not is_problem:
+            return None
+        
+        log.info(f"Decision framework: Analyzing problem: {user_message[:100]}")
+        
+        # Phase 1: Gather evidence
+        evidence = self._decision_framework.gather_evidence(
+            error_message=user_message,
+            context=f"Project: {self._project_root}"
+        )
+        
+        # Phase 2: Analyze
+        analysis = self._decision_framework.analyze_problem(evidence)
+        
+        # Phase 3: Create action plan
+        plan = self._decision_framework.create_action_plan(analysis)
+        
+        # Return enhanced prompt
+        return self._decision_framework.to_system_prompt()
 
     def _check_configuration(self):
         """Check and log AI configuration status."""
@@ -677,7 +754,93 @@ Be concise, direct, and responsive. Do what the user asks — no more, no less."
         
         self._project_root = path
         self._tool_registry.project_root = path
+        
+        # Initialize decision framework for this project
+        self._decision_framework = get_decision_framework(path)
+        reset_decision_framework()  # Start fresh for new project
+        
         log.info(f"AI Agent context switched to project: {path}")
+    
+    def set_project_context(self, context):
+        """Called when background project scan completes."""
+        self._project_context = context
+        log.info(f"Project context set: {context.project_type}, "
+                 f"{context.source_file_count} source files")
+    
+    # Token budget for context window management
+    TOKEN_BUDGET = {
+        "system_prompt":    3000,   # SYSTEM_PROMPT constant
+        "project_context":  2000,   # ProjectContext.to_system_prompt_block()
+        "history_summary":  1000,   # _history_summary
+        "recent_history":   8000,   # last 10-15 turns
+        "current_message":  2000,   # user's current message + context
+        "response_reserve": 8192,   # max_tokens for response
+        # Total: ~24K — well within 64K window
+    }
+    
+    def _build_system_content(self) -> str:
+        """
+        Build system content with strict token budgets.
+        Trims each section to stay within limits.
+        """
+        from src.ai.project_context import get_project_context
+        
+        parts = []
+        
+        # 1. Core system prompt (fixed size)
+        parts.append(self.SYSTEM_PROMPT)
+        
+        # 2. Project context (max 2000 tokens ≈ 8000 chars)
+        if self._project_root:
+            ctx = get_project_context(self._project_root)
+            if ctx and ctx.is_ready:
+                ctx_block = ctx.to_system_prompt_block()
+                # Truncate if too long
+                if len(ctx_block) > 8000:
+                    ctx_block = ctx_block[:8000] + "\n... (project context truncated)"
+                parts.append(ctx_block)
+            else:
+                parts.append(f"## PROJECT ROOT\n{self._project_root}")
+        
+        # 3. History summary (max 1000 tokens ≈ 4000 chars)
+        if self._history_summary:
+            summary = self._history_summary
+            if len(summary) > 4000:
+                summary = summary[:4000] + "..."
+            parts.append(f"## CONVERSATION SUMMARY\n{summary}")
+        
+        # 4. Warmup instruction (first message only)
+        warmup_block = self._get_warmup_instruction()
+        if warmup_block:
+            parts.append(warmup_block)
+        
+        return "\n\n".join(parts)
+    
+    def _get_warmup_instruction(self) -> str:
+        """Get warmup instruction for first message (returns empty string after)."""
+        if self._warmup_shown or not self._project_root:
+            return ""
+        
+        from src.ai.project_context import get_project_context
+        ctx = get_project_context(self._project_root)
+        
+        if ctx and ctx.is_ready:
+            # Context already built — instruct AI to use it, not re-scan
+            return (
+                "## FIRST INTERACTION — PROJECT ALREADY INDEXED\n"
+                "The project context block above contains the complete project analysis.\n"
+                "Use it to respond immediately without calling list_directory.\n"
+                "Present a structured overview then ask what the user wants to work on."
+            )
+        else:
+            return (
+                f"## FIRST INTERACTION — EXPLORE PROJECT\n"
+                f"Project root: {self._project_root}\n"
+                f"1. Start with list_directory('{self._project_root}')\n"
+                f"2. Read README.md and 1-2 key config files\n"
+                f"3. Present: project type, stack, structure, what you can help with\n"
+                f"4. Stay within the project root — do NOT read venv/node_modules"
+            )
         
         # Only load history if this is not a fresh/empty project switch
         # The history will be loaded by _on_project_opened if needed
@@ -787,48 +950,16 @@ Be concise, direct, and responsive. Do what the user asks — no more, no less."
         if len(self._history) >= 25:
             self._summarize_history(10)
 
-        # Build system prompt with summary if available
-        system_content = self.SYSTEM_PROMPT
-        if self._history_summary:
-            system_content += f"\n\n## CONVERSATION SUMMARY (PAST CONTEXT)\n{self._history_summary}"
+        # Build system content with context budget enforcement
+        system_content = self._build_system_content()
         
-        # On first interaction, add instruction to explore project
-        if not self._warmup_shown and self._project_root:
-            system_content += f"""\n\n## FIRST INTERACTION - EXPLORE PROJECT
-This is the first message. Use `list_directory` on '{self._project_root}' to understand the project structure.
-
-IMPORTANT RULES:
-1. After exploring, you MUST provide a clear summary to the user including:
-   - What type of project this is (e.g., web app, Python package, etc.)
-   - Main technologies used
-   - Key files and their purposes
-   - Current state (what's working, what's incomplete)
-
-2. Do NOT keep reading files indefinitely. After 3-5 key files, STOP and provide your analysis.
-
-3. NEVER explore or read files inside these directories (performance killer):
-   # Virtual Environments (ALL frameworks)
-   - venv/, .venv/, env/, virtualenv/, ENV/ (Python)
-   - node_modules/, .pnpm-store/, .yarn/, .pnp/ (Node.js)
-   - vendor/, Godeps/ (Go)
-   - target/, .cargo/, Cargo.lock (Rust)
-   - .gradle/, build/, out/ (Java/Kotlin/Gradle)
-   - bin/, obj/, packages/ (C#/.NET)
-   - Pods/, .cocoapods/ (iOS/Swift)
-   - .bundle/, vendor/bundle/ (Ruby)
-   - .stack-work/, dist-newstyle/ (Haskell)
-   - _build/, deps/, .elixir_ls/ (Elixir)
-   - .dart_tool/, build/, .packages/ (Dart/Flutter)
-   
-   # Cache & Build Artifacts
-   - __pycache__/, .pytest_cache/, .mypy_cache/, .ruff_cache/ (Python cache)
-   - .git/, .svn/, .hg/ (Version control)
-   - dist/, build/, .egg-info/, .tox/, .nox/, pip-wheel-metadata/ (Build artifacts)
-   - .next/, .nuxt/, .svelte-kit/, .vercel/, .netlify/ (Framework build output)
-   - coverage/, .coverage/, htmlcov/, .hypothesis/ (Test coverage)
-   
-   If you need to check dependencies, ask user for permission first."""
-            self._warmup_shown = True
+        # Apply decision framework for problem-solving scenarios
+        if user_message:
+            decision_prompt = self._analyze_and_plan(user_message)
+            if decision_prompt:
+                system_content += f"\n\n{decision_prompt}"
+        
+        self._warmup_shown = True  # Mark warmup as shown after building system content
             
         # Use trimmed history to prevent orphaned tool messages (Error 400)
         history_msgs = self._get_trimmed_history(20)

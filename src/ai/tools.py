@@ -447,6 +447,8 @@ class ToolRegistry:
         self.tools: Dict[str, Tool] = {}
         self._editor = get_editor(project_root)
         self._path_resolver = PathResolver(project_root) if project_root else None
+        self._recent_tool_calls: List[Dict] = []  # Track recent calls to prevent loops
+        self._max_recent_calls = 10
         self._register_default_tools()
         
     def _register_default_tools(self):
@@ -604,12 +606,94 @@ class ToolRegistry:
         # Search operations
         self.register_tool(
             name="search_code",
-            description="Search for text in the codebase",
+            description="Search for text in the codebase using regex",
             parameters=[
-                ToolParameter("query", "string", "Text to search for", required=True),
+                ToolParameter("query", "string", "Text/regex to search for", required=True),
                 ToolParameter("file_pattern", "string", "File pattern to search in (e.g., *.py)", required=False, default="*")
             ],
             function=self._search_code
+        )
+        
+        self.register_tool(
+            name="search_codebase",
+            description="Semantic code search - find code by meaning/intent, not just text. Use when you don't know exact function names or want to understand how something works.",
+            parameters=[
+                ToolParameter("query", "string", "What you're looking for (e.g., 'authentication logic', 'how payments work', 'database connection')", required=True),
+                ToolParameter("target_directories", "array", "Specific directories to search (optional)", required=False, default=None)
+            ],
+            function=self._search_codebase
+        )
+        
+        # Code quality operations
+        self.register_tool(
+            name="get_problems",
+            description="Check for compile errors, lint issues, and syntax problems in code files. Use after making edits to verify correctness.",
+            parameters=[
+                ToolParameter("file_paths", "array", "List of file paths to check (optional - checks all modified files if empty)", required=False, default=None)
+            ],
+            function=self._get_problems
+        )
+        
+        # LSP/Code Intelligence operations
+        self.register_tool(
+            name="lsp_find_references",
+            description="Find all references to a symbol (function, class, variable) across the codebase using LSP",
+            parameters=[
+                ToolParameter("symbol", "string", "Symbol name to find references for", required=True),
+                ToolParameter("file_path", "string", "File containing the symbol definition", required=True),
+                ToolParameter("line", "integer", "Line number where symbol is defined (1-based)", required=True),
+                ToolParameter("character", "integer", "Character position on the line (1-based)", required=True)
+            ],
+            function=self._lsp_find_references
+        )
+        
+        self.register_tool(
+            name="lsp_go_to_definition",
+            description="Jump to the definition of a symbol using LSP code intelligence",
+            parameters=[
+                ToolParameter("symbol", "string", "Symbol to find definition for", required=True),
+                ToolParameter("file_path", "string", "File containing the symbol usage", required=True),
+                ToolParameter("line", "integer", "Line number where symbol is used (1-based)", required=True),
+                ToolParameter("character", "integer", "Character position on the line (1-based)", required=True)
+            ],
+            function=self._lsp_go_to_definition
+        )
+        
+        # Verification operations
+        self.register_tool(
+            name="verify_fix",
+            description="Verify that a fix works by running tests or checking the specific scenario. Use after applying fixes.",
+            parameters=[
+                ToolParameter("test_command", "string", "Command to run to verify (e.g., 'python -m pytest test_file.py')", required=False, default=None),
+                ToolParameter("check_scenario", "string", "Description of what to check for", required=False, default=None),
+                ToolParameter("file_paths", "array", "Files to check for errors after fix", required=False, default=None)
+            ],
+            function=self._verify_fix
+        )
+        
+        # Memory operations
+        self.register_tool(
+            name="search_memory",
+            description="Search past memories/decisions for similar problems. Use before fixing to see if we've solved this before.",
+            parameters=[
+                ToolParameter("query", "string", "What to remember (e.g., 'terminal blank fix', 'git loop issue')", required=True),
+                ToolParameter("category", "string", "Memory category to search (e.g., 'common_pitfalls', 'task_summary')", required=False, default=""),
+                ToolParameter("depth", "string", "Search depth: 'shallow' for quick, 'deep' for thorough", required=False, default="shallow")
+            ],
+            function=self._search_memory
+        )
+        
+        # Git operations
+        self.register_tool(
+            name="git_commit",
+            description="Commit changes to git repository with a message",
+            parameters=[
+                ToolParameter("message", "string", "Commit message describing the changes", required=True),
+                ToolParameter("files", "array", "Specific files to commit (optional - commits all staged if empty)", required=False, default=None),
+                ToolParameter("stage_all", "bool", "Stage all modified files before commit", required=False, default=False)
+            ],
+            function=self._git_commit,
+            requires_confirmation=True
         )
         
     def register_tool(self, name: str, description: str, parameters: List[ToolParameter], 
@@ -653,13 +737,33 @@ class ToolRegistry:
         tool = self.tools.get(tool_name)
         if not tool:
             return ToolResult(success=False, result=None, error=f"Tool '{tool_name}' not found")
-        
+            
+        # Check for duplicate tool calls (prevent infinite loops)
+        call_signature = {"tool": tool_name, "params": params}
+        recent_calls = self._recent_tool_calls[-3:]  # Check last 3 calls
+        duplicate_count = sum(1 for call in recent_calls if call == call_signature)
+            
+        if duplicate_count >= 2:
+            # Same tool with same params called 2+ times recently
+            log.warning(f"Preventing duplicate tool call: {tool_name} with same params (called {duplicate_count} times)")
+            return ToolResult(
+                success=False, 
+                result=None, 
+                error=f"[LOOP PREVENTION] Tool '{tool_name}' was just called with the same parameters. The AI should not repeat the same tool call. Consider the task complete or try a different approach.",
+                duration_ms=0
+            )
+            
+        # Track this call
+        self._recent_tool_calls.append(call_signature)
+        if len(self._recent_tool_calls) > self._max_recent_calls:
+            self._recent_tool_calls.pop(0)
+            
         # Validate required parameters
         missing_params = []
         for param in tool.parameters:
             if param.required and (param.name not in params or params[param.name] is None or params[param.name] == ""):
                 missing_params.append(param.name)
-        
+            
         if missing_params:
             required_param_names = [p.name for p in tool.parameters if p.required]
             error_msg = (
@@ -975,6 +1079,26 @@ class ToolRegistry:
 
             if not items:
                 return "Directory is empty (or contains only hidden/noise directories)."
+            
+            # Add AI hints for important files
+            hints = []
+            all_items = items + blocked_items
+            if any("README" in item for item in all_items):
+                hints.append("→ Read README.md first for project overview")
+            if any("package.json" in item for item in all_items):
+                hints.append("→ package.json contains dependencies and scripts")
+            if any("pyproject.toml" in item or "requirements.txt" in item for item in all_items):
+                hints.append("→ Check pyproject.toml/requirements.txt for Python deps")
+            if any("src/" in item or item.startswith("📁 src/") for item in all_items):
+                hints.append("→ src/ contains the main source code")
+            if any("tests/" in item or "test/" in item for item in all_items):
+                hints.append("→ tests/ contains the test suite")
+            
+            if hints:
+                items.append("")
+                items.append("[AI hints:]")
+                items.extend(hints)
+            
             return "\n".join(items)
         except Exception as e:
             raise Exception(f"Failed to list directory: {e}")
@@ -1069,17 +1193,19 @@ class ToolRegistry:
             
             log.info(f"Running command '{command}' in: {working_dir}")
             
-            # ── Send to terminal widget if available (preferred path) ────────────
+            # ── Always use subprocess for reliable output capture ────────────────
+            # Terminal widget is optional visual feedback only
             if self.terminal_widget and hasattr(self.terminal_widget, 'execute_command'):
-                if hasattr(self.terminal_widget, 'set_cwd'):
-                    self.terminal_widget.set_cwd(working_dir)
-                self.terminal_widget.execute_command(command)
-                response = f"Command sent to terminal: {command}\n[Output appears in the terminal panel]"
-                if warnings:
-                    response += "\n\n" + "\n".join(warnings)
-                return response
+                try:
+                    # Show command in terminal for visual feedback (non-blocking)
+                    if hasattr(self.terminal_widget, 'set_cwd'):
+                        self.terminal_widget.set_cwd(working_dir)
+                    self.terminal_widget.execute_command(command)
+                except Exception as e:
+                    log.debug(f"Could not show command in terminal widget: {e}")
+                    # Continue anyway - subprocess will handle the actual execution
 
-            # ── Fallback: streaming subprocess ───────────────────────────────────
+            # ── Primary: streaming subprocess ────────────────────────────────────
             output_lines = []
             output_queue = queue_module.Queue()
             process_ref = [None]  # mutable ref so thread can set it
@@ -1177,33 +1303,104 @@ class ToolRegistry:
         return "Terminal output not available."
             
     def _git_status(self) -> str:
-        """Get git status."""
-        if not self.git_manager or not self.git_manager.is_repo():
-            return "Not a git repository"
-            
+        """Get git status using git manager or subprocess fallback."""
+        import subprocess
+        import os
+        
+        # Determine working directory
+        working_dir = self.project_root or os.getcwd()
+        
         try:
-            files = self.git_manager.get_status()
-            if not files:
+            # Try using git manager first
+            if self.git_manager and self.git_manager.is_repo():
+                files = self.git_manager.get_status()
+                if not files:
+                    return "Working tree clean"
+                    
+                lines = []
+                for f in files:
+                    status_symbol = f.status.value
+                    staged_symbol = "✓" if f.staged else " "
+                    lines.append(f"{staged_symbol} {status_symbol} {f.path}")
+                return "\n".join(lines)
+        except Exception as e:
+            log.warning(f"Git manager failed, falling back to subprocess: {e}")
+        
+        # Fallback: use subprocess directly
+        try:
+            result = subprocess.run(
+                ['git', 'status', '--short'],
+                cwd=working_dir,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if result.returncode != 0:
+                if "not a git repository" in result.stderr.lower():
+                    return "Not a git repository"
+                raise Exception(result.stderr)
+            
+            output = result.stdout.strip()
+            if not output:
                 return "Working tree clean"
-                
+            
+            # Format the output
             lines = []
-            for f in files:
-                status_symbol = f.status.value
-                staged_symbol = "✓" if f.staged else " "
-                lines.append(f"{staged_symbol} {status_symbol} {f.path}")
-                
+            for line in output.split('\n'):
+                if line:
+                    status = line[:2]
+                    filename = line[3:]
+                    staged = "✓" if status[0] != ' ' and status[0] != '?' else " "
+                    lines.append(f"{staged} {status.strip()} {filename}")
+            
             return "\n".join(lines)
+            
+        except subprocess.TimeoutExpired:
+            raise Exception("Git status timed out - repository may be too large")
         except Exception as e:
             raise Exception(f"Failed to get git status: {e}")
             
     def _git_diff(self, file_path: Optional[str] = None, staged: bool = False) -> str:
-        """Get git diff."""
-        if not self.git_manager or not self.git_manager.is_repo():
-            return "Not a git repository"
-            
+        """Get git diff using git manager or subprocess fallback."""
+        import subprocess
+        import os
+        
+        working_dir = self.project_root or os.getcwd()
+        
+        # Try git manager first
         try:
-            diff = self.git_manager.get_diff(file_path, staged)
-            return diff if diff else "No changes to display"
+            if self.git_manager and self.git_manager.is_repo():
+                diff = self.git_manager.get_diff(file_path, staged)
+                return diff if diff else "No changes to display"
+        except Exception as e:
+            log.warning(f"Git manager failed for diff, falling back: {e}")
+        
+        # Fallback: use subprocess
+        try:
+            cmd = ['git', 'diff']
+            if staged:
+                cmd.append('--staged')
+            if file_path:
+                cmd.append(file_path)
+            
+            result = subprocess.run(
+                cmd,
+                cwd=working_dir,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if result.returncode != 0:
+                if "not a git repository" in result.stderr.lower():
+                    return "Not a git repository"
+                raise Exception(result.stderr)
+            
+            return result.stdout if result.stdout else "No changes to display"
+            
+        except subprocess.TimeoutExpired:
+            raise Exception("Git diff timed out")
         except Exception as e:
             raise Exception(f"Failed to get git diff: {e}")
             
@@ -1240,3 +1437,295 @@ class ToolRegistry:
             
         except Exception as e:
             raise Exception(f"Failed to search code: {e}")
+
+    def _search_codebase(self, query: str, target_directories: Optional[List[str]] = None) -> str:
+        """Semantic code search using the search_codebase module."""
+        try:
+            from src.ai.codebase_search import search_codebase
+            
+            # Extract keywords from query
+            keywords = [word for word in query.lower().split() if len(word) > 3]
+            if not keywords:
+                keywords = ["code", "implementation"]
+            
+            # Limit to 3 most important keywords
+            key_words = ",".join(keywords[:3])
+            
+            # Build target directories
+            dirs = target_directories
+            if not dirs and self.project_root:
+                dirs = [self.project_root]
+            
+            # Perform semantic search
+            results = search_codebase(query, key_words, dirs)
+            
+            if not results:
+                return f"No semantic matches found for '{query}'. Try using search_code for text-based search."
+            
+            # Format results
+            output_lines = [f"## Semantic Search Results for: {query}\n"]
+            for i, result in enumerate(results[:10], 1):
+                output_lines.append(f"{i}. {result.get('file', 'Unknown')}")
+                if 'snippet' in result:
+                    snippet = result['snippet'][:200] + "..." if len(result['snippet']) > 200 else result['snippet']
+                    output_lines.append(f"   {snippet}")
+                output_lines.append("")
+            
+            return "\n".join(output_lines)
+            
+        except ImportError:
+            # Fallback to simple keyword search
+            return self._search_code(query, "*.py")
+        except Exception as e:
+            raise Exception(f"Failed to search codebase: {e}")
+
+    def _get_problems(self, file_paths: Optional[List[str]] = None) -> str:
+        """Check for compile errors, lint issues, and syntax problems."""
+        try:
+            import subprocess
+            import sys
+            import ast
+            
+            problems = []
+            
+            # If no files specified, check recently modified Python files
+            if not file_paths:
+                search_path = Path(self.project_root or os.getcwd())
+                file_paths = []
+                for py_file in search_path.rglob("*.py"):
+                    # Skip blocked directories
+                    if any(blocked in str(py_file) for blocked in BLOCKED_DIRS):
+                        continue
+                    file_paths.append(str(py_file))
+                    if len(file_paths) >= 10:  # Limit to 10 files
+                        break
+            
+            for file_path in file_paths:
+                resolved = self._resolve_path(file_path)
+                if not resolved.exists():
+                    continue
+                
+                # Check Python syntax
+                try:
+                    with open(resolved, 'r', encoding='utf-8', errors='ignore') as f:
+                        source = f.read()
+                    ast.parse(source)
+                except SyntaxError as e:
+                    problems.append(f"❌ {file_path}:{e.lineno}: Syntax error - {e.msg}")
+                    continue
+                except Exception as e:
+                    problems.append(f"⚠️ {file_path}: Could not parse - {e}")
+                    continue
+                
+                # Try importing to catch runtime errors
+                try:
+                    # Use py_compile for additional checks
+                    import py_compile
+                    py_compile.compile(str(resolved), doraise=True)
+                except Exception as e:
+                    problems.append(f"⚠️ {file_path}: Compile error - {e}")
+            
+            if not problems:
+                return "✅ No problems found in checked files."
+            
+            return "## Code Problems Found:\n\n" + "\n".join(problems)
+            
+        except Exception as e:
+            raise Exception(f"Failed to check for problems: {e}")
+
+    def _lsp_find_references(self, symbol: str, file_path: str, line: int, character: int) -> str:
+        """Find all references to a symbol using LSP."""
+        try:
+            from src.core.lsp_client import get_lsp_client
+            
+            resolved_path = self._resolve_path(file_path)
+            
+            lsp = get_lsp_client()
+            if not lsp.is_running():
+                return "LSP server not available. Make sure the project is indexed."
+            
+            references = lsp.find_references(str(resolved_path), line, character)
+            
+            if not references:
+                return f"No references found for '{symbol}'"
+            
+            output_lines = [f"## References to '{symbol}':\n"]
+            for ref in references[:20]:  # Limit to 20 references
+                ref_path = ref.get('uri', 'Unknown').replace('file://', '')
+                ref_line = ref.get('range', {}).get('start', {}).get('line', 0) + 1
+                output_lines.append(f"• {ref_path}:{ref_line}")
+            
+            return "\n".join(output_lines)
+            
+        except ImportError:
+            return "LSP client not available. Falling back to text search...\n\n" + self._search_code(symbol)
+        except Exception as e:
+            raise Exception(f"Failed to find references: {e}")
+
+    def _lsp_go_to_definition(self, symbol: str, file_path: str, line: int, character: int) -> str:
+        """Go to definition of a symbol using LSP."""
+        try:
+            from src.core.lsp_client import get_lsp_client
+            
+            resolved_path = self._resolve_path(file_path)
+            
+            lsp = get_lsp_client()
+            if not lsp.is_running():
+                return "LSP server not available."
+            
+            definitions = lsp.go_to_definition(str(resolved_path), line, character)
+            
+            if not definitions:
+                return f"No definition found for '{symbol}'"
+            
+            output_lines = [f"## Definition of '{symbol}':\n"]
+            for defn in definitions[:5]:  # Usually just 1 definition
+                def_path = defn.get('uri', 'Unknown').replace('file://', '')
+                def_line = defn.get('range', {}).get('start', {}).get('line', 0) + 1
+                output_lines.append(f"📍 {def_path}:{def_line}")
+                
+                # Try to read the definition line
+                try:
+                    with open(def_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        lines = f.readlines()
+                        if 0 <= def_line - 1 < len(lines):
+                            output_lines.append(f"   {lines[def_line - 1].strip()}")
+                except:
+                    pass
+            
+            return "\n".join(output_lines)
+            
+        except ImportError:
+            return f"LSP client not available. Try searching for 'def {symbol}' or 'class {symbol}'"
+        except Exception as e:
+            raise Exception(f"Failed to go to definition: {e}")
+
+    def _verify_fix(self, test_command: Optional[str] = None, check_scenario: Optional[str] = None, 
+                    file_paths: Optional[List[str]] = None) -> str:
+        """Verify that a fix works by running tests or checking files."""
+        results = []
+        
+        # 1. Check for syntax/compile errors
+        if file_paths:
+            results.append("### Checking for syntax errors...")
+            problems_result = self._get_problems(file_paths)
+            results.append(problems_result)
+            
+            if "❌" in problems_result or "⚠️" in problems_result:
+                results.append("\n❌ Fix verification FAILED - syntax errors found")
+                return "\n".join(results)
+        
+        # 2. Run test command if provided
+        if test_command:
+            results.append(f"\n### Running test command: {test_command}")
+            try:
+                test_result = self._run_command(test_command, timeout=60)
+                results.append(test_result)
+                
+                # Check for test failure indicators
+                if any(indicator in test_result.lower() for indicator in ['failed', 'error', 'fail', 'traceback']):
+                    results.append("\n❌ Fix verification FAILED - tests did not pass")
+                else:
+                    results.append("\n✅ Tests passed")
+            except Exception as e:
+                results.append(f"\n❌ Test command failed: {e}")
+        
+        # 3. Check scenario description
+        if check_scenario:
+            results.append(f"\n### Checking scenario: {check_scenario}")
+            results.append("Please verify manually that the scenario works as expected.")
+        
+        results.append("\n✅ Fix verification complete")
+        return "\n".join(results)
+
+    def _search_memory(self, query: str, category: str = "", depth: str = "shallow") -> str:
+        """Search past memories for similar problems."""
+        try:
+            from src.memory.memory_manager import search_memory
+            
+            memories = search_memory(query, category, depth)
+            
+            if not memories:
+                return f"No memories found for '{query}'. Proceeding with fresh analysis."
+            
+            output_lines = [f"## Past Memories for: {query}\n"]
+            for i, mem in enumerate(memories[:5], 1):
+                output_lines.append(f"{i}. {mem.get('title', 'Untitled')}")
+                if 'content' in mem:
+                    content = mem['content'][:300] + "..." if len(mem['content']) > 300 else mem['content']
+                    output_lines.append(f"   {content}")
+                output_lines.append("")
+            
+            output_lines.append("💡 Consider these past experiences before proceeding.")
+            return "\n".join(output_lines)
+            
+        except ImportError:
+            return "Memory system not available."
+        except Exception as e:
+            return f"Could not search memory: {e}"
+
+    def _git_commit(self, message: str, files: Optional[List[str]] = None, stage_all: bool = False) -> str:
+        """Commit changes to git repository."""
+        import subprocess
+        import os
+        
+        # Determine repository path
+        repo_path = self.project_root or os.getcwd()
+        if self.git_manager and self.git_manager.repo_path:
+            repo_path = self.git_manager.repo_path
+        
+        # Verify it's a git repo
+        try:
+            result = subprocess.run(
+                ['git', 'rev-parse', '--git-dir'],
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode != 0:
+                return "Not a git repository"
+        except Exception:
+            return "Not a git repository"
+        
+        try:
+            
+            # Stage files
+            if stage_all:
+                result = subprocess.run(
+                    ['git', 'add', '-A'],
+                    cwd=repo_path,
+                    capture_output=True,
+                    text=True
+                )
+                if result.returncode != 0:
+                    raise Exception(f"Failed to stage files: {result.stderr}")
+            elif files:
+                for file_path in files:
+                    resolved = self._resolve_path(file_path)
+                    result = subprocess.run(
+                        ['git', 'add', str(resolved)],
+                        cwd=repo_path,
+                        capture_output=True,
+                        text=True
+                    )
+                    if result.returncode != 0:
+                        raise Exception(f"Failed to stage {file_path}: {result.stderr}")
+            
+            # Commit
+            result = subprocess.run(
+                ['git', 'commit', '-m', message],
+                cwd=repo_path,
+                capture_output=True,
+                text=True
+            )
+            
+            if result.returncode == 0:
+                return f"✅ Committed: {message}\n{result.stdout}"
+            else:
+                if "nothing to commit" in result.stderr.lower():
+                    return "Nothing to commit - working tree clean"
+                raise Exception(f"Commit failed: {result.stderr}")
+                
+        except Exception as e:
+            raise Exception(f"Failed to commit: {e}")

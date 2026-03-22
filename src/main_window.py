@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QToolBar, QMenuBar, QMessageBox, QInputDialog, QTabBar,
     QFrame, QSizePolicy
 )
-from PyQt6.QtCore import Qt, QSize, pyqtSignal, QTimer, QRect, QProcessEnvironment
+from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtSlot, QTimer, QRect, QProcessEnvironment
 from PyQt6.QtGui import (QAction, QKeySequence, QIcon, QFont, QPainter, QColor, 
                          QMouseEvent, QCloseEvent, QPixmap)
 
@@ -1539,6 +1539,42 @@ class CortexMainWindow(QMainWindow):
         
         # Auto-detect and activate virtual environment
         self._check_and_activate_venv(folder_path)
+        
+        # Start background project context scan
+        self._start_project_context_scan(folder_path)
+    
+    def _start_project_context_scan(self, folder_path: str):
+        """Start background project scanning for instant AI awareness."""
+        from src.ai.project_context import build_project_context
+        
+        # Show indexing status in chat
+        self._ai_chat.show_indexing_status("Indexing project...")
+        
+        def on_context_ready(ctx):
+            """Called when background scan finishes."""
+            from PyQt6.QtCore import QMetaObject, Qt
+            # Must update UI from main thread
+            QMetaObject.invokeMethod(
+                self, "_on_project_context_ready",
+                Qt.ConnectionType.QueuedConnection,
+            )
+            # Store context in agent
+            self._ai_agent.set_project_context(ctx)
+        
+        self._context_builder = build_project_context(folder_path, on_context_ready)
+    
+    @pyqtSlot()
+    def _on_project_context_ready(self):
+        """Called on main thread when project indexing finishes."""
+        from src.ai.project_context import get_project_context
+        ctx = get_project_context(self._ai_agent._project_root)
+        if ctx:
+            self._ai_chat.hide_indexing_status()
+            # Show ready indicator  
+            self._ai_chat.show_indexing_status(
+                f"✓ Indexed {ctx.source_file_count} files ({ctx.build_time_ms:.0f}ms)",
+                auto_hide=True
+            )
 
     def _on_project_closed(self):
         self._update_welcome_project_info()

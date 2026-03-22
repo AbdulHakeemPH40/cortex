@@ -24,6 +24,34 @@
       #app-container { height: 100%; display: flex; }
       #chat-container { height: 100%; display: flex; flex-direction: column; flex: 1; min-width: 0; }
       #chatMessages { flex: 1; overflow-y: auto; min-height: 0; }
+      
+      /* Indexing status bar */
+      .indexing-bar {
+          display: flex;
+          align-items: center;
+          gap: 7px;
+          padding: 4px 14px;
+          background: #0c0c0c;
+          border-bottom: 1px solid #161616;
+          font-size: 11px;
+          color: #555;
+          transition: opacity 0.4s;
+          flex-shrink: 0;
+      }
+      
+      .idx-dot {
+          width: 6px;
+          height: 6px;
+          background: #22c55e;
+          border-radius: 50%;
+          animation: idxPulse 1.5s ease infinite;
+          flex-shrink: 0;
+      }
+      
+      @keyframes idxPulse {
+          0%, 100% { opacity: 1; }
+          50%       { opacity: 0.3; }
+      }
     </style>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/dracula.min.css">
     
@@ -166,6 +194,12 @@
                     </button>
                 </div>
             </header>
+
+            <!-- Indexing Status Bar (shown during project scan) -->
+            <div id="indexing-bar" class="indexing-bar" style="display: none;">
+                <span class="idx-dot"></span>
+                <span class="idx-text" id="indexing-text">Indexing project...</span>
+            </div>
 
             <!-- Chat Messages Container -->
             <div id="chatMessages" role="log" aria-live="polite" aria-atomic="false" aria-relevant="additions">

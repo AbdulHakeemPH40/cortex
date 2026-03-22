@@ -31,18 +31,44 @@ class AIWorkerV2(QThread):
         self._full_response = ""
         self._tool_calls_buffer: Dict[int, Dict] = {}
     
+    MAX_AGENT_ITERATIONS = 15  # Hard cap on agentic loop depth
+    
     def run(self):
-        """Process the session"""
+        """Process the session iteratively (not recursively)."""
         try:
             log.info(f"AIWorkerV2 started for session {self.session.id}")
-            self._process()
+            
+            for iteration in range(self.MAX_AGENT_ITERATIONS):
+                log.info(f"Agent iteration {iteration + 1}/{self.MAX_AGENT_ITERATIONS}")
+                
+                done = self._process_one_turn()
+                
+                if done:
+                    log.info(f"Agent completed after {iteration + 1} iterations")
+                    break
+            else:
+                # Hit max iterations
+                log.warning(f"Agent hit max iterations ({self.MAX_AGENT_ITERATIONS})")
+                self.emitter.emit_llm_token(
+                    f"\n\n⚠️ *Reached maximum of {self.MAX_AGENT_ITERATIONS} steps. "
+                    f"Stopping to prevent infinite loop. Please review the progress above.*"
+                )
+                self._finalize_response()
+            
             log.info("AIWorkerV2 completed successfully")
         except Exception as e:
             log.error(f"AIWorkerV2 error: {e}")
             self.emitter.emit_error(str(e))
     
-    def _process(self):
-        """Main processing loop"""
+    def _process_one_turn(self) -> bool:
+        """
+        Execute one LLM call + tool execution round.
+        Returns True if done (no more tool calls), False if should continue.
+        """
+        # Reset response for this turn
+        self._full_response = ""
+        self._tool_calls_buffer = {}
+        
         # Get messages for LLM
         messages = self.session.get_messages_for_llm()
         
@@ -94,9 +120,11 @@ class AIWorkerV2(QThread):
         # Process any tool calls
         if self._tool_calls_buffer:
             self._execute_tools()
+            return False  # Continue loop
         else:
             # No tools, just complete
             self._finalize_response()
+            return True   # Done
     
     def _handle_tool_call_delta(self, chunk: str):
         """Handle tool call delta from stream"""
@@ -187,12 +215,6 @@ class AIWorkerV2(QThread):
             tool_call.result or tool_call.error,
             result.success
         )
-    
-    def _continue_after_tools(self):
-        """Continue chat after tools execute"""
-        log.info("Continuing after tools...")
-        # Recursive call to process again with updated context
-        self._process()
     
     def _finalize_response(self):
         """Finalize the response"""

@@ -18,6 +18,7 @@ reset_settings.py
 
 # Temp
 tmp/
+installer_output/
 nul
 
 # Documentation (optional)
