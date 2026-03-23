@@ -678,6 +678,7 @@ What would you like to work on?
         self._warmup_shown = False  # Track if warmup has been shown
         self._context_manager = None  # Will be initialized when project is set
         self._project_context = None  # ProjectContext when ready
+        self._cached_project_context = None  # Cached project context string for performance
         self._active_file_path = None
         self._cursor_position = None
         self._change_orchestrator = get_change_orchestrator()
@@ -810,37 +811,41 @@ What would you like to work on?
     }
     
     def _build_system_content(self) -> str:
-        """
-        Build system content with strict token budgets.
-        Trims each section to stay within limits.
-        """
+        """Build system content with strict token budgets."""
         from src.ai.project_context import get_project_context
         
         parts = []
-        
-        # 1. Core system prompt (fixed size)
         parts.append(self.SYSTEM_PROMPT)
         
-        # 2. Project context (max 2000 tokens ≈ 8000 chars)
+        # Project context - use cached version ALWAYS
         if self._project_root:
-            ctx = get_project_context(self._project_root)
-            if ctx and ctx.is_ready:
-                ctx_block = ctx.to_system_prompt_block()
-                # Truncate if too long
-                if len(ctx_block) > 8000:
-                    ctx_block = ctx_block[:8000] + "\n... (project context truncated)"
-                parts.append(ctx_block)
+            # Check if we have cached context from previous message
+            if hasattr(self, '_cached_project_context') and self._cached_project_context:
+                parts.append(self._cached_project_context)
+                log.debug("Using cached project context from previous message")
             else:
-                parts.append(f"## PROJECT ROOT\n{self._project_root}")
+                # Try to get fresh context
+                ctx = get_project_context(self._project_root)
+                if ctx and ctx.is_ready:
+                    ctx_block = ctx.to_system_prompt_block()
+                    if len(ctx_block) > 8000:
+                        ctx_block = ctx_block[:8000] + "\n... (truncated)"
+                    parts.append(ctx_block)
+                    self._cached_project_context = ctx_block  # Cache for next time
+                    log.debug("Built and cached new project context")
+                else:
+                    # No context available - use minimal placeholder
+                    parts.append(f"## PROJECT ROOT\n{self._project_root}")
+                    log.debug("No project context available, using minimal placeholder")
         
-        # 3. History summary (max 1000 tokens ≈ 4000 chars)
+        # History summary
         if self._history_summary:
             summary = self._history_summary
             if len(summary) > 4000:
                 summary = summary[:4000] + "..."
             parts.append(f"## CONVERSATION SUMMARY\n{summary}")
         
-        # 4. Warmup instruction (first message only)
+        # Warmup instruction
         warmup_block = self._get_warmup_instruction()
         if warmup_block:
             parts.append(warmup_block)

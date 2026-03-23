@@ -36,8 +36,53 @@
 <!-- CRITICAL: Load Chat Libraries in Head to prevent Race Conditions -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+<!-- Fallback highlight.js theme (Dracula) - used if CDN fails -->
+<style id="hljs-fallback-styles" disabled>
+.hljs{color:#f8f8f2;background:#282a36;display:block;overflow-x:auto;padding:0.5em}
+.hljs-tag,.hljs-attr,.hljs-name{color:#ff79c6}
+.hljs-keyword,.hljs-selector-tag,.hljs-built_in,.hljs-selector-id,.hljs-selector-class{color:#bd93f9}
+.hljs-string,.hljs-symbol,.hljs-bullet,.hljs-addition{color:#50fa7b}
+.hljs-title,.hljs-section,.hljs-meta{color:#ffb86c}
+.hljs-deletion,.hljs-variable,.hljs-template-variable,.hljs-link,.hljs-attribute{color:#ff5555}
+.hljs-comment,.hljs-quote,.hljs-doctag,.hljs-formula{color:#6272a4}
+.hljs-number,.hljs-literal,.hljs-type,.hljs-params,.hljs-regexp{color:#bd93f9}
+.hljs-emphasis{font-style:italic}
+.hljs-strong{font-weight:bold}
+/* Code block container styling */
+.code-block-container pre code.hljs{color:#f8f8f2;background:#282a36}
+pre[data-lang]{background:#282a36}
+</style>
+
 <!-- Highlight.js: Load 11.9.0 script and FORCE Dracula theme for Chat -->
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/dracula.min.css">
+<script>
+    // Function to check and apply fallback hljs styles
+    function applyHljsStyles() {
+        var testEl = document.createElement('span');
+        testEl.className = 'hljs-keyword';
+        testEl.style.position = 'absolute';
+        testEl.style.left = '-9999px';
+        document.body.appendChild(testEl);
+        var computedColor = window.getComputedStyle(testEl).color;
+        document.body.removeChild(testEl);
+        
+        if (!computedColor || computedColor === 'rgba(0, 0, 0, 0)' || computedColor === 'rgb(0, 0, 0)') {
+            console.log('[Cortex] CDN hljs styles failed, using fallback');
+            var fallback = document.getElementById('hljs-fallback-styles');
+            if (fallback) fallback.disabled = false;
+        } else {
+            console.log('[Cortex] hljs styles loaded from CDN');
+        }
+    }
+    
+    // Load hljs CSS dynamically
+    var hljsLink = document.createElement('link');
+    hljsLink.rel = 'stylesheet';
+    hljsLink.href = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/dracula.min.css';
+    hljsLink.onload = function() { applyHljsStyles(); };
+    hljsLink.onerror = function() { applyHljsStyles(); };
+    document.head.appendChild(hljsLink);
+</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script>
     // IMMEDIATE: Disable the Light theme from base.html to prevent flash/conflict

@@ -239,25 +239,32 @@ class ProjectContextBuilder(QThread):
         self.context_ready.emit(self._context)
 
     def _scan(self):
-        """Quick pass to count files and detect project type."""
+        """Quick pass to count files and detect project type - OPTIMIZED."""
         root = Path(self.root_path)
         self._context.project_name = root.name
         
         source_count = 0
         total_count = 0
         
-        for fpath in root.rglob("*"):
-            # Skip blocked directories
-            parts = set(fpath.parts)
-            if parts & SKIP_DIRS:
+        # Performance optimization: limit recursion depth to 3 levels for speed
+        # Most important files (package.json, requirements.txt, etc.) are at top levels
+        for level in range(3):
+            try:
+                for fpath in root.glob("*" if level == 0 else "*/" * level + "*"):
+                    # Skip blocked directories
+                    parts = set(fpath.parts)
+                    if parts & SKIP_DIRS:
+                        continue
+                    if fpath.is_file():
+                        total_count += 1
+                        if fpath.suffix in SOURCE_EXTENSIONS:
+                            source_count += 1
+            except Exception:
                 continue
-            if fpath.is_file():
-                total_count += 1
-                if fpath.suffix in SOURCE_EXTENSIONS:
-                    source_count += 1
         
         self._context.source_file_count = source_count
         self._context.total_file_count = total_count
+        self._context.scan_depth = 3  # Mark as partial scan
 
     def _detect_framework(self):
         """Detect project type and frameworks from config files."""
@@ -537,6 +544,7 @@ class ProjectContextBuilder(QThread):
 
 _project_contexts: Dict[str, ProjectContext] = {}
 _builders: Dict[str, ProjectContextBuilder] = {}
+_cache_timestamps: Dict[str, float] = {}  # Performance: track when context was built
 
 
 def get_project_context(root_path: str) -> Optional[ProjectContext]:
@@ -545,13 +553,28 @@ def get_project_context(root_path: str) -> Optional[ProjectContext]:
     return ctx if (ctx and ctx.is_ready) else None
 
 
-def build_project_context(root_path: str, on_ready=None) -> ProjectContextBuilder:
+def build_project_context(root_path: str, on_ready=None, force_rebuild=False) -> ProjectContextBuilder:
     """
     Start building project context in background.
     Call this when a project folder is opened.
     
     on_ready: callback(ProjectContext) called when scan completes
+    force_rebuild: if True, rebuild even if recently cached
     """
+    import time
+    
+    # Performance optimization: skip rebuild if cached within last 5 minutes
+    current_time = time.time()
+    if not force_rebuild and root_path in _cache_timestamps:
+        age = current_time - _cache_timestamps[root_path]
+        if age < 300:  # 5 minutes
+            log.info(f"Using cached project context ({age:.0f}s old)")
+            # Return existing context immediately
+            existing = _project_contexts.get(root_path)
+            if existing and existing.is_ready and on_ready:
+                on_ready(existing)
+            return None
+    
     # Cancel existing builder for this path
     if root_path in _builders:
         old = _builders[root_path]
@@ -562,6 +585,7 @@ def build_project_context(root_path: str, on_ready=None) -> ProjectContextBuilde
     
     def _on_context_ready(ctx: ProjectContext):
         _project_contexts[root_path] = ctx
+        _cache_timestamps[root_path] = time.time()  # Cache timestamp
         log.info(f"Project context cached for: {root_path}")
         if on_ready:
             on_ready(ctx)

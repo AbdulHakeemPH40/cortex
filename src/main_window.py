@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QToolBar, QMenuBar, QMessageBox, QInputDialog, QTabBar,
     QFrame, QSizePolicy
 )
-from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtSlot, QTimer, QRect, QProcessEnvironment
+from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtSlot, QTimer, QRect, QProcessEnvironment, QSignalBlocker
 from PyQt6.QtGui import (QAction, QKeySequence, QIcon, QFont, QPainter, QColor, 
                          QMouseEvent, QCloseEvent, QPixmap)
 
@@ -295,7 +295,7 @@ class EditorTabWidget(QTabWidget):
         idx = self.addTab(browser, tab_label)
         self.setCurrentIndex(idx)
 
-    def open_file(self, filepath: str, content: str, language: str) -> int:
+    def open_file(self, filepath: str, content: str, language: str, is_dark: bool = True) -> int:
         """Open a file in a new tab (or switch to existing)."""
         # Check if already open
         for idx, fp in self._files.items():
@@ -306,16 +306,13 @@ class EditorTabWidget(QTabWidget):
         # Create editor
         editor = CodeEditor(language=language)
         
-        # Disconnect the internal document→editor connection temporarily
-        editor.document().contentsChanged.disconnect(editor.content_modified)
+        # Apply current theme to the new editor
+        editor.set_theme(is_dark)
         
-        # Set content with ALL signal paths blocked
-        from PyQt6.QtCore import QSignalBlocker
+        # Disconnect the internal document→editor connection temporarily
+        # Use blockSignals instead of disconnect to avoid errors
         with QSignalBlocker(editor.document()):
             editor.set_content(content, language)
-        
-        # Reconnect the internal signal
-        editor.document().contentsChanged.connect(editor.content_modified)
         
         # NOW connect OUR handler - anything after this is a user edit
         editor.content_modified.connect(lambda: self._mark_modified(filepath))
@@ -1089,7 +1086,13 @@ class CortexMainWindow(QMainWindow):
     # Actions
     # ------------------------------------------------------------------
     def _new_file(self):
+        # Get current theme state and apply it to the new editor
+        is_dark = self._theme_manager.is_dark
         editor = CodeEditor(language="python")
+        if is_dark:
+            editor.apply_dark_theme()
+        else:
+            editor.apply_light_theme()
         idx = self._editor_tabs.addTab(editor, "untitled.py")
         self._editor_tabs.setCurrentIndex(idx)
         editor.cursor_position_changed.connect(self._update_status_cursor)
@@ -1169,7 +1172,9 @@ class CortexMainWindow(QMainWindow):
             language = detect_language(filepath)
             log.info(f"Language detected: {language}. Opening index in tabs...")
             
-            idx = self._editor_tabs.open_file(filepath, content, language)
+            # Get current theme state and pass it to the editor
+            is_dark = self._theme_manager.is_dark
+            idx = self._editor_tabs.open_file(filepath, content, language, is_dark)
             
             # Connect cursor signal for the new editor
             editor = self._editor_tabs.widget(idx)

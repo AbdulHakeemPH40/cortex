@@ -27,7 +27,13 @@ class ChatBridge(QObject):
     model_changed = pyqtSignal(str, str, str)  # model_id, perf, cost
     
     open_file_requested = pyqtSignal(str)
-    open_file_at_line_requested = pyqtSignal(str, int)  # file_path, line_number
+    open_file_at_line_requested = pyqtSignal(str, int)  # file_path, line number
+    show_diff_requested = pyqtSignal(object)  # list of file changes
+    accept_file_edit_requested = pyqtSignal(object)
+    reject_file_edit_requested = pyqtSignal(object)
+    open_terminal_requested = pyqtSignal()
+    search_files_requested = pyqtSignal(str)
+    load_full_chat_requested = pyqtSignal(str)  # conversation_id - NEW!
     show_diff_requested = pyqtSignal(str)
     
     # File edit accept/reject signals
@@ -291,8 +297,8 @@ class ChatBridge(QObject):
     @pyqtSlot(str, result=str)
     def load_chats_from_sqlite(self, storage_key: str) -> str:
         """
-        Load chat data from SQLite database.
-        Returns: JSON string with conversations or empty array.
+        Load ONLY chat metadata (not full messages) for fast sidebar rendering.
+        Returns: JSON string with conversation list or empty array.
         """
         try:
             from src.core.chat_history import get_chat_history
@@ -310,24 +316,52 @@ class ChatBridge(QObject):
                 log.debug(f'No chats found in SQLite for storage_key: {storage_key}')
                 return "[]"
             
-            # Convert to format expected by JavaScript
+            # OPTIMIZATION: Return only metadata (id, title, created_at) - NOT full messages
+            # Full messages loaded on-demand when user clicks a chat
             result = []
             for conv in conversations:
                 chat_data = {
                     'id': conv['conversation_id'],
                     'title': conv['title'],
                     'created_at': conv.get('created_at'),
-                    'messages': history.get_messages(conv['conversation_id'])
+                    'message_count': conv.get('message_count', 0)  # Just count, not content
                 }
                 result.append(chat_data)
             
             json_result = json.dumps(result)
-            log.debug(f'✓ Loaded {len(result)} chats from SQLite ({len(json_result)} chars)')
+            log.debug(f'✓ Loaded {len(result)} chat metadata ({len(json_result)} chars)')
             return json_result
             
         except Exception as e:
             log.error(f'✗ Failed to load chats from SQLite: {e}')
             return "[]"
+    
+    def load_full_chat_from_sqlite(self, conversation_id: str) -> str:
+        """
+        Load full chat messages for a specific conversation (on-demand).
+        Returns: JSON string with complete conversation or empty object.
+        """
+        try:
+            from src.core.chat_history import get_chat_history
+            
+            history = get_chat_history()
+            messages = history.get_messages(conversation_id)
+            
+            if not messages:
+                return "{}"
+            
+            result = {
+                'id': conversation_id,
+                'messages': messages
+            }
+            
+            json_result = json.dumps(result)
+            log.debug(f'✓ Loaded full chat {conversation_id} ({len(json_result)} chars)')
+            return json_result
+            
+        except Exception as e:
+            log.error(f'✗ Failed to load full chat: {e}')
+            return "{}"
 
 
 from PyQt6.QtWebEngineCore import QWebEnginePage
@@ -461,6 +495,10 @@ class AIChatWidget(QWidget):
         self._bridge.reject_file_edit_requested.connect(self.reject_file_edit_requested.emit)
         self._bridge.open_terminal_requested.connect(self.open_terminal_requested.emit)
         self._bridge.search_files_requested.connect(self._on_search_files)
+        
+        # NEW: Lazy load full chat when JS requests it
+        self._bridge.load_full_chat_requested.connect(self._on_load_full_chat_requested)
+        
         self._channel.registerObject("bridge", self._bridge)
 
         self._page.setWebChannel(self._channel)
@@ -486,28 +524,54 @@ class AIChatWidget(QWidget):
         if self._get_code_context:
             context = self._get_code_context()
         self.message_sent.emit(text, context)
+    
+    def _on_load_full_chat_requested(self, conversation_id: str):
+        """Handle lazy load request for full chat messages from JS."""
+        try:
+            # Load full chat data from SQLite
+            full_chat_json = self.load_full_chat_from_sqlite(conversation_id)
+            
+            # Send back to JS via custom event
+            escaped_json = full_chat_json.replace('\\', '\\\\').replace("'", "\\'").replace('"', '\\"')
+            js_code = f"""
+            (function() {{
+                var event = new CustomEvent('chatFullLoadHandler', {{ detail: "{escaped_json}" }});
+                window.dispatchEvent(event);
+            }})();
+            """
+            self._view.page().runJavaScript(js_code)
+            
+            log.debug(f"Sent full chat {conversation_id} to JS ({len(full_chat_json)} chars)")
+        except Exception as e:
+            log.error(f"Failed to load full chat {conversation_id}: {e}")
 
     def _on_search_files(self, query: str):
-        """Handle @ mention file search from JS."""
+        """Handle @ mention file search from JS - OPTIMIZED."""
         try:
             from pathlib import Path
             results = []
             root = getattr(self, '_project_root', None) or '.'
             root_path = Path(root)
-            for p in root_path.rglob('*'):
-                if p.is_file() and (not query or query.lower() in p.name.lower()):
-                    parts = str(p)
-                    if not any(skip in parts for skip in ['.git', '__pycache__', 'node_modules', '.pyc']):
-                        try:
-                            results.append({
-                                'name': p.name,
-                                'path': str(p),
-                                'rel_path': str(p.relative_to(root_path))
-                            })
-                        except ValueError:
-                            results.append({'name': p.name, 'path': str(p), 'rel_path': p.name})
+            
+            # Performance optimization: limit to top 2 levels and 10 results
+            for level in range(2):
+                for p in root_path.glob("*/" * level + "*"):
+                    if p.is_file() and (not query or query.lower() in p.name.lower()):
+                        parts = str(p)
+                        if not any(skip in parts for skip in ['.git', '__pycache__', 'node_modules', '.pyc']):
+                            try:
+                                results.append({
+                                    'name': p.name,
+                                    'path': str(p),
+                                    'rel_path': str(p.relative_to(root_path))
+                                })
+                            except ValueError:
+                                results.append({'name': p.name, 'path': str(p), 'rel_path': p.name})
+                        if len(results) >= 10:
+                            break
                 if len(results) >= 10:
                     break
+            
             safe_results = json.dumps(results)
             self._view.page().runJavaScript(
                 f'if(window.populateMentionResults) populateMentionResults({safe_results});'

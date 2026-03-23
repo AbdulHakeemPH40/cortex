@@ -370,7 +370,12 @@ function initMarked() {
 
                 var highlighted;
                 try {
-                    highlighted = hljs.highlight(code, { language: hljs.getLanguage(lang) ? lang : 'plaintext' }).value;
+                    // For HTML, use highlightAuto to handle embedded languages (CSS, JS)
+                    if (lang === 'html') {
+                        highlighted = hljs.highlightAuto(code).value;
+                    } else {
+                        highlighted = hljs.highlight(code, { language: hljs.getLanguage(lang) ? lang : 'plaintext' }).value;
+                    }
                 } catch (e) {
                     highlighted = escapeHtml(code);
                 }
@@ -3811,27 +3816,39 @@ document.addEventListener('DOMContentLoaded', function() {
                 currentProjectPath = path;
                 console.log('[CHAT] ✅ currentProjectPath SET to:', currentProjectPath);
                 
-                // Parse the chats data received from Python
+                // Parse the chats METADATA only (lazy loading - no messages yet)
                 var savedChats = [];
                 try {
                     if (chatsJson && chatsJson !== "[]") {
                         savedChats = JSON.parse(chatsJson);
-                        console.log('[CHAT] Parsed', savedChats.length, 'chats from Python data');
+                        console.log('[CHAT] Parsed', savedChats.length, 'chat metadata from Python data');
+                        
+                        // Initialize chat list with metadata (sidebar shows titles only)
+                        chats = savedChats.map(function(chatMeta) {
+                            return {
+                                id: chatMeta.id,
+                                title: chatMeta.title,
+                                created_at: chatMeta.created_at,
+                                message_count: chatMeta.message_count || 0,
+                                messages: [],  // Empty - will load on demand
+                                loaded: false  // Flag: not loaded yet
+                            };
+                        });
+                        
+                        // Render sidebar immediately with metadata (FAST!)
+                        renderHistoryList();
+                        console.log('[CHAT] Sidebar rendered with', chats.length, 'chats (metadata only)');
+                        
+                        // Auto-load most recent chat if available
+                        if (chats.length > 0) {
+                            loadChat(chats[0].id);
+                        }
                     }
                 } catch (e) {
                     console.error('[CHAT] Error parsing chats from Python:', e.message);
                 }
                 
-                if (savedChats.length > 0) {
-                    // We have saved chats - load them
-                    chats = savedChats;
-                    currentChatId = null;
-                    clearMessages();
-                    loadChat(chats[0].id);
-                    renderHistoryList();
-                    console.log('[CHAT] Loaded chat with', chats[0].messages.length, 'messages');
-                } else {
-                    // No saved chats, start fresh
+                if (savedChats.length === 0) {
                     // No saved chats, start fresh
                     chats = [];
                     startNewChat();

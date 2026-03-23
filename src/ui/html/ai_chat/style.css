@@ -1877,12 +1877,24 @@ body.light .message-content tr:nth-child(even) {
     border: 1px solid var(--border);
     border-radius: 8px;
     overflow: hidden;
-    background: #0d1117;
+    background: #282a36;
 }
 
 body.light .code-block-container {
-    background: #f6f8fa;
+    background: #282a36;
 }
+
+/* Explicit hljs colors - Dracula theme */
+.hljs{color:#f8f8f2;background:#282a36}
+.hljs-tag,.hljs-attr,.hljs-name{color:#ff79c6}
+.hljs-keyword,.hljs-selector-tag,.hljs-built_in,.hljs-selector-id,.hljs-selector-class{color:#bd93f9}
+.hljs-string,.hljs-symbol,.hljs-bullet,.hljs-addition{color:#50fa7b}
+.hljs-title,.hljs-section,.hljs-meta{color:#ffb86c}
+.hljs-deletion,.hljs-variable,.hljs-template-variable,.hljs-link,.hljs-attribute{color:#ff5555}
+.hljs-comment,.hljs-quote,.hljs-doctag,.hljs-formula{color:#6272a4}
+.hljs-number,.hljs-literal,.hljs-type,.hljs-params,.hljs-regexp{color:#bd93f9}
+.hljs-emphasis{font-style:italic}
+.hljs-strong{font-weight:bold}
 
 .code-header {
     background: rgba(255, 255, 255, 0.05);
@@ -1929,13 +1941,14 @@ body.light .code-header {
     font-size: 13px;
     line-height: 1.5;
     margin: 0;
+    background: #282a36;
 }
 
 .code-block-container pre code {
     background: transparent !important;
     padding: 0 !important;
     border: none !important;
-    color: inherit;
+    color: #f8f8f2;
 }
 
 .mjx-container {
@@ -5713,6 +5726,7 @@ body.light .permission-block {
     background: transparent !important;
     border: none !important;
     overflow-x: auto;
+    color: #f8f8f2;
 }
 
 /* ── FILE TYPE BADGES (colored, matches Image 1) ─────────────────── */

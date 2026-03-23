@@ -24,6 +24,7 @@ class SplitEditorWidget(QWidget):
         self._current_editor = None
         self._split_orientation = Qt.Orientation.Horizontal
         self._is_split = False
+        self._is_dark = True  # Default to dark theme
         self._build_ui()
         
     def _build_ui(self):
@@ -48,6 +49,9 @@ class SplitEditorWidget(QWidget):
         
         # Store reference to file path
         editor._filepath = None
+        
+        # Apply current theme to new editor
+        editor.set_theme(self._is_dark)
         
         self._editors.append(editor)
         self.splitter.addWidget(editor)
@@ -137,6 +141,7 @@ class SplitEditorWidget(QWidget):
             
     def set_theme(self, is_dark: bool):
         """Set theme for all editors."""
+        self._is_dark = is_dark
         for editor in self._editors:
             editor.set_theme(is_dark)
             
