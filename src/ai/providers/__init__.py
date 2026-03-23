@@ -368,6 +368,8 @@ class ProviderRegistry:
         except ImportError:
             log.warning("OpenAI provider not available")
         
+        # SiliconFlow provider is available via get_siliconflow_provider() when needed for images
+        
     def _register_provider(self, provider_type: ProviderType, provider: BaseProvider):
         """Register a provider."""
         self._providers[provider_type] = provider

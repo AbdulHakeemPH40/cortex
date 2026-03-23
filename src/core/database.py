@@ -264,30 +264,23 @@ class CortexDatabase:
                 )
             """)
             
-            # Create indexes
+            # Create indexes for performance
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_file ON chunks(file_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_type ON chunks(chunk_type)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_name ON chunks(name)")
+            
+            # Chat history indexes - optimized for fast loading
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_conversations_project ON conversations(project_path)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_conversations_created ON conversations(created_at DESC)")  # Recent chats first
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_conversation ON chat_messages(conversation_id)")
+            
+            # Project memory and search indexes
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_memory_project ON project_memory(project_path)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_search_token ON search_index(token)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_search_chunk ON search_index(chunk_id)")
             
-            # Full-text search virtual table
-            cursor.execute("""
-                CREATE VIRTUAL TABLE IF NOT EXISTS code_fts USING fts5(
-                    code, 
-                    name,
-                    signature,
-                    docstring,
-                    content='chunks',
-                    content_rowid='id'
-                )
-            """)
-            
-            log.info("Database tables created")
+            log.info(f"Database indexes created (optimized for {self.db_path})")
     
     # =========================================================================
     # FILE OPERATIONS

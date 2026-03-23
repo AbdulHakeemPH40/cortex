@@ -743,6 +743,60 @@ document.addEventListener('DOMContentLoaded', function () {
     // Mark as ready when everything is loaded
     if (window.markReady) window.markReady();
 
+    // Image attachment handling
+    var attachImageBtn = document.querySelector('[title="Attach Image"]');
+    if (attachImageBtn) {
+        attachImageBtn.onclick = function() {
+            // Check if current model supports vision
+            var selectedModel = document.getElementById('selected-model');
+            var modelText = selectedModel ? selectedModel.textContent : '';
+            
+            // Vision-capable models (including SiliconFlow Qwen-VL models)
+            var visionModels = [
+                'Qwen', 'VL', 'Vision',  // Qwen-VL family (includes SiliconFlow)
+                'GPT-4', 'Claude', 'gemini',
+            ];
+            
+            // Models that explicitly do NOT support vision
+            var nonVisionModels = ['deepseek-chat', 'DeepSeek-V3', 'deepseek-ai/DeepSeek', 'QwQ', 'Coder'];
+            
+            var supportsVision = false;
+            var isNonVision = nonVisionModels.some(function(m) { 
+                return modelText.toLowerCase().includes(m.toLowerCase()); 
+            });
+            
+            if (!isNonVision) {
+                supportsVision = visionModels.some(function(m) { 
+                    return modelText.toLowerCase().includes(m.toLowerCase()); 
+                });
+            }
+            
+            if (!supportsVision) {
+                alert('⚠️ Image attachment requires a vision-capable model.\n\n' +
+                      'Current model: ' + modelText + '\n\n' +
+                      'Please switch to a vision model like:\n' +
+                      '• Qwen-VL (SiliconFlow)\n' +
+                      '• GPT-4 Vision\n' +
+                      '• Claude 3\n\n' +
+                      'Click the model selector (top-right) to change models.');
+                return;
+            }
+            
+            // Create file input
+            var input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'image/*';
+            input.multiple = false;
+            input.onchange = function(e) {
+                var file = e.target.files[0];
+                if (file) {
+                    handleImageAttachment(file);
+                }
+            };
+            input.click();
+        };
+    }
+
     // Event Listeners
     var toggle = document.getElementById('toggle-history-btn');
     if (toggle) toggle.onclick = toggleSidebar;
@@ -763,6 +817,50 @@ document.addEventListener('DOMContentLoaded', function () {
     if (genPlan) genPlan.onclick = function() {
         if (bridge) bridge.on_generate_plan();
     };
+
+    // Image paste support (Ctrl+V)
+    document.addEventListener('paste', function(e) {
+        // Check if chat input is focused or any input field
+        var activeEl = document.activeElement;
+        var isInputFocused = activeEl && (
+            activeEl.id === 'chatInput' || 
+            activeEl.tagName === 'TEXTAREA' ||
+            activeEl.tagName === 'INPUT'
+        );
+        
+        if (!isInputFocused) return;
+        
+        var items = e.clipboardData && e.clipboardData.items;
+        if (!items) return;
+        
+        for (var i = 0; i < items.length; i++) {
+            if (items[i].type && items[i].type.indexOf('image') !== -1) {
+                e.preventDefault();
+                
+                // Check if model supports vision
+                var selectedModel = document.getElementById('selected-model');
+                var modelText = selectedModel ? selectedModel.textContent : '';
+                var nonVisionModels = ['deepseek-chat', 'DeepSeek-V3', 'deepseek-ai/DeepSeek', 'QwQ', 'Coder'];
+                var isNonVision = nonVisionModels.some(function(m) { 
+                    return modelText.toLowerCase().includes(m.toLowerCase()); 
+                });
+                
+                if (isNonVision) {
+                    alert('⚠️ Image paste requires a vision-capable model.\n\n' +
+                          'Current model: ' + modelText + '\n\n' +
+                          'Please switch to a vision model like Qwen-VL.');
+                    return;
+                }
+                
+                var file = items[i].getAsFile();
+                if (file) {
+                    handleImageAttachment(file);
+                    console.log('[Cortex] Image pasted via Ctrl+V');
+                }
+                break;
+            }
+        }
+    });
 
     var clear = document.getElementById('clear-chat-btn');
     if (clear) clear.onclick = function () {
@@ -1483,6 +1581,11 @@ function hideThinkingAnimation() {
 function showThinkingIndicator() {
     // Use the new grid animation instead of old dots
     showThinkingAnimation();
+}
+
+function hideThinkingIndicator() {
+    // Alias for removeThinkingIndicator
+    removeThinkingIndicator();
 }
 
 function removeThinkingIndicator() {
@@ -3338,6 +3441,75 @@ function rejectChange(actionId, filePath) {
     if (bridge) bridge.on_reject_change(filePath);
 }
 
+// Handle image attachment - convert to base64 and add to message
+var _attachedImages = [];
+
+function handleImageAttachment(file) {
+    if (!file) return;
+    
+    // Check file size (max 10MB)
+    var maxSize = 10 * 1024 * 1024; // 10MB
+    if (file.size > maxSize) {
+        alert('Image too large. Maximum size is 10MB.');
+        return;
+    }
+    
+    var reader = new FileReader();
+    reader.onload = function(e) {
+        var base64 = e.target.result;
+        
+        // Store the image data
+        _attachedImages.push({
+            name: file.name,
+            type: file.type,
+            data: base64
+        });
+        
+        // Add image preview to input area or show notification
+        showImageAttachmentPreview(file.name, base64);
+        
+        console.log('[Cortex] Image attached:', file.name, '(' + Math.round(file.size / 1024) + 'KB)');
+    };
+    reader.onerror = function() {
+        alert('Failed to read image file.');
+    };
+    reader.readAsDataURL(file);
+}
+
+function showImageAttachmentPreview(filename, base64) {
+    // Create a preview badge near the input
+    var inputArea = document.getElementById('input-area');
+    if (!inputArea) return;
+    
+    // Remove existing preview if any
+    var existingPreview = document.getElementById('image-attachment-preview');
+    if (existingPreview) existingPreview.remove();
+    
+    var preview = document.createElement('div');
+    preview.id = 'image-attachment-preview';
+    preview.className = 'image-attachment-preview';
+    preview.innerHTML = 
+        '<img src="' + base64 + '" alt="' + escapeHtml(filename) + '" />' +
+        '<button class="remove-preview" onclick="removeImageAttachment()">×</button>' +
+        '<span class="preview-filename">' + escapeHtml(filename) + '</span>';
+    
+    // Insert after input container
+    var inputContainer = document.getElementById('input-container');
+    if (inputContainer && inputContainer.parentNode) {
+        inputContainer.parentNode.insertBefore(preview, inputContainer.nextSibling);
+    }
+}
+
+function removeImageAttachment() {
+    if (_attachedImages.length > 0) {
+        _attachedImages.pop();
+    }
+    var preview = document.getElementById('image-attachment-preview');
+    if (preview) preview.remove();
+}
+
+window.removeImageAttachment = removeImageAttachment;
+
 function escapeHtml(text) {
     var div = document.createElement('div');
     div.textContent = text;
@@ -3780,6 +3952,8 @@ document.addEventListener('DOMContentLoaded', function() {
     // Expose thinking functions for Python bridge (already defined earlier)
     window.startThinking = showThinkingAnimation;
     window.stopThinking = hideThinkingAnimation;
+    window.showThinkingIndicator = showThinkingIndicator;
+    window.hideThinkingIndicator = hideThinkingIndicator;
     window.addExploration = addExplorationItem;
     window.showDirectoryContents = showDirectoryContents;
     window.updateThinkingText = updateThinkingText;
@@ -5188,6 +5362,19 @@ window.toggleTodoSection = toggleTodoSection;
 
 function _sendNow(text) {
     _isGenerating = true;
+    
+    // Check if there are attached images
+    var hasImages = _attachedImages.length > 0;
+    
+    // Store images data before clearing
+    var imageData = '';
+    if (hasImages) {
+        imageData = JSON.stringify(_attachedImages);
+        // Clear attached images
+        _attachedImages = [];
+        var preview = document.getElementById('image-attachment-preview');
+        if (preview) preview.remove();
+    }
 
     appendMessage(text, 'user', true);
 
@@ -5198,7 +5385,12 @@ function _sendNow(text) {
     if (sendBtn) sendBtn.style.display = 'none';
     if (stopBtn) stopBtn.style.display = 'flex';
 
-    bridge.on_message_submitted(text);
+    // Send message with image data if present
+    if (hasImages) {
+        bridge.on_message_with_images(text, imageData);
+    } else {
+        bridge.on_message_submitted(text);
+    }
 }
 
 function _enqueueMessage(text) {

@@ -300,6 +300,17 @@ class EditorTabWidget(QTabWidget):
         # Check if already open
         for idx, fp in self._files.items():
             if fp == filepath:
+                # File already open - check if content matches, if not update it
+                editor = self.widget(idx)
+                if isinstance(editor, CodeEditor):
+                    current_content = editor.toPlainText()
+                    if current_content != content:
+                        # Content changed, reload it
+                        with QSignalBlocker(editor.document()):
+                            editor.set_content(content, language)
+                        print(f"[EditorTabs] Updated content for already-open file: {filepath}")
+                    else:
+                        print(f"[EditorTabs] File already open with same content: {filepath}")
                 self.setCurrentIndex(idx)
                 return idx
         

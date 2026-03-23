@@ -21,6 +21,7 @@ class EnhancedChatBridge(QObject):
     
     # Existing signals
     message_submitted = pyqtSignal(str)
+    message_with_images = pyqtSignal(str, str)  # text, image_data_json
     clear_chat_requested = pyqtSignal()
     stop_requested = pyqtSignal()
     run_command_requested = pyqtSignal(str)
@@ -42,6 +43,10 @@ class EnhancedChatBridge(QObject):
     @pyqtSlot(str)
     def on_message_submitted(self, text):
         self.message_submitted.emit(text)
+    
+    @pyqtSlot(str, str)
+    def on_message_with_images(self, text, image_data):
+        self.message_with_images.emit(text, image_data)
     
     @pyqtSlot()
     def on_clear_chat(self):

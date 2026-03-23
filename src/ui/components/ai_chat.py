@@ -3,8 +3,8 @@ import sys
 import json
 import platform
 import shutil
-from typing import Optional
-from PyQt6.QtCore import Qt, pyqtSignal, QUrl, QObject, pyqtSlot, QProcess, QProcessEnvironment, QTimer
+from typing import Optional, Callable
+from PyQt6.QtCore import Qt, pyqtSignal, QUrl, QObject, pyqtSlot, QProcess, QProcessEnvironment, QTimer, QThread
 from PyQt6.QtWidgets import QWidget, QVBoxLayout
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebChannel import QWebChannel
@@ -14,9 +14,27 @@ from src.utils.icons import make_icon
 
 log = get_logger("ai_chat")
 
+
+class VisionWorker(QObject):
+    """Worker for processing vision requests in background thread."""
+    response_ready = pyqtSignal(str)
+    error_occurred = pyqtSignal(str)
+    
+    def __init__(self, task: Callable):
+        super().__init__()
+        self._task = task
+    
+    def run(self):
+        try:
+            self._task()
+        except Exception as e:
+            self.error_occurred.emit(str(e))
+
+
 class ChatBridge(QObject):
     """Bridge for communication between JS and Python."""
     message_submitted = pyqtSignal(str)
+    message_with_images = pyqtSignal(str, str)  # text, image_data_json
     clear_chat_requested = pyqtSignal()
     stop_requested = pyqtSignal()
     run_command_requested = pyqtSignal(str)
@@ -64,6 +82,10 @@ class ChatBridge(QObject):
     @pyqtSlot(str)
     def on_message_submitted(self, text):
         self.message_submitted.emit(text)
+    
+    @pyqtSlot(str, str)
+    def on_message_with_images(self, text, image_data):
+        self.message_with_images.emit(text, image_data)
         
     @pyqtSlot()
     def on_clear_chat(self):
@@ -316,8 +338,15 @@ class ChatBridge(QObject):
                 log.debug(f'No chats found in SQLite for storage_key: {storage_key}')
                 return "[]"
             
-            # OPTIMIZATION: Return only metadata (id, title, created_at) - NOT full messages
+            # OPTIMIZATION 1: Return only metadata (id, title, created_at) - NOT full messages
             # Full messages loaded on-demand when user clicks a chat
+            
+            # OPTIMIZATION 2: Limit to recent 50 chats for performance
+            MAX_CHATS_DISPLAY = 50
+            if len(conversations) > MAX_CHATS_DISPLAY:
+                conversations = conversations[:MAX_CHATS_DISPLAY]
+                log.info(f'⚡ Limited to {MAX_CHATS_DISPLAY} most recent chats for performance')
+            
             result = []
             for conv in conversations:
                 chat_data = {
@@ -411,6 +440,9 @@ class AIChatWidget(QWidget):
 
     # Terminal panel signal
     open_terminal_requested = pyqtSignal()  # Request main window to open terminal panel
+    
+    # Vision response signal (internal)
+    _vision_response_received = pyqtSignal(str)
 
     # Smart paste signal - emitted when user pastes code, to check if it matches editor selection
     smart_paste_check_requested = pyqtSignal(str)  # pasted_text
@@ -429,6 +461,10 @@ class AIChatWidget(QWidget):
         self._pty_process = None
         self._terminal_reader = None
         self._project_root = None  # Set via set_project_root() for @ mention search
+        self._vision_thread = None
+        self._vision_worker = None
+        # Connect vision response signal
+        self._vision_response_received.connect(self._on_vision_response)
         self._build_ui()
         # Terminal backend starts lazily when first requested
         
@@ -480,6 +516,7 @@ class AIChatWidget(QWidget):
         self._channel = QWebChannel()
         self._bridge = ChatBridge()
         self._bridge.message_submitted.connect(self._on_js_message)
+        self._bridge.message_with_images.connect(self._on_js_message_with_images)
         self._bridge.clear_chat_requested.connect(self.clear_chat)
         self._bridge.stop_requested.connect(self.stop_requested.emit)
         self._bridge.run_command_requested.connect(self.run_command.emit)
@@ -524,6 +561,122 @@ class AIChatWidget(QWidget):
         if self._get_code_context:
             context = self._get_code_context()
         self.message_sent.emit(text, context)
+    
+    def _on_js_message_with_images(self, text, image_data_json):
+        """Handle message with images - route to SiliconFlow for vision."""
+        import json
+        import requests
+        import os
+        from PyQt6.QtCore import QThread
+        
+        log.info(f"[AIChat] Message with images received, text length: {len(text)}")
+        
+        # Parse image data
+        try:
+            images = json.loads(image_data_json) if image_data_json else []
+            log.info(f"[AIChat] Number of images: {len(images)}")
+        except Exception as e:
+            log.error(f"[AIChat] Failed to parse image data: {e}")
+            images = []
+        
+        if not images:
+            # No valid images, treat as regular message
+            self._on_js_message(text)
+            return
+        
+        # Show thinking indicator
+        self._show_thinking_in_js()
+        
+        # Process in a separate thread to not block UI
+        def process_vision():
+            try:
+                # Build content with images for vision API
+                content_parts = [{"type": "text", "text": text}]
+                for img in images:
+                    content_parts.append({
+                        "type": "image_url",
+                        "image_url": {"url": img.get("data", "")}
+                    })
+                
+                messages = [{
+                    "role": "user",
+                    "content": content_parts
+                }]
+                
+                # Call SiliconFlow API directly with raw requests
+                api_key = os.getenv("SILICONFLOW_API_KEY", "")
+                headers = {
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"
+                }
+                
+                payload = {
+                    "model": "Qwen/Qwen3-VL-32B-Instruct",
+                    "messages": messages,
+                    "temperature": 0.7,
+                    "max_tokens": 4000
+                }
+                
+                response = requests.post(
+                    "https://api.siliconflow.com/v1/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=60
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    result = data.get('choices', [{}])[0].get('message', {}).get('content', '')
+                    self._vision_response_received.emit(result)
+                else:
+                    error_msg = f"API Error {response.status_code}: {response.text[:200]}"
+                    log.error(f"[AIChat] Vision API error: {error_msg}")
+                    self._vision_response_received.emit(f"Error: {error_msg}")
+                
+            except Exception as e:
+                log.error(f"[AIChat] Vision processing error: {e}")
+                self._vision_response_received.emit(f"Error: {str(e)}")
+        
+        # Create thread for vision processing
+        self._vision_thread = QThread()
+        self._vision_worker = VisionWorker(process_vision)
+        self._vision_worker.response_ready.connect(self._on_vision_response)
+        self._vision_worker.error_occurred.connect(self._on_vision_error)
+        self._vision_worker.moveToThread(self._vision_thread)
+        self._vision_thread.started.connect(self._vision_worker.run)
+        self._vision_thread.start()
+    
+    def _show_thinking_in_js(self):
+        """Show thinking indicator in JS chat."""
+        try:
+            js_code = "if(window.showThinkingIndicator) window.showThinkingIndicator();"
+            self._view.page().runJavaScript(js_code)
+        except Exception:
+            pass
+    
+    def _on_vision_response(self, response: str):
+        """Handle vision response and display in chat."""
+        try:
+            # Hide thinking
+            js_code = "if(window.hideThinkingIndicator) window.hideThinkingIndicator();"
+            self._view.page().runJavaScript(js_code)
+            
+            # Add response as assistant message
+            js_code = f"if(window.appendMessage) window.appendMessage({json.dumps(response)}, 'assistant', true);"
+            self._view.page().runJavaScript(js_code)
+        except Exception:
+            pass
+    
+    def _on_vision_error(self, error: str):
+        """Handle vision error."""
+        try:
+            js_code = "if(window.hideThinkingIndicator) window.hideThinkingIndicator();"
+            self._view.page().runJavaScript(js_code)
+            
+            js_code = f"if(window.appendMessage) window.appendMessage({json.dumps('Error: ' + error)}, 'assistant', true);"
+            self._view.page().runJavaScript(js_code)
+        except Exception:
+            pass
     
     def _on_load_full_chat_requested(self, conversation_id: str):
         """Handle lazy load request for full chat messages from JS."""
