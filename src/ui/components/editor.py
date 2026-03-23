@@ -4,7 +4,7 @@ current-line highlight, and auto-indent.
 """
 
 from PyQt6.QtWidgets import QPlainTextEdit, QWidget, QTextEdit, QApplication
-from PyQt6.QtCore import Qt, QRect, QSize, pyqtSignal
+from PyQt6.QtCore import Qt, QRect, QSize, pyqtSignal, QSignalBlocker
 from PyQt6.QtGui import (
     QColor, QPainter, QTextFormat, QFont, QSyntaxHighlighter,
     QTextCharFormat, QKeyEvent, QFontMetrics, QTextOption
@@ -186,11 +186,18 @@ class CodeEditor(QPlainTextEdit):
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
 
     def set_content(self, text: str, language: str = None):
+        """Set editor content without triggering modification signal."""
         if language:
             self._language = language
             self._highlighter.set_language(language)
-        self.setPlainText(text)
-        self.moveCursor(self.textCursor().MoveOperation.Start)
+        
+        # Block ALL signals during entire content setup
+        from PyQt6.QtCore import QSignalBlocker
+        with QSignalBlocker(self):
+            with QSignalBlocker(self.document()):
+                self.setPlainText(text)
+                # Move cursor without triggering signals
+                self.moveCursor(self.textCursor().MoveOperation.Start)
 
     def set_theme(self, is_dark: bool):
         self._is_dark = is_dark
@@ -272,6 +279,8 @@ class CodeEditor(QPlainTextEdit):
 
     def keyPressEvent(self, event: QKeyEvent):
         key = event.key()
+        modifiers = event.modifiers()
+        
         # Auto-indent on Enter
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             cursor = self.textCursor()
@@ -289,12 +298,82 @@ class CodeEditor(QPlainTextEdit):
             super().keyPressEvent(event)
             self.insertPlainText(indent)
             return
-        # Tab → spaces
+        
+        # Tab handling - VS Code style
         if key == Qt.Key.Key_Tab:
             tab_size = self._settings.get("editor", "tab_size") or 4
+            
+            # Shift+Tab - Outdent
+            if modifiers == Qt.KeyboardModifier.ShiftModifier:
+                self._outdent_selection(tab_size)
+                return
+            
+            # Tab with selection - Indent multiple lines
+            cursor = self.textCursor()
+            if cursor.hasSelection():
+                self._indent_selection(tab_size)
+                return
+            
+            # No selection - Insert tab as spaces
             self.insertPlainText(" " * tab_size)
             return
+        
         super().keyPressEvent(event)
+    
+    def _indent_selection(self, tab_size: int):
+        """Indent selected lines (VS Code style)."""
+        cursor = self.textCursor()
+        start_pos = cursor.selectionStart()
+        end_pos = cursor.selectionEnd()
+        
+        # Get selected text
+        selected_text = cursor.selectedText()
+        lines = selected_text.split("\n")
+        
+        # Indent each line
+        indented_lines = []
+        for line in lines:
+            indented_lines.append(" " * tab_size + line)
+        
+        # Replace selection
+        new_text = "\n".join(indented_lines)
+        cursor.insertText(new_text)
+        
+        # Restore selection
+        cursor.setPosition(start_pos)
+        cursor.setPosition(end_pos + (len(indented_lines) * tab_size), QTextCursor.MoveMode.KeepAnchor)
+        self.setTextCursor(cursor)
+    
+    def _outdent_selection(self, tab_size: int):
+        """Outdent selected lines (remove leading spaces)."""
+        cursor = self.textCursor()
+        start_pos = cursor.selectionStart()
+        end_pos = cursor.selectionEnd()
+        
+        # Get selected text
+        selected_text = cursor.selectedText()
+        lines = selected_text.split("\n")
+        
+        # Outdent each line
+        outdented_lines = []
+        removed_count = 0
+        for line in lines:
+            original_len = len(line)
+            # Remove up to tab_size spaces from start
+            stripped = line.lstrip(' ')
+            spaces_removed = original_len - len(stripped)
+            actual_remove = min(spaces_removed, tab_size)
+            outdented_lines.append(line[actual_remove:])
+            removed_count += actual_remove
+        
+        # Replace selection
+        new_text = "\n".join(outdented_lines)
+        cursor.insertText(new_text)
+        
+        # Restore selection
+        cursor.setPosition(start_pos)
+        cursor.setPosition(end_pos - removed_count, QTextCursor.MoveMode.KeepAnchor)
+        self.setTextCursor(cursor)
 
     def get_selected_text(self) -> str:
         return self.textCursor().selectedText().replace("\u2029", "\n")

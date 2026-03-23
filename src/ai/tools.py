@@ -670,6 +670,57 @@ class ToolRegistry:
             function=self._search_codebase
         )
         
+        self.register_tool(
+            name="semantic_search",
+            description="Deep semantic code search using embeddings. Finds code by meaning, not keywords. Best for finding similar implementations or understanding code concepts.",
+            parameters=[
+                ToolParameter("query", "string", "Natural language query describing what you're looking for", required=True),
+                ToolParameter("limit", "int", "Maximum number of results", required=False, default=10),
+                ToolParameter("chunk_types", "array", "Filter by chunk types: 'function', 'class', 'method', 'import'", required=False, default=None)
+            ],
+            function=self._semantic_search
+        )
+        
+        self.register_tool(
+            name="find_function",
+            description="Find function definitions by name pattern. Returns function signatures, locations, and code snippets.",
+            parameters=[
+                ToolParameter("name", "string", "Function name or pattern to search for", required=True),
+                ToolParameter("file_pattern", "string", "File pattern to search in (e.g., '*.py')", required=False, default=None)
+            ],
+            function=self._find_function
+        )
+        
+        self.register_tool(
+            name="find_class",
+            description="Find class definitions by name pattern. Returns class signatures, locations, and code snippets.",
+            parameters=[
+                ToolParameter("name", "string", "Class name or pattern to search for", required=True),
+                ToolParameter("file_pattern", "string", "File pattern to search in (e.g., '*.py')", required=False, default=None)
+            ],
+            function=self._find_class
+        )
+        
+        self.register_tool(
+            name="debug_error",
+            description="Analyze an error message and get fix suggestions. Works for any framework (Django, Flask, React, etc.). Extracts error context, detects framework, and provides actionable fix hints.",
+            parameters=[
+                ToolParameter("error_text", "string", "Full error message or traceback to analyze", required=True),
+                ToolParameter("file_path", "string", "Optional file path where error occurred", required=False, default=None),
+                ToolParameter("line_number", "int", "Optional line number where error occurred", required=False, default=None)
+            ],
+            function=self._debug_error
+        )
+        
+        self.register_tool(
+            name="check_syntax",
+            description="Check syntax of a file for errors. Supports Python, JavaScript, TypeScript, Go, Rust, Java, C/C++, Ruby, PHP, and more.",
+            parameters=[
+                ToolParameter("file_path", "string", "Path to the file to check", required=True)
+            ],
+            function=self._check_syntax
+        )
+        
         # Code quality operations
         self.register_tool(
             name="get_problems",
@@ -2347,3 +2398,209 @@ class ToolRegistry:
                 
         except Exception as e:
             raise Exception(f"Failed to commit: {e}")
+
+    def _semantic_search(self, query: str, limit: int = 10, chunk_types: Optional[List[str]] = None) -> str:
+        """Semantic search using embeddings."""
+        try:
+            from src.core.semantic_search import get_semantic_search
+            
+            search = get_semantic_search()
+            
+            results = search.search(
+                query=query,
+                limit=limit,
+                chunk_types=chunk_types
+            )
+            
+            if not results:
+                return f"No semantic matches found for '{query}'. The project may not be indexed yet."
+            
+            output_lines = [f"## Semantic Search Results for: {query}\n"]
+            output_lines.append(f"Found {len(results)} matching code chunks:\n")
+            
+            for i, result in enumerate(results, 1):
+                output_lines.append(f"### {i}. {result.name} ({result.chunk_type})")
+                output_lines.append(f"   📁 {result.file_path}:{result.start_line}-{result.end_line}")
+                output_lines.append(f"   📊 Score: {result.score:.2f}")
+                
+                if result.signature:
+                    signature = result.signature[:100] + "..." if len(result.signature) > 100 else result.signature
+                    output_lines.append(f"   📝 {signature}")
+                
+                # Show code snippet
+                code_preview = result.code[:300] + "..." if len(result.code) > 300 else result.code
+                output_lines.append(f"   ```{result.language}")
+                output_lines.append(f"   {code_preview}")
+                output_lines.append("   ```\n")
+            
+            return "\n".join(output_lines)
+            
+        except ImportError:
+            return f"Semantic search not available. The project needs to be indexed first. Use 'index_project' to enable semantic search."
+        except Exception as e:
+            raise Exception(f"Semantic search failed: {e}")
+
+    def _find_function(self, name: str, file_pattern: Optional[str] = None) -> str:
+        """Find function definitions by name pattern."""
+        try:
+            from src.core.semantic_search import get_semantic_search
+            
+            search = get_semantic_search()
+            project_path = self.project_root
+            
+            results = search.find_function(name, project_path)
+            
+            if not results:
+                # Fallback to text search
+                return self._search_code(f"def {name}|function {name}|async def {name}", file_pattern or "*.py")
+            
+            output_lines = [f"## Function Definitions for: {name}\n"]
+            output_lines.append(f"Found {len(results)} function(s):\n")
+            
+            for i, result in enumerate(results, 1):
+                output_lines.append(f"### {i}. {result.name}")
+                output_lines.append(f"   📁 {result.file_path}:{result.start_line}")
+                
+                if result.signature:
+                    output_lines.append(f"   📝 Signature: {result.signature}")
+                
+                if result.docstring:
+                    doc = result.docstring[:150] + "..." if len(result.docstring) > 150 else result.docstring
+                    output_lines.append(f"   📖 {doc}")
+                
+                output_lines.append("")
+            
+            return "\n".join(output_lines)
+            
+        except ImportError:
+            return self._search_code(f"def {name}|function {name}", file_pattern or "*.py")
+        except Exception as e:
+            raise Exception(f"Failed to find function: {e}")
+
+    def _find_class(self, name: str, file_pattern: Optional[str] = None) -> str:
+        """Find class definitions by name pattern."""
+        try:
+            from src.core.semantic_search import get_semantic_search
+            
+            search = get_semantic_search()
+            project_path = self.project_root
+            
+            results = search.find_class(name, project_path)
+            
+            if not results:
+                return self._search_code(f"class {name}", file_pattern or "*.py")
+            
+            output_lines = [f"## Class Definitions for: {name}\n"]
+            output_lines.append(f"Found {len(results)} class(es):\n")
+            
+            for i, result in enumerate(results, 1):
+                output_lines.append(f"### {i}. {result.name}")
+                output_lines.append(f"   📁 {result.file_path}:{result.start_line}-{result.end_line}")
+                
+                if result.signature:
+                    output_lines.append(f"   📝 {result.signature}")
+                
+                if result.docstring:
+                    doc = result.docstring[:150] + "..." if len(result.docstring) > 150 else result.docstring
+                    output_lines.append(f"   📖 {doc}")
+                
+                output_lines.append("")
+            
+            return "\n".join(output_lines)
+            
+        except ImportError:
+            return self._search_code(f"class {name}", file_pattern or "*.py")
+        except Exception as e:
+            raise Exception(f"Failed to find class: {e}")
+
+    def _debug_error(self, error_text: str, file_path: Optional[str] = None, line_number: Optional[int] = None) -> str:
+        """Analyze an error and provide fix suggestions."""
+        try:
+            from src.ai.error_analyzer import ErrorAnalyzer
+            
+            analyzer = ErrorAnalyzer(self.project_root)
+            context = analyzer.analyze_error(error_text)
+            
+            # Override file/line if provided
+            if file_path:
+                context.file_path = file_path
+            if line_number:
+                context.line_number = line_number
+            
+            output_lines = [f"## Error Analysis\n"]
+            output_lines.append(f"**Error Type:** {context.error_type}")
+            output_lines.append(f"**Message:** {context.error_message}")
+            
+            if context.file_path and context.line_number:
+                output_lines.append(f"**Location:** {context.file_path}:{context.line_number}")
+            
+            output_lines.append(f"**Framework Detected:** {context.framework}\n")
+            
+            # Get fix suggestions
+            fix_suggestion = analyzer.get_fix_suggestion(context)
+            output_lines.append("## Suggested Fix\n")
+            output_lines.append(fix_suggestion)
+            
+            # Extract code snippet if file available
+            if context.file_path and context.line_number:
+                snippet = analyzer.extract_code_snippet(context.file_path, context.line_number, context_lines=5)
+                if snippet:
+                    output_lines.append("\n## Code Context\n")
+                    output_lines.append("```")
+                    for line_num, line_content in snippet:
+                        marker = ">>>" if line_num == context.line_number else "   "
+                        output_lines.append(f"{marker} {line_num:4d}| {line_content}")
+                    output_lines.append("```")
+            
+            # Related files
+            related_files = analyzer.find_related_files(context)
+            if related_files:
+                output_lines.append("\n## Files to Check\n")
+                for f in related_files[:10]:
+                    output_lines.append(f"- {f}")
+            
+            return "\n".join(output_lines)
+            
+        except ImportError:
+            return f"Error analyzer not available. Error: {error_text[:200]}"
+        except Exception as e:
+            raise Exception(f"Failed to analyze error: {e}")
+
+    def _check_syntax(self, file_path: str) -> str:
+        """Check syntax of a file for errors."""
+        try:
+            from src.core.syntax_checker import get_syntax_checker
+            from pathlib import Path
+            
+            resolved_path = self._resolve_path(file_path)
+            
+            if not resolved_path.exists():
+                return f"File not found: {file_path}"
+            
+            checker = get_syntax_checker()
+            content = resolved_path.read_text(encoding='utf-8', errors='ignore')
+            result = checker.check_file(str(resolved_path), content)
+            
+            if result.success:
+                return f"✅ No syntax errors in {file_path} ({result.language})"
+            
+            output_lines = [f"## Syntax Errors in {file_path}\n"]
+            output_lines.append(f"Language: {result.language}\n")
+            
+            for i, error in enumerate(result.errors, 1):
+                severity_icon = "❌" if error.severity == "error" else "⚠️" if error.severity == "warning" else "ℹ️"
+                output_lines.append(f"{i}. {severity_icon} Line {error.line}:{error.column}")
+                output_lines.append(f"   {error.message}")
+                if error.code:
+                    output_lines.append(f"   Code: {error.code}")
+                if error.source:
+                    output_lines.append(f"   Source: {error.source}")
+                output_lines.append("")
+            
+            return "\n".join(output_lines)
+            
+        except ImportError:
+            # Fallback to Python-only syntax check
+            return self._get_problems([file_path])
+        except Exception as e:
+            raise Exception(f"Failed to check syntax: {e}")

@@ -28,6 +28,7 @@ from src.ui.components.sidebar import SidebarWidget
 from src.ui.components.editor import CodeEditor
 from src.ui.components.ai_chat import AIChatWidget
 from src.ui.components.xterm_terminal import XTermWidget
+from src.ui.components.find_replace import FindReplaceDialog
 from src.ui.dialogs.diff_viewer import DiffWindow
 from src.utils.icons import make_icon
 from src.utils.helpers import detect_language, shorten_path
@@ -301,9 +302,22 @@ class EditorTabWidget(QTabWidget):
             if fp == filepath:
                 self.setCurrentIndex(idx)
                 return idx
+        
         # Create editor
         editor = CodeEditor(language=language)
-        editor.set_content(content, language)
+        
+        # Disconnect the internal document→editor connection temporarily
+        editor.document().contentsChanged.disconnect(editor.content_modified)
+        
+        # Set content with ALL signal paths blocked
+        from PyQt6.QtCore import QSignalBlocker
+        with QSignalBlocker(editor.document()):
+            editor.set_content(content, language)
+        
+        # Reconnect the internal signal
+        editor.document().contentsChanged.connect(editor.content_modified)
+        
+        # NOW connect OUR handler - anything after this is a user edit
         editor.content_modified.connect(lambda: self._mark_modified(filepath))
 
         name = Path(filepath).name
@@ -351,19 +365,63 @@ class EditorTabWidget(QTabWidget):
                     self.setTabIcon(idx, QIcon(scaled))
 
     def _mark_modified(self, filepath: str):
+        """Mark file as modified and update tab with white dot."""
         self._modified.add(filepath)
         for idx, fp in self._files.items():
             if fp == filepath:
                 name = Path(fp).name
+                # Set tab text with white dot (●) prefix
                 self.setTabText(idx, f"● {name}")
+                # Set tab tooltip to show modified status
+                self.setTabToolTip(idx, f"{filepath} (Modified)")
+                break
+    
+    def _mark_saved(self, filepath: str):
+        """Mark file as saved and remove dot from tab."""
+        self._modified.discard(filepath)
+        for idx, fp in self._files.items():
+            if fp == filepath:
+                name = Path(fp).name
+                # Remove dot and restore normal tab text
+                self.setTabText(idx, name)
+                # Restore normal tooltip
+                self.setTabToolTip(idx, filepath)
                 break
 
     def _close_tab(self, index: int):
+        """Close tab with save confirmation if modified."""
         widget = self.widget(index)
         filepath = self._files.get(index)
         
-        # If it's a code editor with unsaved changes, we might want to prompt (omitting for now as per previous code)
+        # Check if file has unsaved changes
+        if filepath and filepath in self._modified:
+            from PyQt6.QtWidgets import QMessageBox
+            
+            reply = QMessageBox.question(
+                self,
+                "Save Changes?",
+                f"Do you want to save the changes to '{Path(filepath).name}'?",
+                QMessageBox.StandardButton.Save | 
+                QMessageBox.StandardButton.Discard | 
+                QMessageBox.StandardButton.Cancel
+            )
+            
+            if reply == QMessageBox.StandardButton.Cancel:
+                return  # User cancelled - don't close tab
+            elif reply == QMessageBox.StandardButton.Save:
+                # Save the file before closing
+                editor = self.current_editor() if index == self.currentIndex() else None
+                if editor:
+                    content = editor.get_all_text()
+                    try:
+                        Path(filepath).write_text(content, encoding='utf-8')
+                        self._mark_saved(filepath)
+                    except Exception as e:
+                        from PyQt6.QtWidgets import QMessageBox
+                        QMessageBox.critical(self, "Save Error", f"Failed to save file: {e}")
+                        return  # Don't close tab on save error
         
+        # Proceed with closing tab
         self.removeTab(index)
         
         # Cleanup files mapping
@@ -392,6 +450,7 @@ class EditorTabWidget(QTabWidget):
         return self._files.get(self.currentIndex())
 
     def save_current(self, file_manager: FileManager) -> bool:
+        """Save current file and remove modified indicator."""
         editor = self.current_editor()
         fp = self.current_filepath()
         if not editor or not fp:
@@ -399,12 +458,34 @@ class EditorTabWidget(QTabWidget):
         content = editor.get_all_text()
         ok = file_manager.write(fp, content)
         if ok:
-            self._modified.discard(fp)
-            self.setTabText(self.currentIndex(), Path(fp).name)
+            # Use _mark_saved to properly update tab text and tooltip
+            self._mark_saved(fp)
         return ok
+    
+    def save_file(self, filepath: str, content: str) -> bool:
+        """Save a specific file and update its modified state."""
+        from pathlib import Path as _Path
+        try:
+            _Path(filepath).write_text(content, encoding='utf-8')
+            self._mark_saved(filepath)
+            return True
+        except Exception as e:
+            print(f"Save error: {e}")
+            return False
 
     def get_open_files(self) -> list[str]:
         return list(self._files.values())
+
+    def close_current_tab(self):
+        """Close the currently active tab."""
+        current_idx = self.currentIndex()
+        if current_idx >= 0:
+            self._close_tab(current_idx)
+
+    def close_all_tabs(self):
+        """Close all open tabs."""
+        while self.count() > 0:
+            self._close_tab(0)
 
     def update_theme(self, is_dark: bool):
         # Update tab bar colours
@@ -548,6 +629,12 @@ class CortexMainWindow(QMainWindow):
         self._ai_chat.set_code_context_callback(self._get_code_context)
         right_layout.addWidget(self._ai_chat)
         self._main_splitter.addWidget(self._right_panel)
+        
+        # Find/Replace Dialog
+        self._find_replace_dialog = FindReplaceDialog(self)
+        self._find_replace_dialog.find_requested.connect(self._on_find_requested)
+        self._find_replace_dialog.replace_requested.connect(self._on_replace_requested)
+        self._find_replace_dialog.replace_all_requested.connect(self._on_replace_all_requested)
 
         # Splitter sizes for 3 panels: sidebar | editor | AI chat
         sidebar_w = self._settings.get("window", "sidebar_width") or 220
@@ -740,6 +827,37 @@ class CortexMainWindow(QMainWindow):
         self._add_action(edit_menu, "Paste", lambda: self._current_editor_action("paste"), "Ctrl+V")
         edit_menu.addSeparator()
         self._add_action(edit_menu, "Select All", lambda: self._current_editor_action("selectAll"), "Ctrl+A")
+        edit_menu.addSeparator()
+        self._add_action(edit_menu, "Find...", self._show_find, "Ctrl+F")
+        self._add_action(edit_menu, "Find and Replace...", self._show_find_replace, "Ctrl+H")
+        self._add_action(edit_menu, "Find in Files...", self._find_in_files, "Ctrl+Shift+F")
+        edit_menu.addSeparator()
+        self._add_action(edit_menu, "Rename...", self._rename_file, "F2")
+        edit_menu.addSeparator()
+        self._add_action(edit_menu, "Go to Line...", self._go_to_line, "Ctrl+G")
+        edit_menu.addSeparator()
+        self._add_action(edit_menu, "Toggle Comment", self._toggle_comment, "Ctrl+/")
+        self._add_action(edit_menu, "Delete Line", self._delete_line, "Ctrl+Shift+K")
+        self._add_action(edit_menu, "Duplicate Line", self._duplicate_line, "Ctrl+Shift+D")
+        edit_menu.addSeparator()
+        self._add_action(edit_menu, "Indent", self._indent_line, "Ctrl+]")
+        self._add_action(edit_menu, "Outdent", self._outdent_line, "Ctrl+[")
+        edit_menu.addSeparator()
+        self._add_action(edit_menu, "Move Line Up", self._move_line_up, "Alt+Up")
+        self._add_action(edit_menu, "Move Line Down", self._move_line_down, "Alt+Down")
+
+        # Navigation
+        nav_menu = mb.addMenu("Navigation")
+        self._add_action(nav_menu, "Quick Open File...", self._quick_open, "Ctrl+P")
+        self._add_action(nav_menu, "Go to Symbol...", self._go_to_symbol, "Ctrl+Shift+O")
+        nav_menu.addSeparator()
+        self._add_action(nav_menu, "Close Tab", self._close_current_tab, "Ctrl+W")
+        self._add_action(nav_menu, "Close All Tabs", self._close_all_tabs, "Ctrl+Shift+W")
+        nav_menu.addSeparator()
+        self._add_action(nav_menu, "Next Tab", self._next_tab, "Ctrl+Tab")
+        self._add_action(nav_menu, "Previous Tab", self._prev_tab, "Ctrl+Shift+Tab")
+        nav_menu.addSeparator()
+        self._add_action(nav_menu, "Keyboard Shortcuts Help", self._show_shortcuts_help, "Ctrl+K, Ctrl+S")
 
         # View
         view_menu = mb.addMenu("View")
@@ -747,6 +865,10 @@ class CortexMainWindow(QMainWindow):
         self._add_action(view_menu, "Toggle Terminal", self._toggle_terminal, "Ctrl+`")
         view_menu.addSeparator()
         self._add_action(view_menu, "Toggle Sidebar", self._toggle_sidebar, "Ctrl+B")
+        view_menu.addSeparator()
+        self._add_action(view_menu, "Zoom In", self._zoom_in, "Ctrl+=")
+        self._add_action(view_menu, "Zoom Out", self._zoom_out, "Ctrl+-")
+        self._add_action(view_menu, "Reset Zoom", self._zoom_reset, "Ctrl+0")
 
         # AI
         ai_menu = mb.addMenu("AI")
@@ -754,6 +876,11 @@ class CortexMainWindow(QMainWindow):
         self._add_action(ai_menu, "Refactor Code", lambda: self._ai_action("refactor"), "Ctrl+Shift+R")
         self._add_action(ai_menu, "Write Tests", lambda: self._ai_action("tests"), "Ctrl+Shift+U")
         self._add_action(ai_menu, "Debug Help", lambda: self._ai_action("debug"), "Ctrl+Shift+D")
+        ai_menu.addSeparator()
+        self._add_action(ai_menu, "AI Chat Focus", self._focus_ai_chat, "Ctrl+Shift+A")
+        
+        # Command Palette
+        self._add_action(file_menu, "Command Palette...", self._command_palette, "Ctrl+Shift+P")
         ai_menu.addSeparator()
         self._add_action(ai_menu, "Clear Chat", self._ai_chat.clear_chat, "")
 
@@ -766,6 +893,7 @@ class CortexMainWindow(QMainWindow):
 
         # Help
         help_menu = mb.addMenu("Help")
+        self._add_action(help_menu, "Keyboard Shortcuts", self._show_keyboard_shortcuts, "F1")
         self._add_action(help_menu, "About Cortex", self._show_about, "")
 
     def _add_action(self, menu, text, slot, shortcut=""):
@@ -799,11 +927,11 @@ class CortexMainWindow(QMainWindow):
         self._toolbar_btns = []
 
         actions = [
-            ("📂", "Open Folder (Ctrl+O)", self._open_folder_dialog),
-            ("💾", "Save (Ctrl+S)",         self._save_current),
-            ("▶️", "Run File",              self._run_file),
+            ("📂", "Open Folder\nCtrl+O",   self._open_folder_dialog),
+            ("💾", "Save File\nCtrl+S",     self._save_current),
+            ("▶️", "Run Current File",      self._run_file),
             ("➕", "New Terminal",          self._new_terminal),
-            ("⚡", "Toggle Terminal (Ctrl+`)", self._toggle_terminal),
+            ("⚡", "Show/Hide Terminal\nCtrl+`", self._toggle_terminal),
         ]
         for icon, tip, slot in actions:
             btn = QPushButton(icon)
@@ -817,7 +945,7 @@ class CortexMainWindow(QMainWindow):
 
         # Theme toggle button
         self._theme_btn = QPushButton("🌙")
-        self._theme_btn.setToolTip("Toggle Dark/Light Theme (Ctrl+Shift+T)")
+        self._theme_btn.setToolTip("Toggle Theme\nCtrl+Shift+T")
         self._theme_btn.setFixedSize(44, 40)
         self._theme_btn.clicked.connect(self._toggle_theme)
         self._toolbar_btns.append(self._theme_btn)
@@ -1051,7 +1179,10 @@ class CortexMainWindow(QMainWindow):
             self._update_status_file(filepath)
             is_dark = self._theme_manager.is_dark
             if isinstance(editor, CodeEditor):
-                editor.set_theme(is_dark)
+                # Block content_modified signal during theme set (rehighlight triggers it)
+                from PyQt6.QtCore import QSignalBlocker
+                with QSignalBlocker(editor.document()):
+                    editor.set_theme(is_dark)
             log.info(f"File opened successfully: {filepath}")
         except Exception as e:
             log.error(f"Error opening file {filepath}: {e}", exc_info=True)
@@ -1404,10 +1535,591 @@ class CortexMainWindow(QMainWindow):
         visible = self._sidebar.isVisible()
         self._sidebar.setVisible(not visible)
 
+    def _zoom_in(self):
+        """Zoom in (Ctrl+=)."""
+        editor = self._editor_tabs.current_editor()
+        if editor:
+            zoom = editor.zoomIn() + 1
+            editor.setZoom(zoom)
+
+    def _zoom_out(self):
+        """Zoom out (Ctrl+-)."""
+        editor = self._editor_tabs.current_editor()
+        if editor:
+            zoom = max(0, editor.zoomIn() - 1)
+            editor.setZoom(zoom)
+
+    def _zoom_reset(self):
+        """Reset zoom (Ctrl+0)."""
+        editor = self._editor_tabs.current_editor()
+        if editor:
+            editor.setZoom(0)
+
+    def _focus_ai_chat(self):
+        """Focus AI Chat input (Ctrl+Shift+A)."""
+        self._ai_chat.focus_input()
+        self._ai_chat.raise_()
+        self._ai_chat.activateWindow()
+
+    def _command_palette(self):
+        """Show Command Palette (Ctrl+Shift+P)."""
+        # For now, show a quick open style dialog with commands
+        from PyQt6.QtWidgets import QInputDialog
+        commands = [
+            "File: New File",
+            "File: Open File...",
+            "File: Save",
+            "Edit: Find",
+            "Edit: Replace",
+            "View: Toggle Terminal",
+            "View: Toggle Sidebar",
+            "View: Toggle Theme"
+        ]
+        cmd, ok = QInputDialog.getItem(
+            self, 
+            "Command Palette", 
+            "Type a command:",
+            commands, 
+            0, 
+            False
+        )
+        if ok and cmd:
+            self._status_bar.showMessage(f"Command: {cmd}", 2000)
+            # TODO: Implement full command palette
+
     def _current_editor_action(self, action: str):
         editor = self._editor_tabs.current_editor()
         if editor and hasattr(editor, action):
             getattr(editor, action)()
+
+    # ------------------------------------------------------------------
+    # VS Code Style Keyboard Shortcuts
+    # ------------------------------------------------------------------
+    def _show_find(self):
+        """Show Find dialog (Ctrl+F)."""
+        editor = self._editor_tabs.current_editor()
+        if editor:
+            selected = editor.get_selected_text()
+            if selected:
+                self._find_replace_dialog.set_find_text(selected)
+            self._find_replace_dialog.show_find_only()
+            self._find_replace_dialog.show()
+            self._find_replace_dialog.raise_()
+            self._find_replace_dialog.activateWindow()
+
+    def _show_find_replace(self):
+        """Show Find & Replace dialog (Ctrl+H)."""
+        editor = self._editor_tabs.current_editor()
+        if editor:
+            selected = editor.get_selected_text()
+            if selected:
+                self._find_replace_dialog.set_find_text(selected)
+            self._find_replace_dialog.show_find_replace()
+            self._find_replace_dialog.show()
+            self._find_replace_dialog.raise_()
+            self._find_replace_dialog.activateWindow()
+
+    def _rename_file(self):
+        """Rename file (F2)."""
+        current_file = self._editor_tabs.current_file()
+        if not current_file:
+            return
+        
+        from PyQt6.QtWidgets import QInputDialog
+        from pathlib import Path
+        
+        old_name = Path(current_file).name
+        new_name, ok = QInputDialog.getText(
+            self, 
+            "Rename File", 
+            f"New name for '{old_name}':",
+            text=old_name
+        )
+        
+        if ok and new_name and new_name != old_name:
+            try:
+                old_path = Path(current_file)
+                new_path = old_path.parent / new_name
+                
+                # Rename file on disk
+                old_path.rename(new_path)
+                
+                # Close current tab and open renamed file
+                index = self._editor_tabs.currentIndex()
+                self._editor_tabs.removeTab(index)
+                self.open_file(str(new_path))
+                
+                self._status_bar.showMessage(f"Renamed to {new_name}", 3000)
+            except Exception as e:
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.critical(self, "Rename Failed", f"Could not rename file: {e}")
+
+    def _find_in_files(self):
+        """Find in files (Ctrl+Shift+F)."""
+        self._ai_chat.add_system_message("🔍 Find in Files: Type your search query in the AI chat.")
+        self._ai_chat.set_input_text("Search in files for: ")
+
+    def _go_to_line(self):
+        """Go to line (Ctrl+G)."""
+        editor = self._editor_tabs.current_editor()
+        if not editor:
+            return
+        
+        from PyQt6.QtWidgets import QInputDialog
+        line, ok = QInputDialog.getInt(self, "Go to Line", "Line number:", min=1, max=editor.blockCount())
+        if ok:
+            cursor = editor.textCursor()
+            cursor.movePosition(cursor.MoveOperation.Start)
+            for _ in range(line - 1):
+                cursor.movePosition(cursor.MoveOperation.Down)
+            editor.setTextCursor(cursor)
+            editor.setFocus()
+
+    def _toggle_comment(self):
+        """Toggle comment on selected lines (Ctrl+/)."""
+        editor = self._editor_tabs.current_editor()
+        if not editor:
+            return
+        
+        cursor = editor.textCursor()
+        start_line = cursor.blockNumber()
+        
+        # Get selected text range
+        if cursor.hasSelection():
+            end_cursor = editor.textCursor()
+            end_cursor.setPosition(cursor.selectionEnd())
+            end_line = end_cursor.blockNumber()
+        else:
+            end_line = start_line
+        
+        # Toggle comments for each line
+        for line_num in range(start_line, end_line + 1):
+            block = editor.document().findBlockByNumber(line_num)
+            text = block.text()
+            
+            if text.strip().startswith("# "):
+                # Remove comment
+                new_text = text.replace("# ", "", 1)
+            elif text.strip().startswith("#"):
+                # Remove comment
+                new_text = text.replace("#", "", 1)
+            else:
+                # Add comment
+                new_text = "# " + text
+            
+            cursor.select(cursor.SelectionType.BlockUnderCursor)
+            cursor.insertText(new_text)
+
+    def _delete_line(self):
+        """Delete current line (Ctrl+Shift+K)."""
+        editor = self._editor_tabs.current_editor()
+        if not editor:
+            return
+        
+        cursor = editor.textCursor()
+        cursor.select(cursor.SelectionType.BlockUnderCursor)
+        cursor.removeSelectedText()
+        cursor.deleteChar()  # Remove the newline
+
+    def _duplicate_line(self):
+        """Duplicate current line (Ctrl+Shift+D)."""
+        editor = self._editor_tabs.current_editor()
+        if not editor:
+            return
+        
+        cursor = editor.textCursor()
+        line = cursor.block().text()
+        cursor.movePosition(cursor.MoveOperation.EndOfLine)
+        cursor.insertText("\n" + line)
+
+    def _indent_line(self):
+        """Indent selected lines (Ctrl+])."""
+        editor = self._editor_tabs.current_editor()
+        if not editor:
+            return
+        
+        cursor = editor.textCursor()
+        start = cursor.selectionStart()
+        end = cursor.selectionEnd()
+        
+        cursor.beginEditBlock()
+        cursor.setPosition(start)
+        while cursor.position() <= end:
+            cursor.movePosition(cursor.MoveOperation.StartOfLine)
+            cursor.insertText("    ")  # 4 spaces
+            cursor.movePosition(cursor.MoveOperation.Down)
+            if cursor.atEnd():
+                break
+        cursor.endEditBlock()
+
+    def _outdent_line(self):
+        """Outdent selected lines (Ctrl+[)."""
+        editor = self._editor_tabs.current_editor()
+        if not editor:
+            return
+        
+        cursor = editor.textCursor()
+        start = cursor.selectionStart()
+        end = cursor.selectionEnd()
+        
+        cursor.beginEditBlock()
+        cursor.setPosition(start)
+        while cursor.position() <= end:
+            cursor.movePosition(cursor.MoveOperation.StartOfLine)
+            line_text = cursor.block().text()
+            if line_text.startswith("    "):
+                cursor.deleteChar()
+                cursor.deleteChar()
+                cursor.deleteChar()
+                cursor.deleteChar()
+            elif line_text.startswith("\t"):
+                cursor.deleteChar()
+            cursor.movePosition(cursor.MoveOperation.Down)
+            if cursor.atEnd():
+                break
+        cursor.endEditBlock()
+
+    def _move_line_up(self):
+        """Move current line up (Alt+Up)."""
+        editor = self._editor_tabs.current_editor()
+        if not editor:
+            return
+        
+        cursor = editor.textCursor()
+        line_num = cursor.blockNumber()
+        
+        if line_num == 0:
+            return  # Already at top
+        
+        # Get current line and previous line
+        current_block = cursor.block()
+        prev_block = current_block.previous()
+        
+        current_text = current_block.text()
+        prev_text = prev_block.text()
+        
+        # Swap lines
+        cursor.beginEditBlock()
+        cursor.movePosition(cursor.MoveOperation.Start)
+        for _ in range(line_num - 1):
+            cursor.movePosition(cursor.MoveOperation.Down)
+        cursor.movePosition(cursor.MoveOperation.StartOfLine)
+        cursor.movePosition(cursor.MoveOperation.Down, cursor.MoveMode.KeepAnchor)
+        cursor.movePosition(cursor.MoveOperation.EndOfLine, cursor.MoveMode.KeepAnchor)
+        cursor.insertText(current_text + "\n" + prev_text)
+        cursor.endEditBlock()
+
+    def _move_line_down(self):
+        """Move current line down (Alt+Down)."""
+        editor = self._editor_tabs.current_editor()
+        if not editor:
+            return
+        
+        cursor = editor.textCursor()
+        line_num = cursor.blockNumber()
+        total_lines = editor.blockCount()
+        
+        if line_num >= total_lines - 1:
+            return  # Already at bottom
+        
+        # Get current line and next line
+        current_block = cursor.block()
+        next_block = current_block.next()
+        
+        current_text = current_block.text()
+        next_text = next_block.text()
+        
+        # Swap lines
+        cursor.beginEditBlock()
+        cursor.movePosition(cursor.MoveOperation.StartOfLine)
+        cursor.movePosition(cursor.MoveOperation.Down, cursor.MoveMode.KeepAnchor)
+        cursor.movePosition(cursor.MoveOperation.EndOfLine, cursor.MoveMode.KeepAnchor)
+        cursor.insertText(next_text + "\n" + current_text)
+        cursor.endEditBlock()
+
+    def _quick_open(self):
+        """Quick open file (Ctrl+P) - Opens file dialog."""
+        filepath, _ = QFileDialog.getOpenFileName(
+            self, "Open File", 
+            str(self._project_manager.root) if self._project_manager.root else "",
+            "All Files (*.*)"
+        )
+        if filepath:
+            self._open_file(filepath)
+
+    def _go_to_symbol(self):
+        """Go to symbol in file (Ctrl+Shift+O)."""
+        editor = self._editor_tabs.current_editor()
+        if not editor:
+            return
+        
+        text = editor.get_all_text()
+        # Find function/class definitions
+        import re
+        symbols = []
+        for match in re.finditer(r'^(def|class|function|const|let|var)\s+(\w+)', text, re.MULTILINE):
+            line_num = text[:match.start()].count('\n') + 1
+            symbols.append(f"{match.group(1)} {match.group(2)} (line {line_num})")
+        
+        if symbols:
+            self._ai_chat.add_system_message("📍 Symbols in file:\n" + "\n".join(symbols[:20]))
+        else:
+            self._ai_chat.add_system_message("No symbols found in current file.")
+
+    def _close_current_tab(self):
+        """Close current tab (Ctrl+W)."""
+        self._editor_tabs.close_current_tab()
+
+    def _close_all_tabs(self):
+        """Close all tabs (Ctrl+Shift+W)."""
+        self._editor_tabs.close_all_tabs()
+
+    def _next_tab(self):
+        """Go to next tab (Ctrl+Tab)."""
+        current = self._editor_tabs.currentIndex()
+        count = self._editor_tabs.count()
+        if count > 0:
+            self._editor_tabs.setCurrentIndex((current + 1) % count)
+
+    def _prev_tab(self):
+        """Go to previous tab (Ctrl+Shift+Tab)."""
+        current = self._editor_tabs.currentIndex()
+        count = self._editor_tabs.count()
+        if count > 0:
+            self._editor_tabs.setCurrentIndex((current - 1) % count)
+
+    def _show_shortcuts_help(self):
+        """Show keyboard shortcuts help dialog."""
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QScrollArea
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Keyboard Shortcuts Reference")
+        dialog.setMinimumSize(700, 500)
+        
+        layout = QVBoxLayout(dialog)
+        
+        shortcuts_html = """
+        <html>
+        <head>
+            <style>
+                body { font-family: 'Segoe UI', sans-serif; background: #1e1e1e; color: #f5f5f5; }
+                h2 { color: #3b82f6; margin-top: 20px; }
+                table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+                th, td { padding: 10px; text-align: left; border-bottom: 1px solid #3a3a3a; }
+                th { background: #2d2d2d; color: #3b82f6; font-weight: 600; }
+                tr:hover { background: #2a2a2a; }
+                kbd { 
+                    background: #2d2d2d; 
+                    border: 1px solid #3a3a3a; 
+                    border-radius: 4px; 
+                    padding: 2px 6px; 
+                    font-family: 'Consolas', monospace;
+                    color: #3b82f6;
+                }
+            </style>
+        </head>
+        <body>
+            <h2>📝 Editing</h2>
+            <table>
+                <tr><th>Shortcut</th><th>Action</th></tr>
+                <tr><td><kbd>Tab</kbd></td><td>Indent (inserts 4 spaces)</td></tr>
+                <tr><td><kbd>Shift</kbd>+<kbd>Tab</kbd></td><td>Outdent selected lines</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td>Undo (current file only)</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td>Redo (current file only)</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>Select All</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd></td><td>Copy</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>X</kbd></td><td>Cut</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>V</kbd></td><td>Paste</td></tr>
+            </table>
+            
+            <h2>🔍 Find & Replace</h2>
+            <table>
+                <tr><th>Shortcut</th><th>Action</th></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>F</kbd></td><td>Find</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>H</kbd></td><td>Find and Replace</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd></td><td>Find in Files</td></tr>
+                <tr><td><kbd>F3</kbd></td><td>Find Next</td></tr>
+                <tr><td><kbd>Shift</kbd>+<kbd>F3</kbd></td><td>Find Previous</td></tr>
+            </table>
+            
+            <h2>📑 File & Tab Navigation</h2>
+            <table>
+                <tr><th>Shortcut</th><th>Action</th></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>Tab</kbd></td><td>Next Tab</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd></td><td>Previous Tab</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>W</kbd></td><td>Close Current Tab</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd></td><td>Close All Tabs</td></tr>
+                <tr><td><kbd>F2</kbd></td><td>Rename File</td></tr>
+            </table>
+            
+            <h2>🚀 Quick Open</h2>
+            <table>
+                <tr><th>Shortcut</th><th>Action</th></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>P</kbd></td><td>Quick Open File</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd></td><td>Go to Symbol</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>G</kbd></td><td>Go to Line</td></tr>
+            </table>
+            
+            <h2>🎨 View & Tools</h2>
+            <table>
+                <tr><th>Shortcut</th><th>Action</th></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>B</kbd></td><td>Toggle Sidebar</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>`</kbd></td><td>Toggle Terminal</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>=</kbd></td><td>Zoom In</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>-</kbd></td><td>Zoom Out</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>0</kbd></td><td>Reset Zoom</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd></td><td>Command Palette</td></tr>
+            </table>
+        </body>
+        </html>
+        """
+        
+        label = QLabel(shortcuts_html)
+        label.setWordWrap(True)
+        layout.addWidget(label)
+        
+        dialog.exec()
+
+    # ------------------------------------------------------------------
+    # Find/Replace Handlers
+    # ------------------------------------------------------------------
+    def _on_find_requested(self, text: str, options: dict):
+        """Handle find request from dialog."""
+        editor = self._editor_tabs.current_editor()
+        if not editor:
+            return
+        
+        cursor = editor.textCursor()
+        
+        # Search options
+        case_sensitive = options.get('case_sensitive', False)
+        whole_word = options.get('whole_word', False)
+        use_regex = options.get('use_regex', False)
+        wrap_around = options.get('wrap_around', True)
+        search_forward = options.get('forward', True)
+        
+        # Build search flags
+        flags = 0
+        if case_sensitive:
+            flags |= 0x00010  # QTextDocument.FindFlag.FindCaseSensitively
+        
+        # Perform search
+        from PyQt6.QtGui import QTextDocument
+        find_flags = QTextDocument.FindFlag(flags)
+        
+        if search_forward:
+            found = editor.find(text, find_flags)
+        else:
+            found = editor.find(text, find_flags | QTextDocument.FindFlag.FindBackward)
+        
+        if not found and wrap_around:
+            # Wrap around
+            cursor.movePosition(cursor.MoveOperation.Start if search_forward else cursor.MoveOperation.End)
+            editor.setTextCursor(cursor)
+            if search_forward:
+                found = editor.find(text, find_flags)
+            else:
+                found = editor.find(text, find_flags | QTextDocument.FindFlag.FindBackward)
+    
+    def _on_replace_requested(self, find_text: str, replace_text: str, options: dict):
+        """Handle replace request from dialog."""
+        editor = self._editor_tabs.current_editor()
+        if not editor:
+            return
+        
+        cursor = editor.textCursor()
+        
+        # Check if there's selected text matching find_text
+        selected = cursor.selectedText()
+        if selected == find_text:
+            cursor.insertText(replace_text)
+        
+        # Find next
+        self._on_find_requested(find_text, options)
+    
+    def _on_replace_all_requested(self, find_text: str, replace_text: str, options: dict):
+        """Handle replace all request from dialog."""
+        import re
+        editor = self._editor_tabs.current_editor()
+        if not editor:
+            return
+        
+        document = editor.document()
+        cursor = editor.textCursor()
+        
+        count = 0
+        case_sensitive = options.get('case_sensitive', False)
+        whole_word = options.get('whole_word', False)
+        use_regex = options.get('use_regex', False)
+        
+        if use_regex:
+            # Regex replace all
+            try:
+                flags = 0 if case_sensitive else re.IGNORECASE
+                pattern = re.compile(find_text, flags)
+                content = editor.toPlainText()
+                new_content, count = pattern.subn(replace_text, content)
+                
+                if count > 0:
+                    cursor.beginEditBlock()
+                    cursor.select(cursor.SelectionType.Document)
+                    cursor.insertText(new_content)
+                    cursor.endEditBlock()
+                    
+            except re.error as e:
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.warning(self, "Regex Error", f"Invalid regular expression: {e}")
+                return
+        else:
+            # Simple replace all
+            cursor.beginEditBlock()
+            
+            # Save original position
+            original_position = cursor.position()
+            
+            # Move to start of document
+            cursor.setPosition(0)
+            
+            # Find and replace all occurrences
+            while True:
+                found = document.find(find_text, cursor, 
+                                    QTextDocument.FindFlag.FindCaseSensitively if case_sensitive else QTextDocument.FindFlag(0))
+                
+                if found.isNull():
+                    break
+                
+                # Check whole word if needed
+                if whole_word:
+                    # Verify it's a whole word
+                    start = found.selectionStart()
+                    end = found.selectionEnd()
+                    text = editor.toPlainText()
+                    
+                    # Check character before
+                    if start > 0 and (text[start-1].isalnum() or text[start-1] == '_'):
+                        cursor.setPosition(end)
+                        continue
+                    
+                    # Check character after
+                    if end < len(text) and (text[end].isalnum() or text[end] == '_'):
+                        cursor.setPosition(end)
+                        continue
+                
+                # Replace
+                found.insertText(replace_text)
+                count += 1
+            
+            cursor.endEditBlock()
+        
+        from PyQt6.QtWidgets import QMessageBox
+        if count > 0:
+            QMessageBox.information(self, "Replace All", f"Replaced {count} occurrence(s).")
+        else:
+            QMessageBox.information(self, "Replace All", f"No occurrences of '{find_text}' found.")
+        
+        # Restore cursor position
+        cursor.setPosition(original_position)
+        editor.setTextCursor(cursor)
 
     # ------------------------------------------------------------------
     # AI Actions
@@ -1681,6 +2393,199 @@ class CortexMainWindow(QMainWindow):
                           "<p>Features: Multi-file editor · Syntax highlighting · "
                           "AI chat · File explorer · Terminal</p>"
                           "<p><b>Version:</b> 1.0.0</p>")
+
+    def _show_keyboard_shortcuts(self):
+        """Show keyboard shortcuts reference dialog (F1)."""
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QTextEdit
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Keyboard Shortcuts Reference")
+        dialog.setMinimumSize(800, 600)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Create a text edit for displaying shortcuts
+        shortcuts_text = QTextEdit()
+        shortcuts_text.setReadOnly(True)
+        shortcuts_text.setFontFamily("Consolas")
+        shortcuts_text.setFontPointSize(10)
+        
+        # Build shortcuts HTML - Simple dark theme
+        html_content = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body { 
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+                    background-color: #1e1e1e;
+                    color: #ffffff;
+                    padding: 30px;
+                    margin: 0;
+                }
+                h1 {
+                    color: #4CAF50;
+                    text-align: center;
+                    font-size: 32px;
+                    margin-bottom: 10px;
+                }
+                .subtitle {
+                    text-align: center;
+                    color: #9cdcfe;
+                    margin-bottom: 30px;
+                    font-size: 16px;
+                }
+                .section {
+                    background-color: #252526;
+                    border-left: 4px solid #4CAF50;
+                    padding: 20px;
+                    margin-bottom: 25px;
+                    border-radius: 5px;
+                }
+                .section h2 {
+                    color: #4CAF50;
+                    margin: 0 0 15px 0;
+                    font-size: 20px;
+                }
+                table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    background-color: #2d2d30;
+                }
+                th {
+                    background-color: #3e3e42;
+                    color: #ffffff;
+                    padding: 12px;
+                    text-align: left;
+                    font-weight: 600;
+                    border: 1px solid #555;
+                }
+                td {
+                    padding: 10px 12px;
+                    border: 1px solid #555;
+                    color: #cccccc;
+                }
+                tr:nth-child(even) {
+                    background-color: #333337;
+                }
+                tr:hover {
+                    background-color: #3e3e42;
+                }
+                .shortcut {
+                    font-family: 'Consolas', monospace;
+                    background-color: #1e1e1e;
+                    padding: 5px 10px;
+                    border-radius: 4px;
+                    font-weight: bold;
+                    color: #9cdcfe;
+                    display: inline-block;
+                    min-width: 110px;
+                    text-align: center;
+                }
+                .status {
+                    color: #4CAF50;
+                    font-weight: bold;
+                }
+                .tip {
+                    background-color: #264f78;
+                    padding: 15px;
+                    border-radius: 5px;
+                    margin-top: 25px;
+                    border-left: 4px solid #007acc;
+                }
+                .tip strong {
+                    color: #9cdcfe;
+                }
+                .tip p {
+                    margin: 8px 0 0 0;
+                    color: #cccccc;
+                }
+            </style>
+        </head>
+        <body>
+            <h1>⌨️ Keyboard Shortcuts Reference</h1>
+            <p class="subtitle">Quick reference for all Cortex IDE shortcuts</p>
+            
+            <!-- File Operations -->
+            <div class="section">
+                <h2>📁 File Operations</h2>
+                <table>
+                    <tr><th>Action</th><th>Shortcut</th><th>Status</th></tr>
+                    <tr><td>New File</td><td><span class="shortcut">Ctrl+N</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><td>Open Folder</td><td><span class="shortcut">Ctrl+O</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><td>Open File</td><td><span class="shortcut">Ctrl+Shift+O</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><td>Save</td><td><span class="shortcut">Ctrl+S</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><td>Save All</td><td><span class="shortcut">Ctrl+Shift+S</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><td>Close Tab</td><td><span class="shortcut">Ctrl+W</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><td>Close All Tabs</td><td><span class="shortcut">Ctrl+Shift+W</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><td>Rename File</td><td><span class="shortcut">F2</span></td><td class="status">✅ Ready</td></tr>
+                </table>
+            </div>
+            
+            <!-- Edit Operations -->
+            <div class="section">
+                <h2>✏️ Edit Operations</h2>
+                <table>
+                    <tr><th>Action</th><th>Shortcut</th><th>Status</th></tr>
+                    <tr><td>Undo</td><td><span class="shortcut">Ctrl+Z</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><td>Redo</td><td><span class="shortcut">Ctrl+Y</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><td>Cut</td><td><span class="shortcut">Ctrl+X</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><td>Copy</td><td><span class="shortcut">Ctrl+C</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><td>Paste</td><td><span class="shortcut">Ctrl+V</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><td>Select All</td><td><span class="shortcut">Ctrl+A</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><td>Toggle Comment</td><td><span class="shortcut">Ctrl+/</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><td>Delete Line</td><td><span class="shortcut">Ctrl+Shift+K</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><td>Indent Selection</td><td><span class="shortcut">Tab</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><td>Outdent Selection</td><td><span class="shortcut">Shift+Tab</span></td><td class="status">✅ Ready</td></tr>
+                </table>
+            </div>
+            
+            <!-- Find & Replace -->
+            <div class="section">
+                <h2>🔍 Find & Replace</h2>
+                <table>
+                    <tr><th>Action</th><th>Shortcut</th><th>Status</th></tr>
+                    <tr><td>Find</td><td><span class="shortcut">Ctrl+F</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><td>Find & Replace</td><td><span class="shortcut">Ctrl+H</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><td>Replace All</td><td><span class="shortcut">In Dialog</span></td><td class="status">✅ Ready</td></tr>
+                </table>
+            </div>
+            
+            <!-- Navigation -->
+            <div class="section">
+                <h2>🧭 Navigation</h2>
+                <table>
+                    <tr><th>Action</th><th>Shortcut</th><th>Status</th></tr>
+                    <tr><td>Next Tab</td><td><span class="shortcut">Ctrl+Tab</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><td>Previous Tab</td><td><span class="shortcut">Ctrl+Shift+Tab</span></td><td class="status">✅ Ready</td></tr>
+                </table>
+            </div>
+            
+            <!-- View -->
+            <div class="section">
+                <h2>👁️ View</h2>
+                <table>
+                    <tr><th>Action</th><th>Shortcut</th><th>Status</th></tr>
+                    <tr><td>Toggle Theme</td><td><span class="shortcut">Ctrl+Shift+T</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><td>Toggle Terminal</td><td><span class="shortcut">Ctrl+`</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><td>Toggle Sidebar</td><td><span class="shortcut">Ctrl+B</span></td><td class="status">✅ Ready</td></tr>
+                </table>
+            </div>
+            
+            <!-- Tip -->
+            <div class="tip">
+                <strong>💡 Tip:</strong>
+                <p>Press <span class="shortcut" style="min-width: 50px;">F1</span> anytime to open this reference!</p>
+            </div>
+        </body>
+        </html>
+        """
+        
+        shortcuts_text.setHtml(html_content)
+        layout.addWidget(shortcuts_text)
+        
+        dialog.exec()
 
     def closeEvent(self, event: QCloseEvent):
         """Save session on close and kill terminal process cleanly."""

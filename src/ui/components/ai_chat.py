@@ -238,49 +238,95 @@ class ChatBridge(QObject):
     # ── CHAT PERSISTENCE: File-based storage fallback ─────────────────
     
     @pyqtSlot(str, str, result=str)
-    def save_chats_to_file(self, storage_key: str, json_data: str) -> str:
+    def save_chats_to_sqlite(self, storage_key: str, json_data: str) -> str:
         """
-        Save chat data to a JSON file in the .cortex/chats directory.
-        This provides a reliable fallback when localStorage doesn't persist.
+        Save chat data to SQLite database.
+        This provides high-performance persistent storage.
         Returns: "OK" or error message.
         """
         try:
-            # Create .cortex directory if it doesn't exist
-            cortex_dir = os.path.join(os.path.expanduser("~"), ".cortex")
-            chats_dir = os.path.join(cortex_dir, "chats")
-            os.makedirs(chats_dir, exist_ok=True)
+            from src.core.chat_history import get_chat_history
             
-            # Save to file
-            file_path = os.path.join(chats_dir, f"{storage_key}.json")
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(json_data)
+            # Parse JSON data
+            chats = json.loads(json_data)
             
-            log.debug(f'Chats saved to file: {file_path} ({len(json_data)} chars)')
+            # Get chat history manager
+            history = get_chat_history()
+            
+            # Save each conversation
+            for chat in chats:
+                if not isinstance(chat, dict):
+                    continue
+                
+                conversation_id = chat.get('id', storage_key)
+                project_path = f"project_{storage_key}"
+                title = chat.get('title', f"Chat {conversation_id[:8]}")
+                messages = chat.get('messages', [])
+                
+                # Create conversation if not exists
+                history.create_conversation(project_path, title)
+                
+                # Add all messages
+                for msg in messages:
+                    role = msg.get('role', 'user')
+                    content = msg.get('content', '')
+                    files_accessed = msg.get('files_accessed', [])
+                    tools_used = msg.get('tools_used', [])
+                    
+                    history.add_message(
+                        conversation_id=conversation_id,
+                        role=role,
+                        content=content,
+                        files_accessed=files_accessed,
+                        tools_used=tools_used
+                    )
+            
+            log.debug(f'✓ Saved {len(chats)} chats to SQLite (storage_key: {storage_key})')
             return "OK"
+            
         except Exception as e:
-            log.error(f'Failed to save chats to file: {e}')
+            log.error(f'✗ Failed to save chats to SQLite: {e}')
             return f"ERROR: {str(e)}"
     
     @pyqtSlot(str, result=str)
-    def load_chats_from_file(self, storage_key: str) -> str:
+    def load_chats_from_sqlite(self, storage_key: str) -> str:
         """
-        Load chat data from a JSON file in the .cortex/chats directory.
-        Returns: JSON string or empty array if file doesn't exist.
+        Load chat data from SQLite database.
+        Returns: JSON string with conversations or empty array.
         """
         try:
-            chats_dir = os.path.join(os.path.expanduser("~"), ".cortex", "chats")
-            file_path = os.path.join(chats_dir, f"{storage_key}.json")
+            from src.core.chat_history import get_chat_history
             
-            if os.path.exists(file_path):
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    data = f.read()
-                log.debug(f'Chats loaded from file: {file_path} ({len(data)} chars)')
-                return data
-            else:
-                # Return empty array if file doesn't exist
+            # Get chat history manager
+            history = get_chat_history()
+            
+            # Get project path
+            project_path = f"project_{storage_key}"
+            
+            # Get all conversations for this project
+            conversations = history.get_conversations(project_path)
+            
+            if not conversations:
+                log.debug(f'No chats found in SQLite for storage_key: {storage_key}')
                 return "[]"
+            
+            # Convert to format expected by JavaScript
+            result = []
+            for conv in conversations:
+                chat_data = {
+                    'id': conv['conversation_id'],
+                    'title': conv['title'],
+                    'created_at': conv.get('created_at'),
+                    'messages': history.get_messages(conv['conversation_id'])
+                }
+                result.append(chat_data)
+            
+            json_result = json.dumps(result)
+            log.debug(f'✓ Loaded {len(result)} chats from SQLite ({len(json_result)} chars)')
+            return json_result
+            
         except Exception as e:
-            log.error(f'Failed to load chats from file: {e}')
+            log.error(f'✗ Failed to load chats from SQLite: {e}')
             return "[]"
 
 
@@ -733,8 +779,8 @@ class AIChatWidget(QWidget):
             hash_str = format(abs(hash_val), 'x')
             storage_key = f"cortex_chats_{hash_str}"
             
-            # Load chats from file
-            chats_data = self._bridge.load_chats_from_file(storage_key)
+            # Load chats from SQLite
+            chats_data = self._bridge.load_chats_from_sqlite(storage_key)
             log.info(f"Loading chats for key {storage_key}: {len(chats_data)} chars")
             
             # Push both project info AND chat data to JavaScript

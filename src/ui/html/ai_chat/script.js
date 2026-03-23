@@ -43,87 +43,87 @@ function loadProjectChats() {
             return parsed;
         }
         
-        // If localStorage is empty or returns NULL, try loading from file
-        console.log('[CHAT] LOAD - localStorage empty or no data, trying file-based storage...');
-        return loadChatsFromFile();
+        // If localStorage is empty or returns NULL, try loading from SQLite
+        console.log('[CHAT] LOAD - localStorage empty or no data, trying SQLite...');
+        return loadChatsFromSQLite();
     } catch (e) {
         console.error('[CHAT] LOAD ERROR:', e.message);
-        // On error, try loading from file
-        console.log('[CHAT] LOAD - Error in localStorage, trying file-based storage...');
-        return loadChatsFromFile();
+        // On error, try loading from SQLite
+        console.log('[CHAT] LOAD - Error in localStorage, trying SQLite...');
+        return loadChatsFromSQLite();
     }
 }
 
-// FILE-BASED FALLBACK - Save chats for current project
-function saveProjectChatsToFile(chatList) {
+// SQLITE PERSISTENCE - Save chats for current project
+function saveProjectChatsToSQLite(chatList) {
     var key = getStorageKey();
     var data = JSON.stringify(chatList);
     var success = false;
     
-    console.log('[CHAT] SAVE FILE - Saving', chatList.length, 'chat(s),', data.length, 'chars');
+    console.log('[CHAT] SAVE SQLITE - Saving', chatList.length, 'chat(s),', data.length, 'chars');
     
     try {
-        if (bridge && typeof bridge.save_chats_to_file === 'function') {
-            var result = bridge.save_chats_to_file(key, data);
+        if (bridge && typeof bridge.save_chats_to_sqlite === 'function') {
+            var result = bridge.save_chats_to_sqlite(key, data);
             if (result === "OK") {
-                console.log('[CHAT] SAVE FILE - SUCCESS');
+                console.log('[CHAT] SAVE SQLITE - SUCCESS');
                 success = true;
             } else {
-                console.error('[CHAT] SAVE FILE - FAILED:', result);
+                console.error('[CHAT] SAVE SQLITE - FAILED:', result);
             }
         } else {
-            console.warn('[CHAT] SAVE FILE - Bridge not ready');
+            console.warn('[CHAT] SAVE SQLITE - Bridge not ready');
         }
     } catch (e) {
-        console.error('[CHAT] SAVE FILE - ERROR:', e.message);
+        console.error('[CHAT] SAVE SQLITE - ERROR:', e.message);
     }
     
     return success;
 }
 
-// FILE-BASED FALLBACK - Load chats from file
-function loadChatsFromFile() {
+// SQLITE PERSISTENCE - Load chats from SQLite database
+function loadChatsFromSQLite() {
     var key = getStorageKey();
-    console.log('[CHAT] LOAD FILE - Key:', key);
+    console.log('[CHAT] LOAD SQLITE - Key:', key);
     
-    if (!bridge || typeof bridge.load_chats_from_file !== 'function') {
-        console.warn('[CHAT] LOAD FILE - Bridge not ready');
+    if (!bridge || typeof bridge.load_chats_from_sqlite !== 'function') {
+        console.warn('[CHAT] LOAD SQLITE - Bridge not ready');
         return [];
     }
     
     try {
         // The bridge method returns a string directly (synchronous)
-        var result = bridge.load_chats_from_file(key);
-        console.log('[CHAT] LOAD FILE - Raw result type:', typeof result);
-        console.log('[CHAT] LOAD FILE - Raw result:', result);
+        var result = bridge.load_chats_from_sqlite(key);
+        console.log('[CHAT] LOAD SQLITE - Raw result type:', typeof result);
+        console.log('[CHAT] LOAD SQLITE - Raw result:', result);
         
         // If result is a Promise or looks like "[object Promise]", we need to handle it differently
         if (result && result.toString() === '[object Promise]') {
-            console.error('[CHAT] LOAD FILE - Got Promise instead of direct result. Bridge not ready.');
+            console.error('[CHAT] LOAD SQLITE - Got Promise instead of direct result. Bridge not ready.');
             return [];
         }
         
         // Check if we got a valid string result
         if (result && typeof result === 'string' && result !== "[]") {
-            console.log('[CHAT] LOAD FILE - Found', result.length, 'chars of data');
+            console.log('[CHAT] LOAD SQLITE - Found', result.length, 'chars of data');
             try {
                 var parsed = JSON.parse(result);
-                console.log('[CHAT] LOAD FILE - Successfully parsed', parsed.length, 'chats');
+                console.log('[CHAT] LOAD SQLITE - Successfully parsed', parsed.length, 'chats');
                 return parsed;
             } catch (parseError) {
-                console.error('[CHAT] LOAD FILE - JSON parse error:', parseError.message);
-                console.error('[CHAT] LOAD FILE - Invalid JSON:', result.substring(0, 100));
+                console.error('[CHAT] LOAD SQLITE - JSON parse error:', parseError.message);
+                console.error('[CHAT] LOAD SQLITE - Invalid JSON:', result.substring(0, 100));
             }
         } else if (result === "[]") {
-            console.log('[CHAT] LOAD FILE - Empty array returned (no saved chats)');
+            console.log('[CHAT] LOAD SQLITE - Empty array returned (no saved chats)');
             return [];
         }
     } catch (e) {
-        console.error('[CHAT] LOAD FILE - ERROR:', e.message);
-        console.error('[CHAT] LOAD FILE - Error stack:', e.stack);
+        console.error('[CHAT] LOAD SQLITE - ERROR:', e.message);
+        console.error('[CHAT] LOAD SQLITE - Error stack:', e.stack);
     }
     
-    console.log('[CHAT] LOAD FILE - No data or error occurred');
+    console.log('[CHAT] LOAD SQLITE - No data or error occurred');
     return [];
 }
 
@@ -149,34 +149,34 @@ function saveProjectChats(chatList) {
         console.error('[CHAT] SAVE ERROR (localStorage):', e.message);
     }
     
-    // Method 2: File-based storage (reliable fallback)
+    // Method 2: SQLite storage (high-performance persistent storage)
     try {
-        if (bridge && typeof bridge.save_chats_to_file === 'function') {
+        if (bridge && typeof bridge.save_chats_to_sqlite === 'function') {
             // PyQt slots return promises, handle asynchronously
-            var promise = bridge.save_chats_to_file(key, data);
+            var promise = bridge.save_chats_to_sqlite(key, data);
             if (promise && typeof promise.then === 'function') {
                 promise.then(function(result) {
                     if (result === "OK") {
-                        console.log('[CHAT] SAVE - File backup: SUCCESS');
+                        console.log('[CHAT] SAVE - SQLite: SUCCESS ✓');
                     } else {
-                        console.error('[CHAT] SAVE - File backup: FAILED:', result);
+                        console.error('[CHAT] SAVE - SQLite: FAILED:', result);
                     }
                 }).catch(function(err) {
-                    console.error('[CHAT] SAVE - File backup: ERROR:', err);
+                    console.error('[CHAT] SAVE - SQLite: ERROR:', err);
                 });
             } else {
                 // Synchronous fallback
                 if (promise === "OK") {
-                    console.log('[CHAT] SAVE - File backup: SUCCESS');
+                    console.log('[CHAT] SAVE - SQLite: SUCCESS ✓');
                 } else {
-                    console.error('[CHAT] SAVE - File backup: FAILED:', promise);
+                    console.error('[CHAT] SAVE - SQLite: FAILED:', promise);
                 }
             }
         } else {
-            console.warn('[CHAT] SAVE - File backup: Bridge not ready');
+            console.warn('[CHAT] SAVE - SQLite: Bridge not ready');
         }
     } catch (e) {
-        console.error('[CHAT] SAVE ERROR (file backup):', e.message);
+        console.error('[CHAT] SAVE ERROR (SQLite):', e.message);
     }
     
     if (!saveSuccess) {
