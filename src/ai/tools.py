@@ -293,17 +293,26 @@ class PathResolver:
             base = self.root or Path.cwd()
             p = base / p
         resolved = p.resolve()
-        if self.root and not str(resolved).lower().startswith(str(self.root).lower()):
-            # Log the attempted escape so we can diagnose wrong-directory calls
-            log.warning(
-                f"PathResolver BLOCKED: '{path}' resolved to '{resolved}' "
-                f"which is outside project root '{self.root}'. "
-                f"AI should use paths relative to project root only."
-            )
-            raise PermissionError(
-                f"Path '{path}' escapes the project root '{self.root}'. "
-                f"Use a path relative to the project root, e.g. 'src/main.py'."
-            )
+        if self.root:
+            root_str = str(self.root)
+            try:
+                common = os.path.commonpath([
+                    os.path.normcase(str(resolved)),
+                    os.path.normcase(root_str)
+                ])
+            except ValueError:
+                common = ""
+            if common != os.path.normcase(root_str):
+                # Log the attempted escape so we can diagnose wrong-directory calls
+                log.warning(
+                    f"PathResolver BLOCKED: '{path}' resolved to '{resolved}' "
+                    f"which is outside project root '{self.root}'. "
+                    f"AI should use paths relative to project root only."
+                )
+                raise PermissionError(
+                    f"Path '{path}' escapes the project root '{self.root}'. "
+                    f"Use a path relative to the project root, e.g. 'src/main.py'."
+                )
         return resolved
 
     def display(self, path: str) -> str:
@@ -834,6 +843,40 @@ class ToolRegistry:
         tool = self.tools.get(tool_name)
         if not tool:
             return ToolResult(success=False, result=None, error=f"Tool '{tool_name}' not found")
+
+        tools_requires_project = {
+            "read_file",
+            "write_file",
+            "edit_file",
+            "inject_after",
+            "add_import",
+            "insert_at_line",
+            "get_file_outline",
+            "delete_lines",
+            "replace_lines",
+            "find_usages",
+            "analyze_file",
+            "delete_path",
+            "list_directory",
+            "search_code",
+            "search_codebase",
+            "semantic_search",
+            "find_function",
+            "find_class",
+            "debug_error",
+            "check_syntax",
+            "get_problems",
+            "lsp_find_references",
+            "lsp_go_to_definition",
+            "run_command",
+        }
+        if tool_name in tools_requires_project and not (self.project_root and os.path.isdir(self.project_root)):
+            error_msg = (
+                "Project root is not set. Open a project folder before running "
+                f"'{tool_name}'."
+            )
+            log.warning(f"Tool {tool_name} blocked: {error_msg}")
+            return ToolResult(success=False, result=None, error=error_msg, duration_ms=0)
             
         # Check for duplicate tool calls (prevent infinite loops)
         call_signature = {"tool": tool_name, "params": params}
@@ -2402,76 +2445,95 @@ class ToolRegistry:
     def _semantic_search(self, query: str, limit: int = 10, chunk_types: Optional[List[str]] = None) -> str:
         """Semantic search using embeddings."""
         try:
-            from src.core.semantic_search import get_semantic_search
-            
-            search = get_semantic_search()
-            
-            results = search.search(
-                query=query,
-                limit=limit,
-                chunk_types=chunk_types
-            )
-            
+            from src.core.semantic_search import get_semantic_searcher
+
+            project_root = self.project_root or os.getcwd()
+            searcher = get_semantic_searcher(project_root)
+            stats = searcher.get_stats()
+            if stats.get("files_indexed", 0) == 0:
+                searcher.index_project()
+
+            results = searcher.search(query, top_k=limit)
+
             if not results:
                 return f"No semantic matches found for '{query}'. The project may not be indexed yet."
-            
+
             output_lines = [f"## Semantic Search Results for: {query}\n"]
-            output_lines.append(f"Found {len(results)} matching code chunks:\n")
-            
+            output_lines.append(f"Found {len(results)} matching files:\n")
+            if chunk_types:
+                output_lines.append("Note: chunk_types filtering is not supported by the current semantic index.\n")
+
             for i, result in enumerate(results, 1):
-                output_lines.append(f"### {i}. {result.name} ({result.chunk_type})")
-                output_lines.append(f"   📁 {result.file_path}:{result.start_line}-{result.end_line}")
-                output_lines.append(f"   📊 Score: {result.score:.2f}")
-                
-                if result.signature:
-                    signature = result.signature[:100] + "..." if len(result.signature) > 100 else result.signature
-                    output_lines.append(f"   📝 {signature}")
-                
-                # Show code snippet
-                code_preview = result.code[:300] + "..." if len(result.code) > 300 else result.code
-                output_lines.append(f"   ```{result.language}")
-                output_lines.append(f"   {code_preview}")
+                try:
+                    rel_path = str(Path(result.file_path).relative_to(Path(project_root)))
+                except Exception:
+                    rel_path = result.file_path
+
+                output_lines.append(f"### {i}. {rel_path}")
+                output_lines.append(f"   Similarity: {result.similarity:.3f}")
+                output_lines.append(f"   Line ~{result.line_number}")
+
+                snippet = result.content_snippet[:300] + "..." if len(result.content_snippet) > 300 else result.content_snippet
+                output_lines.append("   ```")
+                output_lines.append(f"   {snippet}")
                 output_lines.append("   ```\n")
-            
+
             return "\n".join(output_lines)
-            
+
         except ImportError:
-            return f"Semantic search not available. The project needs to be indexed first. Use 'index_project' to enable semantic search."
+            return (
+                "Semantic search not available. The project needs to be indexed first. "
+                "Use 'index_project' to enable semantic search."
+            )
         except Exception as e:
             raise Exception(f"Semantic search failed: {e}")
 
     def _find_function(self, name: str, file_pattern: Optional[str] = None) -> str:
         """Find function definitions by name pattern."""
         try:
-            from src.core.semantic_search import get_semantic_search
-            
-            search = get_semantic_search()
-            project_path = self.project_root
-            
-            results = search.find_function(name, project_path)
-            
+            from src.core.codebase_index import get_codebase_index, SymbolType
+            import fnmatch
+
+            project_root = self.project_root or os.getcwd()
+            index = get_codebase_index(project_root)
+            if index.get_project_stats().get("files_indexed", 0) == 0:
+                index.index_project()
+
+            name_lower = name.lower()
+            symbols = []
+            symbols.extend(index.find_symbols(sym_type=SymbolType.FUNCTION))
+            symbols.extend(index.find_symbols(sym_type=SymbolType.METHOD))
+
+            results = []
+            for symbol in symbols:
+                if name_lower not in symbol.name.lower():
+                    continue
+                if file_pattern and not fnmatch.fnmatch(Path(symbol.file_path).name, file_pattern):
+                    continue
+                results.append(symbol)
+
             if not results:
-                # Fallback to text search
-                return self._search_code(f"def {name}|function {name}|async def {name}", file_pattern or "*.py")
-            
+                return self._search_code(
+                    f"def {name}|function {name}|async def {name}",
+                    file_pattern or "*.py"
+                )
+
             output_lines = [f"## Function Definitions for: {name}\n"]
             output_lines.append(f"Found {len(results)} function(s):\n")
-            
-            for i, result in enumerate(results, 1):
-                output_lines.append(f"### {i}. {result.name}")
-                output_lines.append(f"   📁 {result.file_path}:{result.start_line}")
-                
-                if result.signature:
-                    output_lines.append(f"   📝 Signature: {result.signature}")
-                
-                if result.docstring:
-                    doc = result.docstring[:150] + "..." if len(result.docstring) > 150 else result.docstring
-                    output_lines.append(f"   📖 {doc}")
-                
+
+            for i, symbol in enumerate(results, 1):
+                try:
+                    rel_path = str(Path(symbol.file_path).relative_to(Path(project_root)))
+                except Exception:
+                    rel_path = symbol.file_path
+                output_lines.append(f"### {i}. {symbol.name} ({symbol.type.value})")
+                output_lines.append(f"   Location: {rel_path}:{symbol.line}")
+                if symbol.parent:
+                    output_lines.append(f"   Parent: {symbol.parent}")
                 output_lines.append("")
-            
+
             return "\n".join(output_lines)
-            
+
         except ImportError:
             return self._search_code(f"def {name}|function {name}", file_pattern or "*.py")
         except Exception as e:
@@ -2480,34 +2542,40 @@ class ToolRegistry:
     def _find_class(self, name: str, file_pattern: Optional[str] = None) -> str:
         """Find class definitions by name pattern."""
         try:
-            from src.core.semantic_search import get_semantic_search
-            
-            search = get_semantic_search()
-            project_path = self.project_root
-            
-            results = search.find_class(name, project_path)
-            
+            from src.core.codebase_index import get_codebase_index, SymbolType
+            import fnmatch
+
+            project_root = self.project_root or os.getcwd()
+            index = get_codebase_index(project_root)
+            if index.get_project_stats().get("files_indexed", 0) == 0:
+                index.index_project()
+
+            name_lower = name.lower()
+            results = []
+            for symbol in index.find_symbols(sym_type=SymbolType.CLASS):
+                if name_lower not in symbol.name.lower():
+                    continue
+                if file_pattern and not fnmatch.fnmatch(Path(symbol.file_path).name, file_pattern):
+                    continue
+                results.append(symbol)
+
             if not results:
                 return self._search_code(f"class {name}", file_pattern or "*.py")
-            
+
             output_lines = [f"## Class Definitions for: {name}\n"]
             output_lines.append(f"Found {len(results)} class(es):\n")
-            
-            for i, result in enumerate(results, 1):
-                output_lines.append(f"### {i}. {result.name}")
-                output_lines.append(f"   📁 {result.file_path}:{result.start_line}-{result.end_line}")
-                
-                if result.signature:
-                    output_lines.append(f"   📝 {result.signature}")
-                
-                if result.docstring:
-                    doc = result.docstring[:150] + "..." if len(result.docstring) > 150 else result.docstring
-                    output_lines.append(f"   📖 {doc}")
-                
+
+            for i, symbol in enumerate(results, 1):
+                try:
+                    rel_path = str(Path(symbol.file_path).relative_to(Path(project_root)))
+                except Exception:
+                    rel_path = symbol.file_path
+                output_lines.append(f"### {i}. {symbol.name}")
+                output_lines.append(f"   Location: {rel_path}:{symbol.line}")
                 output_lines.append("")
-            
+
             return "\n".join(output_lines)
-            
+
         except ImportError:
             return self._search_code(f"class {name}", file_pattern or "*.py")
         except Exception as e:

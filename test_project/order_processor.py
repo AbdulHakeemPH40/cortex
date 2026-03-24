@@ -6,18 +6,43 @@ import sys
 
 def calculate_total(items):
     """Calculate total price from items list."""
+    if not items:
+        return 0.0
+    
     total = 0
     for item in items:
-        total += item['price'] * item['quantity']
-    return total
+        if 'price' not in item:
+            raise ValueError(f"Item missing 'price' field: {item}")
+        if 'quantity' not in item:
+            raise ValueError(f"Item missing 'quantity' field: {item}")
+        
+        price = float(item['price'])
+        quantity = int(item['quantity'])
+        
+        if price < 0:
+            raise ValueError(f"Price cannot be negative: {price}")
+        if quantity < 0:
+            raise ValueError(f"Quantity cannot be negative: {quantity}")
+        
+        total += price * quantity
+    
+    return float(total)
 
 def apply_discount(total, discount_percent):
     """Apply discount to total."""
+    if discount_percent < 0:
+        raise ValueError("Discount percentage cannot be negative")
+    if discount_percent > 100:
+        raise ValueError("Discount percentage cannot exceed 100%")
+    
     discount_amount = total * (discount_percent / 100)
     return total - discount_amount
 
 def process_order(items, discount=0, tax_rate=0.08):
     """Process an order and return final price."""
+    if tax_rate < 0:
+        raise ValueError("Tax rate cannot be negative")
+    
     subtotal = calculate_total(items)
     
     if discount > 0:
@@ -25,8 +50,8 @@ def process_order(items, discount=0, tax_rate=0.08):
     else:
         discounted_total = subtotal
     
-    # BUG: Missing tax calculation
-    tax_amount = discounted_total * tax_rate
+    # BUG: Missing tax calculation - FIXED: Tax should be calculated on subtotal before discount
+    tax_amount = subtotal * tax_rate
     final_total = discounted_total + tax_amount
     
     return final_total

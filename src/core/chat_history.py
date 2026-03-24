@@ -37,10 +37,11 @@ class ChatHistoryManager:
         self.db = db or get_database()
         self._json_dir = Path.home() / ".cortex" / "chats"
     
-    def create_conversation(self, project_path: str, title: str = None) -> str:
+    def create_conversation(self, project_path: str, title: str = None, conversation_id: str = None) -> str:
         """Create a new conversation and return its ID."""
         import uuid
-        conversation_id = str(uuid.uuid4())
+        if not conversation_id:
+            conversation_id = str(uuid.uuid4())
         
         self.db.create_conversation(
             conversation_id=conversation_id,
@@ -95,6 +96,10 @@ class ChatHistoryManager:
         """Delete a conversation and all its messages."""
         self.db.delete_conversation(conversation_id)
         log.debug(f"Deleted conversation {conversation_id}")
+        
+    def clear_conversation_messages(self, conversation_id: str):
+        """Clear all messages from a conversation without deleting it."""
+        self.db.clear_conversation_messages(conversation_id)
     
     def search_messages(self, query: str, project_path: str = None) -> List[Dict]:
         """Search through message content."""
@@ -136,15 +141,18 @@ class ChatHistoryManager:
                 # Create conversation
                 conv_id = self.create_conversation(
                     project_path=project_path,
-                    title=chat_data.get('title', 'Imported Chat')
+                    title=chat_data.get('title', 'Imported Chat'),
+                    conversation_id=chat_data.get('id')
                 )
                 
                 # Add messages
                 for msg in chat_data.get('messages', []):
+                    # Handle both 'content' (new) and 'text' (legacy) keys
+                    msg_content = msg.get('content') or msg.get('text', '')
                     self.add_message(
                         conversation_id=conv_id,
                         role=msg.get('role', 'user'),
-                        content=msg.get('content', ''),
+                        content=msg_content,
                         files_accessed=msg.get('files_accessed', []),
                         tools_used=msg.get('tools_used', [])
                     )

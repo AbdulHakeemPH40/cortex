@@ -4,6 +4,7 @@ Full 3-panel layout: Sidebar | Editor Tabs | AI Chat + Terminal
 """
 
 import os
+import platform
 from pathlib import Path
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSplitter,
@@ -521,6 +522,7 @@ class CortexMainWindow(QMainWindow):
         self._file_tracker = FileEditTracker(self)
         self._diff_window = DiffWindow(self)
         self._codebase_index = None
+        self._inline_edit_context = None
         
         # Initialize UI components to None to prevent theme application crashes if build fails
         self._toolbar = None
@@ -865,7 +867,7 @@ class CortexMainWindow(QMainWindow):
         self._add_action(nav_menu, "Next Tab", self._next_tab, "Ctrl+Tab")
         self._add_action(nav_menu, "Previous Tab", self._prev_tab, "Ctrl+Shift+Tab")
         nav_menu.addSeparator()
-        self._add_action(nav_menu, "Keyboard Shortcuts Help", self._show_shortcuts_help, "Ctrl+K, Ctrl+S")
+        self._add_action(nav_menu, "Keyboard Shortcuts Help", self._show_shortcuts_help, "Ctrl+Alt+K")
 
         # View
         view_menu = mb.addMenu("View")
@@ -1051,6 +1053,7 @@ class CortexMainWindow(QMainWindow):
         self._sidebar.file_opened.connect(self._open_file)
         self._sidebar.file_search_opened.connect(self._open_file_at_line)
         self._sidebar.ai_action_requested.connect(self._ai_action)
+        self._sidebar.file_renamed.connect(self._on_sidebar_file_renamed)
         
         # Changed files panel signals
         self._sidebar.file_accepted.connect(self._on_accept_file_edit)
@@ -1075,6 +1078,7 @@ class CortexMainWindow(QMainWindow):
         self._ai_agent.file_generated.connect(self._open_file)
         self._ai_agent.file_edited_diff.connect(self._file_tracker.add_edit)
         self._ai_agent.file_edited_diff.connect(self._on_file_edited_diff_for_js)
+        self._ai_agent.file_edited_diff.connect(self._on_inline_edit_diff)
         self._ai_agent.tool_activity.connect(self._ai_chat.show_tool_activity)
         self._ai_agent.directory_contents.connect(self._ai_chat.show_directory_contents)
         self._ai_agent.directory_contents.connect(self._on_directory_contents_for_tree)
@@ -1107,6 +1111,9 @@ class CortexMainWindow(QMainWindow):
         idx = self._editor_tabs.addTab(editor, "untitled.py")
         self._editor_tabs.setCurrentIndex(idx)
         editor.cursor_position_changed.connect(self._update_status_cursor)
+        editor.inline_edit_submitted.connect(self._on_inline_edit_submitted)
+        editor.inline_edit_cancelled.connect(self._on_inline_edit_cancelled)
+        editor.inline_diff_requested.connect(self._on_inline_diff_requested)
 
     def _open_file_dialog(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open File",
@@ -1191,6 +1198,9 @@ class CortexMainWindow(QMainWindow):
             editor = self._editor_tabs.widget(idx)
             if isinstance(editor, CodeEditor):
                 editor.cursor_position_changed.connect(self._update_status_cursor)
+                editor.inline_edit_submitted.connect(self._on_inline_edit_submitted)
+                editor.inline_edit_cancelled.connect(self._on_inline_edit_cancelled)
+                editor.inline_diff_requested.connect(self._on_inline_diff_requested)
                 
             self._update_status_file(filepath)
             is_dark = self._theme_manager.is_dark
@@ -1232,6 +1242,118 @@ class CortexMainWindow(QMainWindow):
 
         is_dark = self._theme_manager.is_dark
         self._editor_tabs.open_diff_tab(file_path, original, modified, is_dark)
+
+    def _on_inline_edit_submitted(self, prompt: str, selection_text: str, line_range: tuple):
+        editor = self._editor_tabs.currentWidget()
+        if not isinstance(editor, CodeEditor):
+            self._ai_chat.add_system_message("Open a file to use inline edit.")
+            return
+
+        file_path = self._editor_tabs.current_filepath()
+        if not file_path:
+            self._ai_chat.add_system_message("Open a file to use inline edit.")
+            return
+
+        start_line, end_line = line_range
+        if start_line == end_line:
+            line_range_text = f"{start_line}"
+        else:
+            line_range_text = f"{start_line}-{end_line}"
+
+        rel_path = file_path
+        project_root = self._project_manager.root
+        if project_root:
+            try:
+                rel_path = str(Path(file_path).resolve().relative_to(Path(project_root).resolve()))
+            except Exception:
+                rel_path = file_path
+
+        self._inline_edit_context = {
+            "file_path": os.path.normpath(file_path),
+            "relative_path": rel_path,
+            "line_range": line_range,
+            "selection_text": selection_text,
+            "editor": editor,
+            "diff": None,
+        }
+
+        self._ai_chat.add_system_message(
+            f"Inline edit: `{rel_path}` lines {line_range_text}"
+        )
+        self._ai_chat._add_ai_bubble_streaming()
+
+        inline_prompt = (
+            "Inline edit request.\n"
+            f"File (project-relative): {rel_path}\n"
+            f"Selection lines: {line_range_text}\n"
+            "Selected code:\n"
+            "```\n"
+            f"{selection_text}\n"
+            "```\n"
+            "Instruction:\n"
+            f"{prompt}\n\n"
+            "Constraints:\n"
+            "- Apply changes only within the selection unless absolutely required.\n"
+            "- Use file editing tools (prefer replace_lines) to update the file.\n"
+            "- Do not modify other files.\n"
+            "- Use the project-relative path above.\n"
+        )
+        self._ai_agent.chat(inline_prompt)
+
+    def _on_inline_edit_cancelled(self):
+        self._inline_edit_context = None
+
+    def _on_inline_diff_requested(self):
+        context = self._inline_edit_context or {}
+        file_path = context.get("file_path")
+        if not file_path:
+            return
+
+        diff_pair = context.get("diff")
+        if diff_pair:
+            original, modified = diff_pair
+            is_dark = self._theme_manager.is_dark
+            self._editor_tabs.open_diff_tab(file_path, original, modified, is_dark)
+            return
+
+        self._on_show_diff(file_path)
+
+    def _on_inline_edit_diff(self, file_path: str, original: str, new_content: str):
+        context = self._inline_edit_context
+        if not context:
+            return
+
+        target = context.get("file_path")
+        if not target:
+            return
+
+        if os.path.normcase(os.path.normpath(file_path)) != os.path.normcase(os.path.normpath(target)):
+            return
+
+        editor = context.get("editor")
+        if not isinstance(editor, CodeEditor):
+            return
+
+        import difflib
+
+        diff_lines = list(difflib.unified_diff(
+            original.splitlines(),
+            new_content.splitlines(),
+            fromfile="Original",
+            tofile="Modified",
+            lineterm=""
+        ))
+        if not diff_lines:
+            diff_text = "No changes detected."
+        else:
+            max_lines = 200
+            if len(diff_lines) > max_lines:
+                diff_lines = diff_lines[:max_lines]
+                diff_lines.append("... (diff truncated)")
+            diff_text = "\n".join(diff_lines)
+
+        context["diff"] = (original, new_content)
+        editor.show_inline_diff(diff_text)
 
     def _on_file_edited_diff_for_js(self, file_path: str, original: str, new_content: str):
         """Store diff data in Python dict for the Qt dialog viewer."""
@@ -1430,10 +1552,76 @@ class CortexMainWindow(QMainWindow):
         
         term.setFocus()
         lang = detect_language(fp)
-        if lang == "python":
-            term.execute_command(f'python "{fp}"')
+        command = self._build_run_command(fp, lang)
+        if command:
+            term.execute_command(command)
         else:
             QMessageBox.information(self, "Run", f"Running {lang} is not yet supported.")
+
+    def _build_run_command(self, file_path: str, lang: str) -> str | None:
+        """Build a run command for the current file based on language."""
+        is_windows = platform.system() == "Windows"
+        root = self._project_manager.root or str(Path(file_path).parent)
+        build_dir = os.path.join(root, ".cortex_build")
+        stem = Path(file_path).stem
+
+        if is_windows:
+            quote = lambda p: f'"{p}"'
+            mkdir_cmd = f'New-Item -ItemType Directory -Force -Path {quote(build_dir)} | Out-Null'
+        else:
+            import shlex
+            quote = shlex.quote
+            mkdir_cmd = f'mkdir -p {quote(build_dir)}'
+
+        if lang == "python":
+            return f'python {quote(file_path)}'
+        if lang in {"javascript", "jsx"}:
+            return f'node {quote(file_path)}'
+        if lang in {"typescript", "tsx"}:
+            return f'ts-node {quote(file_path)}'
+        if lang == "bash":
+            return f'bash {quote(file_path)}'
+        if lang == "batch":
+            return f'& {quote(file_path)}' if is_windows else None
+        if lang == "powershell":
+            return f'& {quote(file_path)}' if is_windows else f'pwsh {quote(file_path)}'
+        if lang == "ruby":
+            return f'ruby {quote(file_path)}'
+        if lang == "php":
+            return f'php {quote(file_path)}'
+        if lang == "go":
+            return f'go run {quote(file_path)}'
+        if lang == "rust":
+            exe_path = os.path.join(build_dir, stem + (".exe" if is_windows else ""))
+            compile_cmd = f'rustc {quote(file_path)} -o {quote(exe_path)}'
+            run_cmd = f'& {quote(exe_path)}' if is_windows else f'{quote(exe_path)}'
+            return f'{mkdir_cmd}; {compile_cmd}; if ($LASTEXITCODE -eq 0) {{ {run_cmd} }}' if is_windows else f'{mkdir_cmd} && {compile_cmd} && {run_cmd}'
+        if lang == "c":
+            exe_path = os.path.join(build_dir, stem + (".exe" if is_windows else ""))
+            compile_cmd = f'gcc {quote(file_path)} -o {quote(exe_path)}'
+            run_cmd = f'& {quote(exe_path)}' if is_windows else f'{quote(exe_path)}'
+            return f'{mkdir_cmd}; {compile_cmd}; if ($LASTEXITCODE -eq 0) {{ {run_cmd} }}' if is_windows else f'{mkdir_cmd} && {compile_cmd} && {run_cmd}'
+        if lang == "cpp":
+            exe_path = os.path.join(build_dir, stem + (".exe" if is_windows else ""))
+            compile_cmd = f'g++ {quote(file_path)} -o {quote(exe_path)}'
+            run_cmd = f'& {quote(exe_path)}' if is_windows else f'{quote(exe_path)}'
+            return f'{mkdir_cmd}; {compile_cmd}; if ($LASTEXITCODE -eq 0) {{ {run_cmd} }}' if is_windows else f'{mkdir_cmd} && {compile_cmd} && {run_cmd}'
+        if lang == "java":
+            package_name = ""
+            try:
+                with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith("package ") and line.endswith(";"):
+                            package_name = line[len("package "):-1].strip()
+                            break
+            except Exception:
+                package_name = ""
+            class_name = f"{package_name}.{stem}" if package_name else stem
+            compile_cmd = f'javac -d {quote(build_dir)} {quote(file_path)}'
+            run_cmd = f'java -cp {quote(build_dir)} {class_name}'
+            return f'{mkdir_cmd}; {compile_cmd}; if ($LASTEXITCODE -eq 0) {{ {run_cmd} }}' if is_windows else f'{mkdir_cmd} && {compile_cmd} && {run_cmd}'
+        return None
 
     def _new_terminal(self) -> XTermWidget:
         term = XTermWidget()
@@ -1637,7 +1825,12 @@ class CortexMainWindow(QMainWindow):
 
     def _rename_file(self):
         """Rename file (F2)."""
-        current_file = self._editor_tabs.current_file()
+        if self._sidebar.is_explorer_focused():
+            if self._sidebar.rename_selected_item():
+                return
+            return
+
+        current_file = self._editor_tabs.current_filepath()
         if not current_file:
             return
         
@@ -1663,12 +1856,43 @@ class CortexMainWindow(QMainWindow):
                 # Close current tab and open renamed file
                 index = self._editor_tabs.currentIndex()
                 self._editor_tabs.removeTab(index)
-                self.open_file(str(new_path))
+                self._open_file(str(new_path))
                 
                 self._status_bar.showMessage(f"Renamed to {new_name}", 3000)
             except Exception as e:
                 from PyQt6.QtWidgets import QMessageBox
                 QMessageBox.critical(self, "Rename Failed", f"Could not rename file: {e}")
+
+    def _on_sidebar_file_renamed(self, old_path: str, new_path: str):
+        old_norm = os.path.normpath(old_path)
+        new_norm = os.path.normpath(new_path)
+        updated = False
+
+        for idx, fp in list(self._editor_tabs._files.items()):
+            if os.path.normcase(fp) != os.path.normcase(old_norm):
+                continue
+
+            self._editor_tabs._files[idx] = new_norm
+            name = Path(new_norm).name
+            if fp in self._editor_tabs._modified:
+                self._editor_tabs._modified.discard(fp)
+                self._editor_tabs._modified.add(new_norm)
+                self._editor_tabs.setTabText(idx, f"ƒ-? {name}")
+                self._editor_tabs.setTabToolTip(idx, f"{new_norm} (Modified)")
+            else:
+                self._editor_tabs.setTabText(idx, name)
+                self._editor_tabs.setTabToolTip(idx, new_norm)
+
+            self._editor_tabs._set_tab_icon(idx, new_norm)
+            updated = True
+
+            if idx == self._editor_tabs.currentIndex():
+                self._update_status_file(new_norm)
+                if hasattr(self, '_ai_agent'):
+                    self._ai_agent.set_active_file(new_norm)
+
+        if updated:
+            log.info(f"Updated open tabs for rename: {old_norm} -> {new_norm}")
 
     def _find_in_files(self):
         """Find in files (Ctrl+Shift+F)."""

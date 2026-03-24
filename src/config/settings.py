@@ -24,6 +24,9 @@ DEFAULT_SETTINGS = {
         "temperature": 0.7,
         "max_tokens": 4096,
         "provider": "deepseek",  # openai | anthropic | deepseek | mock
+        "auto_verify": True,
+        "test_command": "",
+        "max_verify_retries": 2,
     },
     "window": {
         "width": 1400,

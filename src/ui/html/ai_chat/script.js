@@ -38,7 +38,11 @@ function loadProjectChats() {
         console.log('[CHAT] LOAD - Parsed', parsed.length, 'chat(s)');
         if (parsed.length > 0) {
             parsed.forEach(function(c, i) {
-                console.log('[CHAT]   Chat ' + (i+1) + ': "' + c.title + '" with ' + c.messages.length + ' messages');
+                var msgCount = (c.messages && c.messages.length) ? c.messages.length : 0;
+                if (typeof c.message_count === 'number' && c.message_count > msgCount) {
+                    c.truncated = true;
+                }
+                console.log('[CHAT]   Chat ' + (i+1) + ': "' + c.title + '" with ' + msgCount + ' messages');
             });
             return parsed;
         }
@@ -108,8 +112,19 @@ function loadChatsFromSQLite() {
             console.log('[CHAT] LOAD SQLITE - Found', result.length, 'chars of data');
             try {
                 var parsed = JSON.parse(result);
-                console.log('[CHAT] LOAD SQLITE - Successfully parsed', parsed.length, 'chats');
-                return parsed;
+                // Ensure all chats from SQLite (which are metadata-only) are marked as unloaded
+                var chatsWithMetadata = parsed.map(function(c) {
+                    return {
+                        id: c.id,
+                        title: c.title,
+                        created_at: c.created_at,
+                        message_count: c.message_count || 0,
+                        messages: [],
+                        loaded: false
+                    };
+                });
+                console.log('[CHAT] LOAD SQLITE - Successfully parsed', chatsWithMetadata.length, 'chats (marked as metadata)');
+                return chatsWithMetadata;
             } catch (parseError) {
                 console.error('[CHAT] LOAD SQLITE - JSON parse error:', parseError.message);
                 console.error('[CHAT] LOAD SQLITE - Invalid JSON:', result.substring(0, 100));
@@ -130,7 +145,25 @@ function loadChatsFromSQLite() {
 // Save chats for current project - saves to both localStorage and file
 function saveProjectChats(chatList) {
     var key = getStorageKey();
-    var data = JSON.stringify(chatList);
+    var fullData = JSON.stringify(chatList);
+    var MAX_LOCAL_MESSAGES = 50;
+    var storageChats = chatList.map(function(chat) {
+        var messages = chat.messages || [];
+        var messageCount = (typeof chat.message_count === 'number') ? chat.message_count : messages.length;
+        var storedMessages = messages;
+        if (messages.length > MAX_LOCAL_MESSAGES) {
+            storedMessages = messages.slice(-MAX_LOCAL_MESSAGES);
+        }
+        return {
+            id: chat.id,
+            title: chat.title,
+            created_at: chat.created_at,
+            message_count: messageCount,
+            messages: storedMessages,
+            truncated: messageCount > storedMessages.length
+        };
+    });
+    var data = JSON.stringify(storageChats);
     var saveSuccess = false;
     
     console.log('[CHAT] SAVE - Saving', chatList.length, 'chat(s),', data.length, 'chars');
@@ -151,26 +184,23 @@ function saveProjectChats(chatList) {
     
     // Method 2: SQLite storage (high-performance persistent storage)
     try {
-        if (bridge && typeof bridge.save_chats_to_sqlite === 'function') {
-            // PyQt slots return promises, handle asynchronously
-            var promise = bridge.save_chats_to_sqlite(key, data);
+        // FAST PATH: Only serialize and sync the active chat across the QWebChannel bridge
+        var activeChat = chatList.find(function(c) { return c.id === currentChatId; });
+        if (activeChat && bridge && typeof bridge.save_single_chat_to_sqlite === 'function') {
+            var singleData = JSON.stringify(activeChat);
+            var promise = bridge.save_single_chat_to_sqlite(key, singleData);
             if (promise && typeof promise.then === 'function') {
-                promise.then(function(result) {
-                    if (result === "OK") {
-                        console.log('[CHAT] SAVE - SQLite: SUCCESS ✓');
-                    } else {
-                        console.error('[CHAT] SAVE - SQLite: FAILED:', result);
-                    }
-                }).catch(function(err) {
-                    console.error('[CHAT] SAVE - SQLite: ERROR:', err);
+                promise.catch(function(err) {
+                    console.error('[CHAT] SAVE - SQLite Single: ERROR:', err);
                 });
-            } else {
-                // Synchronous fallback
-                if (promise === "OK") {
-                    console.log('[CHAT] SAVE - SQLite: SUCCESS ✓');
-                } else {
-                    console.error('[CHAT] SAVE - SQLite: FAILED:', promise);
-                }
+            }
+        } else if (bridge && typeof bridge.save_chats_to_sqlite === 'function') {
+            // FALLBACK FULL SYNC
+            var promise = bridge.save_chats_to_sqlite(key, fullData);
+            if (promise && typeof promise.then === 'function') {
+                promise.catch(function(err) {
+                    console.error('[CHAT] SAVE - SQLite Full: ERROR:', err);
+                });
             }
         } else {
             console.warn('[CHAT] SAVE - SQLite: Bridge not ready');
@@ -600,6 +630,20 @@ function initBridge() {
             if (!bridge) {
                 console.error("Cortex: Bridge object 'bridge' not found on channel.");
                 return;
+            }
+
+            bridgeReady = true;
+            console.log('[CHAT] Bridge initialized successfully');
+            
+            // Re-fetch project info if it was set before bridge was ready
+            if (currentProjectPath) {
+                console.log('[CHAT] Bridge ready, reloading project chats for:', currentProjectPath);
+                var savedChats = loadProjectChats();
+                if (savedChats && savedChats.length > 0) {
+                    chats = savedChats;
+                    renderHistoryList();
+                    loadChat(chats[0].id);
+                }
             }
 
             bridge.clear_chat_requested.connect(clearMessages);
@@ -1032,10 +1076,20 @@ function renderHistoryList() {
 function deleteChat(id) {
     if (!confirm('Delete this conversation?')) return;
     
-    chats = chats.filter(function(chat) { return chat.id !== id; });
+    chats = chats.filter(function(chat) { return chat.id != id; });
+    
+    // 2. Permanently delete from SQLite (if bridge available)
+    if (bridge && typeof bridge.delete_chat_from_sqlite === 'function') {
+        bridge.delete_chat_from_sqlite(id);
+    }
+    
+    // 3. Clear localStorage cache for the current project to force a fresh sync
+    var key = getStorageKey();
+    localStorage.removeItem(key);
+    
     saveChats();
     
-    if (currentChatId === id) {
+    if (currentChatId == id) {
         if (chats.length > 0) {
             loadChat(chats[0].id);
         } else {
@@ -1118,19 +1172,73 @@ function clearTodosAndChangedFiles() {
 }
 window.clearTodosAndChangedFiles = clearTodosAndChangedFiles;
 
+function showLoadingIndicator() {
+    var chatContent = document.getElementById('chat-content');
+    if (!chatContent) return;
+    
+    // Check if indicator already exists
+    if (document.getElementById('chat-lazy-loading')) return;
+    
+    var loader = document.createElement('div');
+    loader.id = 'chat-lazy-loading';
+    loader.style.cssText = 'position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 20px; background: rgba(0,0,0,0.5); color: white; border-radius: 8px; z-index: 1000;';
+    loader.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading chat...';
+    chatContent.appendChild(loader);
+}
+
+function hideLoadingIndicator() {
+    var loader = document.getElementById('chat-lazy-loading');
+    if (loader && loader.parentNode) {
+        loader.parentNode.removeChild(loader);
+    }
+}
+
 function loadChat(id) {
-    var chat = chats.find(function (c) { return c.id === id; });
+    var chat = chats.find(function (c) { return c.id == id; });
     if (!chat) return;
     currentChatId = id;
+    
+    // LAZY LOADING: If messages are not loaded yet, request them from the bridge
+    var canLazyLoad = bridge && typeof bridge.load_full_chat === 'function';
+    var msgCount = chat.messages ? chat.messages.length : 0;
+    var needsLazyLoad = (chat.loaded === false || (msgCount === 0 && chat.message_count > 0));
+    if (chat.truncated && canLazyLoad) {
+        needsLazyLoad = true;
+    }
+    if (needsLazyLoad && canLazyLoad) {
+        console.log('[CHAT] Lazy loading messages for chat:', id);
+        clearMessages();
+        
+        // Ensure empty state is removed or hidden during loading
+        var emptyState = document.getElementById('empty-state');
+        if (emptyState) emptyState.remove();
+        
+        showLoadingIndicator();
+        console.log('[CHAT] Requesting lazy load from bridge for:', id);
+        if (bridge && typeof bridge.load_full_chat === 'function') {
+            bridge.load_full_chat(id);
+            console.log('[CHAT] bridge.load_full_chat CALLED');
+        } else {
+            console.warn('[CHAT] Bridge not ready for lazy load. bridge exists:', !!bridge, 'type:', typeof (bridge && bridge.load_full_chat));
+            hideLoadingIndicator();
+        }
+        return;
+    }
+    
     clearMessages();
     
     // Clear changed files and TODOs before loading new chat
     clearTodosAndChangedFiles();
-    
+
+    normalizeMessageRoles(chat.messages);
+
     chat.messages.forEach(function (msg) {
-        // Skip messages with undefined/empty text
-        if (!msg.text || msg.text === 'undefined' || msg.text.trim() === '') return;
-        appendMessage(msg.text, msg.sender, false);
+        // Skip messages with undefined/empty text (handle both content and text property names)
+        var msgText = msg.content || msg.text;
+        var msgSender = msg.role || msg.sender;
+        
+        if (!msgText || msgText === 'undefined' || msgText.trim() === '') return;
+        appendMessage(msgText, msgSender || 'user', false);
         // Restore tool activities (like directory listings) if present
         if (msg.toolActivities && msg.toolActivities.length > 0) {
             msg.toolActivities.forEach(function (activity) {
@@ -1188,8 +1296,15 @@ function clearMessages() {
     // Also clear TODOs and Changed Files when clearing messages
     clearTodosAndChangedFiles();
 
-    var chat = chats.find(function (c) { return c.id === currentChatId; });
-    if (!chat || chat.messages.length === 0) {
+    var chat = chats.find(function (c) { return c.id == currentChatId; });
+    
+    // Only show "Start a new conversation" splash if:
+    // 1. No chat selected OR
+    // 2. Chat is fully loaded AND has 0 messages
+    // 3. We are NOT currently showing a loading indicator
+    var isLoading = document.getElementById('chat-lazy-loading') !== null;
+    
+    if (!isLoading && (!chat || (chat.loaded !== false && chat.messages.length === 0))) {
         var emptyState = document.createElement('div');
         emptyState.id = 'empty-state';
         emptyState.innerHTML = `<svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto 20px auto; display: block; opacity: 0.6;"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-2.54Z"></path><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-2.54Z"></path></svg><p>Start a new conversation with Cortex AI</p>`;
@@ -1197,7 +1312,41 @@ function clearMessages() {
     }
 }
 
+function normalizeMessageRoles(messages) {
+    if (!messages || messages.length === 0) return false;
+
+    var hasAssistant = false;
+    var hasRole = false;
+    messages.forEach(function(msg) {
+        var role = msg.role || msg.sender;
+        if (role) {
+            hasRole = true;
+            if (role === 'assistant') hasAssistant = true;
+        }
+    });
+
+    if (!hasAssistant && messages.length > 1) {
+        messages.forEach(function(msg, idx) {
+            var role = (idx % 2 === 0) ? 'user' : 'assistant';
+            msg.role = role;
+            msg.sender = role;
+        });
+        console.warn('[CHAT] No assistant roles found; applied alternating roles for display.');
+        return true;
+    }
+
+    if (hasRole) {
+        messages.forEach(function(msg) {
+            var role = msg.role || msg.sender || 'user';
+            msg.role = role;
+            msg.sender = role;
+        });
+    }
+    return false;
+}
+
 function appendMessage(text, sender, shouldSave) {
+    console.log('[CHAT] appendMessage called:', sender, 'length:', text ? text.length : 0);
     var container = document.getElementById('chatMessages');
     if (!container) return null;
 
@@ -1279,10 +1428,10 @@ function appendMessage(text, sender, shouldSave) {
     }
 
     if (shouldSave) {
-        var chat = chats.find(function (c) { return c.id === currentChatId; });
+        var chat = chats.find(function (c) { return c.id == currentChatId; });
         if (chat) {
             // Include any pending tool activities with the message
-            var messageData = { text: text, sender: sender };
+            var messageData = { text: text, sender: sender, role: sender };
             if (window._pendingToolActivities && window._pendingToolActivities.length > 0) {
                 messageData.toolActivities = window._pendingToolActivities;
                 window._pendingToolActivities = []; // Clear after saving
@@ -2695,13 +2844,13 @@ function onChunk(chunk) {
     // Accumulate raw content (INCLUDING custom tags — stripped at render time)
     currentContent += chunk;
 
-    // Throttled Rendering
+    // Throttled Rendering (100ms debounce to prevent massive O(N^2) UI freezing)
     if (!renderPending) {
         renderPending = true;
-        requestAnimationFrame(function() {
+        window._streamRenderTimeout = setTimeout(function() {
             renderPending = false;
             updateStreamingUI();
-        });
+        }, 100);
     }
 }
 
@@ -2849,6 +2998,13 @@ function onComplete() {
     hideThinking();
     clearActivitySection();  // Remove the Working section
 
+    // Clear any pending debounced render before final render
+    if (window._streamRenderTimeout) {
+        clearTimeout(window._streamRenderTimeout);
+        window._streamRenderTimeout = null;
+        renderPending = false;
+    }
+
     if (currentAssistantMessage) {
         // ── Strip all custom tags for display ─────────────────────────────
         var displayText = currentContent
@@ -2861,9 +3017,9 @@ function onComplete() {
             .trim();
 
         // ── Save to history (only if content is valid) ─────────────────────
-        var chat = chats.find(function(c) { return c.id === currentChatId; });
+        var chat = chats.find(function(c) { return c.id == currentChatId; });
         if (chat && displayText && displayText.trim() !== '' && displayText !== 'undefined') {
-            chat.messages.push({ text: displayText, sender: 'assistant' });
+            chat.messages.push({ text: displayText, sender: 'assistant', role: 'assistant' });
             saveChats();
         }
 
@@ -3959,6 +4115,57 @@ document.addEventListener('DOMContentLoaded', function() {
     window.updateThinkingText = updateThinkingText;
     window.toggleExploration = toggleExploration;
     
+    // Handler for full chat load (lazy loading response from Python bridge)
+    window.chatFullLoadHandler = function(id, messagesParsed) {
+        console.log('[CHAT] >>> chatFullLoadHandler START for id:', id);
+        console.log('[CHAT] id type:', typeof id, 'currentChatId:', currentChatId, 'type:', typeof currentChatId);
+        
+        var chat = chats.find(function(c) { return c.id == id; });
+        if (chat) {
+            console.log('[CHAT] Target chat object found. Setting messages (count:', messagesParsed ? messagesParsed.length : 0, ')');
+            chat.messages = messagesParsed || [];
+            chat.loaded = true;
+            chat.message_count = chat.messages.length;
+            chat.truncated = false;
+            normalizeMessageRoles(chat.messages);
+            
+            console.log('[CHAT] Comparison: currentChatId == id is', (currentChatId == id));
+            if (currentChatId == id) {
+                console.log('[CHAT] MATCH! rendering messages...');
+                hideLoadingIndicator();
+                clearMessages();
+                
+                if (chat.messages.length === 0) {
+                   console.log('[CHAT] WARNING: No messages found in messagesParsed array.');
+                }
+                
+                chat.messages.forEach(function(msg, index) {
+                    try {
+                        var msgText = msg.content || msg.text;
+                        var msgSender = msg.role || msg.sender;
+                        console.log('[CHAT] Message', index, ':', msgSender, 'length:', msgText ? msgText.length : 0);
+                        if (msgText && msgText !== 'undefined' && msgText.trim() !== '') {
+                            appendMessage(msgText, msgSender || 'user', false);
+                            console.log('[CHAT] Message', index, 'appended successfully');
+                        } else {
+                            console.log('[CHAT] Skipping empty message', index);
+                        }
+                    } catch (err) {
+                        console.error('[CHAT] Error rendering message at index', index, ':', err);
+                    }
+                });
+                renderHistoryList();
+                console.log('[CHAT] chatFullLoadHandler: Render complete.');
+            } else {
+                console.warn('[CHAT] chatFullLoadHandler: currentChatId mismatch. current:', currentChatId, 'loaded:', id);
+            }
+        } else {
+            console.error('[CHAT] chatFullLoadHandler: chat object missing for id:', id);
+            console.log('[CHAT] Known chats IDs:', chats.map(function(c){ return c.id; }).join(', '));
+        }
+        console.log('[CHAT] <<< chatFullLoadHandler END');
+    };
+    
     // --- Project Directory Awareness ---
     // New method that receives chat data directly from Python
     window.setProjectInfoWithChats = function(name, path, chatsJson) {
@@ -3991,7 +4198,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 console.log('[CHAT] ✅ currentProjectPath SET to:', currentProjectPath);
                 
                 // Parse the chats METADATA only (lazy loading - no messages yet)
-                var savedChats = [];
+                var savedChats = []; // This variable is re-declared here, but the one above is for the bridge-ready case.
+                                     // The original intent of this line was to initialize for the chatsJson parsing.
+                                     // We'll keep it for the chatsJson path.
                 try {
                     if (chatsJson && chatsJson !== "[]") {
                         savedChats = JSON.parse(chatsJson);
@@ -4023,11 +4232,19 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
                 
                 if (savedChats.length === 0) {
-                    // No saved chats, start fresh
-                    chats = [];
-                    startNewChat();
+                    console.log('[CHAT] No saved chats found in Python metadata or localStorage');
+                    // If we have existing chats (e.g. from localStorage) but Python says 0, 
+                    // it means the DB is empty (e.g. after deletion). 
+                    // We should respect the DB and clear our local list.
+                    if (chats.length > 0 && chatsJson === "[]") {
+                        console.log('[CHAT] Clearing local cache as DB is empty');
+                        chats = [];
+                    }
+                    
+                    if (chats.length === 0) {
+                        startNewChat();
+                    }
                     renderHistoryList();
-                    console.log('[CHAT] Started fresh chat for new project');
                 }
             }
         } else {

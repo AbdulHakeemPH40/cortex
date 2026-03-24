@@ -198,6 +198,34 @@
             }
         }
 
+        let _ignoreOnData = false;
+        let _ignoreTimer = null;
+        function _startIgnoreOnData() {
+            _ignoreOnData = true;
+            if (_ignoreTimer) {
+                clearTimeout(_ignoreTimer);
+            }
+            _ignoreTimer = setTimeout(() => {
+                _ignoreOnData = false;
+                _ignoreTimer = null;
+            }, 50);
+        }
+
+        function _handlePasteEvent(e) {
+            if (!window.pyTerminal) {
+                return;
+            }
+            e.preventDefault();
+            e.stopPropagation();
+            _startIgnoreOnData();
+            window.pyTerminal.paste_from_clipboard();
+        }
+
+        if (term.textarea) {
+            term.textarea.addEventListener('paste', _handlePasteEvent);
+        }
+        document.getElementById('terminal-container').addEventListener('paste', _handlePasteEvent, true);
+
         // Handle custom keyboard shortcuts (Copy & Paste)
         term.attachCustomKeyEventHandler(e => {
             if (e.type === 'keydown') {
@@ -211,9 +239,11 @@
                     }
                 } else if (e.ctrlKey && e.code === 'KeyV') {
                     if (window.pyTerminal) {
+                        _startIgnoreOnData();
                         window.pyTerminal.paste_from_clipboard();
+                        return false;
                     }
-                    return false;
+                    return true;
                 }
             }
             return true;
@@ -251,7 +281,13 @@
             window.pyTerminal.resize(term.cols, term.rows);
 
             // When user types in xterm, send to Python (batched)
-            term.onData(data => sendInput(data));
+            term.onData(data => {
+                if (_ignoreOnData) {
+                    _startIgnoreOnData();
+                    return;
+                }
+                sendInput(data);
+            });
             
             // Connect Python -> JS (incoming text from stdout) — use write queue
             window.pyTerminal.send_output.connect(function(text) {

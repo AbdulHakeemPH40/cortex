@@ -444,6 +444,40 @@ class FileExplorerPanel(QWidget):
         # Give the model time to populate (async directory listing)
         QTimer.singleShot(400, _do_restore)
 
+    def is_tree_focused(self) -> bool:
+        return self._tree.hasFocus()
+
+    def rename_selected(self) -> bool:
+        index = self._tree.currentIndex()
+        if not index.isValid():
+            return False
+
+        path = self._model.filePath(index)
+        if not path:
+            return False
+
+        if self._root_path:
+            try:
+                if Path(path).resolve() == Path(self._root_path).resolve():
+                    return False
+            except Exception:
+                return False
+
+        return self._rename_path(path)
+
+    def _rename_path(self, path: str) -> bool:
+        try:
+            name, ok = QInputDialog.getText(self, "Rename", "New name:", text=Path(path).name)
+            if not ok or not name or name == Path(path).name:
+                return False
+
+            new_path = str(Path(path).parent / name)
+            Path(path).rename(new_path)
+            self.file_renamed.emit(path, new_path)
+            return True
+        except Exception as e:
+            QMessageBox.critical(self, "Rename Failed", f"Could not rename: {e}")
+            return False
 
     def set_theme(self, is_dark: bool):
         self._is_dark = is_dark
@@ -602,11 +636,7 @@ class FileExplorerPanel(QWidget):
                 (Path(path) / name).mkdir(exist_ok=True)
 
         elif action == act_rename:
-            name, ok = QInputDialog.getText(self, "Rename", "New name:", text=Path(path).name)
-            if ok and name:
-                new_path = str(Path(path).parent / name)
-                Path(path).rename(new_path)
-                self.file_renamed.emit(path, new_path)
+            self._rename_path(path)
 
         elif action == act_delete:
             reply = QMessageBox.question(
@@ -1001,6 +1031,7 @@ class SidebarWidget(QWidget):
     file_opened = pyqtSignal(str)
     file_search_opened = pyqtSignal(str, int)
     ai_action_requested = pyqtSignal(str)
+    file_renamed = pyqtSignal(str, str)
     
     # Changed files signals
     file_accepted = pyqtSignal(str)
@@ -1056,6 +1087,7 @@ class SidebarWidget(QWidget):
 
         # Connect signals
         self._explorer.file_opened.connect(self.file_opened)
+        self._explorer.file_renamed.connect(self.file_renamed)
         self._search.file_opened.connect(self.file_search_opened)
         self._ai_tools.action_requested.connect(self.ai_action_requested)
         
@@ -1079,6 +1111,12 @@ class SidebarWidget(QWidget):
     def set_project(self, folder_path: str):
         self._explorer.set_project(folder_path)
         self._search.set_root(folder_path)
+
+    def is_explorer_focused(self) -> bool:
+        return self._explorer.is_tree_focused()
+
+    def rename_selected_item(self) -> bool:
+        return self._explorer.rename_selected()
 
     def set_theme(self, is_dark: bool):
         self._explorer.set_theme(is_dark)
