@@ -103,6 +103,9 @@
             // PERFORMANCE: Disable features we don't need
             allowTransparency: false,
             fastScrollModifier: 'alt',
+            // FIX: Disable local echo to prevent double-display (Python handles echoing)
+            disableStdin: false,
+            convertEol: true,
             theme: {
                 background: '#0c0c0c',
                 foreground: '#cccccc',
@@ -182,7 +185,7 @@
             }
         }
 
-        // OPTIMIZATION 3: Input debounce for fast typing/paste
+        // OPTIMIZATION 3: Input handling - prevent local echo
         let _inputBuffer = '';
         let _inputTimer = null;
         function sendInput(data) {
@@ -194,9 +197,28 @@
                         _inputBuffer = '';
                     }
                     _inputTimer = null;
-                }, 1);   // 1ms — imperceptible but batches paste operations
+                }, 0);
             }
         }
+        
+        // CRITICAL FIX: Prevent xterm from echoing input locally
+        // Python/shell will echo everything, so we block local display
+        term.attachCustomKeyEventHandler((e) => {
+            if (e.type === 'keydown') {
+                // Let special keys through (they don't produce visible output)
+                if (e.ctrlKey || e.altKey || e.metaKey || 
+                    e.code.startsWith('Arrow') || e.code === 'Backspace' || 
+                    e.code === 'Delete' || e.code === 'Home' || e.code === 'End') {
+                    return true;
+                }
+                // Block printable characters from being displayed locally
+                // They will be sent to Python and echoed back properly
+                if (!e.ctrlKey && !e.altKey && !e.metaKey) {
+                    return false;
+                }
+            }
+            return true;
+        });
 
         let _ignoreOnData = false;
         let _ignoreTimer = null;
@@ -238,13 +260,22 @@
                         return false; 
                     }
                 } else if (e.ctrlKey && e.code === 'KeyV') {
+                    // CRITICAL: Block Ctrl+V completely - don't let xterm process the 'v' key
                     if (window.pyTerminal) {
                         _startIgnoreOnData();
+                        // Get clipboard text and write it directly (bypass xterm input)
                         window.pyTerminal.paste_from_clipboard();
-                        return false;
                     }
-                    return true;
+                    return false; // Block xterm from processing this key
                 }
+            }
+            return true;
+        });
+        
+        // ALSO block paste events to prevent double handling
+        term.attachCustomKeyEventHandler(e => {
+            if (e.type === 'keypress' && e.ctrlKey && e.key === 'v') {
+                return false;
             }
             return true;
         });

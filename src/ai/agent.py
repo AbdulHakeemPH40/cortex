@@ -438,7 +438,8 @@ class AIWorker(QThread):
 
 class AIAgent(QObject):
     """
-    High-level AI agent — creates workers and manages conversation history.
+    High-level AI agent with MAXIMUM performance optimizations.
+    Features: Async file loading, predictive prefetching, LRU caching.
     """
     response_chunk = pyqtSignal(str)
     response_complete = pyqtSignal(str)
@@ -450,6 +451,9 @@ class AIAgent(QObject):
     thinking_started = pyqtSignal()
     thinking_stopped = pyqtSignal()
     todos_updated = pyqtSignal(list, str)  # todos_list, main_task
+    
+    # Performance: File prefetch signal
+    files_prefetch = pyqtSignal(list)  # list of file paths to prefetch
 
     SYSTEM_PROMPT = """# CORTEX AI — Pragmatic Coding Assistant
 

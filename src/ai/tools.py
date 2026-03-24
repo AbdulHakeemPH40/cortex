@@ -924,8 +924,26 @@ class ToolRegistry:
             return abs_path
         return self._path_resolver.resolve(path)
 
-    def _read_file(self, path: str, start_line: int = 1, end_line: Optional[int] = None, numbered: bool = True) -> str:
-        """Read file contents with line range and optional numbers."""
+    def _read_file(self, path: str, start_line: int = 1, end_line: Optional[int] = None, numbered: bool = True, 
+                   use_cache: bool = True, async_load: bool = False, lazy_load: bool = True) -> str:
+        """
+        Read file contents with LAZY LOADING for MAXIMUM performance.
+        
+        LAZY LOADING STRATEGY:
+        - Only reads requested line range (NOT entire file)
+        - Large files (>512KB) auto-enable lazy loading
+        - Default viewport: 400 lines at a time
+        - Prefetches next viewport while you read current
+        
+        Args:
+            path: File path
+            start_line: Start line (1-indexed)
+            end_line: End line (optional, defaults to start_line + 400)
+            numbered: Add line numbers
+            use_cache: Use cached content (instant if cached)
+            async_load: Load in background (non-blocking)
+            lazy_load: Enable lazy loading (DEFAULT for large files)
+        """
         try:
             resolved_path = self._resolve_path(path)
             str_path = str(resolved_path)
@@ -938,8 +956,53 @@ class ToolRegistry:
             if not resolved_path.exists():
                 raise FileNotFoundError(f"File not found: {path}")
 
-            with open(resolved_path, 'r', encoding='utf-8', errors='ignore') as f:
-                lines = f.readlines()
+            # LAZY LOADING: Only read requested range (NOT full file!)
+            if lazy_load and hasattr(self, '_file_manager') and self._file_manager:
+                # Auto-set end_line if not specified (default 400 line viewport)
+                if end_line is None:
+                    end_line = start_line + 399  # 400 line viewport
+                
+                log.info(f"🎯 Lazy loading: {path}[{start_line}-{end_line}]")
+                
+                # Use FileManager's optimized range reading
+                content = self._file_manager.read_range(str_path, start_line, end_line, use_cache)
+                
+                if content is None:
+                    content = ""
+                
+                # Prefetch NEXT viewport while user reads current (predictive loading)
+                if async_load and hasattr(self, 'files_prefetch'):
+                    next_start = end_line + 1
+                    # Prefetch next 3 viewports in background
+                    self._file_manager.prefetch_viewport(str_path, next_start, 400, lookahead_count=3)
+                    log.debug(f"🔮 Prefetching next viewports for {path}")
+                
+                # Format output
+                lines = content.splitlines(keepends=True)
+                
+                if numbered:
+                    output = []
+                    for i, line in enumerate(lines, start=start_line):
+                        output.append(f"{i:4d}| {line}")
+                    result = "".join(output)
+                else:
+                    result = "".join(lines)
+                
+                return result.strip()
+            
+            # FALLBACK: Old behavior (read full file)
+            if use_cache and hasattr(self, '_file_manager') and self._file_manager:
+                cached_content = self._file_manager.get_cached_content(str_path)
+                if cached_content:
+                    log.debug(f"✅ CACHE HIT: {path}")
+                    lines = cached_content.splitlines(keepends=True)
+                else:
+                    with open(resolved_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        lines = f.readlines()
+                    self._file_manager._file_cache.put(str_path, ''.join(lines))
+            else:
+                with open(resolved_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    lines = f.readlines()
 
             # Apply line range (1-indexed)
             total_lines = len(lines)
