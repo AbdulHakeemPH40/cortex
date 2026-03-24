@@ -3,11 +3,14 @@ Code Editor Component — QPlainTextEdit with line numbers, syntax highlighting,
 current-line highlight, and auto-indent.
 """
 
-from PyQt6.QtWidgets import QPlainTextEdit, QWidget, QTextEdit, QApplication
+from PyQt6.QtWidgets import (
+    QPlainTextEdit, QWidget, QTextEdit, QApplication,
+    QFrame, QLabel, QPushButton, QVBoxLayout, QHBoxLayout
+)
 from PyQt6.QtCore import Qt, QRect, QSize, pyqtSignal, QSignalBlocker, QPoint
 from PyQt6.QtGui import (
     QColor, QPainter, QTextFormat, QFont, QSyntaxHighlighter,
-    QTextCharFormat, QKeyEvent, QFontMetrics, QTextOption, QPen, QPalette
+    QTextCharFormat, QKeyEvent, QFontMetrics, QTextOption, QPen, QPalette, QTextCursor
 )
 from pygments import lex
 from pygments.lexers import get_lexer_by_name, TextLexer
@@ -463,11 +466,118 @@ class LineNumberArea(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# Inline edit overlay
+# ---------------------------------------------------------------------------
+class InlineEditOverlay(QFrame):
+    submitted = pyqtSignal(str)
+    cancelled = pyqtSignal()
+    diff_requested = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("inline_edit_overlay")
+        self.setFrameShape(QFrame.Shape.StyledPanel)
+        self.setAutoFillBackground(True)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        header = QHBoxLayout()
+        self._title = QLabel("Inline Edit (Ctrl+K)")
+        self._status = QLabel("")
+        self._status.setStyleSheet("color: #9aa0a6;")
+        header.addWidget(self._title)
+        header.addStretch(1)
+        header.addWidget(self._status)
+        layout.addLayout(header)
+
+        self._selection_info = QLabel("")
+        self._selection_info.setStyleSheet("color: #9aa0a6; font-size: 11px;")
+        layout.addWidget(self._selection_info)
+
+        self._prompt = QTextEdit()
+        self._prompt.setPlaceholderText("Describe the change to apply to the selection...")
+        self._prompt.setFixedHeight(60)
+        layout.addWidget(self._prompt)
+
+        self._preview_label = QLabel("Preview")
+        self._preview_label.setStyleSheet("color: #9aa0a6; font-size: 11px;")
+        self._preview_label.hide()
+        layout.addWidget(self._preview_label)
+
+        self._preview = QTextEdit()
+        self._preview.setReadOnly(True)
+        self._preview.setFixedHeight(120)
+        self._preview.hide()
+        layout.addWidget(self._preview)
+
+        btn_row = QHBoxLayout()
+        self._diff_btn = QPushButton("Open Diff Tab")
+        self._diff_btn.setEnabled(False)
+        self._send_btn = QPushButton("Send")
+        self._cancel_btn = QPushButton("Cancel")
+        btn_row.addWidget(self._diff_btn)
+        btn_row.addStretch(1)
+        btn_row.addWidget(self._cancel_btn)
+        btn_row.addWidget(self._send_btn)
+        layout.addLayout(btn_row)
+
+        self._send_btn.clicked.connect(self._on_send)
+        self._cancel_btn.clicked.connect(self._on_cancel)
+        self._diff_btn.clicked.connect(self.diff_requested.emit)
+
+        self.setStyleSheet(
+            "#inline_edit_overlay {"
+            "background: #1f1f1f; border: 1px solid #3e3e42; border-radius: 6px;}"
+            "QTextEdit { background: #111; color: #e5e5e5; border: 1px solid #333; }"
+            "QPushButton { padding: 4px 10px; }"
+        )
+
+    def set_selection_info(self, text: str):
+        self._selection_info.setText(text)
+
+    def set_pending(self, pending: bool):
+        self._send_btn.setEnabled(not pending)
+        self._status.setText("Working..." if pending else "")
+
+    def set_preview(self, diff_text: str):
+        self._preview_label.show()
+        self._preview.show()
+        self._preview.setPlainText(diff_text)
+        self._diff_btn.setEnabled(True)
+        self._status.setText("Preview ready")
+
+    def reset(self):
+        self._prompt.clear()
+        self._preview.clear()
+        self._preview.hide()
+        self._preview_label.hide()
+        self._status.setText("")
+        self._diff_btn.setEnabled(False)
+        self.set_pending(False)
+
+    def focus_prompt(self):
+        self._prompt.setFocus()
+
+    def _on_send(self):
+        text = self._prompt.toPlainText().strip()
+        if text:
+            self.submitted.emit(text)
+
+    def _on_cancel(self):
+        self.cancelled.emit()
+
+
+# ---------------------------------------------------------------------------
 # Main Code Editor
 # ---------------------------------------------------------------------------
 class CodeEditor(QPlainTextEdit):
     cursor_position_changed = pyqtSignal(int, int)  # line, col
     content_modified = pyqtSignal()
+    inline_edit_submitted = pyqtSignal(str, str, tuple)  # prompt, selection_text, (start, end)
+    inline_edit_cancelled = pyqtSignal()
+    inline_diff_requested = pyqtSignal()
 
     def _get_preferred_programming_font(self) -> str:
         """Get best available programming font."""
@@ -579,6 +689,15 @@ class CodeEditor(QPlainTextEdit):
         # DEBUG: Verify colors are actually visible
         print(f"[Editor] After init - Background: {self.palette().color(self.palette().ColorRole.Base).name()}")
         print(f"[Editor] After init - Text: {self.palette().color(self.palette().ColorRole.Text).name()}")
+
+        # Inline edit overlay
+        self._inline_overlay = InlineEditOverlay(self.viewport())
+        self._inline_overlay.hide()
+        self._inline_overlay.submitted.connect(self._on_inline_submit)
+        self._inline_overlay.cancelled.connect(self._hide_inline_overlay)
+        self._inline_overlay.diff_requested.connect(self.inline_diff_requested.emit)
+        self._inline_selection_text = ""
+        self._inline_selection_range = (0, 0)
 
     def set_content(self, text: str, language: str = None):
         """Set editor content without triggering modification signal."""
@@ -766,6 +885,15 @@ class CodeEditor(QPlainTextEdit):
     def keyPressEvent(self, event: QKeyEvent):
         key = event.key()
         modifiers = event.modifiers()
+
+        # Inline edit (Ctrl/Cmd + K)
+        if key == Qt.Key.Key_K and (modifiers & Qt.KeyboardModifier.ControlModifier or
+                                    modifiers & Qt.KeyboardModifier.MetaModifier):
+            self._show_inline_overlay()
+            return
+        if key == Qt.Key.Key_Escape and self._inline_overlay.isVisible():
+            self._hide_inline_overlay()
+            return
         
         # Auto-indent on Enter
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
@@ -860,6 +988,75 @@ class CodeEditor(QPlainTextEdit):
         cursor.setPosition(start_pos)
         cursor.setPosition(end_pos - removed_count, QTextCursor.MoveMode.KeepAnchor)
         self.setTextCursor(cursor)
+
+    def _show_inline_overlay(self):
+        selection_text, line_range = self._get_selection_info()
+        self._inline_selection_text = selection_text
+        self._inline_selection_range = line_range
+
+        start_line, end_line = line_range
+        if start_line == end_line:
+            info = f"Line {start_line}"
+        else:
+            info = f"Lines {start_line}-{end_line}"
+        self._inline_overlay.set_selection_info(info)
+        self._inline_overlay.reset()
+
+        # Size and position near cursor
+        overlay_width = min(480, max(320, self.viewport().width() - 40))
+        self._inline_overlay.setFixedWidth(overlay_width)
+        self._inline_overlay.adjustSize()
+        rect = self.cursorRect()
+        x = rect.left() + 10
+        y = rect.bottom() + 10
+        if x + overlay_width > self.viewport().width():
+            x = max(10, self.viewport().width() - overlay_width - 10)
+        if y + self._inline_overlay.height() > self.viewport().height():
+            y = max(10, rect.top() - self._inline_overlay.height() - 10)
+        self._inline_overlay.move(QPoint(x, y))
+
+        self._inline_overlay.show()
+        self._inline_overlay.raise_()
+        self._inline_overlay.focus_prompt()
+
+    def _hide_inline_overlay(self):
+        if self._inline_overlay.isVisible():
+            self._inline_overlay.hide()
+            self.inline_edit_cancelled.emit()
+
+    def _on_inline_submit(self, prompt: str):
+        self._inline_overlay.set_pending(True)
+        self.inline_edit_submitted.emit(
+            prompt,
+            self._inline_selection_text,
+            self._inline_selection_range
+        )
+
+    def show_inline_diff(self, diff_text: str):
+        if self._inline_overlay:
+            self._inline_overlay.set_pending(False)
+            self._inline_overlay.set_preview(diff_text)
+
+    def _get_selection_info(self) -> tuple[str, tuple]:
+        cursor = self.textCursor()
+        if cursor.hasSelection():
+            selection_text = cursor.selectedText().replace("\u2029", "\n")
+            start_pos = cursor.selectionStart()
+            end_pos = cursor.selectionEnd()
+        else:
+            selection_text = cursor.block().text()
+            start_pos = cursor.position()
+            end_pos = cursor.position()
+
+        start_cursor = QTextCursor(self.document())
+        start_cursor.setPosition(start_pos)
+        end_cursor = QTextCursor(self.document())
+        end_cursor.setPosition(end_pos)
+
+        start_line = start_cursor.blockNumber() + 1
+        end_line = end_cursor.blockNumber() + 1
+
+        return selection_text, (start_line, end_line)
 
     def get_selected_text(self) -> str:
         return self.textCursor().selectedText().replace("\u2029", "\n")

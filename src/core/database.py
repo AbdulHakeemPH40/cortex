@@ -188,6 +188,19 @@ class CortexDatabase:
                     FOREIGN KEY (file_id) REFERENCES files(id)
                 )
             """)
+
+            # Full-text search index for chunks (FTS5)
+            try:
+                cursor.execute("""
+                    CREATE VIRTUAL TABLE IF NOT EXISTS code_fts
+                    USING fts5(code, name, signature, docstring, file_path)
+                """)
+                cursor.execute("""
+                    INSERT OR IGNORE INTO code_fts (rowid, code, name, signature, docstring, file_path)
+                    SELECT id, code, name, signature, docstring, file_path FROM chunks
+                """)
+            except sqlite3.OperationalError as e:
+                log.warning(f"FTS5 not available, code search disabled: {e}")
             
             # Embeddings table - vector embeddings for chunks
             cursor.execute("""
@@ -398,6 +411,7 @@ class CortexDatabase:
                     WHERE id = ?
                 """, (chunk.chunk_type, chunk.name, chunk.code, chunk.signature,
                       chunk.docstring, chunk.language, dependencies_json, chunk_hash, existing['id']))
+                self._upsert_code_fts(cursor, existing['id'], chunk)
                 return existing['id']
             else:
                 cursor.execute("""
@@ -407,7 +421,27 @@ class CortexDatabase:
                 """, (file_id, chunk.file_path, chunk.start_line, chunk.end_line, chunk.chunk_type,
                       chunk.name, chunk.code, chunk.signature, chunk.docstring, chunk.language,
                       dependencies_json, chunk_hash, now))
-                return cursor.lastrowid
+                chunk_id = cursor.lastrowid
+                self._upsert_code_fts(cursor, chunk_id, chunk)
+                return chunk_id
+
+    def _upsert_code_fts(self, cursor, chunk_id: int, chunk: CodeChunk):
+        """Keep the FTS index in sync with chunk content."""
+        try:
+            cursor.execute("""
+                INSERT OR REPLACE INTO code_fts (
+                    rowid, code, name, signature, docstring, file_path
+                ) VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                chunk_id,
+                chunk.code,
+                chunk.name or "",
+                chunk.signature or "",
+                chunk.docstring or "",
+                chunk.file_path
+            ))
+        except sqlite3.OperationalError as e:
+            log.warning(f"FTS update skipped: {e}")
     
     def get_chunks_by_file(self, file_path: str) -> List[CodeChunk]:
         """Get all chunks for a file."""
@@ -436,11 +470,19 @@ class CortexDatabase:
         """Full-text search on chunks."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                "SELECT * FROM code_fts WHERE code_fts MATCH ? ORDER BY rank LIMIT ?",
-                (query, limit)
-            )
-            return [self._row_to_chunk(row) for row in cursor.fetchall()]
+            try:
+                cursor.execute("""
+                    SELECT chunks.*
+                    FROM code_fts
+                    JOIN chunks ON code_fts.rowid = chunks.id
+                    WHERE code_fts MATCH ?
+                    ORDER BY rank
+                    LIMIT ?
+                """, (query, limit))
+                return [self._row_to_chunk(row) for row in cursor.fetchall()]
+            except sqlite3.OperationalError as e:
+                log.warning(f"FTS search unavailable: {e}")
+                return []
     
     def _row_to_chunk(self, row) -> CodeChunk:
         """Convert database row to CodeChunk object."""
@@ -617,19 +659,35 @@ class CortexDatabase:
             return messages
     
     def get_conversations(self, project_path: str = None) -> List[Dict]:
-        """Get all conversations for a project."""
+        """Get all conversations for a project with message counts."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             
+            query = """
+                SELECT c.*, COUNT(m.id) as message_count
+                FROM conversations c
+                JOIN chat_messages m ON m.conversation_id = c.conversation_id
+            """
+            
             if project_path:
-                cursor.execute(
-                    "SELECT * FROM conversations WHERE project_path = ? ORDER BY updated_at DESC",
-                    (project_path,)
-                )
+                query += " WHERE c.project_path = ?"
+                query += " GROUP BY c.conversation_id ORDER BY c.updated_at DESC"
+                cursor.execute(query, (project_path,))
             else:
-                cursor.execute("SELECT * FROM conversations ORDER BY updated_at DESC")
+                query += " GROUP BY c.conversation_id ORDER BY c.updated_at DESC"
+                cursor.execute(query)
             
             return [dict(row) for row in cursor.fetchall()]
+
+    def get_message_count(self, conversation_id: str) -> int:
+        """Get message count for a conversation."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM chat_messages WHERE conversation_id = ?",
+                (conversation_id,)
+            )
+            return int(cursor.fetchone()[0] or 0)
     
     def delete_conversation(self, conversation_id: str):
         """Delete a conversation and all its messages."""
@@ -637,6 +695,13 @@ class CortexDatabase:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM chat_messages WHERE conversation_id = ?", (conversation_id,))
             cursor.execute("DELETE FROM conversations WHERE conversation_id = ?", (conversation_id,))
+            
+    def clear_conversation_messages(self, conversation_id: str):
+        """Clear only messages for a conversation without deleting the conversation itself. 
+        Crucial for preventing duplicate insertion on updates."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM chat_messages WHERE conversation_id = ?", (conversation_id,))
     
     # =========================================================================
     # PROJECT MEMORY OPERATIONS
@@ -688,25 +753,44 @@ class CortexDatabase:
         """Search code using full-text search."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            
-            if project_path:
-                cursor.execute("""
-                    SELECT chunk_id, code, name, signature, docstring, file_path, start_line, end_line
-                    FROM code_fts 
+            try:
+                if project_path:
+                    cursor.execute("""
+                    SELECT
+                        chunks.id AS chunk_id,
+                        chunks.code,
+                        chunks.name,
+                        chunks.signature,
+                        chunks.docstring,
+                        chunks.file_path,
+                        chunks.start_line,
+                        chunks.end_line
+                    FROM code_fts
                     JOIN chunks ON code_fts.rowid = chunks.id
-                    WHERE code_fts MATCH ? AND chunks.file_path LIKE ?
-                    ORDER BY rank
-                    LIMIT ?
-                """, (query, f"{project_path}%", limit))
-            else:
-                cursor.execute("""
-                    SELECT chunk_id, code, name, signature, docstring, file_path, start_line, end_line
-                    FROM code_fts 
-                    JOIN chunks ON code_ftS.rowid = chunks.id
-                    WHERE code_fts MATCH ?
-                    ORDER BY rank
-                    LIMIT ?
-                """, (query, limit))
+                        WHERE code_fts MATCH ? AND chunks.file_path LIKE ?
+                        ORDER BY rank
+                        LIMIT ?
+                    """, (query, f"{project_path}%", limit))
+                else:
+                    cursor.execute("""
+                    SELECT
+                        chunks.id AS chunk_id,
+                        chunks.code,
+                        chunks.name,
+                        chunks.signature,
+                        chunks.docstring,
+                        chunks.file_path,
+                        chunks.start_line,
+                        chunks.end_line
+                    FROM code_fts
+                    JOIN chunks ON code_fts.rowid = chunks.id
+                        WHERE code_fts MATCH ?
+                        ORDER BY rank
+                        LIMIT ?
+                    """, (query, limit))
+            except sqlite3.OperationalError as e:
+                log.warning(f"FTS search unavailable: {e}")
+                return []
             
             results = []
             for row in cursor.fetchall():
@@ -796,6 +880,9 @@ class CortexDatabase:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             
+            # Delete FTS rows first (contentless table)
+            cursor.execute("DELETE FROM code_fts WHERE file_path LIKE ?", (f"{project_path}%",))
+
             # Delete chunks
             cursor.execute("DELETE FROM chunks WHERE file_path LIKE ?", (f"{project_path}%",))
             

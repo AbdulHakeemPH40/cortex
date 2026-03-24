@@ -7,6 +7,7 @@ Uses Provider Registry and Key Manager for secure API key handling.
 
 import os
 import json
+import time
 from pathlib import Path
 import hashlib
 from typing import Optional, List, Dict, Any
@@ -17,6 +18,21 @@ from src.ai.providers import get_provider_registry, ProviderType, ChatMessage
 from src.ai.decision_framework import get_decision_framework, reset_decision_framework, ActionType
 
 log = get_logger("ai_agent")
+
+
+def _categorize_error_message(error_msg: str) -> str:
+    msg = (error_msg or "").lower()
+    if "api key" in msg or "authentication" in msg or "unauthorized" in msg:
+        return "auth"
+    if "rate limit" in msg:
+        return "rate_limit"
+    if "timeout" in msg or "timed out" in msg:
+        return "timeout"
+    if "connection" in msg or "network" in msg or "dns" in msg:
+        return "network"
+    if "tool" in msg and "timeout" in msg:
+        return "tool_timeout"
+    return "unknown"
 
 # Load .env if available - check multiple locations for dev and packaged modes
 try:
@@ -403,6 +419,11 @@ class AIWorker(QThread):
                 return  # Success, exit retry loop
             except Exception as e:
                 error_msg = str(e)
+                category = _categorize_error_message(error_msg)
+                log.warning(
+                    f"AIWorker attempt {attempt + 1}/{max_retries} failed "
+                    f"category={category}: {error_msg[:200]}"
+                )
                 if "rate limit" in error_msg.lower() and attempt < max_retries - 1:
                     wait_time = 2 ** attempt  # 1s, 2s, 4s
                     log.warning(f"Rate limit hit, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
@@ -507,6 +528,67 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
         self._change_orchestrator = get_change_orchestrator()
         self._pre_edit_snapshots: dict = {}  # Capture file content before edits for diff
         self._decision_framework = None  # Initialized when project is set
+        self._request_started_at: float | None = None
+        self._request_in_flight = False
+        self._auto_verify_enabled = bool(self._settings.get("ai", "auto_verify", default=True))
+        self._auto_verify_command = (self._settings.get("ai", "test_command", default="") or "").strip()
+        if not self._auto_verify_command:
+            env_test_command = os.getenv("CORTEX_TEST_COMMAND", "").strip()
+            if env_test_command:
+                self._auto_verify_command = env_test_command
+        self._auto_verify_max_retries = int(self._settings.get("ai", "max_verify_retries", default=2) or 2)
+        self._auto_verify_attempts = 0
+        self._auto_verify_in_progress = False
+        self._pending_verify_files: set[str] = set()
+        self._metrics = {
+            "requests_total": 0,
+            "requests_success": 0,
+            "requests_error": 0,
+            "request_ms_total": 0,
+            "last_request_ms": 0,
+            "tool_calls_total": 0,
+            "tool_calls_success": 0,
+            "tool_calls_error": 0,
+            "tool_timeouts": 0,
+            "edit_calls": 0,
+            "edit_success": 0,
+            "lint_checks": 0,
+            "lint_clean": 0,
+            "retries_total": 0
+        }
+        log.info(
+            "Metrics enabled: edit success rate, lint clean rate, time-to-answer, tool timeout rate"
+        )
+
+    def get_metrics(self) -> dict:
+        """Return a copy of current metrics."""
+        return dict(self._metrics)
+
+    def _record_request_start(self):
+        self._metrics["requests_total"] += 1
+        self._request_started_at = time.time()
+        self._request_in_flight = True
+
+    def _record_request_end(self, success: bool, error_category: str | None = None):
+        if not self._request_in_flight:
+            return
+        elapsed_ms = 0
+        if self._request_started_at:
+            elapsed_ms = int((time.time() - self._request_started_at) * 1000)
+        self._metrics["last_request_ms"] = elapsed_ms
+        self._metrics["request_ms_total"] += elapsed_ms
+        if success:
+            self._metrics["requests_success"] += 1
+        else:
+            self._metrics["requests_error"] += 1
+        self._request_in_flight = False
+        self._request_started_at = None
+        if error_category:
+            log.info(
+                f"[METRICS] request_end status=error category={error_category} ms={elapsed_ms}"
+            )
+        else:
+            log.info(f"[METRICS] request_end status=success ms={elapsed_ms}")
 
     def set_interaction_mode(self, mode: str):
         """Set the interaction mode (Agent or Ask)."""
@@ -606,6 +688,9 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
         self._active_file_path = None
         self._cursor_position = None
         self._warmup_shown = False  # Reset for new project
+        self._auto_verify_attempts = 0
+        self._auto_verify_in_progress = False
+        self._pending_verify_files.clear()
         
         self._project_root = path
         self._tool_registry.project_root = path
@@ -773,6 +858,9 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
                     self.response_chunk.emit("\n❌ Action cancelled. Let me know if you need anything else.")
                     self.response_complete.emit("Action cancelled.")
                 return
+
+            # Record start of a new user request for metrics
+            self._record_request_start()
             
             # Build context-aware message using Context Manager
             if self._context_manager:
@@ -1253,6 +1341,7 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
         else:
             self._history.append({"role": "assistant", "content": full_text})
             self.response_complete.emit(full_text)
+            self._record_request_end(success=True)
             
         # Refactor: Save workflow tags to physical files in .cortex/
         self._save_workflow_files(full_text)
@@ -1283,10 +1372,22 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
     def _on_tool_started(self, name, args):
         """Called when a tool starts execution in background."""
         log.info(f"Executing tool: {name} with args: {args}")
+        self._metrics["tool_calls_total"] += 1
         display_path = ""
         if "path" in args:
             path = str(args["path"])
             display_path = path.split('\\')[-1] or path.split('/')[-1] or path
+
+        edit_tools = {
+            "write_file",
+            "edit_file",
+            "inject_after",
+            "add_import",
+            "delete_lines",
+            "replace_lines",
+            "delete_path"
+        }
+        lint_tools = {"check_syntax", "get_problems"}
         
         # Capture pre-edit snapshot for diff support
         if name in ["write_file", "edit_file", "inject_after", "add_import"]:
@@ -1319,7 +1420,35 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
             path = str(args["path"])
             display_path = path.split('\\')[-1] or path.split('/')[-1] or path
 
+        edit_tools = {
+            "write_file",
+            "edit_file",
+            "inject_after",
+            "add_import",
+            "delete_lines",
+            "replace_lines",
+            "delete_path"
+        }
+        lint_tools = {"check_syntax", "get_problems"}
+
         if result.success:
+            self._metrics["tool_calls_success"] += 1
+            if name in edit_tools:
+                self._metrics["edit_calls"] += 1
+                self._metrics["edit_success"] += 1
+                if name != "delete_path":
+                    path = str(args.get("path", ""))
+                    if path:
+                        resolved_path = path
+                        if self._project_root and not os.path.isabs(path):
+                            resolved_path = os.path.join(str(self._project_root), path)
+                        if resolved_path and os.path.exists(resolved_path):
+                            self._pending_verify_files.add(resolved_path)
+            if name in lint_tools:
+                self._metrics["lint_checks"] += 1
+                content = str(result.result)
+                if "No syntax errors" in content or "No problems found" in content:
+                    self._metrics["lint_clean"] += 1
             if name == "list_directory":
                 dir_content = str(result.result)
                 file_count = dir_content.count('\n') + 1 if dir_content else 0
@@ -1413,6 +1542,9 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
             else:
                 self.tool_activity.emit(name, "Completed", "complete")
         else:
+            self._metrics["tool_calls_error"] += 1
+            if name in edit_tools:
+                self._metrics["edit_calls"] += 1
             self.tool_activity.emit(name, f"Error: {result.error[:40]}", "error")
             self.response_chunk.emit(f"\n⚠️ Error calling {name}: {result.error}\n")
 
@@ -1444,16 +1576,108 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
             })
             
         self._save_history_to_disk()
-        self._continue_after_tools_flag = True
         self.response_complete.emit("")
+
+        if self._auto_verify_in_progress:
+            self._handle_auto_verify_results(results)
+            return
+
+        if self._should_auto_verify():
+            if self._start_auto_verify():
+                return
+        
+        self._continue_after_tools_flag = True
         
         # Trigger continuation
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(100, self._continue_chat_after_tools)
+
+    def _should_auto_verify(self) -> bool:
+        if not self._auto_verify_enabled:
+            return False
+        if self._auto_verify_in_progress:
+            return False
+        if not self._pending_verify_files:
+            return False
+        if self._auto_verify_attempts >= self._auto_verify_max_retries:
+            return False
+        return True
+
+    def _start_auto_verify(self) -> bool:
+        file_paths = [p for p in self._pending_verify_files if p and os.path.exists(p)]
+        self._pending_verify_files.clear()
+        if not file_paths and not self._auto_verify_command:
+            return False
+
+        import uuid
+
+        args: dict = {}
+        if self._auto_verify_command:
+            args["test_command"] = self._auto_verify_command
+        if file_paths:
+            args["file_paths"] = file_paths
+
+        tool_call = {
+            "id": f"auto_verify_{uuid.uuid4().hex}",
+            "type": "function",
+            "function": {
+                "name": "verify_fix",
+                "arguments": json.dumps(args)
+            }
+        }
+
+        self._auto_verify_in_progress = True
+        self._auto_verify_attempts += 1
+        log.info(f"Auto-verify attempt {self._auto_verify_attempts}/{self._auto_verify_max_retries}")
+        self._execute_tools([tool_call], assistant_content="[AUTO VERIFY] Running verification.")
+        return True
+
+    def _handle_auto_verify_results(self, results):
+        output = ""
+        success = False
+        for res in results:
+            if res.get("name") == "verify_fix":
+                output = str(res.get("content", ""))
+                success = bool(res.get("success"))
+                break
+
+        self._auto_verify_in_progress = False
+
+        lowered = output.lower()
+        failed = (not success) or ("failed" in lowered) or ("error" in lowered) or ("traceback" in lowered)
+
+        if failed:
+            if self._auto_verify_attempts >= self._auto_verify_max_retries:
+                log.warning("Auto-verify failed: max retries reached")
+                self._auto_verify_attempts = 0
+                final_prompt = (
+                    "Auto verification failed after the maximum retries. "
+                    "Summarize the failure and ask the user how to proceed."
+                )
+                self.chat(final_prompt)
+                return
+
+            trimmed_output = output.strip()
+            if len(trimmed_output) > 4000:
+                trimmed_output = trimmed_output[:4000] + "\n... (truncated)"
+
+            prompt = (
+                "Auto verification failed. Fix the errors and rerun verification.\n\n"
+                f"Verification output:\n{trimmed_output}"
+            )
+            self.chat(prompt)
+            return
+
+        self._auto_verify_attempts = 0
+        self._continue_after_tools_flag = True
         from PyQt6.QtCore import QTimer
         QTimer.singleShot(100, self._continue_chat_after_tools)
 
     def _on_tool_error(self, error_msg):
         """Handle fatal error in ToolWorker."""
         log.error(f"ToolWorker fatal error: {error_msg}")
+        self._metrics["tool_calls_error"] += 1
+        self._record_request_end(success=False, error_category="tool_error")
         self.response_chunk.emit(f"\n❌ Tool Execution Failed: {error_msg}\n")
         self.response_chunk.emit("\n</exploration>\n")
         self._continue_after_tools_flag = False
@@ -1466,6 +1690,8 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
         can understand what happened and resume from the next step.
         """
         log.warning(f"Tool timeout handler: {tool_name}")
+        self._metrics["tool_timeouts"] += 1
+        self._metrics["tool_calls_error"] += 1
         # Show warning in chat UI
         self.response_chunk.emit(
             f"\n⏱️ **Tool `{tool_name}` timed out** (>{ToolWorker.TOOL_TIMEOUT_SECONDS}s). "
@@ -1587,6 +1813,8 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
 
     def _on_error(self, error: str):
         log.error(f"AI error: {error}")
+        category = _categorize_error_message(error)
+        self._record_request_end(success=False, error_category=category)
         # Reset flags on error
         self._continue_after_tools_flag = False
         # Stop thinking indicator

@@ -239,6 +239,27 @@ class ChatBridge(QObject):
         """Handle JavaScript errors reported from the page."""
         log.warning(f'JS Error: {error_json}')
 
+    @pyqtSlot(str)
+    def delete_chat_from_sqlite(self, conversation_id: str):
+        """Delete a conversation from SQLite."""
+        try:
+            from src.core.chat_history import get_chat_history
+            history = get_chat_history()
+            history.delete_conversation(conversation_id)
+            log.info(f"✓ Deleted conversation {conversation_id} from SQLite")
+        except Exception as e:
+            log.error(f"✗ Failed to delete conversation {conversation_id}: {e}")
+
+    @pyqtSlot(str)
+    def load_full_chat(self, conversation_id: str):
+        """Trigger loading of full chat messages for a specific conversation."""
+        try:
+            # This will be handled by the signal connection in AIChatWidget
+            self.load_full_chat_requested.emit(conversation_id)
+            log.debug(f"Requested full chat load for {conversation_id}")
+        except Exception as e:
+            log.error(f"Failed to request full chat {conversation_id}: {e}")
+
     # ── THREE FEATURES: Project Tree, Terminal, Todo Bridge Slots ─────
 
     @pyqtSlot(str)
@@ -266,10 +287,66 @@ class ChatBridge(QObject):
     # ── CHAT PERSISTENCE: File-based storage fallback ─────────────────
     
     @pyqtSlot(str, str, result=str)
+    def save_single_chat_to_sqlite(self, storage_key: str, json_data: str) -> str:
+        """
+        Save a SINGLE chat's data to SQLite database.
+        This provides high-performance persistent storage without full-history payload overhead.
+        """
+        try:
+            from src.core.chat_history import get_chat_history
+            chat = json.loads(json_data)
+            history = get_chat_history()
+            
+            if not isinstance(chat, dict):
+                return "ERROR: Invalid chat data"
+                
+            conversation_id = chat.get('id', storage_key)
+            project_path = f"project_{storage_key}"
+            title = chat.get('title', f"Chat {conversation_id[:8]}")
+            messages = chat.get('messages', [])
+            
+            # Skip saving if no messages
+            if not messages:
+                log.debug(f"Skipping save for empty conversation {conversation_id}")
+                return "OK - Skipped empty"
+                
+            # Create conversation if not exists
+            history.create_conversation(project_path, title, conversation_id=conversation_id)
+
+            total_messages = len(messages)
+            existing_count = history.db.get_message_count(conversation_id)
+            if existing_count > total_messages:
+                history.clear_conversation_messages(conversation_id)
+                existing_count = 0
+            
+            if existing_count == total_messages:
+                log.debug(f"Skipping save for conversation {conversation_id} (no new messages)")
+                return "OK - No new messages"
+            
+            # Add only new messages
+            for msg in messages[existing_count:]:
+                # Handle both 'content' (new) and 'text' (legacy) keys
+                msg_content = msg.get('content') or msg.get('text', '')
+                msg_role = msg.get('role') or msg.get('sender') or 'user'
+                history.add_message(
+                    conversation_id=conversation_id,
+                    role=msg_role,
+                    content=msg_content,
+                    files_accessed=msg.get('files_accessed', []),
+                    tools_used=msg.get('tools_used', [])
+                )
+            
+            log.debug(f'✓ Saved single chat {conversation_id} to SQLite (storage_key: {storage_key})')
+            return "OK"
+            
+        except Exception as e:
+            log.error(f'✗ Failed to save single chat to SQLite: {e}')
+            return f"ERROR: {str(e)}"
+
+    @pyqtSlot(str, str, result=str)
     def save_chats_to_sqlite(self, storage_key: str, json_data: str) -> str:
         """
-        Save chat data to SQLite database.
-        This provides high-performance persistent storage.
+        Save ALL chat data to SQLite database. (Legacy full-sync fallback)
         Returns: "OK" or error message.
         """
         try:
@@ -277,8 +354,6 @@ class ChatBridge(QObject):
             
             # Parse JSON data
             chats = json.loads(json_data)
-            
-            # Get chat history manager
             history = get_chat_history()
             
             # Save each conversation
@@ -292,21 +367,25 @@ class ChatBridge(QObject):
                 messages = chat.get('messages', [])
                 
                 # Create conversation if not exists
-                history.create_conversation(project_path, title)
+                history.create_conversation(project_path, title, conversation_id=conversation_id)
+
+                total_messages = len(messages)
+                existing_count = history.db.get_message_count(conversation_id)
+                if existing_count > total_messages:
+                    history.clear_conversation_messages(conversation_id)
+                    existing_count = 0
                 
-                # Add all messages
-                for msg in messages:
-                    role = msg.get('role', 'user')
-                    content = msg.get('content', '')
-                    files_accessed = msg.get('files_accessed', [])
-                    tools_used = msg.get('tools_used', [])
-                    
+                if existing_count == total_messages:
+                    continue
+                
+                # Add only new messages
+                for msg in messages[existing_count:]:
                     history.add_message(
                         conversation_id=conversation_id,
-                        role=role,
-                        content=content,
-                        files_accessed=files_accessed,
-                        tools_used=tools_used
+                        role=msg.get('role', msg.get('sender', 'user')),
+                        content=msg.get('content', msg.get('text', '')),
+                        files_accessed=msg.get('files_accessed', []),
+                        tools_used=msg.get('tools_used', [])
                     )
             
             log.debug(f'✓ Saved {len(chats)} chats to SQLite (storage_key: {storage_key})')
@@ -365,6 +444,7 @@ class ChatBridge(QObject):
             log.error(f'✗ Failed to load chats from SQLite: {e}')
             return "[]"
     
+    @pyqtSlot(str, result=str)
     def load_full_chat_from_sqlite(self, conversation_id: str) -> str:
         """
         Load full chat messages for a specific conversation (on-demand).
@@ -681,22 +761,24 @@ class AIChatWidget(QWidget):
     def _on_load_full_chat_requested(self, conversation_id: str):
         """Handle lazy load request for full chat messages from JS."""
         try:
-            # Load full chat data from SQLite
-            full_chat_json = self.load_full_chat_from_sqlite(conversation_id)
+            # Load full chat data from SQLite via bridge (returns JSON string)
+            full_chat_json_str = self._bridge.load_full_chat_from_sqlite(conversation_id)
             
-            # Send back to JS via custom event
-            escaped_json = full_chat_json.replace('\\', '\\\\').replace("'", "\\'").replace('"', '\\"')
-            js_code = f"""
-            (function() {{
-                var event = new CustomEvent('chatFullLoadHandler', {{ detail: "{escaped_json}" }});
-                window.dispatchEvent(event);
-            }})();
-            """
+            # Parse it so we can pass components to the JS function signature: (id, messages)
+            import json
+            chat_data = json.loads(full_chat_json_str)
+            messages = chat_data.get('messages', [])
+            
+            safe_id = json.dumps(conversation_id)
+            safe_msgs = json.dumps(messages)
+            
+            # Direct function call to JS global
+            js_code = f"if(window.chatFullLoadHandler) window.chatFullLoadHandler({safe_id}, {safe_msgs});"
+            
             self._view.page().runJavaScript(js_code)
-            
-            log.debug(f"Sent full chat {conversation_id} to JS ({len(full_chat_json)} chars)")
+            log.info(f"✓ Restored {len(messages)} messages for chat {conversation_id}")
         except Exception as e:
-            log.error(f"Failed to load full chat {conversation_id}: {e}")
+            log.error(f"✗ Failed to handle chat load for {conversation_id}: {e}")
 
     def _on_search_files(self, query: str):
         """Handle @ mention file search from JS - OPTIMIZED."""
@@ -770,7 +852,7 @@ class AIChatWidget(QWidget):
     def add_system_message(self, text):
         """Add a system message."""
         safe_text = json.dumps(text)
-        self._view.page().runJavaScript(f"if(window.appendMessage) window.appendMessage({safe_text}, 'assistant', false);")
+        self._view.page().runJavaScript(f"if(window.appendMessage) window.appendMessage({safe_text}, 'system', false);")
 
     def _add_ai_bubble_streaming(self):
         """Start a new AI streaming message bubble."""
@@ -996,22 +1078,20 @@ class AIChatWidget(QWidget):
             hash_str = format(abs(hash_val), 'x')
             storage_key = f"cortex_chats_{hash_str}"
             
-            # Load chats from SQLite
-            chats_data = self._bridge.load_chats_from_sqlite(storage_key)
-            log.info(f"Loading chats for key {storage_key}: {len(chats_data)} chars")
+            # Load chats from SQLite (returns JSON string)
+            chats_json = self._bridge.load_chats_from_sqlite(storage_key)
+            log.info(f"✓ Loaded {len(chats_json)} chars of metadata from SQLite")
             
             # Push both project info AND chat data to JavaScript
-            safe_chats = json.dumps(chats_data)
+            # Note: chats_json is already a JSON string from bridge.load_chats_from_sqlite,
+            # so we pass it directly into the JS call as a literal.
             self._page.runJavaScript(
                 f"""
                 if(window.setProjectInfoWithChats) {{
                     console.log('[CHAT] Python calling setProjectInfoWithChats');
-                    window.setProjectInfoWithChats({safe_name}, {safe_path}, {safe_chats});
+                    window.setProjectInfoWithChats({safe_name}, {safe_path}, `{chats_json}`);
                 }} else if(window.setProjectInfo) {{
-                    console.log('[CHAT] Python calling setProjectInfo (old method)');
                     window.setProjectInfo({safe_name}, {safe_path});
-                }} else {{
-                    console.log('[CHAT] setProjectInfo still not ready');
                 }}
                 """
             )
