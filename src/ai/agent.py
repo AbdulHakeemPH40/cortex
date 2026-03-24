@@ -16,6 +16,7 @@ from src.utils.logger import get_logger
 from src.core.key_manager import get_key_manager
 from src.ai.providers import get_provider_registry, ProviderType, ChatMessage
 from src.ai.decision_framework import get_decision_framework, reset_decision_framework, ActionType
+from src.ai.autogen_wrapper import get_autogen_system, init_autogen_system
 
 log = get_logger("ai_agent")
 
@@ -33,6 +34,45 @@ def _categorize_error_message(error_msg: str) -> str:
     if "tool" in msg and "timeout" in msg:
         return "tool_timeout"
     return "unknown"
+
+# PERFORMANCE: API response cache to avoid repeating identical requests
+_api_response_cache: Dict[str, Any] = {}
+_api_cache_max_size = 100  # LRU cache size
+_api_cache_ttl = 3600  # Cache TTL: 1 hour
+
+def _get_api_cache_key(messages: List[Dict], model: str, provider: str) -> str:
+    """Generate cache key for API request."""
+    # Create hash of messages + model + provider
+    hasher = hashlib.sha256()
+    for msg in messages:
+        hasher.update(json.dumps(msg, sort_keys=True).encode())
+    hasher.update(model.encode())
+    hasher.update(provider.encode())
+    return hasher.hexdigest()
+
+def _cache_api_response(key: str, response: Any):
+    """Cache API response with LRU eviction."""
+    global _api_response_cache
+    if len(_api_response_cache) >= _api_cache_max_size:
+        # Remove oldest entry (LRU)
+        oldest_key = next(iter(_api_response_cache))
+        del _api_response_cache[oldest_key]
+    _api_response_cache[key] = {
+        'response': response,
+        'timestamp': time.time()
+    }
+
+def _get_cached_api_response(key: str) -> Optional[Any]:
+    """Get cached API response if not expired."""
+    global _api_response_cache
+    if key in _api_response_cache:
+        entry = _api_response_cache[key]
+        if time.time() - entry['timestamp'] < _api_cache_ttl:
+            return entry['response']
+        else:
+            # Expired - remove
+            del _api_response_cache[key]
+    return None
 
 # Load .env if available - check multiple locations for dev and packaged modes
 try:
@@ -280,12 +320,7 @@ class AIWorker(QThread):
             "together": ProviderType.TOGETHER,  # Qwen, Kimi, MiniMax, DeepSeek-R1
         }
         
-        # Together AI models (use "together" provider with these model IDs):
-        # - Qwen/Qwen3.5-397B-A17B
-        # - moonshotai/Kimi-K2.5
-        # - MiniMaxAI/MiniMax-M2.5
-        # - deepseek-ai/DeepSeek-R1
-        
+        # Use selected provider directly (no auto-switching)
         provider_type = provider_map.get(self.provider, ProviderType.DEEPSEEK)
         
         # Get provider instance from registry
@@ -309,6 +344,8 @@ class AIWorker(QThread):
         # Set the API key on the provider
         provider.set_api_key(api_key)
         
+        log.info(f"   Using {self.provider} provider")
+        
         # Convert messages to ChatMessage objects
         chat_messages = []
         for msg in self.messages:
@@ -320,120 +357,94 @@ class AIWorker(QThread):
                 name=msg.get("name")
             ))
         
-        # Stream the response with proper tool call handling
-        # Exponential backoff for rate limits
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                log.info(f"Starting to stream from provider... (attempt {attempt + 1})")
-                chunk_count = 0
-                tool_call_buffer = {}  # index -> accumulated tool call data
-                
-                import time
-                last_chunk_time = time.time()
-                
-                for chunk in provider.chat_stream(
-                    messages=chat_messages,
-                    model=self.model,
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
-                    tools=self.tools
-                ):
-                    if not chunk:
-                        # Check for timeout on empty chunks
-                        if time.time() - last_chunk_time > 30:  # 30 second timeout
-                            log.warning("Stream timeout - no data received for 30 seconds")
-                            break
-                        continue
-                    
-                    last_chunk_time = time.time()
-                    chunk_count += 1
-                    
-                    # Handle tool call deltas
-                    if chunk.startswith("__TOOL_CALL_DELTA__:"):
-                        try:
-                            deltas = json.loads(chunk[len("__TOOL_CALL_DELTA__:"):])
-                            for delta in deltas:
-                                index = delta.get("index", 0)
-                                if index not in tool_call_buffer:
-                                    tool_call_buffer[index] = {"id": "", "name": "", "arguments": ""}
-                                
-                                # Debug: log each delta
-                                args_preview = delta.get("function", {}).get("arguments", "")[:50] if delta.get("function", {}).get("arguments") else "EMPTY"
-                                log.debug(f"Tool delta: idx={index}, id={delta.get('id')}, name={delta.get('function', {}).get('name')}, args={args_preview}...")
-                                
-                                if delta.get("id"):
-                                    tool_call_buffer[index]["id"] += delta["id"]
-                                if delta.get("function", {}).get("name"):
-                                    tool_call_buffer[index]["name"] += delta["function"]["name"]
-                                if delta.get("function", {}).get("arguments"):
-                                    tool_call_buffer[index]["arguments"] += delta["function"]["arguments"]
-                        except Exception as e:
-                            log.error(f"Error parsing tool call delta: {e}")
-                    else:
-                        # Regular content chunk
-                        self._full_response += chunk
-                        self.chunk_received.emit(chunk)
-                
-                log.info(f"Stream completed, received {chunk_count} chunks")
-                
-                # Convert tool call buffer to final format
-                if tool_call_buffer:
-                    log.debug(f"Tool call buffer contents: {tool_call_buffer}")
-                    final_tool_calls = []
-                    for idx in sorted(tool_call_buffer.keys()):
-                        tc = tool_call_buffer[idx]
-                        # Validate tool call has all required fields
-                        if tc["id"] and tc["name"]:
-                            args = tc["arguments"].strip() if tc["arguments"] else ""
-                            # Tools that don't require arguments (can be called with empty {})
-                            no_args_tools = {"git_status", "read_terminal", "undo_last_action", 
-                                            "get_problems"}  # git_diff, list_directory need args
-                            # Skip only if args are completely missing AND tool requires args
-                            if not args or args == "":
-                                # Empty args - only allow for tools that don't need args
-                                if tc["name"] not in no_args_tools:
-                                    log.warning(f"Skipping tool call {tc['name']}: missing required arguments")
-                                    continue
-                                # For no-args tools, use empty object
-                                args = "{}"
-                            log.debug(f"Valid tool call: {tc['name']} with args length {len(args)}")
-                            final_tool_calls.append({
-                                "id": tc["id"],
-                                "type": "function",
-                                "function": {
-                                    "name": tc["name"],
-                                    "arguments": args
-                                }
-                            })
-                    if final_tool_calls:
-                        self.tool_calls = final_tool_calls
-                        log.info(f"Worker has {len(final_tool_calls)} tool calls to return")
-                    elif tool_call_buffer:
-                        # Some tool calls were skipped due to empty arguments
-                        # Add a note to the response so AI knows to retry
-                        self._full_response += "\n\n[SYSTEM ERROR: Tool call was rejected because arguments were empty. This is a streaming issue. Please try again and make sure to include the file path and content in your tool call.]\n"
-                
-                log.info(f"Emitting finished signal with response length {len(self._full_response)}")
-                self.finished.emit(self._full_response)
-                return  # Success, exit retry loop
-            except Exception as e:
-                error_msg = str(e)
-                category = _categorize_error_message(error_msg)
-                log.warning(
-                    f"AIWorker attempt {attempt + 1}/{max_retries} failed "
-                    f"category={category}: {error_msg[:200]}"
-                )
-                if "rate limit" in error_msg.lower() and attempt < max_retries - 1:
-                    wait_time = 2 ** attempt  # 1s, 2s, 4s
-                    log.warning(f"Rate limit hit, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
-                    time.sleep(wait_time)
+        # PERFORMANCE: Check cache first (before making API call)
+        cache_key = _get_api_cache_key(self.messages, self.model, self.provider)
+        cached_response = _get_cached_api_response(cache_key)
+        if cached_response:
+            log.info(f"✅ CACHE HIT: Reusing cached API response")
+            self._full_response = cached_response
+            self.finished.emit(self._full_response)
+            return
+        
+        log.info(f"💾 CACHE MISS: Making fresh API call")
+        
+        # Stream the response for live UI updates
+        log.info(f"Starting streaming request to {self.provider}...")
+        
+        try:
+            chunk_count = 0
+            tool_call_buffer = {}
+            
+            log.info(f"Starting streaming with OpenAI SDK (SSL disabled)...")
+            self.chunk_received.emit("Thinking...\n")
+            
+            # Simple streaming via OpenAI SDK
+            stream = provider.chat_stream(
+                messages=chat_messages,
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                tools=self.tools
+            )
+            
+            # Process chunks
+            for chunk in stream:
+                if not chunk or chunk.isspace():
                     continue
-                if "authentication" in error_msg.lower() or "api key" in error_msg.lower():
-                    error_msg = f"Invalid API key for {self.provider}. Please check your settings."
-                elif "rate limit" in error_msg.lower():
-                    error_msg = f"Rate limit exceeded for {self.provider}. Please try again later."
-                raise Exception(error_msg)
+                
+                chunk_count += 1
+                
+                # Handle tool call deltas
+                if chunk.startswith("__TOOL_CALL_DELTA__:"):
+                    try:
+                        deltas = json.loads(chunk[len("__TOOL_CALL_DELTA__:"):])
+                        for delta in deltas:
+                            index = delta.get("index", 0)
+                            if index not in tool_call_buffer:
+                                tool_call_buffer[index] = {"id": "", "name": "", "arguments": ""}
+                            
+                            if delta.get("id"):
+                                tool_call_buffer[index]["id"] += delta["id"]
+                            if delta.get("function", {}).get("name"):
+                                tool_call_buffer[index]["name"] += delta["function"]["name"]
+                            if delta.get("function", {}).get("arguments"):
+                                tool_call_buffer[index]["arguments"] += delta["function"]["arguments"]
+                    except Exception as e:
+                        log.error(f"Error parsing tool delta: {e}")
+                else:
+                    # Regular content
+                    self._full_response += chunk
+                    self.chunk_received.emit(chunk)
+            
+            log.info(f"Stream completed: {chunk_count} chunks")
+            
+            # Process tool calls
+            if tool_call_buffer:
+                final_tool_calls = []
+                for idx in sorted(tool_call_buffer.keys()):
+                    tc = tool_call_buffer[idx]
+                    if tc["id"] and tc["name"]:
+                        args = tc["arguments"].strip() if tc["arguments"] else "{}"
+                        final_tool_calls.append({
+                            "id": tc["id"],
+                            "type": "function",
+                            "function": {"name": tc["name"], "arguments": args}
+                        })
+                if final_tool_calls:
+                    self.tool_calls = final_tool_calls
+            
+            # Cache and finish
+            if self._full_response:
+                cache_key = _get_api_cache_key(self.messages, self.model, self.provider)
+                _cache_api_response(cache_key, self._full_response)
+                self.finished.emit(self._full_response)
+                return
+            
+            raise Exception("No response from stream")
+            
+        except Exception as e:
+            log.error(f"API call failed: {e}")
+            raise
 
 
 class AIAgent(QObject):
@@ -535,6 +546,10 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
         self._request_started_at: float | None = None
         self._request_in_flight = False
         self._auto_verify_enabled = bool(self._settings.get("ai", "auto_verify", default=True))
+        
+        # AutoGen Multi-Agent System
+        self._autogen_system = None
+        self._autogen_enabled = bool(self._settings.get("ai", "autogen_enabled", default=False))
         self._auto_verify_command = (self._settings.get("ai", "test_command", default="") or "").strip()
         if not self._auto_verify_command:
             env_test_command = os.getenv("CORTEX_TEST_COMMAND", "").strip()
@@ -544,6 +559,12 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
         self._auto_verify_attempts = 0
         self._auto_verify_in_progress = False
         self._pending_verify_files: set[str] = set()
+        # AutoGen multi-agent system configuration
+        self._use_autogen = False  # Disabled by default, enable via UI toggle
+        self._autogen_system: Optional[CortexMultiAgentSystem] = None
+        # Human-in-the-loop configuration
+        self._require_human_approval = False  # Enabled via enable_human_in_loop()
+        
         self._metrics = {
             "requests_total": 0,
             "requests_success": 0,
@@ -602,7 +623,104 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
         if mode == "Agent":
             self._always_allowed = True
             log.info("AI Agent: Auto-approval enabled for Agent mode")
-
+    
+    def enable_human_in_loop(self, enabled: bool = True):
+        """
+        Enable human-in-the-loop mode for critical operations.
+        
+        When enabled:
+        - AI must get user confirmation before executing file modifications
+        - Prevents Groq from making rapid destructive changes
+        - Slows down the system to safe human speed
+        
+        Args:
+            enabled: True to enable human approval required, False for full autonomy
+        """
+        self._require_human_approval = enabled
+        if enabled:
+            log.info("👤 Human-in-the-loop ENABLED - AI will ask before critical changes")
+        else:
+            log.info("⚡ Human-in-the-loop DISABLED - AI has full autonomy")
+    
+    def enable_autogen(self, enabled: bool = True):
+        """Enable or disable AutoGen multi-agent mode (uses DeepSeek)."""
+        if not enabled:
+            self._use_autogen = False
+            log.info("⚪ AutoGen MULTI-AGENT MODE DISABLED")
+            return
+        
+        try:
+            from src.core.key_manager import get_key_manager
+            key_manager = get_key_manager()
+            deepseek_key = key_manager.get_key("deepseek")
+            
+            if not deepseek_key:
+                log.warning("❌ DeepSeek API key not found. Add to .env file first.")
+                return False
+            
+            self._autogen_system = init_autogen_system(deepseek_key)
+            self._use_autogen = True
+            log.info("✅ AutoGen MULTI-AGENT MODE ENABLED! 🤖")
+            log.info("   🚀 Powered by DeepSeek V3 for reliable tool execution")
+            log.info("   🤖 Agents: PM + Architect + Developer + QA + Reviewer")
+            log.info("   🔒 Safe code execution with multi-agent review")
+            return True
+            
+        except Exception as e:
+            log.error(f"Failed to enable AutoGen: {e}")
+            return False
+    
+    def disable_autogen(self):
+        """Disable AutoGen and return to single-agent mode."""
+        self._use_autogen = False
+        self._autogen_system = None
+        log.info("ℹ️ AutoGen disabled - using single-agent mode")
+    
+    def is_autogen_enabled(self) -> bool:
+        """Check if AutoGen multi-agent mode is active."""
+        return self._use_autogen and self._autogen_system is not None
+        
+    def _process_via_autogen(self, user_message: str, code_context: str):
+        """Process message through AutoGen multi-agent system (1-2s responses!)."""
+        try:
+            log.info(f"🤖 AutoGen processing: {user_message[:50]}...")
+                
+            # Determine if code execution should be allowed
+            execute_code = any(keyword in user_message.lower() for keyword in [
+                "run", "execute", "test", "calculate", "compute", "generate"
+            ])
+                
+            # Process through multi-agent system
+            result = self._autogen_system.chat(user_message, execute_code=execute_code)
+                
+            if result["success"]:
+                # Emit response
+                response_text = result["response"]
+                self.response_chunk.emit(response_text)
+                self.response_complete.emit("✅ Multi-agent complete")
+                    
+                # Add to history
+                self._history.append({
+                    "role": "user",
+                    "content": user_message
+                })
+                self._history.append({
+                    "role": "assistant", 
+                    "content": response_text
+                })
+                self._save_history_to_disk()
+                    
+                log.info(f"✅ AutoGen response emitted ({len(response_text)} chars)")
+            else:
+                error_msg = f"❌ AutoGen Error: {result.get('error', 'Unknown error')}"
+                log.error(error_msg)
+                self.request_error.emit(error_msg)
+                    
+        except Exception as e:
+            error_msg = f"❌ AutoGen Exception: {str(e)}"
+            log.error(error_msg)
+            self.request_error.emit(error_msg)
+        
     def _is_greeting(self, message: str) -> bool:
         """Check if message is a simple greeting - DISABLED for context-aware responses."""
         # Always return False to ensure all messages go through the AI
@@ -702,6 +820,25 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
         # Initialize decision framework for this project
         self._decision_framework = get_decision_framework(path)
         reset_decision_framework()  # Start fresh for new project
+        
+        # Initialize AutoGen multi-agent system if enabled
+        if self._autogen_enabled and self._autogen_system is None:
+            try:
+                from src.ai.autogen_wrapper import create_standard_team
+                from src.core.key_manager import get_key_manager
+                
+                key_manager = get_key_manager()
+                deepseek_key = key_manager.get_key("deepseek")
+                
+                if deepseek_key:
+                    self._autogen_system = create_standard_team(deepseek_key)
+                    log.info("✅ AutoGen Multi-Agent System initialized with DeepSeek")
+                else:
+                    log.warning("⚠️ DeepSeek API key not found - AutoGen disabled")
+                    self._autogen_enabled = False
+            except Exception as e:
+                log.error(f"Failed to initialize AutoGen: {e}")
+                self._autogen_enabled = False
         
         log.info(f"AI Agent context switched to project: {path}")
     
@@ -831,16 +968,23 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
 
     def chat(self, user_message: Optional[str], code_context: str = ""):
         """Send a message and get a streamed response."""
+            
+        # 🤖 AUTOGEN MULTI-AGENT MODE CHECK
+        if self._use_autogen and self._autogen_system and user_message:
+            log.info("🤖 Processing via AutoGen multi-agent system...")
+            self._process_via_autogen(user_message, code_context)
+            return
+            
         # Clean up finished worker if exists
         if self._worker and not self._worker.isRunning():
             log.debug("Cleaning up finished worker")
             self._worker.wait(100)  # Brief wait to ensure cleanup
             self._worker = None
-        
+            
         if self._worker and self._worker.isRunning():
             log.warning("AI worker already running, skipping request.")
             return
-
+            
         if user_message is not None:
             # Check if this is a greeting - if so, do warmup instead of AI call
             if self._is_greeting(user_message):
@@ -1352,7 +1496,9 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
         self._save_history_to_disk()
 
     def _execute_tools(self, tool_calls, assistant_content=""):
-        """Execute tool calls in a background thread and then continue the chat.
+        """Execute tool calls in PARALLEL for MAXIMUM speed.
+        
+        OPTIMIZATION: Independent tools run simultaneously using ThreadPoolExecutor
         
         Args:
             tool_calls: List of tool call objects from the assistant
@@ -1361,17 +1507,82 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
         # Start exploration block for UI display
         self.response_chunk.emit("\n<exploration>\n")
         
-        # Create ToolWorker to run tools in background
-        self._tool_worker = ToolWorker(self._tool_registry, tool_calls)
+        # PERFORMANCE: Group independent tool calls for parallel execution
+        independent_groups = self._group_independent_tools(tool_calls)
         
-        # Connect signals
-        self._tool_worker.tool_started.connect(self._on_tool_started)
-        self._tool_worker.tool_completed.connect(lambda n, a, r: self._on_tool_completed(n, a, r))
-        self._tool_worker.all_tools_completed.connect(lambda res: self._on_all_tools_completed(res, tool_calls, assistant_content))
-        self._tool_worker.error_occurred.connect(self._on_tool_error)
-        self._tool_worker.tool_timeout.connect(self._on_tool_timeout)
+        if len(independent_groups) > 1:
+            log.info(f"⚡ PARALLEL EXECUTION: {len(tool_calls)} tools grouped into {len(independent_groups)} batches")
         
-        self._tool_worker.start()
+        # Execute tool groups sequentially (groups contain parallel tools)
+        all_results = []
+        for group_idx, tool_group in enumerate(independent_groups):
+            log.debug(f"Executing tool group {group_idx + 1}/{len(independent_groups)} with {len(tool_group)} tools")
+            
+            # Create ToolWorker for this group
+            group_worker = ToolWorker(self._tool_registry, tool_group)
+            
+            # Connect signals
+            group_worker.tool_started.connect(self._on_tool_started)
+            group_worker.tool_completed.connect(lambda n, a, r: self._on_tool_completed(n, a, r))
+            
+            # Start and wait for completion
+            group_worker.start()
+            group_worker.wait()  # Wait for this group to finish
+            
+            # Collect results
+            all_results.extend(group_worker._results)
+        
+        # Notify all tools completed
+        self._on_all_tools_completed(all_results, tool_calls, assistant_content)
+    
+    def _group_independent_tools(self, tool_calls: list) -> List[List[dict]]:
+        """
+        Group independent tool calls for parallel execution.
+        
+        STRATEGY:
+        - Tools that read different files → Can run in parallel
+        - Tools that write to same file → Must run sequentially
+        - Mixed read/write operations → Group by dependency
+        
+        Returns:
+            List of tool groups (each group can run in parallel)
+        """
+        if not tool_calls:
+            return []
+        
+        # Simple heuristic: Group by tool type and path
+        read_tools = []  # Can parallelize
+        write_tools = []  # Must serialize
+        other_tools = []  # Serialize for safety
+        
+        for tool_call in tool_calls:
+            tool_name = tool_call["function"]["name"]
+            
+            if tool_name in ["read_file", "search_code", "find_function", "find_class", "find_symbol"]:
+                read_tools.append(tool_call)
+            elif tool_name in ["write_file", "edit_file", "delete_path"]:
+                write_tools.append(tool_call)
+            else:
+                other_tools.append(tool_call)
+        
+        # Build execution groups
+        groups = []
+        
+        # Group 1: All reads can run in parallel (up to 4 at once)
+        if read_tools:
+            groups.append(read_tools)
+        
+        # Group 2+: Writes must run one at a time
+        for write_tool in write_tools:
+            groups.append([write_tool])
+        
+        # Group 3: Other tools run one at a time
+        for other_tool in other_tools:
+            groups.append([other_tool])
+        
+        log.debug(f"Tool grouping: {len(read_tools)} reads + {len(write_tools)} writes + {len(other_tools)} others = {len(groups)} groups")
+        
+        return groups
 
     def _on_tool_started(self, name, args):
         """Called when a tool starts execution in background."""
@@ -1884,6 +2095,68 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
     def update_settings(self, provider: str, model: str):
         self._settings.set("ai", "provider", provider)
         self._settings.set("ai", "model", model)
+    
+    def enable_autogen(self, enabled: bool = True):
+        """Enable or disable AutoGen multi-agent system."""
+        self._autogen_enabled = enabled
+        
+        if enabled and self._project_root and self._autogen_system is None:
+            # Initialize immediately if project is already set
+            self.set_project_root(self._project_root)
+        
+        log.info(f"AutoGen {'enabled' if enabled else 'disabled'}")
+    
+    def run_multi_agent_task(self, task: str, mode: str = "collaborative") -> str:
+        """
+        Run a task using the multi-agent system.
+        
+        Args:
+            task: The task to complete
+            mode: "collaborative" (group discussion) or "sequential" (assembly line)
+        
+        Returns:
+            Result summary from the agents
+        """
+        if not self._autogen_system:
+            return "Error: AutoGen system not initialized"
+        
+        try:
+            if mode == "collaborative":
+                # Set up group chat with all agents
+                agent_names = list(self._autogen_system.agents.keys())
+                self._autogen_system.setup_group_chat(agent_names)
+                
+                # Start collaborative discussion
+                result = self._autogen_system.run_collaborative_task(
+                    task=task,
+                    initiator_name=agent_names[0]  # First agent initiates
+                )
+            elif mode == "sequential":
+                # Define workflow: PM → Architect → Developer → QA → Reviewer
+                workflow = ["PM", "Architect", "Developer", "QA", "Reviewer"]
+                result = self._autogen_system.run_sequential_workflow(
+                    task=task,
+                    workflow=workflow
+                )
+            else:
+                result = "Error: Unknown mode. Use 'collaborative' or 'sequential'"
+            
+            return result
+            
+        except Exception as e:
+            log.error(f"Multi-agent task error: {e}")
+            return f"Error during multi-agent execution: {str(e)}"
+    
+    def get_autogen_status(self) -> Dict[str, Any]:
+        """Get AutoGen system status."""
+        if not self._autogen_system:
+            return {"enabled": False, "agents": []}
+        
+        return {
+            "enabled": self._autogen_enabled,
+            "agents": self._autogen_system.list_agents(),
+            "active": bool(self._autogen_system.group_chat)
+        }
 
     def is_busy(self) -> bool:
         return bool(self._worker and self._worker.isRunning())

@@ -519,6 +519,11 @@ class CortexMainWindow(QMainWindow):
         self._file_manager = FileManager()
         self._session_manager = SessionManager()
         self._ai_agent = AIAgent()
+        
+        # Set DeepSeek as default for reliable agentic workflows
+        self._ai_agent.update_settings(provider="deepseek", model="deepseek-chat")
+        log.info("🤖 AI Agent initialized with DeepSeek")
+        log.info("   Using DeepSeek V3 for reliable agentic work")
         self._file_tracker = FileEditTracker(self)
         self._diff_window = DiffWindow(self)
         self._codebase_index = None
@@ -637,6 +642,8 @@ class CortexMainWindow(QMainWindow):
         self._ai_chat.reject_file_edit_requested.connect(self._on_reject_file_edit)
         self._ai_chat.open_terminal_requested.connect(self._show_terminal_panel)
         self._ai_chat.set_code_context_callback(self._get_code_context)
+        self._ai_chat.load_full_chat_requested.connect(self._on_load_full_chat_requested)
+        self._ai_chat.toggle_autogen_requested.connect(self._on_toggle_autogen)
         right_layout.addWidget(self._ai_chat)
         self._main_splitter.addWidget(self._right_panel)
         
@@ -1428,6 +1435,32 @@ class CortexMainWindow(QMainWindow):
         self.statusBar().showMessage(f"✗ Rejected changes to {Path(file_path).name} - review file", 5000)
         # Remove from sidebar panel
         self._sidebar.remove_changed_file(file_path)
+    
+    def _on_load_full_chat_requested(self, conversation_id: str):
+        """Load full chat messages from SQLite database."""
+        log.info(f"Loading full chat: {conversation_id}")
+        
+        try:
+            # Load from SQLite via bridge
+            full_chat_json_str = self._ai_chat.load_full_chat_from_sqlite(conversation_id)
+            
+            if full_chat_json_str and full_chat_json_str != "[]":
+                log.info(f"Loaded {len(full_chat_json_str)} chars of chat data")
+                # Send back to JavaScript
+                self._ai_chat._view.page().runJavaScript(
+                    f"window.handleFullChatLoad('{conversation_id}', {full_chat_json_str});"
+                )
+                self.statusBar().showMessage(f"✓ Loaded chat history", 2000)
+            else:
+                log.warning(f"No chat data found for: {conversation_id}")
+                self._ai_chat._view.page().runJavaScript(
+                    f"window.handleFullChatLoad('{conversation_id}', null);"
+                )
+        except Exception as e:
+            log.error(f"Failed to load full chat: {e}")
+            self._ai_chat._view.page().runJavaScript(
+                f"window.handleFullChatLoad('{conversation_id}, null);"
+            )
 
     def _on_accept_all_files(self):
         """Handle user accepting all pending file edits."""
@@ -2404,13 +2437,11 @@ class CortexMainWindow(QMainWindow):
 
     def _on_model_changed(self, model_id: str, perf: str, cost: str):
         """Handle model selection change from AI chat."""
-        # Determine provider from model_id
-        if model_id.startswith("openai/") or model_id.startswith("llama-") or model_id.startswith("mixtral-") or model_id.startswith("gemma"):
-            provider = "groq"
-        elif model_id.startswith("deepseek-"):
+        # Determine provider from model_id (DeepSeek only - Groq removed)
+        if model_id.startswith("deepseek-"):
             provider = "deepseek"
         else:
-            provider = "groq"  # Default
+            provider = "deepseek"  # Default to DeepSeek
         
         log.info(f"[MainWindow] Model changed to: {model_id} (provider: {provider})")
         self._ai_agent.update_settings(provider, model_id)
@@ -2418,6 +2449,18 @@ class CortexMainWindow(QMainWindow):
     def _on_ai_stop_requested(self):
         """Handle stop request from AI (via web bridge)."""
         self._ai_agent.stop()
+    
+    def _on_toggle_autogen(self):
+        """Toggle AutoGen multi-agent mode."""
+        # Get current status
+        status = self._ai_agent.get_autogen_status()
+        current_enabled = status.get('enabled', False)
+        
+        # Toggle
+        new_state = not current_enabled
+        self._ai_agent.enable_autogen(new_state)
+        
+        log.info(f"AutoGen {'enabled' if new_state else 'disabled'} via UI toggle")
 
     def _on_generate_plan(self):
         log.info("MainWindow: Automated plan generation triggered")

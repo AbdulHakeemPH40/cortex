@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, 
     QPushButton, QLabel, QComboBox
 )
-from PyQt6.QtCore import Qt, QProcess, QProcessEnvironment, pyqtSignal, QTimer, QObject, pyqtSlot, QUrl
+from PyQt6.QtCore import Qt, QProcess, QProcessEnvironment, pyqtSignal, QTimer, QObject, pyqtSlot, QUrl, QSize
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PyQt6.QtWebChannel import QWebChannel
@@ -98,15 +98,17 @@ class XTermWidget(QWidget):
         self._output_buffer = ""
         self._is_ready = False
         
-        # OPTIMIZATION: Output emit throttle — accumulate for 16ms before sending to JS
+        # PERFORMANCE: Ultra-aggressive output batching + rate limiting
         self._emit_buffer = ""
         self._emit_timer = QTimer(self)
         self._emit_timer.setSingleShot(True)
         self._emit_timer.timeout.connect(self._flush_emit_buffer)
-        self._emit_debounce_ms = 16   # ~60fps
+        self._emit_debounce_ms = 8   # Faster: 8ms (~120fps) for snappier feel
         
-        # PERFORMANCE: Rate limiting for terminal output
+        # PERFORMANCE: Rate limiting for terminal output (aggressive)
         self._last_emit_time = 0.0
+        self._min_emit_interval = 25  # ms - minimum between emits (was 50, now 25 for faster response)
+        self._max_batch_lines = 50    # Emit up to 50 lines at once (was 10, now 5x more efficient)
         
         self._build_ui()
         self._update_header_style()
@@ -299,23 +301,23 @@ class XTermWidget(QWidget):
                 
     def _write_to_terminal(self, text: str):
         """
-        Buffer output and flush in batches with rate limiting.
-        Prevents QWebChannel from being flooded with hundreds of small messages.
-        Also emits clean lines for chat card streaming display.
+        ULTRA-FAST terminal output with aggressive batching.
+        Optimized for high-throughput command output (git log, pip install, etc.)
         """
-        # Rate limiting: throttle large outputs to prevent UI freezing
+        # Ultra-aggressive rate limiting: 25ms minimum (was 50ms)
         current_time = datetime.now().timestamp() * 1000
-        time_since_last_emit = current_time - self._last_emit_time if self._last_emit_time > 0 else 100
+        time_since_last_emit = current_time - self._last_emit_time if self._last_emit_time > 0 else self._min_emit_interval
         
-        # If we're emitting too fast, add delay
-        if time_since_last_emit < 50:  # Minimum 50ms between emits
-            delay = 50 - time_since_last_emit
-            QTimer.singleShot(int(delay), lambda: self._process_terminal_write(text))
+        # If emitting too fast, queue with minimal delay
+        if time_since_last_emit < self._min_emit_interval:
+            delay = max(1, int(self._min_emit_interval - time_since_last_emit))  # Min 1ms
+            QTimer.singleShot(delay, lambda: self._process_terminal_write(text))
         else:
+            # Can emit immediately
             self._process_terminal_write(text)
     
     def _process_terminal_write(self, text: str):
-        """Process actual terminal write with buffering."""
+        """Process actual terminal write with ULTRA-FAST batching."""
         self._last_emit_time = datetime.now().timestamp() * 1000
         
         # Store in buffer for AI feedback (clean ANSI codes first)
@@ -326,20 +328,18 @@ class XTermWidget(QWidget):
                 self._terminal_buffer = self._terminal_buffer[-self._max_buffer:]
             self.terminal_output_received.emit(clean_text)
             
-            # Emit lines for chat card streaming display (throttled)
-            # Only emit non-empty, non-whitespace lines
+            # Emit lines for chat card streaming display (OPTIMIZED)
+            # Only emit non-empty, significant lines (>1 char to skip cursors)
             lines_to_emit = [line.strip() for line in clean_text.splitlines() if line.strip() and len(line) > 1]
             
-            # Batch emit lines instead of one by one
+            # OPTIMIZATION: Larger batches, fewer emissions
             if lines_to_emit:
-                batch_size = min(10, len(lines_to_emit))  # Max 10 lines at once
-                for i in range(0, len(lines_to_emit), batch_size):
-                    batch = lines_to_emit[i:i+batch_size]
+                # Emit ALL lines at once up to max_batch_lines (was 10, now 50)
+                for i in range(0, len(lines_to_emit), self._max_batch_lines):
+                    batch = lines_to_emit[i:i+self._max_batch_lines]
                     combined = '\n'.join(batch)
                     self.terminal_line_for_chat.emit(combined)
-                    # Small delay between batches
-                    if i + batch_size < len(lines_to_emit):
-                        QTimer.singleShot(20, lambda: None)  # 20ms delay
+                    # No delay needed - larger batches mean fewer emits overall
 
         if self._is_ready:
             self._emit_buffer += text
@@ -557,6 +557,18 @@ class XTermWidget(QWidget):
         if not self._shell_started:
             self._shell_started = True
             QTimer.singleShot(200, self._start_shell)
+            
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Ensure webview gets proper size
+        if self._webview:
+            self._webview.resize(self.size())
+            
+    def sizeHint(self):
+        return QSize(800, 400)
+        
+    def minimumSizeHint(self):
+        return QSize(200, 150)
             
     def _on_stdout(self):
         if self._process:

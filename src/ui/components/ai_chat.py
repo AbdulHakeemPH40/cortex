@@ -147,6 +147,17 @@ class ChatBridge(QObject):
     def on_check_smart_paste(self, pasted_text):
         """Check if pasted text matches current editor selection."""
         self.smart_paste_check_requested.emit(pasted_text)
+    
+    @pyqtSlot()
+    def on_toggle_autogen(self):
+        """Toggle AutoGen multi-agent mode."""
+        from src.ai.agent import AIAgent
+        # Find the AI agent instance and toggle AutoGen
+        # This will be handled by main_window
+        self.toggle_autogen_requested.emit()
+    
+    # Add new signal for AutoGen toggle
+    toggle_autogen_requested = pyqtSignal()
 
     @pyqtSlot(bool)
     def handle_permission_response(self, allowed):
@@ -517,6 +528,9 @@ class AIChatWidget(QWidget):
     # File edit accept/reject signals
     accept_file_edit_requested = pyqtSignal(str)  # file_path
     reject_file_edit_requested = pyqtSignal(str)  # file_path
+    
+    # Vision processing signal
+    _vision_response_received = pyqtSignal(str)
 
     # Terminal panel signal
     open_terminal_requested = pyqtSignal()  # Request main window to open terminal panel
@@ -526,7 +540,12 @@ class AIChatWidget(QWidget):
 
     # Smart paste signal - emitted when user pastes code, to check if it matches editor selection
     smart_paste_check_requested = pyqtSignal(str)  # pasted_text
-
+    
+    # AutoGen multi-agent toggle signal
+    toggle_autogen_requested = pyqtSignal()
+    
+    # Load full chat from database signal
+    load_full_chat_requested = pyqtSignal(str)  # conversation_id
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -615,6 +634,9 @@ class AIChatWidget(QWidget):
         
         # NEW: Lazy load full chat when JS requests it
         self._bridge.load_full_chat_requested.connect(self._on_load_full_chat_requested)
+        
+        # Connect vision response signal
+        self._bridge._vision_response_received.connect(self._on_vision_response)
         
         self._channel.registerObject("bridge", self._bridge)
 
@@ -717,6 +739,12 @@ class AIChatWidget(QWidget):
                 log.error(f"[AIChat] Vision processing error: {e}")
                 self._vision_response_received.emit(f"Error: {str(e)}")
         
+        # Cleanup previous thread if exists and running
+        if hasattr(self, '_vision_thread') and self._vision_thread is not None and self._vision_thread.isRunning():
+            log.warning("Cleaning up previous vision thread...")
+            self._vision_thread.quit()
+            self._vision_thread.wait(3000)  # Wait up to 3s
+        
         # Create thread for vision processing
         self._vision_thread = QThread()
         self._vision_worker = VisionWorker(process_vision)
@@ -725,6 +753,7 @@ class AIChatWidget(QWidget):
         self._vision_worker.moveToThread(self._vision_thread)
         self._vision_thread.started.connect(self._vision_worker.run)
         self._vision_thread.start()
+        log.info("Vision thread started")
     
     def _show_thinking_in_js(self):
         """Show thinking indicator in JS chat."""
@@ -744,6 +773,9 @@ class AIChatWidget(QWidget):
             # Add response as assistant message
             js_code = f"if(window.appendMessage) window.appendMessage({json.dumps(response)}, 'assistant', true);"
             self._view.page().runJavaScript(js_code)
+            
+            # Cleanup thread after response
+            self._cleanup_vision_thread()
         except Exception:
             pass
     
@@ -755,8 +787,18 @@ class AIChatWidget(QWidget):
             
             js_code = f"if(window.appendMessage) window.appendMessage({json.dumps('Error: ' + error)}, 'assistant', true);"
             self._view.page().runJavaScript(js_code)
+            
+            # Cleanup thread after error
+            self._cleanup_vision_thread()
         except Exception:
             pass
+    
+    def _cleanup_vision_thread(self):
+        """Cleanup vision thread after worker finishes."""
+        if hasattr(self, '_vision_thread'):
+            log.debug("Cleaning up vision thread...")
+            self._vision_thread.quit()
+            self._vision_thread.wait(3000)  # Wait up to 3s for thread to finish
     
     def _on_load_full_chat_requested(self, conversation_id: str):
         """Handle lazy load request for full chat messages from JS."""

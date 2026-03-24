@@ -16,9 +16,8 @@ log = get_logger("provider_registry")
 
 class ProviderType(Enum):
     """Supported LLM providers."""
-    DEEPSEEK = "deepseek"
+    DEEPSEEK = "deepseek"  # Primary provider for agentic work
     TOGETHER = "together"  # Qwen, Kimi, MiniMax, DeepSeek-R1
-    OPENAI = "openai"
 
 
 @dataclass
@@ -172,23 +171,10 @@ class DeepSeekProvider(BaseProvider):
             log.debug(f"DeepSeek API key updated")
 
     def _get_client(self):
-        """Get or create DeepSeek client."""
-        # Recreate client if key changed or client doesn't exist
-        if self._client is None or self._client_key != self._api_key:
-            try:
-                from openai import OpenAI
-                if not self._api_key:
-                    raise ValueError("API key not set for DeepSeek")
-
-                log.debug(f"Creating DeepSeek client with key: {self._api_key[:10]}...")
-                self._client = OpenAI(
-                    api_key=self._api_key,
-                    base_url=self._base_url or self.DEFAULT_BASE_URL
-                )
-                self._client_key = self._api_key
-            except ImportError:
-                raise ImportError("OpenAI package not installed. Run: pip install openai")
-        return self._client
+        """Get or create DeepSeek client - NOT USING OPENAI SDK (it hangs)."""
+        # We don't use OpenAI SDK - it hangs when connecting to DeepSeek
+        # Direct HTTP requests work reliably
+        return None
     
     def chat(self, 
              messages: List[ChatMessage], 
@@ -198,12 +184,14 @@ class DeepSeekProvider(BaseProvider):
              stream: bool = False,
              tools: Optional[List[Dict[str, Any]]] = None,
              tool_choice: Optional[str] = None) -> ChatResponse:
-        """Send chat completion request to DeepSeek."""
+        """Send chat completion request to DeepSeek using OpenAI SDK."""
         start_time = time.time()
         
         try:
             client = self._get_client()
             formatted_messages = self._format_messages_for_provider(messages)
+            
+            log.info(f"Calling DeepSeek API via OpenAI SDK (stream={stream})...")
             
             response = client.chat.completions.create(
                 model=model,
@@ -220,9 +208,13 @@ class DeepSeekProvider(BaseProvider):
             if stream:
                 # Handle streaming response
                 content = ""
+                chunk_count = 0
                 for chunk in response:
-                    if chunk.choices[0].delta.content:
+                    chunk_count += 1
+                    if chunk.choices and chunk.choices[0].delta.content:
                         content += chunk.choices[0].delta.content
+                
+                log.info(f"Stream completed: {chunk_count} chunks, {len(content)} chars")
                 
                 return ChatResponse(
                     content=content,
@@ -276,56 +268,79 @@ class DeepSeekProvider(BaseProvider):
                    temperature: float = 0.7,
                    max_tokens: int = 2000,
                    tools: Optional[List[Dict[str, Any]]] = None) -> Generator[str, None, None]:
-        """Stream chat completion from DeepSeek."""
+        """Stream chat completion from DeepSeek using direct HTTP requests."""
         try:
-            client = self._get_client()
-            formatted_messages = self._format_messages_for_provider(messages)
-            
-            response = client.chat.completions.create(
-                model=model,
-                messages=formatted_messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                stream=True,
-                tools=tools
-            )
-            
+            import requests as req
             import json
-            for chunk in response:
-                # Check if chunk has choices
-                if not chunk.choices:
-                    continue
-                
-                delta = chunk.choices[0].delta
-                
-                # Process content first
-                if delta.content:
-                    yield delta.content
-                
-                # Process tool calls - IMPORTANT: process BEFORE checking finish_reason
-                if delta.tool_calls:
-                    # Serialize tool calls to a special string format that worker can detect
-                    # Handle None arguments gracefully
-                    tool_call_data = []
-                    for tc in delta.tool_calls:
-                        tc_info = {
-                            'index': tc.index, 
-                            'id': tc.id or '', 
-                            'function': {
-                                'name': tc.function.name if tc.function else '', 
-                                'arguments': tc.function.arguments if tc.function and tc.function.arguments else ''
-                            }
-                        }
-                        tool_call_data.append(tc_info)
-                    yield f"__TOOL_CALL_DELTA__:{json.dumps(tool_call_data)}"
-                
-                # Check for finish reason AFTER processing - stream is done
-                if chunk.choices[0].finish_reason:
-                    break
+            
+            url = f"{self._base_url or self.DEFAULT_BASE_URL}/v1/chat/completions"
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self._api_key}"
+            }
+            payload = {
+                "model": model,
+                "messages": self._format_messages_for_provider(messages),
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": True  # Enable streaming
+            }
+            if tools:
+                payload["tools"] = tools
+            
+            log.info(f"POST {url} (streaming mode)")
+            
+            # Use requests with stream=True for real-time chunks
+            response = req.post(url, headers=headers, json=payload, stream=True, timeout=30)
+            response.raise_for_status()
+            
+            log.info(f"Stream established, receiving chunks...")
+            
+            chunk_count = 0
+            
+            # Parse SSE stream line by line
+            for line in response.iter_lines():
+                if line:
+                    line_str = line.decode('utf-8')
+                    
+                    # Skip comments
+                    if line_str.startswith(':'):
+                        continue
+                    
+                    # Parse data lines
+                    if line_str.startswith('data: '):
+                        data_str = line_str[6:]
+                        
+                        # Check for end of stream
+                        if data_str.strip() == '[DONE]':
+                            log.info(f"Stream finished after {chunk_count} chunks")
+                            break
+                        
+                        try:
+                            chunk = json.loads(data_str)
+                            
+                            # Extract content from chunk
+                            if 'choices' in chunk and len(chunk['choices']) > 0:
+                                delta = chunk['choices'][0].get('delta', {})
+                                
+                                # Yield content
+                                if 'content' in delta and delta['content']:
+                                    chunk_count += 1
+                                    yield delta['content']
+                                    
+                        except json.JSONDecodeError as e:
+                            log.debug(f"Failed to parse chunk: {e}")
+            
+            if chunk_count == 0:
+                log.warning("No chunks received")
+            else:
+                log.info(f"Streaming complete: {chunk_count} chunks")
                     
         except Exception as e:
             self._last_error = str(e)
-            log.error(f"DeepSeek streaming error: {e}")
+            log.error(f"Streaming error: {e}")
+            import traceback
+            log.error(traceback.format_exc())
             yield f"[Error: {e}]"
     
     def validate_api_key(self) -> bool:
@@ -361,14 +376,7 @@ class ProviderRegistry:
         except ImportError:
             log.warning("Together provider not available")
         
-        # Register OpenAI provider
-        try:
-            from src.ai.providers.openai_provider import OpenAIProvider
-            self._providers[ProviderType.OPENAI] = OpenAIProvider()
-        except ImportError:
-            log.warning("OpenAI provider not available")
-        
-        # SiliconFlow provider is available via get_siliconflow_provider() when needed for images
+        # DeepSeek provider already registered above (only provider needed)
         
     def _register_provider(self, provider_type: ProviderType, provider: BaseProvider):
         """Register a provider."""

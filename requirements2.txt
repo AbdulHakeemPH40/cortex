@@ -1,6 +1,1 @@
-pip install together
-
-pip install pywinpty
-
-
-pip install numpy sentence-transformers
+# Temporary file - can be deleted

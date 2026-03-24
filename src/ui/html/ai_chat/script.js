@@ -112,8 +112,10 @@ function loadChatsFromSQLite() {
             console.log('[CHAT] LOAD SQLITE - Found', result.length, 'chars of data');
             try {
                 var parsed = JSON.parse(result);
+                console.log('[CHAT] LOAD SQLITE - Parsed raw data:', JSON.stringify(parsed, null, 2));
                 // Ensure all chats from SQLite (which are metadata-only) are marked as unloaded
                 var chatsWithMetadata = parsed.map(function(c) {
+                    console.log('[CHAT]   Processing chat:', c.title, 'message_count:', c.message_count);
                     return {
                         id: c.id,
                         title: c.title,
@@ -851,6 +853,73 @@ document.addEventListener('DOMContentLoaded', function () {
     var newChatBtn = document.getElementById('new-chat-btn');
     if (newChatBtn) newChatBtn.onclick = startNewChat;
 
+    // AutoGen Multi-Agent Toggle (Compact Banner in Dropdown)
+    var autogenBanner = document.getElementById('autogen-banner');
+    var autogenToggleSwitch = document.getElementById('autogen-toggle-switch');
+    var autogenBannerText = document.getElementById('autogen-banner-text');
+    
+    console.log('[AutoGen] Banner elements:', {
+        banner: !!autogenBanner,
+        switch: !!autogenToggleSwitch,
+        text: !!autogenBannerText
+    });
+    
+    if (autogenBanner && autogenToggleSwitch) {
+        console.log('[AutoGen] Click handler attached');
+        
+        autogenToggleSwitch.onclick = function(e) {
+            e.stopPropagation();
+            e.preventDefault();
+            
+            console.log('[AutoGen] Toggle clicked! Bridge available:', !!bridge);
+            console.log('[AutoGen] on_toggle_autogen method:', typeof (bridge && bridge.on_toggle_autogen));
+            
+            if (bridge && bridge.on_toggle_autogen) {
+                console.log('[AutoGen] Calling bridge.on_toggle_autogen()...');
+                // Toggle AutoGen using the correct method name
+                bridge.on_toggle_autogen();
+                
+                // Update UI after small delay
+                setTimeout(function() {
+                    autogenBanner.classList.toggle('active');
+                    var isActive = autogenBanner.classList.contains('active');
+                    autogenBannerText.textContent = isActive ? 
+                        'Multi-Agent: ON' : 'Multi-Agent: OFF';
+                    
+                    console.log('[AutoGen] UI updated, active:', isActive);
+                    
+                    // Show toast notification (inline to avoid hoisting issues)
+                    try {
+                        if (typeof showToast === 'function') {
+                            showToast(
+                                isActive ? '✅ Multi-Agent Mode ENABLED' : '⚪ Multi-Agent Mode DISABLED',
+                                isActive ? 'success' : 'info',
+                                3000
+                            );
+                        } else {
+                            console.log('[AutoGen] Mode toggled:', isActive ? 'ON' : 'OFF');
+                        }
+                    } catch (err) {
+                        console.log('[AutoGen] Toast error:', err);
+                    }
+                }, 200);
+            } else {
+                console.error('[AutoGen] Bridge method not ready!', {
+                    bridge: !!bridge,
+                    on_toggle_autogen: typeof (bridge && bridge.on_toggle_autogen)
+                });
+            }
+        };
+        
+        // Prevent dropdown from closing when clicking banner
+        autogenBanner.onclick = function(e) {
+            e.stopPropagation();
+            e.preventDefault();
+        };
+    } else {
+        console.error('[AutoGen] Banner or switch element not found!');
+    }
+
     var send = document.getElementById('sendBtn');
     if (send) send.onclick = sendMessage;
 
@@ -1194,8 +1263,13 @@ function hideLoadingIndicator() {
 }
 
 function loadChat(id) {
+    console.log('[CHAT] loadChat called with ID:', id);
     var chat = chats.find(function (c) { return c.id == id; });
-    if (!chat) return;
+    if (!chat) {
+        console.error('[CHAT] Chat not found in list:', id);
+        return;
+    }
+    console.log('[CHAT] Found chat:', chat.title, 'Messages:', chat.messages ? chat.messages.length : 0, 'Message count:', chat.message_count);
     currentChatId = id;
     
     // LAZY LOADING: If messages are not loaded yet, request them from the bridge
@@ -1205,6 +1279,7 @@ function loadChat(id) {
     if (chat.truncated && canLazyLoad) {
         needsLazyLoad = true;
     }
+    console.log('[CHAT] canLazyLoad:', canLazyLoad, 'needsLazyLoad:', needsLazyLoad, 'msgCount:', msgCount, 'message_count:', chat.message_count);
     if (needsLazyLoad && canLazyLoad) {
         console.log('[CHAT] Lazy loading messages for chat:', id);
         clearMessages();
@@ -1217,13 +1292,15 @@ function loadChat(id) {
         console.log('[CHAT] Requesting lazy load from bridge for:', id);
         if (bridge && typeof bridge.load_full_chat === 'function') {
             bridge.load_full_chat(id);
-            console.log('[CHAT] bridge.load_full_chat CALLED');
+            console.log('[CHAT] bridge.load_full_chat CALLED for ID:', id);
         } else {
             console.warn('[CHAT] Bridge not ready for lazy load. bridge exists:', !!bridge, 'type:', typeof (bridge && bridge.load_full_chat));
             hideLoadingIndicator();
         }
         return;
     }
+    
+    // ... rest of loadChat implementation
     
     clearMessages();
     
@@ -1344,6 +1421,93 @@ function normalizeMessageRoles(messages) {
     }
     return false;
 }
+
+// Handle full chat load response from Python
+window.handleFullChatLoad = function(conversationId, chatData) {
+    console.log('[CHAT] handleFullChatLoad called for:', conversationId);
+    console.log('[CHAT] Chat data received:', chatData ? 'YES' : 'NO', 'Type:', typeof chatData);
+    if (chatData) {
+        console.log('[CHAT] Chat data keys:', Object.keys(chatData));
+        console.log('[CHAT] Messages count:', chatData.messages ? chatData.messages.length : 0);
+    }
+    hideLoadingIndicator();
+    
+    if (!chatData || !chatData.messages || chatData.messages.length === 0) {
+        console.warn('[CHAT] No chat data received for:', conversationId);
+        // Show empty state
+        var container = document.getElementById('chatMessages');
+        if (container && !document.getElementById('empty-state')) {
+            var emptyState = document.createElement('div');
+            emptyState.id = 'empty-state';
+            emptyState.innerHTML = '<p>No chat history found</p>';
+            container.appendChild(emptyState);
+        }
+        return;
+    }
+    
+    console.log('[CHAT] Received', chatData.messages.length, 'messages');
+    
+    // Find the chat in our list
+    var chat = chats.find(function(c) { return c.id == conversationId; });
+    if (!chat) {
+        console.error('[CHAT] Chat not found in list:', conversationId);
+        return;
+    }
+    
+    // Update chat with full data
+    chat.messages = chatData.messages || [];
+    chat.loaded = true;
+    chat.truncated = false;
+    
+    // Clear and render messages
+    clearMessages();
+    normalizeMessageRoles(chat.messages);
+    
+    chat.messages.forEach(function(msg) {
+        var msgText = msg.content || msg.text;
+        var msgSender = msg.role || msg.sender;
+        
+        if (!msgText || msgText === 'undefined' || msgText.trim() === '') return;
+        appendMessage(msgText, msgSender || 'user', false);
+        
+        // Restore tool activities
+        if (msg.toolActivities && msg.toolActivities.length > 0) {
+            msg.toolActivities.forEach(function(activity) {
+                if (activity.type === 'directory' && activity.contents) {
+                    var container = document.getElementById('chatMessages');
+                    var bubbles = container.querySelectorAll('.message-bubble.assistant');
+                    if (bubbles.length > 0) {
+                        currentAssistantMessage = bubbles[bubbles.length - 1];
+                        renderDirectoryContents(activity.path, activity.contents);
+                    }
+                }
+            });
+        }
+    });
+    
+    // Restore changed files if present
+    if (chatData.changedFiles && Object.keys(chatData.changedFiles).length > 0) {
+        _changedFiles = chatData.changedFiles;
+        Object.keys(_changedFiles).forEach(function(filePath) {
+            var file = _changedFiles[filePath];
+            if (file.status !== 'rejected') {
+                renderChangedFileRow(filePath, file.added, file.removed, file.editType, file.status);
+            }
+        });
+        _refreshCfsHeader();
+    }
+    
+    // Restore todos if present
+    if (chatData.todos && chatData.todos.length > 0) {
+        currentTodoList = chatData.todos;
+        updateTodos(currentTodoList, '');
+    } else {
+        currentTodoList = [];
+        updateTodos([], '');
+    }
+    
+    console.log('[CHAT] Chat loaded successfully:', conversationId);
+};
 
 function appendMessage(text, sender, shouldSave) {
     console.log('[CHAT] appendMessage called:', sender, 'length:', text ? text.length : 0);
@@ -4155,6 +4319,16 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 });
                 renderHistoryList();
+                
+                // Auto-scroll to bottom to show latest message
+                setTimeout(function() {
+                    var container = document.getElementById('chat-output');
+                    if (container) {
+                        container.scrollTop = container.scrollHeight;
+                        console.log('[CHAT] Auto-scrolled to bottom after loading', chat.messages.length, 'messages');
+                    }
+                }, 100);
+                
                 console.log('[CHAT] chatFullLoadHandler: Render complete.');
             } else {
                 console.warn('[CHAT] chatFullLoadHandler: currentChatId mismatch. current:', currentChatId, 'loaded:', id);

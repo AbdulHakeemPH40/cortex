@@ -383,7 +383,7 @@ class SyntaxChecker:
                 file_path=file_path,
                 line=1,
                 column=0,
-                message=f"Unbalanced braces: {abs(open_braces)} {'missing' if open_braces > 0 else 'extra' }}",
+                message=f"Unbalanced braces: {abs(open_braces)} {'missing' if open_braces > 0 else 'extra'}",
                 severity="warning",
                 source="regex"
             ))
@@ -940,7 +940,7 @@ class SyntaxChecker:
                 file_path=file_path,
                 line=1,
                 column=0,
-                message=f"Unbalanced braces: {abs(open_braces)} {'missing' if open_braces > 0 else 'extra' }}",
+                message=f"Unbalanced braces: {abs(open_braces)} {'missing' if open_braces > 0 else 'extra'}",
                 severity="warning",
                 source="css-check"
             ))
