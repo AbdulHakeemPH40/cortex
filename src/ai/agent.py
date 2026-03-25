@@ -13,12 +13,36 @@ import hashlib
 from typing import Optional, List, Dict, Any
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 from src.utils.logger import get_logger
+
+# Initialize logger first (needed for .env loading messages)
+log = get_logger("ai_agent")
+
 from src.core.key_manager import get_key_manager
+# Load .env if available - check multiple locations for dev and packaged modes
+# MUST happen BEFORE importing provider registry!
+try:
+    from dotenv import load_dotenv
+    import sys
+    
+    # Possible locations for .env file
+    env_paths = [
+        Path(__file__).parent.parent.parent / ".env",  # Development
+        Path.cwd() / ".env",  # Current working directory
+        Path(sys.executable).parent / ".env",  # Next to EXE (packaged)
+    ]
+    
+    for env_path in env_paths:
+        if env_path.exists():
+            load_dotenv(env_path)
+            log.info(f"Loaded .env from: {env_path}")
+            break
+except ImportError:
+    pass
+
+# NOW import provider registry (after .env is loaded)
 from src.ai.providers import get_provider_registry, ProviderType, ChatMessage
 from src.ai.decision_framework import get_decision_framework, reset_decision_framework, ActionType
 from src.ai.autogen_wrapper import get_autogen_system, init_autogen_system
-
-log = get_logger("ai_agent")
 
 
 def _categorize_error_message(error_msg: str) -> str:
@@ -73,26 +97,6 @@ def _get_cached_api_response(key: str) -> Optional[Any]:
             # Expired - remove
             del _api_response_cache[key]
     return None
-
-# Load .env if available - check multiple locations for dev and packaged modes
-try:
-    from dotenv import load_dotenv
-    import sys
-    
-    # Possible locations for .env file
-    env_paths = [
-        Path(__file__).parent.parent.parent / ".env",  # Development
-        Path.cwd() / ".env",  # Current working directory
-        Path(sys.executable).parent / ".env",  # Next to EXE (packaged)
-    ]
-    
-    for env_path in env_paths:
-        if env_path.exists():
-            load_dotenv(env_path)
-            log.info(f"Loaded .env from: {env_path}")
-            break
-except ImportError:
-    pass
 
 
 class ToolWorker(QThread):
@@ -581,9 +585,74 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
             "lint_clean": 0,
             "retries_total": 0
         }
+        
+        # Event bus integration for proactive AI suggestions (NEW)
+        self._setup_event_bus()
+        
         log.info(
             "Metrics enabled: edit success rate, lint clean rate, time-to-answer, tool timeout rate"
         )
+
+    def _setup_event_bus(self):
+        """Setup event bus integration for proactive AI suggestions."""
+        try:
+            from src.core.event_bus import get_event_bus, EventType
+            self._event_bus = get_event_bus()
+            
+            # Subscribe to critical events
+            self._event_bus.subscribe(EventType.CRITICAL_ERRORS_FOUND, self._on_critical_errors)
+            self._event_bus.subscribe(EventType.PROBLEMS_DETECTED, self._on_problems_detected)
+            
+            log.info("Event bus integration enabled for proactive suggestions")
+        except Exception as e:
+            log.warning(f"Could not setup event bus: {e}")
+            self._event_bus = None
+    
+    def _on_critical_errors(self, event_type, data):
+        """Handle critical errors detected - offer immediate help."""
+        if hasattr(data, 'error_count') and data.error_count > 0:
+            # Only auto-offer if there are multiple critical errors
+            if data.error_count >= 3:
+                self.response_chunk.emit(
+                    f"\n\n🔴 **I noticed {data.error_count} critical errors** in your code. "
+                    f"Would you like me to analyze and fix them?"
+                )
+    
+    def _on_problems_detected(self, event_type, data):
+        """Handle problems detected - track for pattern recognition."""
+        # Track error patterns for proactive suggestions
+        if not hasattr(self, '_recent_problems'):
+            self._recent_problems = []
+        
+        self._recent_problems.append({
+            'severity': getattr(data, 'severity', 'info'),
+            'message': getattr(data, 'message', ''),
+            'file_path': getattr(data, 'file_path', ''),
+            'timestamp': getattr(data, 'timestamp', 0)
+        })
+        
+        # Keep only recent problems (last 20)
+        if len(self._recent_problems) > 20:
+            self._recent_problems = self._recent_problems[-20:]
+        
+        # Detect error spikes (5+ errors in short time)
+        recent_errors = [p for p in self._recent_problems if p['severity'] == 'error']
+        if len(recent_errors) >= 5:
+            # Check if we haven't already offered help recently
+            if not getattr(self, '_offered_help_recently', False):
+                self.response_chunk.emit(
+                    f"\n\n⚠️ **I'm seeing multiple errors** ({len(recent_errors)} recent). "
+                    f"Shall I investigate what's going wrong?"
+                )
+                self._offered_help_recently = True
+                
+                # Reset flag after 30 seconds
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(30000, self._reset_help_flag)
+    
+    def _reset_help_flag(self):
+        """Reset the help offered flag to allow future suggestions."""
+        self._offered_help_recently = False
 
     def get_metrics(self) -> dict:
         """Return a copy of current metrics."""

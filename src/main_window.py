@@ -2437,9 +2437,14 @@ class CortexMainWindow(QMainWindow):
 
     def _on_model_changed(self, model_id: str, perf: str, cost: str):
         """Handle model selection change from AI chat."""
-        # Determine provider from model_id (DeepSeek only - Groq removed)
-        if model_id.startswith("deepseek-"):
+        # Determine provider from model_id
+        # Together AI models contain "/" or are in the explicit list
+        if model_id.startswith("deepseek-") and "/" not in model_id:
+            # Native DeepSeek models (without /)
             provider = "deepseek"
+        elif "/" in model_id or model_id in ["moonshotai/Kimi-K2.5", "deepseek-ai/DeepSeek-R1", "deepseek-ai/DeepSeek-V3"]:
+            # Together AI models (always have / in name)
+            provider = "together"
         else:
             provider = "deepseek"  # Default to DeepSeek
         

@@ -401,6 +401,28 @@ class DebugPanel(QWidget):
         self._stack_frames = frames
         self._refresh_stack()
         
+        # Emit event for cross-component communication (NEW)
+        try:
+            from src.core.event_bus import get_event_bus, EventType, DebugEventData
+            event_bus = get_event_bus()
+            if frames:
+                event_bus.publish(
+                    EventType.DEBUG_STACK_FRAME_CHANGED,
+                    DebugEventData(
+                        source_component="debug_panel",
+                        session_id=getattr(self, '_session_id', ''),
+                        stack_frames=[{
+                            'function': f.function,
+                            'file_path': f.file_path,
+                            'line': f.line,
+                            'column': f.column
+                        } for f in frames],
+                        is_paused=len(frames) > 0
+                    )
+                )
+        except Exception as e:
+            pass  # Don't break functionality if event bus fails
+        
     def update_variables(self, variables: List[Variable]):
         """Update the variables."""
         self._variables = variables

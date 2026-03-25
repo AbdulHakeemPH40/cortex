@@ -71,6 +71,9 @@ class ChatBridge(QObject):
     smart_paste_check_requested = pyqtSignal(str)  # pasted_text
     search_files_requested = pyqtSignal(str)       # @ mention file search
     
+    # Vision response signal
+    _vision_response_received = pyqtSignal(str)  # response text
+    
     # Chat persistence signals
     save_chats_requested = pyqtSignal(str, str)  # storage_key, json_data
     load_chats_requested = pyqtSignal(str)       # storage_key
@@ -723,7 +726,7 @@ class AIChatWidget(QWidget):
                     "https://api.siliconflow.com/v1/chat/completions",
                     headers=headers,
                     json=payload,
-                    timeout=60
+                    timeout=(30, 180)  # 30s connect, 180s read
                 )
                 
                 if response.status_code == 200:

@@ -531,7 +531,7 @@
                                     <div class="dropdown-divider"></div>
                                     
                                     <div class="dropdown-header">DeepSeek Models</div>
-                                    <div class="dropdown-item active" data-value="deepseek-chat" data-provider="deepseek" data-perf="8.0" data-cost="$0.27/1M">
+                                    <div class="dropdown-item active" data-value="deepseek-chat" data-provider="deepseek" data-perf="8.0">
                                         <div class="item-icon deepseek-icon">
                                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
                                         </div>
@@ -541,22 +541,52 @@
                                                 Active
                                             </span></span>
                                         </div>
-                                        <span class="model-cost">$0.27/1M</span>
                                     </div>
                                     
-                                    <div class="dropdown-item" data-value="deepseek-coder" data-provider="deepseek" data-perf="6.5" data-cost="$0.27/1M">
+                                    <div class="dropdown-item" data-value="deepseek-coder" data-provider="deepseek" data-perf="6.5">
                                         <div class="item-icon deepseek-icon">
                                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
                                         </div>
                                         <div class="item-text">
                                             <span>DeepSeek Coder</span>
                                         </div>
-                                        <span class="model-cost">$0.27/1M</span>
+                                    </div>
+                                    
+                                    <div class="dropdown-divider"></div>
+                                    <div class="dropdown-header">Together AI Models</div>
+                                    
+                                    <!-- Kimi K2.5 with streaming compatibility layer -->
+                                    <div class="dropdown-item" data-value="moonshotai/Kimi-K2.5" data-provider="together" data-perf="9.0">
+                                        <div class="item-icon together-icon">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>Kimi K2.5</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- DeepSeek models - proven stable -->
+                                    <div class="dropdown-item" data-value="deepseek-ai/DeepSeek-V3" data-provider="together" data-perf="9.0">
+                                        <div class="item-icon together-icon">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>DeepSeek V3</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="dropdown-item" data-value="deepseek-ai/DeepSeek-R1" data-provider="together" data-perf="9.2">
+                                        <div class="item-icon together-icon">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>DeepSeek R1</span>
+                                        </div>
                                     </div>
                                     
                                     <div class="dropdown-divider"></div>
                                     <div class="dropdown-footer">
-                                        Cost per 1M tokens • API key required
+                                        API key required in Settings
                                     </div>
                                 </div>
                             </div>

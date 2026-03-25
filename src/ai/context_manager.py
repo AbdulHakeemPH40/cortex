@@ -48,6 +48,12 @@ class ChatContext:
     mentioned_files: List[str] = field(default_factory=list)
     terminal_output: str = ""
     git_status: str = ""
+    
+    # Enhanced multi-source context (NEW)
+    problems: List[Dict[str, Any]] = field(default_factory=list)  # Current errors/warnings
+    debug_context: Optional[Dict[str, Any]] = None  # Debug session state
+    outline_symbols: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)  # File structure
+    recent_errors: List[Dict[str, Any]] = field(default_factory=list)  # Recent error history
 
 
 class AIContextManager:
@@ -70,6 +76,15 @@ class AIContextManager:
         self._active_file_path = None
         self._cursor_position = None
         
+        # Event bus integration (NEW)
+        self._event_bus = None
+        self._setup_event_bus()
+        
+        # Multi-source context cache (NEW)
+        self._problems_cache: List[Dict[str, Any]] = []
+        self._debug_cache: Dict[str, Any] = {}
+        self._outline_cache: Dict[str, List[Dict[str, Any]]] = {}
+        
     def initialize_index(self):
         """Initialize the codebase index for file discovery."""
         try:
@@ -77,6 +92,67 @@ class AIContextManager:
             log.info("AI Context Manager initialized with codebase index")
         except Exception as e:
             log.warning(f"Could not initialize codebase index: {e}")
+    
+    def _setup_event_bus(self):
+        """Setup event bus subscriptions for real-time context updates."""
+        try:
+            from src.core.event_bus import get_event_bus, EventType
+            self._event_bus = get_event_bus()
+            
+            # Subscribe to relevant events
+            self._event_bus.subscribe(EventType.PROBLEMS_DETECTED, self._on_problems_event)
+            self._event_bus.subscribe(EventType.DEBUG_SESSION_STARTED, self._on_debug_event)
+            self._event_bus.subscribe(EventType.DEBUG_SESSION_ENDED, self._on_debug_end_event)
+            self._event_bus.subscribe(EventType.OUTLINE_UPDATED, self._on_outline_event)
+            
+            log.info("Event bus integration enabled")
+        except Exception as e:
+            log.warning(f"Could not setup event bus: {e}")
+            self._event_bus = None
+    
+    def _on_problems_event(self, event_type, data):
+        """Handle problems panel events."""
+        if hasattr(data, 'source_component'):
+            self._problems_cache.append({
+                'severity': getattr(data, 'severity', 'error'),
+                'message': getattr(data, 'message', ''),
+                'file_path': getattr(data, 'file_path', ''),
+                'line': getattr(data, 'line', 0),
+                'column': getattr(data, 'column', 0),
+                'code': getattr(data, 'code', None),
+                'timestamp': getattr(data, 'timestamp', 0)
+            })
+            # Keep only recent problems (last 50)
+            if len(self._problems_cache) > 50:
+                self._problems_cache = self._problems_cache[-50:]
+    
+    def _on_debug_event(self, event_type, data):
+        """Handle debug session events."""
+        if hasattr(data, 'session_id'):
+            self._debug_cache = {
+                'session_id': getattr(data, 'session_id', ''),
+                'stack_frames': getattr(data, 'stack_frames', []),
+                'variables': getattr(data, 'variables', []),
+                'is_paused': getattr(data, 'is_paused', False),
+                'breakpoint_file': getattr(data, 'breakpoint_file', ''),
+                'breakpoint_line': getattr(data, 'breakpoint_line', 0),
+                'timestamp': getattr(data, 'timestamp', 0)
+            }
+    
+    def _on_debug_end_event(self, event_type, data):
+        """Handle debug session end."""
+        self._debug_cache.clear()
+    
+    def _on_outline_event(self, event_type, data):
+        """Handle outline update events."""
+        if hasattr(data, 'file_path'):
+            file_path = getattr(data, 'file_path', '')
+            self._outline_cache[file_path] = {
+                'symbols': getattr(data, 'symbols', {}),
+                'classes': getattr(data, 'classes', []),
+                'functions': getattr(data, 'functions', []),
+                'timestamp': getattr(data, 'timestamp', 0)
+            }
     
     def set_active_file(self, file_path: str, cursor_position: Tuple[int, int] = None):
         """Set the currently active file in the editor."""
@@ -139,8 +215,14 @@ class AIContextManager:
         context.mentioned_files = self._extract_file_mentions(query)
         self._mentioned_files_history.extend(context.mentioned_files)
         
+        # 5. ENHANCED: Add multi-source context aggregation (NEW)
+        context.problems = self._problems_cache.copy() if self._problems_cache else []
+        context.debug_context = self._debug_cache.copy() if self._debug_cache else None
+        context.outline_symbols = self._outline_cache.copy() if self._outline_cache else {}
+        
         log.info(f"Context prepared: {len(context.related_files)} related files, "
-                f"active file: {context.active_file.path if context.active_file else 'None'}")
+                f"active file: {context.active_file.path if context.active_file else 'None'}, "
+                f"problems: {len(context.problems)}, debug: {bool(context.debug_context)}")
         
         return context
     
@@ -484,6 +566,63 @@ class AIContextManager:
         lines.append("-" * 70)
         lines.append(context.project_structure)
         lines.append("")
+        
+        # ENHANCED: Problems/Errors context (NEW)
+        if context.problems:
+            lines.append("-" * 70)
+            lines.append(f"🔴 DETECTED PROBLEMS ({len(context.problems)} issues):")
+            lines.append("-" * 70)
+            for problem in context.problems[-10:]:  # Show last 10 problems
+                severity_icon = "🔴" if problem.get('severity') == 'error' else "🟡" if problem.get('severity') == 'warning' else "🔵"
+                lines.append(f"{severity_icon} {problem.get('message', 'Unknown issue')}")
+                lines.append(f"   📄 {problem.get('file_path', 'Unknown')}:{problem.get('line', '?')}")
+                if problem.get('code'):
+                    lines.append(f"   Code: {problem['code']}")
+            lines.append("")
+        
+        # ENHANCED: Debug context (NEW)
+        if context.debug_context:
+            lines.append("-" * 70)
+            lines.append("🐛 DEBUG SESSION ACTIVE:")
+            lines.append("-" * 70)
+            debug = context.debug_context
+            if debug.get('is_paused'):
+                lines.append(f"Status: ⏸️ Paused at breakpoint")
+                lines.append(f"Location: {debug.get('breakpoint_file', 'Unknown')}:{debug.get('breakpoint_line', '?')}")
+            
+            if debug.get('stack_frames'):
+                lines.append("\nCall Stack:")
+                for i, frame in enumerate(debug['stack_frames'][:5], 1):  # Top 5 frames
+                    func = frame.get('function', 'unknown')
+                    file = frame.get('file_path', 'unknown')
+                    line = frame.get('line', '?')
+                    lines.append(f"  {i}. {func} at {file}:{line}")
+            
+            if debug.get('variables'):
+                lines.append("\nKey Variables:")
+                for var in debug['variables'][:5]:  # Top 5 variables
+                    name = var.get('name', 'unknown')
+                    value = var.get('value', 'unknown')
+                    lines.append(f"  • {name} = {value}")
+            lines.append("")
+        
+        # ENHANCED: Outline symbols (NEW)
+        if context.outline_symbols and context.active_file:
+            active_path = context.active_file.path
+            if active_path in context.outline_symbols:
+                outline = context.outline_symbols[active_path]
+                lines.append("-" * 70)
+                lines.append("📋 FILE STRUCTURE:")
+                lines.append("-" * 70)
+                if outline.get('classes'):
+                    lines.append("Classes:")
+                    for cls in outline['classes'][:5]:  # Top 5 classes
+                        lines.append(f"  📦 {cls.get('name', 'unknown')} (line {cls.get('line', '?')})")
+                if outline.get('functions'):
+                    lines.append("Functions:")
+                    for func in outline['functions'][:10]:  # Top 10 functions
+                        lines.append(f"  ⚡ {func.get('name', 'unknown')} (line {func.get('line', '?')})")
+                lines.append("")
         
         lines.append("=" * 70)
         lines.append("💡 INSTRUCTION: Provide assistance based on the above context.")

@@ -5,6 +5,22 @@ Run with: python src/main.py
 
 import sys
 import os
+from pathlib import Path
+
+# CRITICAL: Load .env FIRST before ANY other imports!
+try:
+    from dotenv import load_dotenv
+    env_paths = [
+        Path(__file__).parent.parent.parent / ".env",
+        Path.cwd() / ".env",
+    ]
+    for env_path in env_paths:
+        if env_path.exists():
+            load_dotenv(env_path)
+            print(f"[MAIN] Loaded .env from: {env_path}")
+            break
+except ImportError:
+    pass
 
 # Force Windows platform
 if sys.platform == 'win32':

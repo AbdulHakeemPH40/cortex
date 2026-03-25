@@ -168,6 +168,11 @@
     color: white;
 }
 
+.together-icon {
+    background: #f59e0b;
+    color: white;
+}
+
 .item-icon svg {
     stroke: currentColor;
 }
@@ -187,6 +192,15 @@
     background: rgba(6, 182, 212, 0.15);
     color: #06b6d4;
     border: 1px solid rgba(6, 182, 212, 0.3);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.model-tag.recommended-tag {
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+    border: 1px solid rgba(245, 158, 11, 0.3);
     display: inline-flex;
     align-items: center;
     gap: 4px;

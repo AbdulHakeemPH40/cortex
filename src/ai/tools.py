@@ -17,6 +17,57 @@ from src.utils.logger import get_logger
 
 log = get_logger("tool_registry")
 
+
+@dataclass
+class ToolExecutionContext:
+    """
+    Unified context for tool execution results.
+    Provides standardized way to track tool outcomes and side effects.
+    """
+    tool_name: str
+    success: bool
+    result: Any
+    execution_time_ms: float = 0.0
+    error: Optional[str] = None
+    
+    # Side effects tracking
+    files_modified: List[str] = field(default_factory=list)
+    commands_executed: List[str] = field(default_factory=list)
+    
+    # UI update hints
+    refresh_editor: bool = False
+    refresh_problems: bool = False
+    refresh_outline: bool = False
+    refresh_terminal: bool = False
+    refresh_sidebar: bool = False
+    
+    # Metadata
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    
+    @classmethod
+    def from_tool_result(cls, tool_name: str, result, execution_time_ms: float = 0.0):
+        """Create context from a ToolResult."""
+        from src.ai.tools import ToolResult
+        
+        if isinstance(result, ToolResult):
+            return cls(
+                tool_name=tool_name,
+                success=result.success,
+                result=result.result,
+                execution_time_ms=result.duration_ms if result.duration_ms else execution_time_ms,
+                error=result.error,
+                refresh_editor=tool_name in ['write_file', 'edit_file', 'delete_lines', 'replace_lines'],
+                refresh_problems=tool_name in ['check_syntax', 'get_problems', 'write_file', 'edit_file'],
+                refresh_outline=tool_name in ['write_file', 'edit_file', 'delete_path'],
+            )
+        else:
+            return cls(
+                tool_name=tool_name,
+                success=True,
+                result=result,
+                execution_time_ms=execution_time_ms,
+            )
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # VIRTUAL ENVIRONMENT & DEPENDENCY DIRECTORY EXCLUSION SYSTEM
 # Prevents AI from exploring framework dependency directories (performance killer)
