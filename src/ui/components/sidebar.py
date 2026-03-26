@@ -199,8 +199,15 @@ QTreeView::item {
     border-radius: 3px;
     padding-left: 2px;
 }
-QTreeView::item:hover      { background: #2a2d2e; }
-QTreeView::item:selected   { background: #094771; color: #ffffff; }
+QTreeView::item:hover      { 
+    background: #37373d;
+    color: #ffffff;
+}
+QTreeView::item:selected   { 
+    background: #094771; 
+    color: #ffffff;
+    border: 1px solid #007acc;
+}
 QTreeView::branch {
     background: #1e1e1e;
 }
@@ -229,8 +236,15 @@ QTreeView::item {
     border-radius: 3px;
     padding-left: 2px;
 }
-QTreeView::item:hover      { background: #e8f0fe; }
-QTreeView::item:selected   { background: #cce5ff; color: #003d80; }
+QTreeView::item:hover      { 
+    background: #d4d4d4;
+    color: #1a1a1a;
+}
+QTreeView::item:selected   { 
+    background: #cce5ff; 
+    color: #003d80;
+    border: 1px solid #007acc;
+}
 QTreeView::branch {
     background: #ffffff;
 }
@@ -242,11 +256,76 @@ SKIP_DIRS = {'.git', '__pycache__', 'node_modules', '.venv',
 
 class VsCodeFileTree(QTreeView):
     """QTreeView subclass: single-click expands folders."""
+    file_deleted = pyqtSignal(str)
 
-    def __init__(self, parent=None):
+    def __init__(self, file_manager=None, parent=None):
         super().__init__(parent)
+        self._file_manager = file_manager
         self.setMouseTracking(True)
         self.setExpandsOnDoubleClick(False)  # we handle manually
+
+    def keyPressEvent(self, event):
+        """Handle keyboard shortcuts for file operations."""
+        if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            # Delete key pressed - delete selected file/folder
+            index = self.currentIndex()
+            if index.isValid():
+                model = self.model()
+                if hasattr(model, 'filePath'):
+                    path = model.filePath(index)
+                    if path:
+                        self._delete_item(path)
+                        return
+        elif event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+            # Arrow key navigation - select file/folder
+            index = self.currentIndex()
+            if index.isValid():
+                # Force visual update of selection
+                self.setCurrentIndex(index)
+                self.viewport().update()
+        super().keyPressEvent(event)
+    
+    def _delete_item(self, path):
+        """Show confirmation dialog and delete file/folder (moves to trash)."""
+        from PyQt6.QtWidgets import QMessageBox
+        from pathlib import Path
+        
+        name = Path(path).name
+        msg_box = QMessageBox(
+            QMessageBox.Icon.Question, "Delete",
+            f"Are you sure you want to delete '{name}'?\n\nThis action can be undone with Ctrl+Z.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            self
+        )
+        # Set Yes as default button (pre-selected)
+        msg_box.setDefaultButton(QMessageBox.StandardButton.Yes)
+        # Set focus to Yes button
+        yes_button = msg_box.button(QMessageBox.StandardButton.Yes)
+        if yes_button:
+            yes_button.setFocus()
+            # Add hover style for Yes button
+            yes_button.setStyleSheet("""
+                QPushButton:hover {
+                    background-color: #d32f2f;
+                    color: white;
+                }
+                QPushButton {
+                    padding: 8px 16px;
+                }
+            """)
+        
+        reply = msg_box.exec()
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            # Use FileManager's trash-based delete
+            if self._file_manager:
+                if self._file_manager.delete(path):
+                    # Signal will be emitted by FileManager
+                    log.info(f"File moved to trash: {path}")
+                else:
+                    QMessageBox.critical(self, "Delete Failed", "Failed to move file to trash")
+            else:
+                QMessageBox.critical(self, "Delete Failed", "FileManager not available")
 
     def mousePressEvent(self, event):
         index = self.indexAt(event.pos())
@@ -276,8 +355,9 @@ class FileExplorerPanel(QWidget):
     file_deleted = pyqtSignal(str)
     file_renamed = pyqtSignal(str, str)
 
-    def __init__(self, parent=None):
+    def __init__(self, file_manager=None, parent=None):
         super().__init__(parent)
+        self._file_manager = file_manager
         self._root_path: str | None = None
         self._is_dark = True
         self._tree_collapsed = False
@@ -369,7 +449,7 @@ class FileExplorerPanel(QWidget):
         self._model.setNameFilterDisables(False)
 
         # ── Tree view ──────────────────────────────────────────────────────
-        self._tree = VsCodeFileTree()
+        self._tree = VsCodeFileTree(self._file_manager)
         self._tree.setModel(self._model)
         self._tree.setHeaderHidden(True)
         for col in (1, 2, 3):
@@ -384,6 +464,8 @@ class FileExplorerPanel(QWidget):
         self._tree.collapsed.connect(self._on_collapsed)
         # Repaint when async directory listing finishes loading
         self._model.directoryLoaded.connect(lambda _: self._tree.viewport().update())
+        # Connect file deletion signal
+        self._tree.file_deleted.connect(self.file_deleted)
 
         # Custom delegate
         self._delegate = FileTreeDelegate(self._model)
@@ -1032,6 +1114,7 @@ class SidebarWidget(QWidget):
     file_search_opened = pyqtSignal(str, int)
     ai_action_requested = pyqtSignal(str)
     file_renamed = pyqtSignal(str, str)
+    file_deleted = pyqtSignal(str)
     
     # Changed files signals
     file_accepted = pyqtSignal(str)
@@ -1039,8 +1122,9 @@ class SidebarWidget(QWidget):
     accept_all_requested = pyqtSignal()
     reject_all_requested = pyqtSignal()
 
-    def __init__(self, parent=None):
+    def __init__(self, file_manager=None, parent=None):
         super().__init__(parent)
+        self._file_manager = file_manager
         self._build_ui()
 
     def _build_ui(self):
@@ -1074,7 +1158,7 @@ class SidebarWidget(QWidget):
 
         # Stacked panels
         self._stack = QStackedWidget()
-        self._explorer = FileExplorerPanel()
+        self._explorer = FileExplorerPanel(self._file_manager)
         self._search = SearchPanel()
         self._ai_tools = AIToolsPanel()
         self._changed_files = ChangedFilesPanel()
@@ -1088,6 +1172,7 @@ class SidebarWidget(QWidget):
         # Connect signals
         self._explorer.file_opened.connect(self.file_opened)
         self._explorer.file_renamed.connect(self.file_renamed)
+        self._explorer.file_deleted.connect(self.file_deleted)
         self._search.file_opened.connect(self.file_search_opened)
         self._ai_tools.action_requested.connect(self.ai_action_requested)
         
@@ -1153,6 +1238,11 @@ class SidebarWidget(QWidget):
 
     def restore_expanded_paths(self, paths: list[str]):
         self._explorer.restore_expanded_paths(paths)
+
+    def refresh(self):
+        """Refresh the file explorer to reflect changes."""
+        if hasattr(self._explorer, '_refresh_explorer'):
+            self._explorer._refresh_explorer()
 
 
     def get_ai_model(self) -> str:

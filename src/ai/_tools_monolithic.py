@@ -8,11 +8,14 @@ import re
 import subprocess
 import time
 import shutil
+import html
 import hashlib
 from typing import Dict, List, Callable, Any, Optional, Tuple
 from dataclasses import dataclass, field
 from pathlib import Path
+from PyQt6.QtCore import QTimer, QMetaObject, Qt
 from src.ai.precise_editor import get_editor, PreciseEditor
+from src.ai.tools.base_tool import ToolResult
 from src.utils.logger import get_logger
 
 log = get_logger("tool_registry")
@@ -337,6 +340,10 @@ class PathResolver:
     def __init__(self, project_root: str):
         self.root = Path(project_root).resolve() if project_root else None
 
+    def set_root(self, root: str):
+        """Update the project root dynamically."""
+        self.root = Path(root).resolve() if root else None
+
     def resolve(self, path: str) -> Path:
         """Return absolute resolved path. Raises PermissionError if outside root."""
         p = Path(path)
@@ -386,14 +393,6 @@ class ToolParameter:
     required: bool = True
     default: Any = None
 
-
-@dataclass
-class ToolResult:
-    """Result from tool execution."""
-    success: bool
-    result: Any
-    error: Optional[str] = None
-    duration_ms: float = 0.0
 
 
 class Tool:
@@ -500,21 +499,111 @@ class ToolRegistry:
     }
 
     def __init__(self, file_manager=None, terminal_widget=None, git_manager=None, project_root=None):
-        self.file_manager = file_manager
-        self.terminal_widget = terminal_widget
-        self.git_manager = git_manager
-        self.project_root = project_root
+        self._file_manager = file_manager
+        self._terminal_widget = terminal_widget
+        self._git_manager = git_manager
+        self._project_root = project_root
         self.tools: Dict[str, Tool] = {}
         self._editor = get_editor(project_root)
         self._path_resolver = PathResolver(project_root) if project_root else None
         self._recent_tool_calls: List[Dict] = []  # Track recent calls to prevent loops
         self._max_recent_calls = 10
+        self._ui_parent = None
+        
+        # ========== MODULAR TOOLS INTEGRATION (FINAL) ==========
+        # Initialize modular tool instances from their dedicated packages
+        from src.ai.tools.file_tools import ReadTool, WriteTool, EditTool
+        from src.ai.tools.search_tools import GrepTool, GlobTool, LspTool
+        from src.ai.tools.system_tools import BashTool, TaskTool
+        from src.ai.tools.web_tools import WebFetchTool, WebSearchTool
+        from src.ai.tools.interaction_tools import QuestionTool
+        
+        # Map of tool names (what AI uses) to modular tool implementations
+        # This acts as the "bridge" for the migration.
+        self._modular_tools = {
+            # File operations
+            'read_file': ReadTool(),
+            'write_file': WriteTool(),
+            'edit_file': EditTool(),
+            
+            # Search & Insight (Aliased for compatibility)
+            'grep': GrepTool(),
+            'search_code': GrepTool(),  # Legacy name alias
+            'glob': GlobTool(),
+            'lsp': LspTool(),
+            'lsp_find_references': LspTool(),  # Alias for specific LSP op
+            'lsp_go_to_definition': LspTool(), # Alias for specific LSP op
+            
+            # System & Task
+            'bash': BashTool(),
+            'run_command': BashTool(),  # Legacy name alias
+            'task': TaskTool(),
+            
+            # Web & Interaction
+            'webfetch': WebFetchTool(),
+            'websearch': WebSearchTool(),
+            'question': QuestionTool(),
+        }
+        
+        # Set shared dependencies on ALL modular tools
+        for tool in self._modular_tools.values():
+            tool.file_manager = self._file_manager
+            tool.precise_editor = self._editor
+            tool.terminal_widget = self._terminal_widget
+            tool.project_root = self._project_root
+            tool._ui_parent = self._ui_parent
+        # =======================================================
+        
         self._register_default_tools()
+    
+    @property
+    def project_root(self) -> Optional[str]:
+        return self._project_root
+    
+    @project_root.setter
+    def project_root(self, value: str):
+        self._project_root = value
+        self._editor = get_editor(value)
+        if hasattr(self, '_path_resolver') and self._path_resolver:
+            self._path_resolver.set_root(value)
+        
+        # Update modular tools
+        if hasattr(self, '_modular_tools'):
+            for tool in self._modular_tools.values():
+                tool.project_root = value
+                tool.precise_editor = self._editor
+    
+    @property
+    def file_manager(self):
+        return self._file_manager
+    
+    @file_manager.setter
+    def file_manager(self, value):
+        self._file_manager = value
+        if hasattr(self, '_modular_tools'):
+            for tool in self._modular_tools.values():
+                tool.file_manager = value
+    
+    @property
+    def terminal_widget(self):
+        return self._terminal_widget
+    
+    @terminal_widget.setter
+    def terminal_widget(self, value):
+        self._terminal_widget = value
+        if hasattr(self, '_modular_tools'):
+            for tool in self._modular_tools.values():
+                tool.terminal_widget = value
+        
+    def set_ui_parent(self, value):
+        self._ui_parent = value
+        if hasattr(self, '_modular_tools'):
+            for tool in self._modular_tools.values():
+                tool._ui_parent = value
         
     def _register_default_tools(self):
-        """Register the default set of tools."""
-        
-        # File operations
+        """Register the default set of tools (bridged to modular implementations)."""
+        # --- File Operations ---
         self.register_tool(
             name="read_file",
             description="Read file content with optional line numbers and range. Use range for large files.",
@@ -851,6 +940,60 @@ class ToolRegistry:
             function=self._search_memory
         )
         
+        self.register_tool(
+            name="grep",
+            description="Search code contents with regex (like ripgrep). Supports include/exclude filters.",
+            parameters=[
+                ToolParameter("pattern", "string", "Regex pattern to search for", required=True),
+                ToolParameter("include", "string", "File pattern (e.g., '*.py')", required=False, default="*"),
+                ToolParameter("exclude_dirs", "array", "Directories to exclude", required=False, default=None)
+            ],
+            function=self._opencode_grep # This will be intercepted by GrepTool
+        )
+
+        self.register_tool(
+            name="glob",
+            description="Find files matching a pattern (recursive with **).",
+            parameters=[
+                ToolParameter("pattern", "string", "Glob pattern (e.g., '**/*.py')", required=True),
+                ToolParameter("exclude_dirs", "array", "Directories to exclude", required=False, default=None)
+            ],
+            function=self._opencode_glob # This will be intercepted by GlobTool
+        )
+
+        self.register_tool(
+            name="bash",
+            description="Run an interactive bash command. Best for complex shell operations.",
+            parameters=[
+                ToolParameter("command", "string", "Command to run", required=True),
+                ToolParameter("cwd", "string", "Working directory", required=False, default=None)
+            ],
+            function=self._run_command, # This will be intercepted by BashTool
+            requires_confirmation=True
+        )
+
+        self.register_tool(
+            name="task",
+            description="Manage background tasks (test suites, dev servers).",
+            parameters=[
+                ToolParameter("operation", "string", "'start', 'stop', or 'status'", required=True),
+                ToolParameter("command", "string", "Command to run (for 'start')", required=False),
+                ToolParameter("task_id", "string", "ID of task to stop", required=False)
+            ],
+            function=self._verify_fix, # Placeholder, will be intercepted by TaskTool
+            requires_confirmation=True
+        )
+
+        self.register_tool(
+            name="question",
+            description="Ask the user for clarification or confirmation.",
+            parameters=[
+                ToolParameter("question", "string", "What to ask", required=True),
+                ToolParameter("type", "string", "'text', 'confirm', or 'choice'", required=False, default="text")
+            ],
+            function=self._search_memory # Placeholder
+        )
+
         # Git operations
         self.register_tool(
             name="git_commit",
@@ -863,6 +1006,70 @@ class ToolRegistry:
             function=self._git_commit,
             requires_confirmation=True
         )
+
+        # ========== OPENCODE-STYLE ENHANCED TOOLS (LEGACY - DISABLED) ==========
+        # These are kept for reference but disabled to avoid confusion
+        # The actual implementations are now in modular tools (file_tools/, search_tools/, etc.)
+        
+        # # Enhanced file reading (smarter than basic read_file)
+        # self.register_tool(
+        #     name="opencode_read",
+        #     description="Smart file reading with automatic path resolution, size limits, and metadata. Better than basic read_file.",
+        #     parameters=[
+        #         ToolParameter("path", "string", "File path (relative or absolute)", required=True),
+        #         ToolParameter("limit", "integer", "Maximum lines to read (default: no limit)", required=False, default=None)
+        #     ],
+        #     function=self._opencode_read
+        # )
+        # 
+        # # Enhanced search/replace editing (safer than basic edit_file)
+        # self.register_tool(
+        #     name="opencode_edit",
+        #     description="Precise search/replace editing with occurrence validation. Safer and more reliable than edit_file.",
+        #     parameters=[
+        #         ToolParameter("path", "string", "File path to edit", required=True),
+        #         ToolParameter("old_text", "string", "Text to search for (must be unique)", required=True),
+        #         ToolParameter("new_text", "string", "Text to replace with", required=True),
+        #         ToolParameter("expected_replacements", "integer", "Expected number of occurrences (default: 1)", required=False, default=1)
+        #     ],
+        #     function=self._opencode_edit,
+        #     requires_confirmation=True
+        # )
+        # 
+        # # Code search (grep) - like OpenCode's grep.ts
+        # self.register_tool(
+        #     name="opencode_grep",
+        #     description="Search code contents with regex support. Like OpenCode's grep tool.",
+        #     parameters=[
+        #         ToolParameter("pattern", "string", "Regex pattern to search for", required=True),
+        #         ToolParameter("include", "string", "File pattern (e.g., '*.py', '**/*.js')", required=False, default="*"),
+        #         ToolParameter("exclude_dirs", "array", "Directories to exclude (default: ['venv', 'node_modules'])", required=False, default=None)
+        #     ],
+        #     function=self._opencode_grep
+        # )
+        # 
+        # # File pattern matching (glob) - like OpenCode's glob.ts
+        # self.register_tool(
+        #     name="opencode_glob",
+        #     description="Find files by glob pattern (** for recursive). Like OpenCode's glob tool.",
+        #     parameters=[
+        #         ToolParameter("pattern", "string", "Glob pattern (e.g., '**/*.py', 'src/**/*.js')", required=True),
+        #         ToolParameter("exclude_dirs", "array", "Directories to exclude", required=False, default=None)
+        #     ],
+        #     function=self._opencode_glob
+        # )
+        # 
+        # # Enhanced directory listing with depth control
+        # self.register_tool(
+        #     name="opencode_list_dir",
+        #     description="Smart directory listing with depth control and metadata. Better than basic list_directory.",
+        #     parameters=[
+        #         ToolParameter("path", "string", "Directory path to list", required=False, default="."),
+        #         ToolParameter("depth", "integer", "Recursion depth (0=current, 1=one level, etc.)", required=False, default=1)
+        #     ],
+        #     function=self._opencode_list_dir
+        # )
+        # =========================================================================
         
     def register_tool(self, name: str, description: str, parameters: List[ToolParameter], 
                      function: Callable, requires_confirmation: bool = False):
@@ -875,6 +1082,58 @@ class ToolRegistry:
         self.project_root = project_root
         self._path_resolver = PathResolver(project_root)
         self._editor = get_editor(project_root)
+        
+        # ========== UPDATE MODULAR TOOLS (NEW) ==========
+        # Also update project root on all modular tools
+        if hasattr(self, '_modular_tools'):
+            for tool in self._modular_tools.values():
+                tool.project_root = project_root
+        # =================================================
+    
+    def set_ui_parent(self, ui_parent):
+        """Set the UI parent widget for showing permission dialogs."""
+        self._ui_parent = ui_parent
+    
+    def _build_permission_details(self, tool_name: str, params: dict) -> str:
+        """
+        Build a detailed HTML view of what a tool will do for permission requests.
+        """
+        details = ""
+        
+        if tool_name == 'write_file':
+            path = params.get('path', 'unknown')
+            content = params.get('content', '')
+            
+            # Check if directory needs to be created
+            dir_path = os.path.dirname(self._resolve_path(path))
+            dir_exists = os.path.exists(dir_path)
+            
+            details = f"<b>Action:</b> Create new file<br><b>Path:</b> <code>{path}</code>"
+            if not dir_exists:
+                details += f"<br><br><b style='color: #f59e0b;'>⚠️ Directory Permission:</b> This will also create the directory <code>{os.path.dirname(path)}</code>"
+            
+            details += f"<br><br><b>Content Preview:</b><pre>{html.escape(content[:500]) if content else ''}{'...' if content and len(content) > 500 else ''}</pre>"
+            
+        elif tool_name == 'edit_file':
+            path = params.get('path', 'unknown')
+            details = f"<b>Action:</b> Edit file<br><b>Path:</b> <code>{path}</code>"
+            if 'explanation' in params:
+                details += f"<br><br><b>Reason:</b> {params['explanation']}"
+            
+        elif tool_name == 'bash' or tool_name == 'run_command':
+            cmd = params.get('command', '') or params.get('cmd', '')
+            details = f"<b>Action:</b> Execute terminal command<br><br><b>Command:</b><br><pre>{html.escape(cmd)}</pre>"
+            
+        elif tool_name == 'inject_after':
+            path = params.get('path', 'unknown')
+            details = f"<b>Action:</b> Inject code after line/string<br><b>Path:</b> <code>{path}</code>"
+            
+        else:
+            # Generic fallback
+            param_str = ", ".join([f"{k}={v}" for k, v in params.items()])
+            details = f"<b>Tool:</b> {tool_name}<br><b>Params:</b> <code>{param_str}</code>"
+            
+        return details
         
     def get_tool(self, name: str) -> Optional[Tool]:
         """Get a tool by name."""
@@ -905,6 +1164,33 @@ class ToolRegistry:
         tool = self.tools.get(tool_name)
         if not tool:
             return ToolResult(success=False, result=None, error=f"Tool '{tool_name}' not found")
+
+        # Normalize parameter names (handle variations from different AI providers)
+        # e.g., "file_path" -> "path", "target_path" -> "path", "source_file" -> "file"
+        param_aliases = {
+            "file_path": "path",
+            "target_path": "path",
+            "dest_path": "path",
+            "destination": "path",
+            "target_file": "file",
+            "source_file": "file",
+            "src_file": "file",
+            "old_text": "original",
+            "new_text": "replacement",
+            "content_to_add": "content",
+        }
+        
+        normalized_params = {}
+        for key, value in params.items():
+            normalized_key = param_aliases.get(key, key)
+            normalized_params[normalized_key] = value
+        
+        # If 'path' is still missing but we have 'file', use that
+        has_path = any(k in normalized_params for k in ['path', 'file', 'directory'])
+        if not has_path and 'file' in params:
+            normalized_params['path'] = params['file']
+        
+        params = normalized_params
 
         tools_requires_project = {
             "read_file",
@@ -941,29 +1227,126 @@ class ToolRegistry:
             return ToolResult(success=False, result=None, error=error_msg, duration_ms=0)
             
         # Check for duplicate tool calls (prevent infinite loops)
-        call_signature = {"tool": tool_name, "params": params}
-        recent_calls = self._recent_tool_calls[-3:]  # Check last 3 calls
-        duplicate_count = sum(1 for call in recent_calls if call == call_signature)
-            
-        if duplicate_count >= 2:
-            # Same tool with same params called 2+ times recently
-            log.warning(f"Preventing duplicate tool call: {tool_name} with same params (called {duplicate_count} times)")
-            return ToolResult(
-                success=False, 
-                result=None, 
-                error=f"[LOOP PREVENTION] Tool '{tool_name}' was just called with the same parameters. The AI should not repeat the same tool call. Consider the task complete or try a different approach.",
-                duration_ms=0
-            )
+        # Normalize params for comparison (ignore whitespace in code/content)
+        normalized_params = {}
+        for k, v in params.items():
+            if isinstance(v, str):
+                normalized_params[k] = v.strip()
+            else:
+                normalized_params[k] = v
+                
+        call_signature = {"tool": tool_name, "params": normalized_params}
+        
+        # Zero-tolerance for identical consecutive calls of stateful tools
+        stateful_tools = ["write_file", "edit_file", "run_command", "bash", "inject_after", "delete_path"]
+        
+        # Check last 5 calls for any identical signature (not just consecutive)
+        # ONLY apply to stateful tools that actually change the environment.
+        # read_file, list_directory, etc. are safe to repeat.
+        if tool_name in stateful_tools:
+            recent_calls = self._recent_tool_calls[-5:]
+            is_duplicate = any(call == call_signature for call in recent_calls)
+                
+            if is_duplicate:
+                log.warning(f"🚫 LOOP PREVENTION: Blocking repeated {tool_name} with same params.")
+                return ToolResult(
+                    success=False, 
+                    result=None, 
+                    error=(
+                        f"❌ [LOOP PREVENTION] You just performed this exact '{tool_name}' operation. "
+                        "Repeating the same call with the same content will NOT change anything. "
+                        "If you intended to fix something, your previous attempt already applied or failed. "
+                        "MOVE ON to the next task or check the file content with read_file to verify."
+                    ),
+                    duration_ms=0
+                )
             
         # Track this call
         self._recent_tool_calls.append(call_signature)
         if len(self._recent_tool_calls) > self._max_recent_calls:
             self._recent_tool_calls.pop(0)
+        
+        # ========== PERMISSION CHECK (MOVED BEFORE EXECUTION) ==========
+        # Check if tool requires user confirmation
+        from src.ai.permission_system import get_permission_manager, show_permission_dialog
+        
+        perm_manager = get_permission_manager()
+        allowed, reason = perm_manager.check_permission(tool_name, params)
+        
+        # Auto-denied
+        if allowed is False:
+            log.warning(f"Tool {tool_name} blocked: {reason}")
+            return ToolResult(success=False, result=None, error=f"Permission denied: {reason}", duration_ms=0)
+        
+        # Needs user confirmation (not auto-approved and not remembered)
+        if allowed is None:
+            log.info(f"Tool {tool_name} requires permission. Returning PENDING status.")
+            
+            # Build permission details for the UI card
+            details = self._build_permission_details(tool_name, params)
+            
+            # We return a 'pending' result. This will be caught by ToolWorker and AIAgent,
+            # which will then show an interaction card in the chat UI.
+            # Once user responds, AIAgent.user_responded will call execute_tool again
+            # with the user's decision (which should then be caught by PermissionManager).
+            return ToolResult(
+                success=True,
+                result="PENDING_PERMISSION",
+                status="pending",
+                metadata={
+                    "type": "permission",
+                    "tool_name": tool_name,
+                    "details": details,
+                    "params": params
+                }
+            )
+        # ===============================================================
+        # ===============================================================
+        
+        # ========== MODULAR TOOL EXECUTION (AFTER PERMISSION) ==========
+        # Use modular tools if available for better architecture
+        if tool_name in self._modular_tools:
+            modular_tool = self._modular_tools[tool_name]
+            
+            # Validate parameters using modular tool's validation
+            is_valid, error_msg = modular_tool.validate_params(params)
+            if not is_valid:
+                return ToolResult(success=False, result=None, error=error_msg, duration_ms=0)
+            
+            # Execute modular tool directly
+            try:
+                result = modular_tool.execute(params)
+                
+                # Convert ToolResult to string format expected by AI
+                if result.success:
+                    # Format result with metadata if available
+                    output = str(result.result)
+                    if result.metadata:
+                        if 'file_path' in result.metadata:
+                            output += f"\n\n[File: {result.metadata['file_path']}]"
+                        if 'line_count' in result.metadata:
+                            output += f"\n[Lines: {result.metadata['line_count']}]"
+                        if 'total_matches' in result.metadata:
+                            output += f"\n[Matches: {result.metadata['total_matches']}]"
+                    return ToolResult(
+                        success=True, 
+                        result=output, 
+                        status=result.status,
+                        duration_ms=result.duration_ms,
+                        metadata=result.metadata
+                    )
+                else:
+                    return result
+                    
+            except Exception as e:
+                return ToolResult(success=False, result=None, error=f"Modular tool error: {str(e)}", duration_ms=0)
+        # ===============================================================
             
         # Validate required parameters
         missing_params = []
         for param in tool.parameters:
-            if param.required and (param.name not in params or params[param.name] is None or params[param.name] == ""):
+            # Only None is treated as missing - empty string is valid for content
+            if param.required and (param.name not in params or params[param.name] is None):
                 missing_params.append(param.name)
             
         if missing_params:
@@ -2643,6 +3026,152 @@ class ToolRegistry:
                 
         except Exception as e:
             raise Exception(f"Failed to commit: {e}")
+
+    # ========== OPENCODE-STYLE TOOLS IMPLEMENTATION ==========
+    
+    def _opencode_read(self, path: str, limit: int = None) -> str:
+        """Smart file reading with metadata - OpenCode style."""
+        from src.ai.opencode_tools import get_opencode_tools
+        
+        project_root = self.project_root or os.getcwd()
+        tools = get_opencode_tools(project_root)
+        
+        result = tools.read_file(path, limit)
+        
+        if result["success"]:
+            lines_info = f"\n\n📊 File Stats:\n"
+            lines_info += f"- Lines: {result['line_count']}\n"
+            lines_info += f"- Size: {result['size_bytes']:,} bytes\n"
+            if result.get('truncated'):
+                lines_info += f"- ⚠️ Truncated to {limit} lines\n"
+            
+            return f"```\n{result['content']}\n```{lines_info}"
+        else:
+            return f"❌ Error reading file: {result['error']}"
+    
+    def _opencode_edit(self, path: str, old_text: str, new_text: str, 
+                       expected_replacements: int = 1) -> str:
+        """Precise search/replace editing with validation - OpenCode style."""
+        from src.ai.opencode_tools import get_opencode_tools
+        
+        project_root = self.project_root or os.getcwd()
+        tools = get_opencode_tools(project_root)
+        
+        result = tools.edit_file(path, old_text, new_text, expected_replacements)
+        
+        if result["success"]:
+            stats = (
+                f"\n\n✅ Edit Successful:\n"
+                f"- Replacements made: {result['replacements_made']}\n"
+                f"- Lines {'added' if result['lines_added'] > 0 else 'removed'}: {abs(result['lines_added'])}\n"
+                f"- Characters {'added' if result['chars_added'] > 0 else 'removed'}: {abs(result['chars_added'])}"
+            )
+            return stats
+        else:
+            error_msg = f"❌ Edit Failed: {result['error']}\n"
+            if 'occurrences_found' in result:
+                error_msg += f"\nFound {result['occurrences_found']} occurrence(s) of the search text.\n"
+                error_msg += "💡 Tip: Make the search text more specific or adjust expected_replacements."
+            return error_msg
+    
+    def _opencode_grep(self, pattern: str, include: str = "*", 
+                       exclude_dirs: List[str] = None) -> str:
+        """Code search with regex - OpenCode grep.ts style."""
+        from src.ai.opencode_tools import get_opencode_tools
+        
+        project_root = self.project_root or os.getcwd()
+        tools = get_opencode_tools(project_root)
+        
+        result = tools.grep(pattern, include, exclude_dirs)
+        
+        if not result["success"]:
+            return f"❌ Search failed: {result['error']}"
+        
+        if result["total_matches"] == 0:
+            return f"No matches found for pattern '{pattern}' (searched {result['files_searched']} files)"
+        
+        # Format results
+        output_lines = [
+            f"🔍 Found {result['total_matches']} match(es) for '{pattern}'",
+            f"📁 Searched {result['files_searched']} files\n"
+        ]
+        
+        # Group by file
+        current_file = None
+        for match in result["matches"][:50]:  # Limit to first 50 matches
+            if match["file"] != current_file:
+                current_file = match["file"]
+                output_lines.append(f"\n📄 {current_file}:")
+            
+            output_lines.append(f"  {match['line']:4d}: {match['content']}")
+        
+        if len(result["matches"]) > 50:
+            output_lines.append(f"\n... and {len(result['matches']) - 50} more matches")
+        
+        return "\n".join(output_lines)
+    
+    def _opencode_glob(self, pattern: str, exclude_dirs: List[str] = None) -> str:
+        """File pattern matching - OpenCode glob.ts style."""
+        from src.ai.opencode_tools import get_opencode_tools
+        
+        project_root = self.project_root or os.getcwd()
+        tools = get_opencode_tools(project_root)
+        
+        result = tools.glob(pattern, exclude_dirs)
+        
+        if not result["success"]:
+            return f"❌ Search failed: {result['error']}"
+        
+        if result["count"] == 0:
+            return f"No files found matching '{pattern}'"
+        
+        # Format results
+        output_lines = [f"📁 Found {result['count']} file(s) matching '{pattern}':\n"]
+        
+        for file_path in result["files"][:100]:  # Limit display
+            output_lines.append(f"  - {file_path}")
+        
+        if len(result["files"]) > 100:
+            output_lines.append(f"\n... and {len(result['files']) - 100} more files")
+        
+        return "\n".join(output_lines)
+    
+    def _opencode_list_dir(self, path: str = ".", depth: int = 1) -> str:
+        """Enhanced directory listing with depth control - OpenCode style."""
+        from src.ai.opencode_tools import get_opencode_tools
+        
+        project_root = self.project_root or os.getcwd()
+        tools = get_opencode_tools(project_root)
+        
+        result = tools.list_directory(path, depth)
+        
+        if not result["success"]:
+            return f"❌ Error: {result['error']}"
+        
+        if result["count"] == 0:
+            return "Directory is empty"
+        
+        # Format results with nice tree structure
+        output_lines = [f"📁 {result['directory']} ({result['count']} items):\n"]
+        
+        dirs = [e for e in result["entries"] if e["type"] == "directory"]
+        files = [e for e in result["entries"] if e["type"] == "file"]
+        
+        # Show directories first
+        if dirs:
+            output_lines.append("📂 Directories:")
+            for d in sorted(dirs, key=lambda x: x["name"]):
+                output_lines.append(f"  📁 {d['name']}/")
+        
+        # Then files
+        if files:
+            output_lines.append("\n📄 Files:")
+            for f in sorted(files, key=lambda x: x["name"]):
+                size_kb = f.get('size_bytes', 0) / 1024
+                size_str = f"{size_kb:.1f} KB" if size_kb >= 1 else f"{f.get('size_bytes', 0)} B"
+                output_lines.append(f"  📄 {f['name']} ({size_str})")
+        
+        return "\n".join(output_lines)
 
     def _semantic_search(self, query: str, limit: int = 10, chunk_types: Optional[List[str]] = None) -> str:
         """Semantic search using embeddings."""

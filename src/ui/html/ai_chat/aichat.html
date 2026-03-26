@@ -7,6 +7,9 @@
     <title>Cortex AI Chat</title>
     
     <!-- External Libraries (Local for reliability) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Outfit:wght@400;600;700&display=swap" rel="stylesheet">
     <script src="../../components/assets/marked.min.js"></script>
     <script src="../../components/assets/highlight.min.js"></script>
     
@@ -661,6 +664,32 @@
             });
         })();
     </script>
+    
+    <!-- ========== PERMISSION CARD TEMPLATE (NEW) ========== -->
+    <template id="permission-card-template">
+        <div class="permission-card">
+            <div class="permission-card-header">
+                <span class="permission-card-icon">⚠️</span>
+                <span class="permission-card-title">Permission Required</span>
+            </div>
+            <div class="permission-card-body">
+                <div class="permission-tool-name"></div>
+                <p class="permission-card-description">AI wants to perform this action:</p>
+                <div class="permission-card-details"></div>
+                <div class="permission-card-actions">
+                    <button class="permission-btn permission-btn-deny">❌ Deny</button>
+                    <button class="permission-btn permission-btn-approve">✅ Approve</button>
+                </div>
+                <div class="permission-card-remember">
+                    <label>
+                        <input type="checkbox" class="permission-remember-checkbox">
+                        Remember my choice for this session
+                    </label>
+                </div>
+            </div>
+        </div>
+    </template>
+    
     <script src="script.js"></script>
 
 </body>

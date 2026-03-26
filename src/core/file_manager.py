@@ -4,9 +4,12 @@ Implements LRU caching, async loading, memory-mapped I/O, and predictive prefetc
 """
 
 import os
+import shutil
 from pathlib import Path
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
+from typing import Dict, Any, Optional
+import threading
 from PyQt6.QtCore import QObject, pyqtSignal, QThread, pyqtSlot
 from src.utils.helpers import detect_language
 from src.utils.logger import get_logger
@@ -20,23 +23,26 @@ class LRUCache:
     def __init__(self, max_size: int = 100):
         self.cache = OrderedDict()
         self.max_size = max_size
+        self._lock = threading.Lock()
         
     def get(self, key: str) -> str | None:
         """Get item from cache, moving it to end (most recently used)."""
-        if key in self.cache:
-            self.cache.move_to_end(key)
-            return self.cache[key]
+        with self._lock:
+            if key in self.cache:
+                self.cache.move_to_end(key)
+                return self.cache[key]
         return None
     
     def put(self, key: str, value: str):
         """Put item in cache, evicting oldest if at capacity."""
-        if key in self.cache:
-            self.cache.move_to_end(key)
-        self.cache[key] = value
-        
-        # Evict oldest if over capacity
-        if len(self.cache) > self.max_size:
-            self.cache.popitem(last=False)
+        with self._lock:
+            if key in self.cache:
+                self.cache.move_to_end(key)
+            self.cache[key] = value
+            
+            # Evict oldest if over capacity
+            if len(self.cache) > self.max_size:
+                self.cache.popitem(last=False)
     
     def get_stats(self) -> Dict[str, Any]:
         """Get cache statistics (from lazy_loading_demo.py pattern)."""
@@ -48,7 +54,8 @@ class LRUCache:
     
     def clear(self):
         """Clear the cache."""
-        self.cache.clear()
+        with self._lock:
+            self.cache.clear()
 
 
 class FileReadWorker(QThread):
@@ -85,6 +92,8 @@ class FileReadWorker(QThread):
 class FileManager(QObject):
     file_changed_on_disk = pyqtSignal(str)  # path of changed file
     file_read_complete = pyqtSignal(str, str)  # path, content
+    file_deleted = pyqtSignal(str)  # path of deleted file (for undo)
+    file_restored = pyqtSignal(str)  # path of restored file (for redo)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -93,6 +102,12 @@ class FileManager(QObject):
         # Hash cache for quick change detection
         self._hash_cache: dict[str, str] = {}
         self._open_files: dict[str, str] = {}  # Currently open files
+        
+        # Trash bin for undo/redo support
+        self._trash_bin: list[Dict[str, Any]] = []  # Stack of deleted items
+        self._redo_stack: list[Dict[str, Any]] = []  # Stack for redo operations
+        self._trash_dir = Path.home() / ".cortex" / "trash"
+        self._trash_dir.mkdir(parents=True, exist_ok=True)
         
         # Async file loading with thread pool
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="file_reader")
@@ -229,7 +244,7 @@ class FileManager(QObject):
             
             # LEVEL 4: Large file - memory-mapped I/O (OPTIMIZED)
             import mmap
-            with open(path, 'r+b', buffering=0) as f:
+            with open(path, 'rb') as f:
                 with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
                     # Mmap reads directly into OS page cache - extremely fast
                     content = mm.read().decode('utf-8', errors='replace')
@@ -429,14 +444,156 @@ class FileManager(QObject):
             return None
 
     def delete(self, filepath: str) -> bool:
+        """
+        Delete file/folder and move to trash bin for undo support.
+        Emits file_deleted signal with original path for undo tracking.
+        """
         try:
             path = Path(filepath)
-            if path.is_file():
-                path.unlink()
-            elif path.is_dir():
-                import shutil
-                shutil.rmtree(path)
+            if not path.exists():
+                return False
+            
+            # Generate unique trash ID
+            import uuid
+            trash_id = str(uuid.uuid4())
+            trash_path = self._trash_dir / trash_id
+            
+            # Store metadata for undo
+            metadata = {
+                'trash_id': trash_id,
+                'original_path': str(path.resolve()),
+                'trash_path': str(trash_path),
+                'name': path.name,
+                'is_directory': path.is_dir(),
+                'timestamp': Path(path).stat().st_mtime if path.is_file() else None
+            }
+            
+            # Move to trash instead of permanent delete
+            shutil.move(str(path), str(trash_path))
+            
+            # ⚡ CACHE CONSISTENCY: Clear all caches for this path
+            self._open_files.pop(metadata['original_path'], None)
+            self._hash_cache.pop(metadata['original_path'], None)
+            
+            # Clear range caches
+            if hasattr(self, '_file_cache'):
+                # Key is "path" or "path:start-end"
+                keys_to_del = [k for k in list(self._file_cache.cache.keys()) 
+                              if k == metadata['original_path'] or k.startswith(metadata['original_path'] + ":")]
+                for k in keys_to_del:
+                    del self._file_cache.cache[k]
+            
+            # Add to trash bin stack
+            self._trash_bin.append(metadata)
+            # Clear redo stack when new deletion happens
+            self._redo_stack.clear()
+            
+            # Emit signal for UI updates
+            self.file_deleted.emit(metadata['original_path'])
+            
+            log.info(f"Moved to trash: {filepath} (ID: {trash_id})")
             return True
         except Exception as e:
             log.error(f"Cannot delete {filepath}: {e}")
             return False
+    
+    def undo_delete(self) -> Optional[str]:
+        """
+        Undo the last delete operation by restoring from trash.
+        Returns restored path or None if undo not possible.
+        """
+        if not self._trash_bin:
+            log.warning("Trash bin is empty - nothing to undo")
+            return None
+        
+        # Get last deleted item
+        metadata = self._trash_bin.pop()
+        trash_path = Path(metadata['trash_path'])
+        original_path = Path(metadata['original_path'])
+        
+        if not trash_path.exists():
+            log.error(f"Trash item not found: {trash_path}")
+            return None
+        
+        try:
+            # Restore to original location
+            if metadata['is_directory']:
+                shutil.move(str(trash_path), str(original_path))
+            else:
+                # Ensure parent directory exists
+                original_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(trash_path), str(original_path))
+            
+            # Add to redo stack
+            self._redo_stack.append(metadata)
+            
+            # Emit signal for UI updates
+            self.file_restored.emit(metadata['original_path'])
+            
+            log.info(f"Restored from trash: {metadata['original_path']}")
+            return metadata['original_path']
+        except Exception as e:
+            log.error(f"Failed to restore {metadata['original_path']}: {e}")
+            # Put back in trash bin if restore failed
+            self._trash_bin.append(metadata)
+            return None
+    
+    def redo_delete(self) -> Optional[str]:
+        """
+        Redo a previously undone delete operation.
+        Returns re-deleted path or None if redo not possible.
+        """
+        if not self._redo_stack:
+            log.warning("Redo stack is empty - nothing to redo")
+            return None
+        
+        # Get last redone item
+        metadata = self._redo_stack.pop()
+        trash_path = Path(metadata['trash_path'])
+        original_path = Path(metadata['original_path'])
+        
+        if not original_path.exists():
+            log.error(f"Original path not found: {original_path}")
+            return None
+        
+        try:
+            # Move back to trash
+            shutil.move(str(original_path), str(trash_path))
+            
+            # Add back to trash bin
+            self._trash_bin.append(metadata)
+            
+            # Emit signal for UI updates
+            self.file_deleted.emit(metadata['original_path'])
+            
+            log.info(f"Re-deleted: {metadata['original_path']}")
+            return metadata['original_path']
+        except Exception as e:
+            log.error(f"Failed to re-delete {metadata['original_path']}: {e}")
+            # Put back in redo stack if operation failed
+            self._redo_stack.append(metadata)
+            return None
+    
+    def can_undo(self) -> bool:
+        """Check if undo is available."""
+        return len(self._trash_bin) > 0
+    
+    def can_redo(self) -> bool:
+        """Check if redo is available."""
+        return len(self._redo_stack) > 0
+    
+    def get_trash_count(self) -> int:
+        """Get number of items in trash bin."""
+        return len(self._trash_bin)
+    
+    def clear_trash(self):
+        """Permanently delete all items in trash."""
+        try:
+            if self._trash_dir.exists():
+                shutil.rmtree(self._trash_dir)
+                self._trash_dir.mkdir(parents=True, exist_ok=True)
+            self._trash_bin.clear()
+            self._redo_stack.clear()
+            log.info("Trash cleared permanently")
+        except Exception as e:
+            log.error(f"Failed to clear trash: {e}")

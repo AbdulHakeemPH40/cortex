@@ -11,15 +11,9 @@ import time
 from pathlib import Path
 import hashlib
 from typing import Optional, List, Dict, Any
-from PyQt6.QtCore import QObject, QThread, pyqtSignal
-from src.utils.logger import get_logger
+from PyQt6.QtCore import QObject, QThread, pyqtSignal, QTimer
 
-# Initialize logger first (needed for .env loading messages)
-log = get_logger("ai_agent")
-
-from src.core.key_manager import get_key_manager
-# Load .env if available - check multiple locations for dev and packaged modes
-# MUST happen BEFORE importing provider registry!
+# Load .env FIRST - before any other imports that might use API keys
 try:
     from dotenv import load_dotenv
     import sys
@@ -34,12 +28,15 @@ try:
     for env_path in env_paths:
         if env_path.exists():
             load_dotenv(env_path)
-            log.info(f"Loaded .env from: {env_path}")
             break
 except ImportError:
     pass
 
-# NOW import provider registry (after .env is loaded)
+# NOW import other modules (after .env is loaded)
+from src.utils.logger import get_logger
+log = get_logger("ai_agent")
+
+from src.core.key_manager import get_key_manager
 from src.ai.providers import get_provider_registry, ProviderType, ChatMessage
 from src.ai.decision_framework import get_decision_framework, reset_decision_framework, ActionType
 from src.ai.autogen_wrapper import get_autogen_system, init_autogen_system
@@ -271,11 +268,18 @@ class ToolWorker(QThread):
                     "name": name,
                     "content": content,
                     "success": result.success,
-                    "duration_ms": result.duration_ms
+                    "duration_ms": result.duration_ms,
+                    "status": getattr(result, 'status', 'completed'),
+                    "metadata": getattr(result, 'metadata', {}) or {}
                 })
 
                 # Emit completed signal
                 self.tool_completed.emit(name, args, result)
+
+                # Stop batch if tool is pending (Interactive stop-and-wait)
+                if getattr(result, 'status', 'completed') == 'pending':
+                    log.info(f"Stopping batch execution: {name} is PENDING")
+                    break
 
             # Emit all completed
             self.all_tools_completed.emit(self._results)
@@ -302,6 +306,7 @@ class AIWorker(QThread):
         self.tools = tools
         self._full_response = ""
         self._tool_calls = {}  # index -> {"id": id, "name": name, "arguments": args}
+        self.tool_calls = None  # Final parsed tool calls (list format)
 
     def run(self):
         log.info("AIWorker.run() started")
@@ -380,7 +385,10 @@ class AIWorker(QThread):
             tool_call_buffer = {}
             
             log.info(f"Starting streaming with OpenAI SDK (SSL disabled)...")
-            self.chunk_received.emit("Thinking...\n")
+            
+            # For Kimi, don't emit "Thinking..." since it has its own thinking blocks
+            if "kimi" not in self.model.lower():
+                self.chunk_received.emit("Thinking...\n")
             
             # Simple streaming via OpenAI SDK
             stream = provider.chat_stream(
@@ -392,35 +400,51 @@ class AIWorker(QThread):
             )
             
             # Process chunks
-            for chunk in stream:
-                if not chunk or chunk.isspace():
-                    continue
-                
-                chunk_count += 1
-                
-                # Handle tool call deltas
-                if chunk.startswith("__TOOL_CALL_DELTA__:"):
-                    try:
-                        deltas = json.loads(chunk[len("__TOOL_CALL_DELTA__:"):])
-                        for delta in deltas:
-                            index = delta.get("index", 0)
-                            if index not in tool_call_buffer:
-                                tool_call_buffer[index] = {"id": "", "name": "", "arguments": ""}
-                            
-                            if delta.get("id"):
-                                tool_call_buffer[index]["id"] += delta["id"]
-                            if delta.get("function", {}).get("name"):
-                                tool_call_buffer[index]["name"] += delta["function"]["name"]
-                            if delta.get("function", {}).get("arguments"):
-                                tool_call_buffer[index]["arguments"] += delta["function"]["arguments"]
-                    except Exception as e:
-                        log.error(f"Error parsing tool delta: {e}")
-                else:
-                    # Regular content
-                    self._full_response += chunk
-                    self.chunk_received.emit(chunk)
+            try:
+                for chunk in stream:
+                    if not chunk or chunk.isspace():
+                        continue
+                    
+                    chunk_count += 1
+                    
+                    # Handle tool call deltas
+                    if chunk.startswith("__TOOL_CALL_DELTA__:"):
+                        try:
+                            deltas = json.loads(chunk[len("__TOOL_CALL_DELTA__:"):])
+                            log.debug(f"[AIWorker] Received {len(deltas)} tool call deltas")
+                            for delta in deltas:
+                                index = delta.get("index", 0)
+                                if index not in tool_call_buffer:
+                                    tool_call_buffer[index] = {"id": "", "name": "", "arguments": ""}
+                                
+                                if delta.get("id"):
+                                    tool_call_buffer[index]["id"] += delta["id"]
+                                if delta.get("function", {}).get("name"):
+                                    tool_call_buffer[index]["name"] += delta["function"]["name"]
+                                if delta.get("function", {}).get("arguments"):
+                                    tool_call_buffer[index]["arguments"] += delta["function"]["arguments"]
+                        except json.JSONDecodeError as e:
+                            log.error(f"Error parsing tool delta JSON: {e}")
+                            log.debug(f"Raw delta: {chunk[:200]}")
+                    else:
+                        # Regular content - strip any stray tool call markers and thinking blocks as safety
+                        import re
+                        # Strip thinking blocks first
+                        cleaned_chunk = re.sub(r'<\|thinking\|>.*?</\|thinking\|>', '', chunk, flags=re.DOTALL)
+                        # Strip tool call markers
+                        cleaned_chunk = re.sub(r'<\|tool_calls_section_begin\|>.*?<\|tool_calls_section_end\|>', '', cleaned_chunk, flags=re.DOTALL)
+                        cleaned_chunk = re.sub(r'<\|tool_call_begin\|>', '', cleaned_chunk)
+                        cleaned_chunk = re.sub(r'<\|tool_call_argument_begin\|>', '', cleaned_chunk)
+                        cleaned_chunk = re.sub(r'<\|tool_call_end\|>', '', cleaned_chunk)
+                        cleaned_chunk = re.sub(r'<\|tool_calls_section_end\|>', '', cleaned_chunk)
+                        cleaned_chunk = re.sub(r'<\|tool_calls_section_begin\|>', '', cleaned_chunk)
+                        self._full_response += cleaned_chunk
+                        self.chunk_received.emit(cleaned_chunk)
+            except Exception as e:
+                log.error(f"Stream processing error: {e}")
+                # Continue to process what we have
             
-            log.info(f"Stream completed: {chunk_count} chunks")
+            log.info(f"Stream completed: {chunk_count} chunks, full_response={len(self._full_response)} chars, tool_calls={len(tool_call_buffer)}")
             
             # Process tool calls
             if tool_call_buffer:
@@ -436,14 +460,29 @@ class AIWorker(QThread):
                         })
                 if final_tool_calls:
                     self.tool_calls = final_tool_calls
+                    log.info(f"✅ Processed {len(final_tool_calls)} tool calls from stream")
             
-            # Cache and finish
+            # Cache and finish - succeed if we have EITHER content OR tool calls
             if self._full_response:
                 cache_key = _get_api_cache_key(self.messages, self.model, self.provider)
                 _cache_api_response(cache_key, self._full_response)
                 self.finished.emit(self._full_response)
                 return
             
+            # If no content but we have tool calls, that's a valid response!
+            if self.tool_calls:
+                self.finished.emit("")  # Empty content, but tool calls exist
+                return
+            
+            # Handle truncated response (max_tokens exceeded)
+            if chunk_count > 0:
+                # We received chunks but no content/tool calls - likely truncated
+                log.warning(f"[AIWorker] Response truncated (received {chunk_count} chunks but no content/tool_calls)")
+                truncated_msg = "[Truncated] Response was cut off. Please try again or the task may be incomplete."
+                self.finished.emit(truncated_msg)
+                return
+            
+            # No content AND no tool calls - that's an error
             raise Exception("No response from stream")
             
         except Exception as e:
@@ -470,71 +509,79 @@ class AIAgent(QObject):
     # Performance: File prefetch signal
     files_prefetch = pyqtSignal(list)  # list of file paths to prefetch
 
-    SYSTEM_PROMPT = """# CORTEX AI — Pragmatic Coding Assistant
+    SYSTEM_PROMPT = """# CORTEX AI — ACTION-ORIENTED BUILD AGENT
 
-You solve problems efficiently. You READ code, UNDERSTAND logic, and FIX root causes surgically.
+You are a BUILD AGENT. Your PRIMARY job is to BUILD, not chat.
 
-## CRITICAL RULES
+## CORE RULE: USE TOOLS
 
-### 1. READ → UNDERSTAND → FIX
-- Read actual code before suggesting fixes
-- Trace function calls to understand logic flow  
-- Fix ONLY what's broken - don't rewrite working code
+When the user asks to build something:
+1. IMMEDIATELY use `read_file` tool to read any spec/documentation
+2. Use `write_file` tool to create files with COMPLETE code
+3. NEVER describe what you'll do — DO IT
 
-### 2. SURGICAL EDITS
-- Use `edit_file` with unique context (3+ lines minimum)
-- Use `delete_lines` / `replace_lines` for large changes (>20 lines)
-- NEVER rewrite entire files >50 lines in one call
-- Verify edit worked by reading changed lines immediately after
+## TOOL USAGE RULES
 
-### 3. NO UNNECESSARY WORK
-- Don't create .md files unless explicitly asked
-- Don't write tests unless requested  
-- Don't create tasklists for simple fixes (<5 steps)
-- Don't over-analyze obvious problems
+- `read_file` — Read any file to understand context
+- `write_file` — Create new files with COMPLETE implementation
+- `edit_file` — Make surgical edits to existing files
+- `list_directory` — Explore project structure
 
-### 4. TRACE LOGIC PROPERLY
-When debugging:
-1. Find where error originates (`get_problems`)
-2. Trace call stack (which functions call which)
-3. Read THOSE specific functions with line numbers
-4. Fix ROOT CAUSE, not symptoms
+## WHAT TO SAY
 
-### 5. BE DIRECT
-- "fix X" → Fix X immediately
-- "hi" → Brief greeting, ask what they need
-- Questions → Answer directly, don't assume they want code
+✅ "Reading PROJECT_SPEC.md..." [calls read_file]
+✅ "Creating src/main.py..." [calls write_file with complete code]
 
-### 6. PATH DISCIPLINE
-- Use project-relative paths: `src/main.py` NOT `C:/Users/...`
-- Call `list_directory` if unsure of path
+## WHAT NOT TO SAY
 
-## EDIT WORKFLOW (MANDATORY)
+❌ "I'll start by creating the main file" (no tool = useless)
+❌ "First, let me understand the requirements" (stop talking, start building)
 
-For files >100 lines:
-1. `get_file_outline` → find line numbers
-2. `read_file(start_line, end_line)` → see relevant section  
-3. `edit_file` OR `delete_lines`/`replace_lines` with exact line numbers
-4. Verify with `read_file` on changed lines
+## BUILDING WORKFLOW
 
-## QUALITY OVER QUANTITY
-Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
+1. Read spec (read_file)
+2. Create directory structure (write_file calls)
+3. Implement each file completely
+4. Keep moving — don't stop to explain
 
-    def __init__(self, parent=None):
+## RESPONSE STYLE
+
+- Short intro (1 sentence max)
+- Tool call
+- Brief confirmation
+- Next tool call
+- Repeat until done
+
+REMEMBER: Every response should contain a TOOL CALL unless the task is truly complete."""
+    # Internal signal to bridge background tool processing back to main thread safely
+    _tool_batch_finished = pyqtSignal(list, list, str) # results, tool_calls, assistant_content
+    
+    # Signal for interactive user questions (Pending status)
+    # user_question_requested.emit(tool_call_id, question_text, metadata)
+    user_question_requested = pyqtSignal(str, str, dict)
+    
+    def __init__(self, file_manager: Optional[Any] = None, terminal_widget=None, parent=None):
         super().__init__(parent)
         from src.config.settings import get_settings
-        from src.ai.tools import ToolRegistry
+        # Import ToolRegistry from _tools_monolithic.py (to avoid tools/ package conflict)
+        from src.ai._tools_monolithic import ToolRegistry
         from src.ai.context_manager import get_context_manager
         from src.core.change_orchestrator import get_change_orchestrator
         self._settings = get_settings()
         self._project_root: Optional[str] = None
-        self._tool_registry = ToolRegistry(project_root=self._project_root)
+        self._tool_registry = ToolRegistry(
+            file_manager=file_manager,
+            terminal_widget=terminal_widget,
+            project_root=self._project_root
+        )
         self._history: list[dict] = []
         self._history_summary: str = ""
         self._worker: AIWorker | None = None
         self._pending_tool_calls: list[dict] = []
         self._always_allowed: bool = False
         self._continue_after_tools_flag: bool = False  # Reset on error
+        self._waiting_for_user_response = False
+        self._pending_tool_call_id = None
         self._check_configuration()
         self._mode = "Agent"  # Default mode
         self._always_allowed = True  # Agent mode has full autonomy by default
@@ -585,6 +632,9 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
             "lint_clean": 0,
             "retries_total": 0
         }
+        
+        # Connect internal signal for thread-safe cross-turn handover
+        self._tool_batch_finished.connect(self._on_all_tools_completed)
         
         # Event bus integration for proactive AI suggestions (NEW)
         self._setup_event_bus()
@@ -870,6 +920,11 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
             terminal_widget.terminal_line_for_chat.connect(
                 self._on_terminal_line_for_chat
             )
+    
+    def set_ui_parent(self, ui_parent):
+        """Set the UI parent widget for permission dialogs."""
+        self._tool_registry.set_ui_parent(ui_parent)
+        log.info("Permission system connected to UI")
 
     def set_project_root(self, path: str):
         """Set project root and load project-specific history."""
@@ -884,7 +939,7 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
         self._pending_verify_files.clear()
         
         self._project_root = path
-        self._tool_registry.project_root = path
+        self._tool_registry.set_project_root(path)
         
         # Initialize decision framework for this project
         self._decision_framework = get_decision_framework(path)
@@ -919,13 +974,13 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
     
     # Token budget for context window management
     TOKEN_BUDGET = {
-        "system_prompt":    3000,   # SYSTEM_PROMPT constant
-        "project_context":  2000,   # ProjectContext.to_system_prompt_block()
-        "history_summary":  1000,   # _history_summary
-        "recent_history":   8000,   # last 10-15 turns
-        "current_message":  2000,   # user's current message + context
-        "response_reserve": 8192,   # max_tokens for response
-        # Total: ~24K — well within 64K window
+        "system_prompt":    2000,   # SYSTEM_PROMPT constant
+        "project_context":  10000,  # ProjectContext.to_system_prompt_block()
+        "history_summary":  5000,    # _history_summary
+        "recent_history":  25000,   # last 10-15 turns
+        "current_message":  8000,    # user's current message + context
+        "response_reserve": 16384,   # max_tokens for response
+        # Total: ~65K — within 64K window
     }
     
     def _build_system_content(self) -> str:
@@ -956,6 +1011,56 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
                     parts.append(f"## PROJECT ROOT\n{self._project_root}")
                     log.debug("No project context available, using minimal placeholder")
         
+        # 🚀 FRAMEWORK-SPECIFIC GUIDANCE (CRITICAL FOR REDUCING HALLUCINATION)
+        framework_guidance = []
+        ctx = get_project_context(self._project_root) if self._project_root else None
+        
+        if ctx and ctx.is_ready:
+            fws = [fw.lower() for fw in (ctx.frameworks or [])]
+            if "django" in fws:
+                framework_guidance.append(
+                    "## DJANGO TECHNICAL GUIDANCE\n"
+                    "- Use Django template syntax: `{% static '...' %}`, `{% url '...' %}`, `{% csrf_token %}`.\n"
+                    "- DO NOT use Flask's `url_for`.\n"
+                    "- Check `settings.py` for INSTALLED_APPS and TEMPLATES config.\n"
+                    "- Models should inherit from `models.Model`."
+                )
+            elif "flask" in fws:
+                framework_guidance.append(
+                    "## FLASK TECHNICAL GUIDANCE\n"
+                    "- Use Flask's `{{ url_for('static', filename='...') }}` and `{{ url_for(...) }}`.\n"
+                    "- Check `app.py` or `wsgi.py` for route definitions."
+                )
+            elif "react" in fws:
+                framework_guidance.append(
+                    "## REACT TECHNICAL GUIDANCE\n"
+                    "- Use functional components and hooks (useEffect, useState).\n"
+                    "- Prefer Tailwind CSS if requested or present in dependencies.\n"
+                    "- Check `package.json` for React version and scripts."
+                )
+        
+        if framework_guidance:
+            parts.append("\n\n".join(framework_guidance))
+
+        # 🖥️ OS & SHELL CONTEXT (PREVENT WINDOWS/LINUX CONFUSION)
+        import platform
+        os_name = platform.system()
+        parts.append(
+            f"## ENVIRONMENT CONTEXT\n"
+            f"- **Operating System**: {os_name}\n"
+            f"- **Preferred Shell**: {'PowerShell' if os_name == 'Windows' else 'Bash'}\n"
+            f"- **Guidance**: You are on {os_name}. Use appropriate syntax. "
+            f"{'In PowerShell, `ls`, `cat`, `rm`, `cp`, `mv` are available as aliases. Use `(Get-Content file | Measure-Object -Line).Lines` for line counting.' if os_name == 'Windows' else ''}"
+        )
+
+        # 🔄 INFINITE LOOP PROTECTION
+        parts.append(
+            "## INFINTIE LOOP PROTECTION\n"
+            "1. **Never repeat failed tools**: If a tool fails, don't just try it again with the same arguments. Change your approach.\n"
+            "2. **Verify before write**: Before using `write_file` or `edit_file`, check if the file already exists and has the desired content. Do not overwrite if no change is needed.\n"
+            "3. **Detect 'Already Done' status**: If the user's goal is already met by existing files, stop and explain what you found instead of recreating them."
+        )
+            
         # History summary
         if self._history_summary:
             summary = self._history_summary
@@ -1451,10 +1556,34 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
                 log.warning(f"Sanitized history: removed {len(raw_history) - len(self._history)} corrupted messages")
             
             log.info(f"Restored history for project {project_id} ({len(self._history)} messages)")
+            
+            # 🚀 RESUME INTELLIGENCE: Reparse todos and offer to continue
+            if self._history:
+                # Find last assistant message to restore UI state (todos, plan)
+                for msg in reversed(self._history):
+                    if msg.get("role") == "assistant" and msg.get("content"):
+                        log.info("Restoring UI todos from last session...")
+                        self._parse_and_emit_todos(msg["content"])
+                        break
+                        
+                # Proactively offer to resume work after a short delay (once bridge is ready)
+                QTimer.singleShot(1500, self._emit_resume_hint)
+                
         except Exception as e:
             log.error(f"Failed to load history: {e}")
             self._history = []
             self._history_summary = ""
+
+    def _emit_resume_hint(self):
+        """Emit a friendly nudge to resume work when project is reopened."""
+        if not self._history or self._warmup_shown:
+            return
+            
+        # Only show if the user hasn't typed anything yet
+        resume_msg = "\n\n👋 **Welcome back!** I've restored your last session's context and task list. Ready to continue where we left off?"
+        self.response_chunk.emit(resume_msg)
+        self.response_complete.emit("Session restored.")
+        self._warmup_shown = True # Prevent double warmup
     
     def _sanitize_loaded_history(self, history: list[dict]) -> list[dict]:
         """Remove corrupted messages with mismatched tool calls from loaded history."""
@@ -1565,44 +1694,52 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
         self._save_history_to_disk()
 
     def _execute_tools(self, tool_calls, assistant_content=""):
-        """Execute tool calls in PARALLEL for MAXIMUM speed.
-        
-        OPTIMIZATION: Independent tools run simultaneously using ThreadPoolExecutor
-        
-        Args:
-            tool_calls: List of tool call objects from the assistant
-            assistant_content: The assistant's message content (to be added atomically with tools)
-        """
+        """Execute tool calls in background thread for MAXIMUM UI responsiveness."""
         # Start exploration block for UI display
         self.response_chunk.emit("\n<exploration>\n")
         
         # PERFORMANCE: Group independent tool calls for parallel execution
         independent_groups = self._group_independent_tools(tool_calls)
         
-        if len(independent_groups) > 1:
-            log.info(f"⚡ PARALLEL EXECUTION: {len(tool_calls)} tools grouped into {len(independent_groups)} batches")
-        
-        # Execute tool groups sequentially (groups contain parallel tools)
-        all_results = []
-        for group_idx, tool_group in enumerate(independent_groups):
-            log.debug(f"Executing tool group {group_idx + 1}/{len(independent_groups)} with {len(tool_group)} tools")
-            
-            # Create ToolWorker for this group
-            group_worker = ToolWorker(self._tool_registry, tool_group)
-            
-            # Connect signals
-            group_worker.tool_started.connect(self._on_tool_started)
-            group_worker.tool_completed.connect(lambda n, a, r: self._on_tool_completed(n, a, r))
-            
-            # Start and wait for completion
-            group_worker.start()
-            group_worker.wait()  # Wait for this group to finish
-            
-            # Collect results
-            all_results.extend(group_worker._results)
-        
-        # Notify all tools completed
-        self._on_all_tools_completed(all_results, tool_calls, assistant_content)
+        # Define the background runner to avoid blocking main thread
+        def run_in_background():
+            try:
+                all_results = []
+                for group_idx, tool_group in enumerate(independent_groups):
+                    log.debug(f"Executing tool group {group_idx + 1}/{len(independent_groups)} with {len(tool_group)} tools")
+                    
+                    # Create ToolWorker for this group
+                    group_worker = ToolWorker(self._tool_registry, tool_group)
+                    
+                    # Important: Since we are in a background thread already, 
+                    # we must connect signals across threads. 
+                    # By default, signals from the QThread worker will still deliver to the receiving 
+                    # thread (which might be the main thread if connected to 'self'/AIAgent).
+                    # We can use QueuedConnection or simply rely on QObject's default thread-safe signal delivery.
+                    
+                    group_worker.tool_started.connect(self._on_tool_started)
+                    group_worker.tool_completed.connect(lambda n, a, r: self._on_tool_completed(n, a, r))
+                    
+                    # Start and wait for completion (WE ARE IN BACKGROUND THREAD, SO WAIT IS SAFE)
+                    group_worker.start()
+                    group_worker.wait()  # Blocks background thread only
+                    
+                    # Collect results from the worker
+                    all_results.extend(group_worker._results)
+                
+                # Once ALL groups are done, trigger final results processing
+                log.info(f"All {len(independent_groups)} tool groups finished execution. Emitting finish signal.")
+                self._tool_batch_finished.emit(all_results, tool_calls, assistant_content)
+                
+            except Exception as e:
+                log.error(f"Error in background tool execution: {e}", exc_info=True)
+                self.request_error.emit(f"Tool execution failed: {str(e)}")
+
+        # Launch background runner
+        import threading
+        t = threading.Thread(target=run_in_background, daemon=True)
+        t.start()
+        log.info(f"🚀 Launched {len(tool_calls)} tools in background execution thread.")
     
     def _group_independent_tools(self, tool_calls: list) -> List[List[dict]]:
         """
@@ -1834,48 +1971,202 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
 
     def _on_all_tools_completed(self, results, original_tool_calls, assistant_content):
         """Called when ALL tools in the batch are finished."""
-        log.info(f"All {len(results)} tools completed")
+        log.info(f"Processing final results for {len(results)} tool calls")
         self.response_chunk.emit("\n</exploration>\n")
         self.thinking_stopped.emit()  # Hide spinner after tool execution
         
+        # 1. Check for PENDING status (Interactive Interaction)
+        pending_tool = next((r for r in results if r.get("status") == "pending"), None)
+        if pending_tool:
+            log.info(f"Tool {pending_tool['name']} is PENDING. Waiting for user response.")
+            self._waiting_for_user_response = True
+            self._pending_tool_call_id = pending_tool["tool_call_id"]
+            
+            # Store the current batch state to resume later
+            self._pending_tool_results = results
+            self._pending_original_tool_calls = original_tool_calls
+            self._pending_assistant_content = assistant_content
+            
+            # Signal the UI to show a question/interaction card
+            question = pending_tool["content"]
+            metadata = pending_tool.get("metadata", {})
+            self.user_question_requested.emit(self._pending_tool_call_id, question, metadata)
+            
+            # Important: DO NOT call response_complete or continue_chat here.
+            # We are pausing the agentic loop.
+            return
+        
+        # Generate summary report for file operations
+        summary = self._generate_tool_summary(results)
+        if summary:
+            self.response_chunk.emit(summary)
+        
         # Add assistant message and tool responses to history
-        self._history.append({
+        assistant_msg = {
             "role": "assistant",
-            "content": assistant_content,
-            "tool_calls": original_tool_calls
-        })
+            "content": assistant_content or "",
+        }
+        if original_tool_calls:
+            assistant_msg["tool_calls"] = original_tool_calls
+        self._history.append(assistant_msg)
         
         for res in results:
-            tool_json = json.dumps({
-                "success": res["success"],
-                "output": str(res["content"]) if res["success"] else None,
-                "error": str(res["content"]) if not res["success"] else None,
-                "duration_ms": res.get("duration_ms", 0)
-            })
+            # Use raw content instead of JSON wrapper to match OpenAI-style expectations
+            # (especially for models like DeepSeek which can be picky about tool content)
+            content = str(res["content"])
+            
             self._history.append({
                 "role": "tool",
                 "tool_call_id": res["tool_call_id"],
                 "name": res["name"],
-                "content": tool_json
+                "content": content
             })
             
         self._save_history_to_disk()
         self.response_complete.emit("")
-
+        
+        # Handle auto-verify
         if self._auto_verify_in_progress:
             self._handle_auto_verify_results(results)
             return
-
+        
         if self._should_auto_verify():
             if self._start_auto_verify():
                 return
         
+        # Trigger continuation after tools complete
         self._continue_after_tools_flag = True
+        log.info("Triggering continuation after tools completed")
+        QTimer.singleShot(200, self._continue_chat_after_tools)
+    
+    def _generate_tool_summary(self, results: list) -> str:
+        """Generate a summary report of all tool operations."""
+        if not results:
+            return ""
         
-        # Trigger continuation
-        from PyQt6.QtCore import QTimer
-        QTimer.singleShot(100, self._continue_chat_after_tools)
-
+        # Categorize results
+        file_writes = []
+        file_reads = []
+        file_edits = []
+        commands = []
+        errors = []
+        other = []
+        
+        for res in results:
+            name = res.get("name", "")
+            content = str(res.get("content", ""))[:200]  # Truncate for summary
+            
+            if not res.get("success"):
+                errors.append({
+                    "name": name,
+                    "error": content
+                })
+                continue
+            
+            if name in ("write_file", "edit_file", "create_directory"):
+                # Extract file path from content or args
+                file_path = res.get("content", "").split("\n")[0] if res.get("content") else "Unknown"
+                if "Created:" in file_path or "Written:" in file_path or "Edited:" in file_path:
+                    file_writes.append({"name": name, "path": file_path})
+                else:
+                    file_writes.append({"name": name, "path": content})
+            elif name in ("read_file", "read_multiple_files"):
+                file_reads.append({"name": name, "content": content})
+            elif name in ("run_command", "execute_command"):
+                commands.append({"name": name, "output": content})
+            elif name in ("search_code", "find_function", "find_class"):
+                other.append({"name": name, "result": content})
+            else:
+                other.append({"name": name, "result": content})
+        
+        lines = []
+        lines.append("\n" + "=" * 60)
+        lines.append("📋 TOOL EXECUTION SUMMARY")
+        lines.append("=" * 60)
+        
+        # File write summary
+        if file_writes:
+            lines.append(f"\n📁 **Files Created/Modified ({len(file_writes)}):**")
+            lines.append("-" * 40)
+            
+            for item in file_writes:
+                path = item.get("path", "Unknown")
+                tool_name = item.get("name", "")
+                
+                # Get file details if path looks valid
+                if path and path != "Unknown" and not path.startswith("Error"):
+                    try:
+                        import os
+                        if os.path.exists(path):
+                            size = os.path.getsize(path)
+                            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                                content = f.read()
+                            line_count = len(content.split('\n'))
+                            
+                            size_str = self._format_size(size)
+                            icon = "✏️" if tool_name == "edit_file" else "✅"
+                            lines.append(f"  {icon} `{path}`")
+                            lines.append(f"     Size: {size_str} | Lines: {line_count}")
+                        else:
+                            lines.append(f"  ✅ {path}")
+                    except:
+                        lines.append(f"  ✅ {path}")
+                else:
+                    lines.append(f"  ✅ {path}")
+            
+            lines.append("")
+        
+        # File read summary
+        if file_reads:
+            lines.append(f"\n📖 **Files Read ({len(file_reads)}):**")
+            lines.append("-" * 40)
+            for item in file_reads:
+                lines.append(f"  👁️ {item.get('name', 'read')}: {item.get('content', '')[:80]}...")
+            lines.append("")
+        
+        # Command summary
+        if commands:
+            lines.append(f"\n⚙️ **Commands Executed ({len(commands)}):**")
+            lines.append("-" * 40)
+            for item in commands:
+                lines.append(f"  ▶️ {item.get('name', 'command')}")
+                output = item.get("output", "")
+                if output:
+                    lines.append(f"     Output: {output[:100]}...")
+            lines.append("")
+        
+        # Errors
+        if errors:
+            lines.append(f"\n❌ **Errors ({len(errors)}):**")
+            lines.append("-" * 40)
+            for item in errors:
+                lines.append(f"  ❌ {item.get('name', 'tool')}: {item.get('error', 'Unknown error')[:100]}")
+            lines.append("")
+        
+        # Other operations
+        if other:
+            lines.append(f"\n🔧 **Other Operations ({len(other)}):**")
+            lines.append("-" * 40)
+            for item in other:
+                lines.append(f"  ⚡ {item.get('name', 'operation')}")
+            lines.append("")
+        
+        lines.append("=" * 60)
+        lines.append("")
+        
+        return "\n".join(lines)
+    
+    def _format_size(self, size_bytes: int) -> str:
+        """Format file size in human readable format."""
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 * 1024:
+            return f"{size_bytes / 1024:.1f} KB"
+        elif size_bytes < 1024 * 1024 * 1024:
+            return f"{size_bytes / (1024 * 1024):.1f} MB"
+        else:
+            return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
+    
     def _should_auto_verify(self) -> bool:
         if not self._auto_verify_enabled:
             return False
@@ -2000,8 +2291,87 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
             log.warning("Worker still exists in _continue_chat_after_tools, clearing")
             self._worker = None
         
+        log.info("Continuing chat after tools - calling chat(None)")
         # Now continue the chat
         self.chat(None)  # Continue without adding a user message
+
+    def user_responded(self, tool_call_id: str, response: str):
+        """Called when a user answers a 'pending' question in the chat."""
+        if not self._waiting_for_user_response or self._pending_tool_call_id != tool_call_id:
+            log.warning(f"Unexpected user response for {tool_call_id}")
+            return
+            
+        log.info(f"User responded to {tool_call_id}: {response[:40]}...")
+        self._waiting_for_user_response = False
+        self._pending_tool_call_id = None
+        
+        # Check if this was a permission request or a general question
+        is_permission_request = False
+        target_tool_res = None
+        for res in self._pending_tool_results:
+            if res["tool_call_id"] == tool_call_id:
+                target_tool_res = res
+                if res.get("content") == "PENDING_PERMISSION":
+                    is_permission_request = True
+                break
+        
+        if is_permission_request and target_tool_res:
+            # Handle permission response
+            tool_name = target_tool_res.get("metadata", {}).get("tool_name")
+            params = target_tool_res.get("metadata", {}).get("params", {})
+            
+            from src.ai.permission_system import get_permission_manager
+            perm_manager = get_permission_manager()
+            
+            if response in ["allow", "always"]:
+                log.info(f"User GRANTED permission for {tool_name}. Executing now...")
+                
+                # CRITICAL: Inform permission manager about this approval before re-executing
+                if response == "always":
+                    perm_manager.remember_decision(tool_name, True)
+                else:
+                    perm_manager.add_session_approval(tool_name)
+                
+                # Synchronize always_allowed flag with tool registry for this call
+                old_reg_allowed = getattr(self._tool_registry, '_always_allowed', False)
+                self._tool_registry._always_allowed = True 
+                
+                try:
+                    # Now execute_tool will actually proceed because check_permission will return True
+                    real_result = self._tool_registry.execute_tool(tool_name, params)
+                    
+                    # Update the tool result in history with actual content
+                    target_tool_res["content"] = str(real_result.result) if real_result.success else f"Error: {real_result.error}"
+                    target_tool_res["success"] = real_result.success
+                finally:
+                    self._tool_registry._always_allowed = old_reg_allowed
+            else:
+                log.info(f"User DENIED permission for {tool_name}")
+                if response == "never": # Just in case we add this
+                     perm_manager.remember_decision(tool_name, False)
+                target_tool_res["content"] = "Error: User denied permission for this operation."
+                target_tool_res["success"] = False
+            
+            target_tool_res["status"] = "completed"
+        else:
+            # Update the pending tool result with the user's answer (standard QuestionTool)
+            if target_tool_res:
+                target_tool_res["content"] = response
+                target_tool_res["status"] = "completed"
+                target_tool_res["success"] = True
+        
+        # Resume the batch processing (Turn 2 starts)
+        results = self._pending_tool_results
+        calls = self._pending_original_tool_calls
+        content = self._pending_assistant_content
+        
+        # Clear stores
+        self._pending_tool_results = []
+        self._pending_original_tool_calls = []
+        self._pending_assistant_content = ""
+        
+        # Re-trigger Turn 2 completion logic
+        self._on_all_tools_completed(results, calls, content)
 
     def _execute_pending_tools(self):
         """Resume execution of tools that were awaiting confirmation."""
@@ -2112,6 +2482,9 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
     def set_always_allowed(self, allowed: bool):
         """Set whether to always allow tool execution without confirmation"""
         self._always_allowed = allowed
+        # Sync with tool registry
+        if hasattr(self, '_tool_registry'):
+            self._tool_registry._always_allowed = allowed
         log.info(f"AI Agent 'Always Allow' set to: {allowed}")
         if allowed:
             self.response_chunk.emit("\n🔓 **Auto-approval enabled** for this chat session. I'll execute file changes without asking.")

@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
     QToolBar, QMenuBar, QMessageBox, QInputDialog, QTabBar,
     QFrame, QSizePolicy
 )
-from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtSlot, QTimer, QRect, QProcessEnvironment, QSignalBlocker
+from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtSlot, QTimer, QRect, QProcessEnvironment, QSignalBlocker, QEventLoop
 from PyQt6.QtGui import (QAction, QKeySequence, QIcon, QFont, QPainter, QColor, 
                          QMouseEvent, QCloseEvent, QPixmap)
 
@@ -518,7 +518,7 @@ class CortexMainWindow(QMainWindow):
         self._project_manager = ProjectManager()
         self._file_manager = FileManager()
         self._session_manager = SessionManager()
-        self._ai_agent = AIAgent()
+        self._ai_agent = AIAgent(file_manager=self._file_manager)
         
         # Set DeepSeek as default for reliable agentic workflows
         self._ai_agent.update_settings(provider="deepseek", model="deepseek-chat")
@@ -589,7 +589,7 @@ class CortexMainWindow(QMainWindow):
         self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # --- Left Sidebar ---
-        self._sidebar = SidebarWidget()
+        self._sidebar = SidebarWidget(self._file_manager)
         self._sidebar.setMinimumWidth(44)
         self._sidebar.setMaximumWidth(320)
         self._main_splitter.addWidget(self._sidebar)
@@ -642,7 +642,7 @@ class CortexMainWindow(QMainWindow):
         self._ai_chat.reject_file_edit_requested.connect(self._on_reject_file_edit)
         self._ai_chat.open_terminal_requested.connect(self._show_terminal_panel)
         self._ai_chat.set_code_context_callback(self._get_code_context)
-        self._ai_chat.load_full_chat_requested.connect(self._on_load_full_chat_requested)
+        # load_full_chat_requested is handled internally by AIChatWidget now
         self._ai_chat.toggle_autogen_requested.connect(self._on_toggle_autogen)
         right_layout.addWidget(self._ai_chat)
         self._main_splitter.addWidget(self._right_panel)
@@ -836,8 +836,8 @@ class CortexMainWindow(QMainWindow):
 
         # Edit
         edit_menu = mb.addMenu("Edit")
-        self._add_action(edit_menu, "Undo", lambda: self._current_editor_action("undo"), "Ctrl+Z")
-        self._add_action(edit_menu, "Redo", lambda: self._current_editor_action("redo"), "Ctrl+Y")
+        self._add_action(edit_menu, "Undo", self._undo, "Ctrl+Z")
+        self._add_action(edit_menu, "Redo", self._redo, "Ctrl+Y")
         edit_menu.addSeparator()
         self._add_action(edit_menu, "Cut", lambda: self._current_editor_action("cut"), "Ctrl+X")
         self._add_action(edit_menu, "Copy", lambda: self._current_editor_action("copy"), "Ctrl+C")
@@ -1061,6 +1061,7 @@ class CortexMainWindow(QMainWindow):
         self._sidebar.file_search_opened.connect(self._open_file_at_line)
         self._sidebar.ai_action_requested.connect(self._ai_action)
         self._sidebar.file_renamed.connect(self._on_sidebar_file_renamed)
+        self._sidebar.file_deleted.connect(self._on_sidebar_file_deleted)
         
         # Changed files panel signals
         self._sidebar.file_accepted.connect(self._on_accept_file_edit)
@@ -1075,6 +1076,11 @@ class CortexMainWindow(QMainWindow):
 
         # Editor tab changes
         self._editor_tabs.currentChanged.connect(self._on_tab_changed)
+        
+        # File manager undo/redo signals
+        if hasattr(self, '_file_manager'):
+            self._file_manager.file_deleted.connect(self._on_file_deleted_for_undo)
+            self._file_manager.file_restored.connect(self._on_file_restored_for_redo)
 
         # AI chat - ONLY connect signals here to avoid duplicates
         self._ai_chat.message_sent.connect(self._on_ai_chat_message)
@@ -1099,10 +1105,19 @@ class CortexMainWindow(QMainWindow):
         self._ai_chat.open_file_requested.connect(self._open_file)
         self._ai_chat.open_file_at_line_requested.connect(self._open_file_at_line)
         self._ai_chat.show_diff_requested.connect(self._on_show_diff)
+        self._ai_chat.answer_question_requested.connect(self._ai_agent.user_responded)
         self._ai_chat.smart_paste_check_requested.connect(self._on_smart_paste_check)
+        
+        # Connect AI Agent back to UI for interactive questions
+        self._ai_agent.user_question_requested.connect(self._on_ai_question_requested)
 
         # Terminal tab changes
         self._terminal_tabs.currentChanged.connect(self._on_terminal_tab_changed)
+        
+        # ========== PERMISSION SYSTEM CONNECTION (NEW) ==========
+        # Connect AI agent to UI for permission dialogs
+        self._ai_agent.set_ui_parent(self)
+        log.info("Permission system initialized and connected to main window")
 
     # ------------------------------------------------------------------
     # Actions
@@ -1375,6 +1390,20 @@ class CortexMainWindow(QMainWindow):
             self._sidebar.add_changed_file(file_path, edit_type)
         except Exception as e:
             log.debug(f"Sidebar update skipped: {e}")
+
+    def _on_ai_question_requested(self, tool_call_id: str, question: str, metadata: dict):
+        """Handle AI asking a question that requires user response in chat."""
+        log.info(f"AI requested user input: {question[:50]}...")
+        # Structuring the question info for the JS UI
+        info = {
+            "id": tool_call_id,
+            "text": question,
+            "type": metadata.get("type", "text"),
+            "choices": metadata.get("choices", []),
+            "default": metadata.get("default", ""),
+            "details": metadata.get("details", "")
+        }
+        self._ai_chat.show_question(info)
 
     def _open_file_at_line(self, file_path: str, line_number: int):
         """Open file and navigate to specific line."""
@@ -1926,6 +1955,70 @@ class CortexMainWindow(QMainWindow):
 
         if updated:
             log.info(f"Updated open tabs for rename: {old_norm} -> {new_norm}")
+    
+    def _on_sidebar_file_deleted(self, path: str):
+        """Handle file/folder deletion from sidebar."""
+        import os
+        from pathlib import Path
+        
+        norm_path = os.path.normpath(path)
+        
+        # Close tab if file is open
+        for idx, fp in list(self._editor_tabs._files.items()):
+            if os.path.normcase(fp) == os.path.normcase(norm_path):
+                self._editor_tabs._close_tab(idx)
+                break
+        
+        # Refresh sidebar to reflect deletion
+        self._sidebar.refresh()
+        
+        # Refresh project context for AI agent
+        if hasattr(self, '_ai_agent') and self._ai_agent:
+            project_root = str(self._project_manager.root) if self._project_manager.root else None
+            if project_root:
+                self._ai_agent.set_project_root(project_root)
+        
+        log.info(f"File deleted: {path}")
+    
+    def _on_file_deleted_for_undo(self, original_path: str):
+        """Track file deletion for undo functionality."""
+        log.debug(f"Undo tracking: File moved to trash: {original_path}")
+    
+    def _on_file_restored_for_redo(self, restored_path: str):
+        """Track file restoration for redo functionality."""
+        log.debug(f"Redo tracking: File restored: {restored_path}")
+        # Refresh sidebar to show restored file
+        QTimer.singleShot(100, self._sidebar.refresh)
+    
+    def _undo(self):
+        """Handle undo - prioritize editor undo, then file restore."""
+        # Try editor undo first
+        editor = self._editor_tabs.current_editor()
+        if editor and editor.document().isUndoAvailable():
+            editor.undo()
+            return
+        
+        # If no editor or no undo available, try file restore
+        if hasattr(self, '_file_manager') and self._file_manager.can_undo():
+            restored_path = self._file_manager.undo_delete()
+            if restored_path:
+                log.info(f"Restored file: {restored_path}")
+                self.statusBar().showMessage(f"Restored: {Path(restored_path).name}", 3000)
+    
+    def _redo(self):
+        """Handle redo - prioritize editor redo, then file re-delete."""
+        # Try editor redo first
+        editor = self._editor_tabs.current_editor()
+        if editor and editor.document().isRedoAvailable():
+            editor.redo()
+            return
+        
+        # If no editor or no redo available, try file re-delete
+        if hasattr(self, '_file_manager') and self._file_manager.can_redo():
+            deleted_path = self._file_manager.redo_delete()
+            if deleted_path:
+                log.info(f"Re-deleted file: {deleted_path}")
+                self.statusBar().showMessage(f"Deleted: {Path(deleted_path).name}", 3000)
 
     def _find_in_files(self):
         """Find in files (Ctrl+Shift+F)."""
@@ -2876,26 +2969,97 @@ class CortexMainWindow(QMainWindow):
         dialog.exec()
 
     def closeEvent(self, event: QCloseEvent):
-        """Save session on close and kill terminal process cleanly."""
+        """Save session on close, prompt for unsaved files, and kill terminals."""
+        # 1. Check for unsaved files
+        modified_files = self._editor_tabs._modified
+        if modified_files:
+            from PyQt6.QtWidgets import QMessageBox
+            file_names = [os.path.basename(f) for f in modified_files]
+            files_str = ", ".join(file_names[:3]) + ("..." if len(file_names) > 3 else "")
+            
+            reply = QMessageBox.question(
+                self,
+                "Unsaved Changes",
+                f"You have unsaved changes in: {files_str}\n\nDo you want to save them before closing?",
+                QMessageBox.StandardButton.SaveAll | 
+                QMessageBox.StandardButton.Discard | 
+                QMessageBox.StandardButton.Cancel
+            )
+            
+            if reply == QMessageBox.StandardButton.Cancel:
+                event.ignore()
+                return
+            elif reply == QMessageBox.StandardButton.SaveAll:
+                # Save all modified files
+                for filepath in list(modified_files):
+                    idx = -1
+                    for i, fp in self._editor_tabs._files.items():
+                        if fp == filepath:
+                            idx = i
+                            break
+                    
+                    if idx >= 0:
+                        editor = self._editor_tabs.widget(idx)
+                        if isinstance(editor, CodeEditor):
+                            content = editor.toPlainText()
+                            try:
+                                with open(filepath, 'w', encoding='utf-8') as f:
+                                    f.write(content)
+                                self._editor_tabs._mark_saved(filepath)
+                            except Exception as e:
+                                log.error(f"Failed to auto-save {filepath}: {e}")
+        
+        # 2. Force AI Chat persistence
+        if hasattr(self, '_ai_chat') and self._ai_chat:
+            log.info("Persisting AI chat history before close...")
+            # Create a localized event loop to wait for the chat persistence to finish
+            loop = QEventLoop()
+            save_success = [False]
+            
+            def on_save_done(status):
+                log.info(f"AI chat persistence finished with status: {status}")
+                save_success[0] = (status == "OK")
+                loop.quit()
+                
+            # Connect the bridge response signal
+            self._ai_chat.save_finished.connect(on_save_done)
+            
+            # Start timer for timeout (3s max)
+            QTimer.singleShot(3000, loop.quit)
+            
+            # Trigger JS to save its logic to SQLite
+            self._ai_chat.run_javascript("if(window.saveProjectChats) saveProjectChats(window.chats);")
+            
+            # Wait for save or timeout
+            loop.exec()
+            
+            if not save_success[0]:
+                log.warning("AI chat persistence timed out or failed before close.")
+            else:
+                log.info("AI chat persistence confirmed.")
+        
+        # 3. Save IDE UI state
         fps = self._editor_tabs.get_open_files()
         active = self._editor_tabs.current_filepath()
-        # Collect expanded folder paths from the file tree
         expanded = self._sidebar.get_expanded_paths()
         self._session_manager.save(fps, active, {"expanded_paths": expanded})
         self._settings.set("window", "maximized", self.isMaximized())
         if not self.isMaximized():
             self._settings.set("window", "width", self.width())
             self._settings.set("window", "height", self.height())
-        # Save splitter panel widths so they restore correctly on next open
+        
+        # Save splitter panel widths
         sizes = self._main_splitter.sizes()
         if len(sizes) == 3:
             self._settings.set("window", "sidebar_width", sizes[0])
             self._settings.set("window", "right_panel_width", sizes[2])
-        # Kill all terminal shells before Qt destroys the widgets
+            
+        # 4. Clean up terminals
         for i in range(self._terminal_tabs.count()):
             term = self._terminal_tabs.widget(i)
             if isinstance(term, XTermWidget):
                 term._kill_process()
+                
         event.accept()
 
     def resizeEvent(self, event):

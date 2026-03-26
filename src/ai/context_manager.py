@@ -269,7 +269,7 @@ class AIContextManager:
                 
             return FileContext(
                 path=file_path,
-                content=content[:10000],  # Limit content size
+                content=content[:60000],  # Full file content for maximum context
                 is_active=is_active,
                 symbols=symbols,
                 language=language,
@@ -535,7 +535,7 @@ class AIContextManager:
                 lines.append(f"   Lines: {context.active_file.lines[0]}-{context.active_file.lines[1]}")
             lines.append("-" * 70)
             lines.append("```" + context.active_file.language)
-            lines.append(context.active_file.content[:5000])
+            lines.append(context.active_file.content[:30000])  # Full content
             lines.append("```")
             lines.append("")
         
@@ -551,10 +551,10 @@ class AIContextManager:
                     lines.append(f"   Language: {file_ctx.language}")
                 if file_ctx.symbols:
                     lines.append("   Key Symbols:")
-                    for sym in file_ctx.symbols[:3]:
+                    for sym in file_ctx.symbols[:10]:  # Show more symbols
                         lines.append(f"     • {sym['name']} ({sym['type']}) at line {sym['line']}")
-                # Include snippet
-                content_preview = file_ctx.content[:1500]
+                # Include full content for reference files
+                content_preview = file_ctx.content[:8000]  # More content from related files
                 lines.append(f"   ```{file_ctx.language}")
                 lines.append(content_preview)
                 lines.append("   ```")

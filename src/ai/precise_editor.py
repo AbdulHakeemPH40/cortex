@@ -95,6 +95,8 @@ class SyntaxChecker:
             return SyntaxChecker._check_python(content)
         elif ext in (".js", ".jsx", ".ts", ".tsx"):
             return SyntaxChecker._check_js(content, file_path)
+        elif ext in (".html", ".htm", ".templates"):
+            return SyntaxChecker._check_html(content)
         else:
             return True, ""  # Unknown type — assume valid
     
@@ -120,6 +122,23 @@ class SyntaxChecker:
         except Exception:
             # node not available — skip check
             return True, ""
+
+    @staticmethod
+    def _check_html(content: str) -> Tuple[bool, str]:
+        """Basic validation for HTML and Template files."""
+        # 1. Check for balanced Template tags (Django/Jinja/Handlebars)
+        template_tags = [
+            ("{%", "%}"), ("{{", "}}"), ("{#", "#}"), 
+            ("<%", "%>"), ("[[", "]]")
+        ]
+        for start, end in template_tags:
+            if content.count(start) != content.count(end):
+                return False, f"Mismatched template tags: {start} ... {end}"
+        
+        # NOTE: Rudimentary HTML bracket counting removed as it causes false positives
+        # in valid templates (e.g. {% if x < 5 %}).
+            
+        return True, ""
 
 
 # ─── INDENTATION HANDLER ─────────────────────────────────────────────────────
@@ -475,6 +494,17 @@ class PreciseEditor:
         # Overwrite safety
         if full_path.exists():
             original = full_path.read_text(encoding="utf-8")
+            
+            # IDEMPOTENCY: If content is already identical, don't write
+            if original == content:
+                log.info(f"PreciseEditor: Redundant write to {path} blocked - content identical.")
+                return EditResult(
+                    True, path=path, 
+                    error="NO_CHANGE - Content already identical on disk.",
+                    action="The file already has the intended content. No action needed."
+                )
+            
+            # Truncation safety
             if len(content) < len(original) * 0.4 and len(original) > 300:
                 return EditResult(
                     False, path=path,

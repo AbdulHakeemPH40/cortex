@@ -229,9 +229,7 @@ button, #toggle-history-btn, .history-item {
     align-items: center;
     gap: 8px;
     transition: background 0.2s;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    min-width: 0; /* Allow flex item to shrink below content size */
 }
 
 .history-item:hover {
@@ -248,9 +246,19 @@ button, #toggle-history-btn, .history-item {
     color: var(--text-muted);
 }
 
+.history-item .title-text {
+    flex: 1; /* Take available space */
+    min-width: 0; /* Allow shrinking for ellipsis */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .history-item .delete-chat-btn {
     opacity: 0;
-    margin-left: auto;
+    flex-shrink: 0; /* Prevent button from shrinking */
+    width: 24px; /* Fixed width to reserve space */
+    height: 24px;
     background: transparent;
     border: none;
     color: var(--text-muted);
@@ -7871,4 +7879,157 @@ body.light img {
 /* Selection */
 body.light ::selection {
     background: rgba(0, 122, 204, 0.3);
+}
+
+/* ================================================
+   PERMISSION CARD (IN-CHAT) STYLES (NEW)
+   ================================================ */
+
+.permission-card {
+    margin: var(--space-md) 0;
+    border: 2px solid var(--accent-primary);
+    border-radius: var(--radius-lg);
+    background: var(--bg-elevated);
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
+    overflow: hidden;
+    animation: slideIn 0.3s ease-out;
+}
+
+.permission-card-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-md) var(--space-lg);
+    background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+    color: white;
+}
+
+.permission-card-icon {
+    font-size: 20px;
+    line-height: 1;
+}
+
+.permission-card-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.permission-card-body {
+    padding: var(--space-lg);
+}
+
+.permission-tool-name {
+    font-family: 'Courier New', monospace;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--accent-primary);
+    margin-bottom: var(--space-sm);
+    padding: var(--space-xs) var(--space-sm);
+    background: rgba(59, 130, 246, 0.1);
+    border-radius: var(--radius-sm);
+    display: inline-block;
+}
+
+.permission-card-description {
+    margin: var(--space-md) 0;
+    color: var(--text-secondary);
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.permission-card-details {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    padding: var(--space-md);
+    margin: var(--space-md) 0;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    color: var(--text);
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.permission-card-actions {
+    display: flex;
+    gap: var(--space-md);
+    margin-top: var(--space-md);
+}
+
+.permission-btn {
+    flex: 1;
+    padding: var(--space-sm) var(--space-lg);
+    border: none;
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-xs);
+}
+
+.permission-btn-deny {
+    background: var(--error);
+    color: white;
+}
+
+.permission-btn-deny:hover {
+    background: #dc2626;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+}
+
+.permission-btn-approve {
+    background: var(--success);
+    color: white;
+}
+
+.permission-btn-approve:hover {
+    background: #16a34a;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(34, 197, 94, 0.4);
+}
+
+.permission-card-remember {
+    margin-top: var(--space-md);
+    padding-top: var(--space-md);
+    border-top: 1px solid var(--border);
+}
+
+.permission-card-remember label {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-size: 13px;
+    user-select: none;
+}
+
+.permission-card-remember input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: var(--accent-primary);
+}
+
+/* Light mode support */
+body.light .permission-card {
+    background: #ffffff;
+    border-color: #3b82f6;
+}
+
+body.light .permission-card-details {
+    background: #f6f8fa;
+    border-color: #e0e0e0;
+    color: #1a1a1a;
+}
+
+body.light .permission-tool-name {
+    color: #3b82f6;
+    background: rgba(59, 130, 246, 0.1);
 }

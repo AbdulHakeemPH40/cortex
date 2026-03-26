@@ -72,7 +72,7 @@ class ChatHistoryManager:
     def get_messages(
         self,
         conversation_id: str,
-        limit: int = 100
+        limit: int = 5000
     ) -> List[Dict]:
         """Get messages for a conversation."""
         messages = self.db.get_messages(conversation_id, limit)

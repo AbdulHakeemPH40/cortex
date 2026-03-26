@@ -27,195 +27,158 @@ function getStorageKey() {
     return 'cortex_chats';
 }
 
-// Load chats for current project
+// --- CHAT PERSISTENCE (Consolidated & Handled for Robust Shutdown) ---
+
+// Load chats for current project - MERGE with SQLite source-of-truth
 function loadProjectChats() {
     var key = getStorageKey();
+    var lsChats = [];
     try {
         var data = localStorage.getItem(key);
-        console.log('[CHAT] LOAD - Key:', key);
-        console.log('[CHAT] LOAD - Data:', data ? 'found (' + data.length + ' chars)' : 'NULL (no saved chats)');
-        var parsed = JSON.parse(data || '[]');
-        console.log('[CHAT] LOAD - Parsed', parsed.length, 'chat(s)');
-        if (parsed.length > 0) {
-            parsed.forEach(function(c, i) {
-                var msgCount = (c.messages && c.messages.length) ? c.messages.length : 0;
-                if (typeof c.message_count === 'number' && c.message_count > msgCount) {
-                    c.truncated = true;
-                }
-                console.log('[CHAT]   Chat ' + (i+1) + ': "' + c.title + '" with ' + msgCount + ' messages');
-            });
-            return parsed;
-        }
-        
-        // If localStorage is empty or returns NULL, try loading from SQLite
-        console.log('[CHAT] LOAD - localStorage empty or no data, trying SQLite...');
-        return loadChatsFromSQLite();
+        lsChats = JSON.parse(data || '[]');
+        console.log('[CHAT] LOAD LS - Parsed', lsChats.length, 'chat(s) from localStorage');
     } catch (e) {
-        console.error('[CHAT] LOAD ERROR:', e.message);
-        // On error, try loading from SQLite
-        console.log('[CHAT] LOAD - Error in localStorage, trying SQLite...');
-        return loadChatsFromSQLite();
+        console.warn('[CHAT] LOAD LS - Error parsing localStorage:', e.message);
     }
-}
-
-// SQLITE PERSISTENCE - Save chats for current project
-function saveProjectChatsToSQLite(chatList) {
-    var key = getStorageKey();
-    var data = JSON.stringify(chatList);
-    var success = false;
     
-    console.log('[CHAT] SAVE SQLITE - Saving', chatList.length, 'chat(s),', data.length, 'chars');
+    // Load from SQLite (Authority for history)
+    var sqlChats = loadChatsFromSQLite() || [];
+    console.log('[CHAT] LOAD SQLITE - Found', sqlChats.length, 'chat(s) in SQLite');
     
-    try {
-        if (bridge && typeof bridge.save_chats_to_sqlite === 'function') {
-            var result = bridge.save_chats_to_sqlite(key, data);
-            if (result === "OK") {
-                console.log('[CHAT] SAVE SQLITE - SUCCESS');
-                success = true;
-            } else {
-                console.error('[CHAT] SAVE SQLITE - FAILED:', result);
+    if (sqlChats.length === 0) return lsChats;
+    
+    // Merge: Create a map of LS chats for easy lookup
+    var lsMap = {};
+    lsChats.forEach(function(c) { 
+        if (c && c.id) lsMap[c.id] = c; 
+    });
+    
+    // Build final merged list based on SQLite's authoritative list
+    var merged = sqlChats.map(function(sqlChat) {
+        var lsChat = lsMap[sqlChat.id];
+        if (lsChat) {
+            // Update LS chat metadata if SQLite has newer info
+            var sqlCount = sqlChat.message_count || 0;
+            var lsCount = (lsChat.messages && lsChat.messages.length) || lsChat.message_count || 0;
+            
+            if (sqlCount > lsCount) {
+                console.log('[CHAT]   Chat "' + sqlChat.title + '" has newer messages in SQLite ('+sqlCount+' vs '+lsCount+')');
+                lsChat.message_count = sqlCount;
+                lsChat.truncated = true; // Mark as needing lazy load
             }
+            return lsChat;
         } else {
-            console.warn('[CHAT] SAVE SQLITE - Bridge not ready');
+            // New chat from SQLite that isn't in LS cache
+            console.log('[CHAT]   Adding missing chat from SQLite:', sqlChat.title);
+            return sqlChat;
         }
-    } catch (e) {
-        console.error('[CHAT] SAVE SQLITE - ERROR:', e.message);
-    }
+    });
     
-    return success;
+    return merged;
 }
 
-// SQLITE PERSISTENCE - Load chats from SQLite database
+// SQLITE PERSISTENCE - Load chats metadata from SQLite
 function loadChatsFromSQLite() {
     var key = getStorageKey();
-    console.log('[CHAT] LOAD SQLITE - Key:', key);
-    
     if (!bridge || typeof bridge.load_chats_from_sqlite !== 'function') {
         console.warn('[CHAT] LOAD SQLITE - Bridge not ready');
         return [];
     }
     
     try {
-        // The bridge method returns a string directly (synchronous)
         var result = bridge.load_chats_from_sqlite(key);
-        console.log('[CHAT] LOAD SQLITE - Raw result type:', typeof result);
-        console.log('[CHAT] LOAD SQLITE - Raw result:', result);
-        
-        // If result is a Promise or looks like "[object Promise]", we need to handle it differently
-        if (result && result.toString() === '[object Promise]') {
-            console.error('[CHAT] LOAD SQLITE - Got Promise instead of direct result. Bridge not ready.');
-            return [];
-        }
-        
-        // Check if we got a valid string result
         if (result && typeof result === 'string' && result !== "[]") {
-            console.log('[CHAT] LOAD SQLITE - Found', result.length, 'chars of data');
-            try {
-                var parsed = JSON.parse(result);
-                console.log('[CHAT] LOAD SQLITE - Parsed raw data:', JSON.stringify(parsed, null, 2));
-                // Ensure all chats from SQLite (which are metadata-only) are marked as unloaded
-                var chatsWithMetadata = parsed.map(function(c) {
-                    console.log('[CHAT]   Processing chat:', c.title, 'message_count:', c.message_count);
-                    return {
-                        id: c.id,
-                        title: c.title,
-                        created_at: c.created_at,
-                        message_count: c.message_count || 0,
-                        messages: [],
-                        loaded: false
-                    };
-                });
-                console.log('[CHAT] LOAD SQLITE - Successfully parsed', chatsWithMetadata.length, 'chats (marked as metadata)');
-                return chatsWithMetadata;
-            } catch (parseError) {
-                console.error('[CHAT] LOAD SQLITE - JSON parse error:', parseError.message);
-                console.error('[CHAT] LOAD SQLITE - Invalid JSON:', result.substring(0, 100));
-            }
-        } else if (result === "[]") {
-            console.log('[CHAT] LOAD SQLITE - Empty array returned (no saved chats)');
-            return [];
+            var parsed = JSON.parse(result);
+            return parsed.map(function(c) {
+                return {
+                    id: c.id,
+                    title: c.title,
+                    created_at: c.created_at,
+                    message_count: c.message_count || 0,
+                    messages: [],
+                    loaded: false
+                };
+            });
         }
     } catch (e) {
-        console.error('[CHAT] LOAD SQLITE - ERROR:', e.message);
-        console.error('[CHAT] LOAD SQLITE - Error stack:', e.stack);
+        console.error('[CHAT] LOAD SQLITE ERROR:', e.message);
     }
-    
-    console.log('[CHAT] LOAD SQLITE - No data or error occurred');
     return [];
 }
 
-// Save chats for current project - saves to both localStorage and file
+// CONSOLIDATED SAVE - Captures partial responses and ensures persistence
 function saveProjectChats(chatList) {
+    if (!chatList || chatList.length === 0) {
+        // Even if no chats, signal finish to allow shutdown to proceed
+        if (bridge && typeof bridge.on_save_finished === 'function') bridge.on_save_finished("EMPTY");
+        return false;
+    }
+    
+    // ── IMPORTANT: Capture partial AI response if streaming during shutdown ──
+    if (typeof _isGenerating !== 'undefined' && _isGenerating && currentAssistantMessage && currentContent && currentContent.trim()) {
+        var chat = chatList.find(function(c) { return c.id == currentChatId; });
+        if (chat) {
+            var messages = chat.messages || [];
+            var lastMsg = messages[messages.length - 1];
+            var isDuplicate = lastMsg && (lastMsg.role === 'assistant' || lastMsg.sender === 'assistant') && (lastMsg.text === currentContent || lastMsg.content === currentContent);
+            
+            if (!isDuplicate) {
+                console.log('[CHAT] SAVE - Capturing partial AI response:', currentContent.substring(0, 30) + '...');
+                if (!chat.messages) chat.messages = [];
+                chat.messages.push({ 
+                    text: currentContent, 
+                    content: currentContent, 
+                    role: 'assistant', 
+                    sender: 'assistant',
+                    partial: true 
+                });
+            }
+        }
+    }
+    
     var key = getStorageKey();
     var fullData = JSON.stringify(chatList);
+    
+    // Truncate for localStorage (performance)
     var MAX_LOCAL_MESSAGES = 50;
     var storageChats = chatList.map(function(chat) {
         var messages = chat.messages || [];
-        var messageCount = (typeof chat.message_count === 'number') ? chat.message_count : messages.length;
-        var storedMessages = messages;
-        if (messages.length > MAX_LOCAL_MESSAGES) {
-            storedMessages = messages.slice(-MAX_LOCAL_MESSAGES);
-        }
+        var msgCount = (typeof chat.message_count === 'number') ? chat.message_count : messages.length;
         return {
             id: chat.id,
             title: chat.title,
             created_at: chat.created_at,
-            message_count: messageCount,
-            messages: storedMessages,
-            truncated: messageCount > storedMessages.length
+            message_count: msgCount,
+            messages: messages.slice(-MAX_LOCAL_MESSAGES),
+            truncated: msgCount > MAX_LOCAL_MESSAGES
         };
     });
-    var data = JSON.stringify(storageChats);
-    var saveSuccess = false;
+    var lsData = JSON.stringify(storageChats);
     
-    console.log('[CHAT] SAVE - Saving', chatList.length, 'chat(s),', data.length, 'chars');
+    console.log('[CHAT] SAVE - Persisting', chatList.length, 'chat(s) to LS and SQLite');
     
-    // Method 1: localStorage (fast but may not persist)
     try {
-        localStorage.setItem(key, data);
-        var verify = localStorage.getItem(key);
-        if (verify) {
-            console.log('[CHAT] SAVE - localStorage: OK (' + verify.length + ' chars)');
-            saveSuccess = true;
-        } else {
-            console.error('[CHAT] SAVE - localStorage: FAILED (verify returned null)');
-        }
-    } catch (e) {
-        console.error('[CHAT] SAVE ERROR (localStorage):', e.message);
-    }
-    
-    // Method 2: SQLite storage (high-performance persistent storage)
-    try {
-        // FAST PATH: Only serialize and sync the active chat across the QWebChannel bridge
+        localStorage.setItem(key, lsData);
+        
+        // Priority 1: Save Active Chat (Fast Path)
         var activeChat = chatList.find(function(c) { return c.id === currentChatId; });
         if (activeChat && bridge && typeof bridge.save_single_chat_to_sqlite === 'function') {
-            var singleData = JSON.stringify(activeChat);
-            var promise = bridge.save_single_chat_to_sqlite(key, singleData);
-            if (promise && typeof promise.then === 'function') {
-                promise.catch(function(err) {
-                    console.error('[CHAT] SAVE - SQLite Single: ERROR:', err);
-                });
-            }
+            var activeData = JSON.stringify(activeChat);
+            bridge.save_single_chat_to_sqlite(key, activeData);
         } else if (bridge && typeof bridge.save_chats_to_sqlite === 'function') {
-            // FALLBACK FULL SYNC
-            var promise = bridge.save_chats_to_sqlite(key, fullData);
-            if (promise && typeof promise.then === 'function') {
-                promise.catch(function(err) {
-                    console.error('[CHAT] SAVE - SQLite Full: ERROR:', err);
-                });
-            }
-        } else {
-            console.warn('[CHAT] SAVE - SQLite: Bridge not ready');
+            // Fallback: Full Sync
+            bridge.save_chats_to_sqlite(key, fullData);
         }
     } catch (e) {
-        console.error('[CHAT] SAVE ERROR (SQLite):', e.message);
+        console.error('[CHAT] SAVE ERROR:', e.message);
     }
     
-    if (!saveSuccess) {
-        console.error('[CHAT] SAVE - ALL METHODS FAILED - chats may be lost on restart!');
+    // CRITICAL: Notify Python bridge that save is complete for shutdown handshake
+    if (bridge && typeof bridge.on_save_finished === 'function') {
+        bridge.on_save_finished("OK");
     }
     
-    return saveSuccess;
+    return true;
 }
 
 // Initialize chats as empty - will be loaded when project is set
@@ -1122,6 +1085,7 @@ function renderHistoryList() {
         item.className = 'history-item' + (chat.id === currentChatId ? ' active' : '');
         
         var titleSpan = document.createElement('span');
+        titleSpan.className = 'title-text'; // Add class for proper ellipsis
         titleSpan.textContent = chat.title;
         
         var deleteBtn = document.createElement('button');
@@ -1607,6 +1571,16 @@ function appendMessage(text, sender, shouldSave) {
             saveChats();
         }
     }
+    
+    // Re-verify title for first message if needed
+    if (sender === 'user' && shouldSave) {
+        var chat = chats.find(function(c) { return c.id == currentChatId; });
+        if (chat && (chat.messages.length === 1 || !chat.title || chat.title === 'New Chat')) {
+             chat.title = text.substring(0, 40) + (text.length > 40 ? '...' : '');
+             renderHistoryList();
+        }
+    }
+    
     return bubble;
 }
 
@@ -4322,7 +4296,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 
                 // Auto-scroll to bottom to show latest message
                 setTimeout(function() {
-                    var container = document.getElementById('chat-output');
+                    var container = document.getElementById('chat-output') || document.getElementById('chatMessages');
                     if (container) {
                         container.scrollTop = container.scrollHeight;
                         console.log('[CHAT] Auto-scrolled to bottom after loading', chat.messages.length, 'messages');
@@ -5884,3 +5858,235 @@ function hideIndexingStatus() {
 
 window.showIndexingStatus = showIndexingStatus;
 window.hideIndexingStatus = hideIndexingStatus;
+
+// ================================================
+// PERMISSION CARD SYSTEM (IN-CHAT) (NEW)
+// ================================================
+
+/**
+ * Show permission card inside chat messages area
+ * @param {string} toolName - Name of the tool requesting permission
+ * @param {string} details - HTML content showing what will be changed
+ * @param {function} callback - Function to call with (approved, remember) when user responds
+ */
+function showPermissionCard(toolName, details, callback) {
+    console.log('[PERMISSION] Showing card for:', toolName);
+    
+    // Get chat messages container
+    var chatMessages = document.getElementById('chatMessages');
+    if (!chatMessages) {
+        console.error('[PERMISSION] Chat messages container not found!');
+        return;
+    }
+    
+    // Create permission card from template
+    var template = document.getElementById('permission-card-template');
+    if (!template) {
+        console.error('[PERMISSION] Template not found!');
+        return;
+    }
+    
+    var card = template.content.cloneNode(true);
+    
+    // Populate card content
+    card.querySelector('.permission-tool-name').textContent = toolName;
+    card.querySelector('.permission-card-details').innerHTML = details;
+    
+    // Store callback on card element
+    card._permissionCallback = callback;
+    
+    // Add to chat messages
+    chatMessages.appendChild(card);
+    
+    // Scroll to bottom to show card
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+    
+    // Setup button handlers
+    var approveBtn = card.querySelector('.permission-btn-approve');
+    var denyBtn = card.querySelector('.permission-btn-deny');
+    var rememberCheckbox = card.querySelector('.permission-remember-checkbox');
+    
+    if (approveBtn) {
+        approveBtn.addEventListener('click', function() {
+            var remember = rememberCheckbox ? rememberCheckbox.checked : false;
+            console.log('[PERMISSION] User approved');
+            if (card._permissionCallback) {
+                card._permissionCallback(true, remember);
+            }
+            // Remove card after response
+            card.remove();
+        });
+    }
+    
+    if (denyBtn) {
+        denyBtn.addEventListener('click', function() {
+            var remember = rememberCheckbox ? rememberCheckbox.checked : false;
+            console.log('[PERMISSION] User denied');
+            if (card._permissionCallback) {
+                card._permissionCallback(false, remember);
+            }
+            // Remove card after response
+            card.remove();
+        });
+    }
+}
+
+// Expose to Python bridge
+window.showPermissionCard = showPermissionCard;
+
+
+// ── INTERACTIVE QUESTION SUPPORT (STOP-AND-WAIT PIPELINE) ──────────
+
+/**
+ * Shows a premium interaction card in the chat for AI questions.
+ * @param {Object} info - {id, text, type, choices, default}
+ */
+window.showQuestionCard = function(info) {
+    console.log('[CHAT] showQuestionCard called:', info);
+    var container = document.getElementById('chatMessages');
+    if (!container) return;
+
+    // Use Template for permissions if available (Planned UI support)
+    if (info.type === 'permission') {
+        var template = document.getElementById('permission-card-template');
+        if (template) {
+            var card = template.content.cloneNode(true).querySelector('.permission-card');
+            card.id = 'interaction-' + info.id;
+            
+            var titleEl = card.querySelector('.permission-tool-name');
+            if (titleEl) titleEl.textContent = info.tool_name || 'Action Request';
+            
+            var detailsEl = card.querySelector('.permission-card-details');
+            if (detailsEl) detailsEl.innerHTML = info.details || '';
+            
+            var approveBtn = card.querySelector('.permission-btn-approve');
+            if (approveBtn) approveBtn.onclick = function() { 
+                var checkbox = card.querySelector('.permission-remember-checkbox');
+                var answer = (checkbox && checkbox.checked) ? 'always' : 'allow';
+                submitInteractionAnswer(info.id, answer); 
+            };
+            
+            var denyBtn = card.querySelector('.permission-btn-deny');
+            if (denyBtn) denyBtn.onclick = function() { submitInteractionAnswer(info.id, 'deny'); };
+            
+            container.appendChild(card);
+            setTimeout(function() {
+                container.scrollTop = container.scrollHeight;
+                console.log('[CHAT] Template permission card appended and scrolled');
+            }, 50);
+            return;
+        }
+    }
+
+    var card = document.createElement('div');
+    card.className = 'interaction-card';
+    card.id = 'interaction-' + info.id;
+
+    var html = '<div class="interaction-header">' +
+               '<span class="interaction-icon">❓</span>' +
+               '<span class="interaction-title">AI Question</span>' +
+               '</div>' +
+               '<div class="interaction-body">' +
+               '<p class="interaction-text">' + (info.text || "I have a question before I continue.") + '</p>';
+
+    if (info.type === 'confirm') {
+        html += '<div class="interaction-actions">' +
+                '<button class="interaction-btn deny" onclick="submitInteractionAnswer(\'' + info.id + '\', \'no\')">No</button>' +
+                '<button class="interaction-btn approve" onclick="submitInteractionAnswer(\'' + info.id + '\', \'yes\')">Yes</button>' +
+                '</div>';
+    } else if (info.type === 'permission') {
+        html += '<div class="interaction-permission-details">' + (info.details || "") + '</div>' +
+                '<div class="interaction-actions permission-grid">' +
+                '<button class="interaction-btn secondary" onclick="submitInteractionAnswer(\'' + info.id + '\', \'deny\')">Deny</button>' +
+                '<button class="interaction-btn primary" onclick="submitInteractionAnswer(\'' + info.id + '\', \'allow\')">Allow</button>' +
+                '<button class="interaction-btn ghost" onclick="submitInteractionAnswer(\'' + info.id + '\', \'always\')">Always</button>' +
+                '</div>';
+    } else if (info.type === 'choice' && info.choices && info.choices.length > 0) {
+        html += '<div class="interaction-choices">';
+        info.choices.forEach(function(choice) {
+            html += '<button class="interaction-choice-btn" onclick="submitInteractionAnswer(\'' + info.id + '\', \'' + choice.replace(/'/g, "\\'") + '\')">' + choice + '</button>';
+        });
+        html += '</div>';
+    } else {
+        // Default text input
+        html += '<div class="interaction-input-group">' +
+                '<input type="text" id="input-' + info.id + '" class="interaction-input" placeholder="' + (info.default || 'Type your answer...') + '" />' +
+                '<button class="interaction-submit-btn" onclick="submitInteractionByInput(\'' + info.id + '\')">Send</button>' +
+                '</div>';
+    }
+
+    html += '</div>';
+    card.innerHTML = html;
+    container.appendChild(card);
+    
+    // FORCE scroll to bottom for interactions - high priority
+    setTimeout(function() {
+        container.scrollTop = container.scrollHeight;
+        console.log('[CHAT] Interaction card appended and scrolled to bottom');
+    }, 50);
+
+    // Focus input if it's a text type and handle Enter key
+    if (info.type !== 'confirm' && info.type !== 'choice' && info.type !== 'permission') {
+        setTimeout(function() {
+            var input = document.getElementById('input-' + info.id);
+            if (input) {
+                input.focus();
+                input.onkeydown = function(e) {
+                    if (e.key === 'Enter') {
+                        submitInteractionByInput(info.id);
+                    }
+                };
+            }
+        }, 150);
+    }
+};
+
+/**
+ * Submits the answer back to the Python AIAgent.
+ */
+window.submitInteractionAnswer = function(id, answer) {
+    console.log('[CHAT] Submitting interaction answer:', id, answer);
+    var card = document.getElementById('interaction-' + id);
+    if (card) {
+        card.classList.add('answered');
+        var answeredContainer = card.querySelector('.interaction-answered') || card.querySelector('.permission-card-body') || card;
+        
+        if (card.classList.contains('permission-card')) {
+            // Special handling for template card
+            var actions = card.querySelector('.permission-card-actions');
+            var remember = card.querySelector('.permission-card-remember');
+            if (actions) actions.style.display = 'none';
+            if (remember) remember.style.display = 'none';
+            
+            var statusDiv = document.createElement('div');
+            statusDiv.className = 'interaction-answered';
+            statusDiv.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>' +
+                                 ' Decision: ' + answer.toUpperCase();
+            answeredContainer.appendChild(statusDiv);
+        } else {
+            card.innerHTML = '<div class="interaction-answered">' +
+                             '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>' +
+                             ' Answered: ' + answer + '</div>';
+        }
+    }
+
+    if (window.bridge && typeof window.bridge.on_answer_question === 'function') {
+        window.bridge.on_answer_question(id, answer);
+    } else {
+        console.error('[CHAT] Bridge not ready to send interaction answer');
+    }
+};
+
+/**
+ * Helper to submit answer from a text input field.
+ */
+window.submitInteractionByInput = function(id) {
+    var input = document.getElementById('input-' + id);
+    var answer = input ? input.value : '';
+    // If empty but has a default (placeholder), use it
+    if (!answer && input && input.placeholder !== 'Type your answer...') {
+        answer = input.placeholder;
+    }
+    if (!answer) answer = ""; // Ensure not null
+    window.submitInteractionAnswer(id, answer);
+};
