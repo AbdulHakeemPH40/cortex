@@ -43,3 +43,4 @@ dist/
 installer_output/
 opencode-dev/
 vscode-main/
+node_modules/

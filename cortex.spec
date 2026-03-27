@@ -34,6 +34,8 @@ a = Analysis(
         ('src/ui/components/assets', 'src/ui/components/assets'),
         ('src/ui/themes', 'src/ui/themes'),
         ('src/assets', 'src/assets'),
+        ('bin/node', 'bin/node'),
+        ('node_modules', 'node_modules'),
         ('.env', '.'),
     ],
     hiddenimports=[
@@ -45,6 +47,7 @@ a = Analysis(
         'PyQt6.sip',
         'src.ai.providers.deepseek_provider',
         'src.ai.providers.together_provider',
+        'src.core.lsp_manager',
     ],
     hookspath=[],
     hooksconfig={},
@@ -74,6 +77,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='src/assets/logo/app.ico',
 )
 
 coll = COLLECT(

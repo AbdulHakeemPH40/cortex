@@ -11,17 +11,20 @@ from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
 from src.utils.logger import get_logger
+from src.core.lsp_manager import get_lsp_manager
 
 log = get_logger("syntax_checker")
 
 
 @dataclass
-class SyntaxError:
-    """A syntax error found in source code."""
+class DiagnosticError:
+    """A diagnostic problem found in source code with precise range support."""
     file_path: str
     line: int
     column: int
     message: str
+    end_line: int = 0
+    end_column: int = 0
     severity: str = "error"  # error, warning, info
     code: str = ""  # Error code if available
     source: str = ""  # Source tool name
@@ -32,7 +35,7 @@ class SyntaxResult:
     """Result of syntax checking."""
     file_path: str
     language: str
-    errors: List[SyntaxError]
+    errors: List[DiagnosticError]
     success: bool
     check_time_ms: float = 0
 
@@ -94,6 +97,8 @@ class SyntaxChecker:
     }
     
     def __init__(self):
+        self._lsp_manager = get_lsp_manager()
+        self._opened_files = set()
         self._checkers = {
             'python': self._check_python,
             'javascript': self._check_javascript,
@@ -119,18 +124,9 @@ class SyntaxChecker:
         return self.LANGUAGE_EXTENSIONS.get(ext, 'unknown')
     
     def check_file(self, file_path: str, content: str = None) -> SyntaxResult:
-        """
-        Check a file for syntax errors.
-        
-        Args:
-            file_path: Path to the file
-            content: Optional content (reads from file if not provided)
-        
-        Returns:
-            SyntaxResult with errors and status
-        """
+        """Check a file for syntax errors using LSP + Local fallback."""
         import time
-        start_time = time.time()
+        start_t = time.time()
         
         language = self.detect_language(file_path)
         
@@ -138,35 +134,25 @@ class SyntaxChecker:
             try:
                 content = Path(file_path).read_text(encoding='utf-8', errors='ignore')
             except Exception as e:
-                return SyntaxResult(
-                    file_path=file_path,
-                    language=language,
-                    errors=[SyntaxError(
-                        file_path=file_path,
-                        line=0,
-                        column=0,
-                        message=f"Failed to read file: {e}"
-                    )],
-                    success=False
-                )
+                return SyntaxResult(file_path, language, [DiagnosticError(file_path, 0, 0, f"Read error: {e}")], False)
+
+        # 1. 🚀 Industry Standard: LSP Analysis
+        errors = self._get_lsp_diagnostics(file_path, content, language)
         
-        errors = []
-        
-        # Get appropriate checker
+        # 2. Local Fallback (Fast Highlighting / AST)
         checker = self._checkers.get(language, self._check_generic)
-        
         try:
-            errors = checker(file_path, content)
+            local_errors = checker(file_path, content)
+            # Avoid duplicate warnings for the same line if LSP already caught it
+            lsp_lines = {e.line for e in errors}
+            for e in local_errors:
+                if e.line not in lsp_lines:
+                    errors.append(e)
         except Exception as e:
-            log.warning(f"Syntax check failed for {file_path}: {e}")
-            errors = [SyntaxError(
-                file_path=file_path,
-                line=0,
-                column=0,
-                message=f"Syntax check error: {str(e)}"
-            )]
-        
-        check_time_ms = (time.time() - start_time) * 1000
+            log.warning(f"Local scanner for {language} failed: {e}")
+            
+        print(f"[SyntaxChecker] Checked {file_path} ({language}): Found {len(errors)} errors.")
+        check_time_ms = (time.time() - start_t) * 1000
         
         return SyntaxResult(
             file_path=file_path,
@@ -175,23 +161,52 @@ class SyntaxChecker:
             success=len(errors) == 0,
             check_time_ms=check_time_ms
         )
+
+    def _get_lsp_diagnostics(self, file_path: str, content: str, language: str) -> List[DiagnosticError]:
+        """Talk to LSP server and convert standard diagnostics with precise ranges."""
+        self._lsp_manager.notify_changed(file_path, content, language)
+        
+        abs_path = os.path.abspath(file_path)
+        raw_diagnostics = self._lsp_manager.get_diagnostics(abs_path)
+        standard_errors = []
+        
+        severity_map = {1: "error", 2: "warning", 3: "info", 4: "info"}
+        for d in raw_diagnostics:
+            rng_start = d.get("range", {}).get("start", {})
+            rng_end = d.get("range", {}).get("end", {})
+            
+            standard_errors.append(DiagnosticError(
+                file_path=abs_path,
+                line=rng_start.get("line", 0) + 1,
+                column=rng_start.get("character", 0) + 1,
+                end_line=rng_end.get("line", 0) + 1,
+                end_column=rng_end.get("character", 0) + 1,
+                message=d.get("message", "Unknown problem"),
+                severity=severity_map.get(d.get("severity", 1), "error"),
+                source=f"LSP ({language})", # Source is usually the server's lang
+                code=str(d.get("code", ""))
+            ))
+            
+        return standard_errors
     
-    def _check_python(self, file_path: str, content: str) -> List[SyntaxError]:
+    def _check_python(self, file_path: str, content: str) -> List[DiagnosticError]:
         """Check Python syntax using ast module."""
         errors = []
         
         try:
             import ast
             ast.parse(content)
-        except SyntaxError as e:
-            errors.append(SyntaxError(
-                file_path=file_path,
-                line=e.lineno or 1,
-                column=e.offset or 0,
-                message=e.msg or str(e),
-                code="syntax-error",
-                source="python-ast"
-            ))
+        except Exception as e:
+            # Check specifically for SyntaxError without shadowing it
+            if e.__class__.__name__ == 'SyntaxError':
+                errors.append(DiagnosticError(
+                    file_path=file_path,
+                    line=getattr(e, 'lineno', 1) or 1,
+                    column=getattr(e, 'offset', 0) or 0,
+                    message=getattr(e, 'msg', str(e)) or str(e),
+                    code="syntax-error",
+                    source="python-ast"
+                ))
         
         # Try py_compile for additional checks
         try:
@@ -208,7 +223,7 @@ class SyntaxChecker:
                 # Parse line number from error message
                 match = re.search(r'line (\d+)', str(e))
                 line = int(match.group(1)) if match else 1
-                errors.append(SyntaxError(
+                errors.append(DiagnosticError(
                     file_path=file_path,
                     line=line,
                     column=0,
@@ -223,11 +238,11 @@ class SyntaxChecker:
         
         return errors
     
-    def _check_javascript(self, file_path: str, content: str) -> List[SyntaxError]:
+    def _check_javascript(self, file_path: str, content: str) -> List[DiagnosticError]:
         """Check JavaScript syntax using Node.js."""
         return self._check_with_node(file_path, content)
     
-    def _check_typescript(self, file_path: str, content: str) -> List[SyntaxError]:
+    def _check_typescript(self, file_path: str, content: str) -> List[DiagnosticError]:
         """Check TypeScript syntax using tsc or Node.js."""
         # Try tsc if available
         errors = self._check_with_tsc(file_path, content)
@@ -236,7 +251,7 @@ class SyntaxChecker:
             errors = self._check_with_node(file_path, content)
         return errors
     
-    def _check_with_node(self, file_path: str, content: str) -> List[SyntaxError]:
+    def _check_with_node(self, file_path: str, content: str) -> List[DiagnosticError]:
         """Check JS syntax using Node.js --check or -e."""
         errors = []
         
@@ -255,7 +270,7 @@ class SyntaxChecker:
             # Node not installed - try basic regex checks
             errors = self._check_js_regex(file_path, content)
         except subprocess.TimeoutExpired:
-            errors.append(SyntaxError(
+            errors.append(DiagnosticError(
                 file_path=file_path,
                 line=0,
                 column=0,
@@ -267,7 +282,7 @@ class SyntaxChecker:
         
         return errors
     
-    def _check_with_tsc(self, file_path: str, content: str) -> List[SyntaxError]:
+    def _check_with_tsc(self, file_path: str, content: str) -> List[DiagnosticError]:
         """Check TypeScript syntax using tsc."""
         errors = []
         
@@ -290,7 +305,7 @@ class SyntaxChecker:
         
         return errors
     
-    def _parse_node_error(self, stderr: str, file_path: str) -> List[SyntaxError]:
+    def _parse_node_error(self, stderr: str, file_path: str) -> List[DiagnosticError]:
         """Parse Node.js error output."""
         errors = []
         
@@ -310,7 +325,7 @@ class SyntaxChecker:
                 msg_match = re.search(r'SyntaxError: (.+)', line)
                 msg = msg_match.group(1) if msg_match else line
                 
-                errors.append(SyntaxError(
+                errors.append(DiagnosticError(
                     file_path=file_path,
                     line=line_num,
                     column=col_num,
@@ -321,7 +336,7 @@ class SyntaxChecker:
         
         return errors
     
-    def _parse_tsc_error(self, stdout: str, file_path: str) -> List[SyntaxError]:
+    def _parse_tsc_error(self, stdout: str, file_path: str) -> List[DiagnosticError]:
         """Parse TypeScript compiler error output."""
         errors = []
         
@@ -331,7 +346,7 @@ class SyntaxChecker:
         for line in stdout.strip().split('\n'):
             match = re.match(pattern, line)
             if match:
-                errors.append(SyntaxError(
+                errors.append(DiagnosticError(
                     file_path=match.group(1),
                     line=int(match.group(2)),
                     column=int(match.group(3)),
@@ -342,7 +357,7 @@ class SyntaxChecker:
         
         return errors
     
-    def _check_js_regex(self, file_path: str, content: str) -> List[SyntaxError]:
+    def _check_js_regex(self, file_path: str, content: str) -> List[DiagnosticError]:
         """Basic JavaScript syntax check using regex patterns."""
         errors = []
         lines = content.split('\n')
@@ -379,7 +394,7 @@ class SyntaxChecker:
         
         # Check for unbalanced brackets
         if open_braces != 0:
-            errors.append(SyntaxError(
+            errors.append(DiagnosticError(
                 file_path=file_path,
                 line=1,
                 column=0,
@@ -389,7 +404,7 @@ class SyntaxChecker:
             ))
         
         if open_brackets != 0:
-            errors.append(SyntaxError(
+            errors.append(DiagnosticError(
                 file_path=file_path,
                 line=1,
                 column=0,
@@ -399,7 +414,7 @@ class SyntaxChecker:
             ))
         
         if open_parens != 0:
-            errors.append(SyntaxError(
+            errors.append(DiagnosticError(
                 file_path=file_path,
                 line=1,
                 column=0,
@@ -410,7 +425,7 @@ class SyntaxChecker:
         
         return errors
     
-    def _check_java(self, file_path: str, content: str) -> List[SyntaxError]:
+    def _check_java(self, file_path: str, content: str) -> List[DiagnosticError]:
         """Check Java syntax using javac."""
         errors = []
         
@@ -425,7 +440,7 @@ class SyntaxChecker:
             if result.returncode != 0:
                 errors.extend(self._parse_java_error(result.stderr, file_path))
         except FileNotFoundError:
-            errors.append(SyntaxError(
+            errors.append(DiagnosticError(
                 file_path=file_path,
                 line=0,
                 column=0,
@@ -433,7 +448,7 @@ class SyntaxChecker:
                 severity="warning"
             ))
         except subprocess.TimeoutExpired:
-            errors.append(SyntaxError(
+            errors.append(DiagnosticError(
                 file_path=file_path,
                 line=0,
                 column=0,
@@ -444,7 +459,7 @@ class SyntaxChecker:
         
         return errors
     
-    def _parse_java_error(self, stderr: str, file_path: str) -> List[SyntaxError]:
+    def _parse_java_error(self, stderr: str, file_path: str) -> List[DiagnosticError]:
         """Parse Java compiler error output."""
         errors = []
         
@@ -454,7 +469,7 @@ class SyntaxChecker:
         for line in stderr.strip().split('\n'):
             match = re.match(pattern, line)
             if match:
-                errors.append(SyntaxError(
+                errors.append(DiagnosticError(
                     file_path=match.group(1),
                     line=int(match.group(2)),
                     column=0,
@@ -464,7 +479,7 @@ class SyntaxChecker:
         
         return errors
     
-    def _check_go(self, file_path: str, content: str) -> List[SyntaxError]:
+    def _check_go(self, file_path: str, content: str) -> List[DiagnosticError]:
         """Check Go syntax using go vet/parser."""
         errors = []
         
@@ -482,7 +497,7 @@ class SyntaxChecker:
             # Try basic Go regex check
             errors = self._check_go_regex(file_path, content)
         except subprocess.TimeoutExpired:
-            errors.append(SyntaxError(
+            errors.append(DiagnosticError(
                 file_path=file_path,
                 line=0,
                 column=0,
@@ -493,7 +508,7 @@ class SyntaxChecker:
         
         return errors
     
-    def _check_go_regex(self, file_path: str, content: str) -> List[SyntaxError]:
+    def _check_go_regex(self, file_path: str, content: str) -> List[DiagnosticError]:
         """Basic Go syntax check using regex."""
         errors = []
         
@@ -505,7 +520,7 @@ class SyntaxChecker:
             open_braces += line.count('{') - line.count('}')
         
         if open_braces != 0:
-            errors.append(SyntaxError(
+            errors.append(DiagnosticError(
                 file_path=file_path,
                 line=1,
                 column=0,
@@ -515,7 +530,7 @@ class SyntaxChecker:
         
         return errors
     
-    def _parse_go_error(self, stderr: str, file_path: str) -> List[SyntaxError]:
+    def _parse_go_error(self, stderr: str, file_path: str) -> List[DiagnosticError]:
         """Parse Go vet output."""
         errors = []
         
@@ -525,7 +540,7 @@ class SyntaxChecker:
         for line in stderr.strip().split('\n'):
             match = re.match(pattern, line)
             if match:
-                errors.append(SyntaxError(
+                errors.append(DiagnosticError(
                     file_path=match.group(1),
                     line=int(match.group(2)),
                     column=int(match.group(3)) if match.group(3) else 0,
@@ -535,7 +550,7 @@ class SyntaxChecker:
         
         return errors
     
-    def _check_rust(self, file_path: str, content: str) -> List[SyntaxError]:
+    def _check_rust(self, file_path: str, content: str) -> List[DiagnosticError]:
         """Check Rust syntax using rustc --check."""
         errors = []
         
@@ -550,7 +565,7 @@ class SyntaxChecker:
             if result.returncode != 0:
                 errors.extend(self._parse_rust_error(result.stderr, file_path))
         except FileNotFoundError:
-            errors.append(SyntaxError(
+            errors.append(DiagnosticError(
                 file_path=file_path,
                 line=0,
                 column=0,
@@ -558,7 +573,7 @@ class SyntaxChecker:
                 severity="warning"
             ))
         except subprocess.TimeoutExpired:
-            errors.append(SyntaxError(
+            errors.append(DiagnosticError(
                 file_path=file_path,
                 line=0,
                 column=0,
@@ -569,7 +584,7 @@ class SyntaxChecker:
         
         return errors
     
-    def _parse_rust_error(self, stderr: str, file_path: str) -> List[SyntaxError]:
+    def _parse_rust_error(self, stderr: str, file_path: str) -> List[DiagnosticError]:
         """Parse Rust compiler output."""
         errors = []
         
@@ -579,7 +594,7 @@ class SyntaxChecker:
         for line in stderr.strip().split('\n'):
             match = re.match(pattern, line)
             if match:
-                errors.append(SyntaxError(
+                errors.append(DiagnosticError(
                     file_path=match.group(1),
                     line=int(match.group(2)),
                     column=int(match.group(3)),
@@ -589,15 +604,15 @@ class SyntaxChecker:
         
         return errors
     
-    def _check_c(self, file_path: str, content: str) -> List[SyntaxError]:
+    def _check_c(self, file_path: str, content: str) -> List[DiagnosticError]:
         """Check C syntax using gcc/clang."""
         return self._check_c_cpp(file_path, content, is_cpp=False)
     
-    def _check_cpp(self, file_path: str, content: str) -> List[SyntaxError]:
+    def _check_cpp(self, file_path: str, content: str) -> List[DiagnosticError]:
         """Check C++ syntax using g++/clang++."""
         return self._check_c_cpp(file_path, content, is_cpp=True)
     
-    def _check_c_cpp(self, file_path: str, content: str, is_cpp: bool) -> List[SyntaxError]:
+    def _check_c_cpp(self, file_path: str, content: str, is_cpp: bool) -> List[DiagnosticError]:
         """Check C/C++ syntax."""
         errors = []
         compiler = 'g++' if is_cpp else 'gcc'
@@ -622,7 +637,7 @@ class SyntaxChecker:
             
             os.unlink(temp_path)
         except FileNotFoundError:
-            errors.append(SyntaxError(
+            errors.append(DiagnosticError(
                 file_path=file_path,
                 line=0,
                 column=0,
@@ -634,7 +649,7 @@ class SyntaxChecker:
         
         return errors
     
-    def _parse_c_error(self, stderr: str, file_path: str) -> List[SyntaxError]:
+    def _parse_c_error(self, stderr: str, file_path: str) -> List[DiagnosticError]:
         """Parse GCC/Clang error output."""
         errors = []
         
@@ -644,7 +659,7 @@ class SyntaxChecker:
         for line in stderr.strip().split('\n'):
             match = re.match(pattern, line)
             if match:
-                errors.append(SyntaxError(
+                errors.append(DiagnosticError(
                     file_path=match.group(1),
                     line=int(match.group(2)),
                     column=int(match.group(3)),
@@ -654,7 +669,7 @@ class SyntaxChecker:
         
         return errors
     
-    def _check_csharp(self, file_path: str, content: str) -> List[SyntaxError]:
+    def _check_csharp(self, file_path: str, content: str) -> List[DiagnosticError]:
         """Check C# syntax using dotnet build."""
         errors = []
         
@@ -673,7 +688,7 @@ class SyntaxChecker:
             # Try basic syntax check
             errors = self._check_csharp_regex(file_path, content)
         except subprocess.TimeoutExpired:
-            errors.append(SyntaxError(
+            errors.append(DiagnosticError(
                 file_path=file_path,
                 line=0,
                 column=0,
@@ -684,7 +699,7 @@ class SyntaxChecker:
         
         return errors
     
-    def _check_csharp_regex(self, file_path: str, content: str) -> List[SyntaxError]:
+    def _check_csharp_regex(self, file_path: str, content: str) -> List[DiagnosticError]:
         """Basic C# syntax check."""
         errors = []
         
@@ -696,7 +711,7 @@ class SyntaxChecker:
             open_braces += line.count('{') - line.count('}')
         
         if open_braces != 0:
-            errors.append(SyntaxError(
+            errors.append(DiagnosticError(
                 file_path=file_path,
                 line=1,
                 column=0,
@@ -706,7 +721,7 @@ class SyntaxChecker:
         
         return errors
     
-    def _parse_csharp_error(self, stderr: str, file_path: str) -> List[SyntaxError]:
+    def _parse_csharp_error(self, stderr: str, file_path: str) -> List[DiagnosticError]:
         """Parse C# compiler error output."""
         errors = []
         
@@ -716,7 +731,7 @@ class SyntaxChecker:
         for line in stderr.strip().split('\n'):
             match = re.match(pattern, line)
             if match:
-                errors.append(SyntaxError(
+                errors.append(DiagnosticError(
                     file_path=match.group(1),
                     line=int(match.group(2)),
                     column=int(match.group(3)),
@@ -727,7 +742,7 @@ class SyntaxChecker:
         
         return errors
     
-    def _check_ruby(self, file_path: str, content: str) -> List[SyntaxError]:
+    def _check_ruby(self, file_path: str, content: str) -> List[DiagnosticError]:
         """Check Ruby syntax using ruby -c."""
         errors = []
         
@@ -742,7 +757,7 @@ class SyntaxChecker:
             if result.returncode != 0:
                 errors.extend(self._parse_ruby_error(result.stderr, file_path))
         except FileNotFoundError:
-            errors.append(SyntaxError(
+            errors.append(DiagnosticError(
                 file_path=file_path,
                 line=0,
                 column=0,
@@ -750,7 +765,7 @@ class SyntaxChecker:
                 severity="warning"
             ))
         except subprocess.TimeoutExpired:
-            errors.append(SyntaxError(
+            errors.append(DiagnosticError(
                 file_path=file_path,
                 line=0,
                 column=0,
@@ -761,7 +776,7 @@ class SyntaxChecker:
         
         return errors
     
-    def _parse_ruby_error(self, stderr: str, file_path: str) -> List[SyntaxError]:
+    def _parse_ruby_error(self, stderr: str, file_path: str) -> List[DiagnosticError]:
         """Parse Ruby syntax error."""
         errors = []
         
@@ -771,7 +786,7 @@ class SyntaxChecker:
         for line in stderr.strip().split('\n'):
             match = re.match(pattern, line)
             if match and 'syntax' in line.lower():
-                errors.append(SyntaxError(
+                errors.append(DiagnosticError(
                     file_path=match.group(1),
                     line=int(match.group(2)),
                     column=0,
@@ -781,7 +796,7 @@ class SyntaxChecker:
         
         return errors
     
-    def _check_php(self, file_path: str, content: str) -> List[SyntaxError]:
+    def _check_php(self, file_path: str, content: str) -> List[DiagnosticError]:
         """Check PHP syntax using php -l."""
         errors = []
         
@@ -798,7 +813,7 @@ class SyntaxChecker:
                     result.stderr or result.stdout, file_path
                 ))
         except FileNotFoundError:
-            errors.append(SyntaxError(
+            errors.append(DiagnosticError(
                 file_path=file_path,
                 line=0,
                 column=0,
@@ -806,7 +821,7 @@ class SyntaxChecker:
                 severity="warning"
             ))
         except subprocess.TimeoutExpired:
-            errors.append(SyntaxError(
+            errors.append(DiagnosticError(
                 file_path=file_path,
                 line=0,
                 column=0,
@@ -817,7 +832,7 @@ class SyntaxChecker:
         
         return errors
     
-    def _parse_php_error(self, output: str, file_path: str) -> List[SyntaxError]:
+    def _parse_php_error(self, output: str, file_path: str) -> List[DiagnosticError]:
         """Parse PHP linter output."""
         errors = []
         
@@ -826,7 +841,7 @@ class SyntaxChecker:
         
         match = re.search(pattern, output)
         if match:
-            errors.append(SyntaxError(
+            errors.append(DiagnosticError(
                 file_path=match.group(2),
                 line=int(match.group(3)),
                 column=0,
@@ -836,7 +851,7 @@ class SyntaxChecker:
         
         return errors
     
-    def _check_json(self, file_path: str, content: str) -> List[SyntaxError]:
+    def _check_json(self, file_path: str, content: str) -> List[DiagnosticError]:
         """Check JSON syntax."""
         errors = []
         
@@ -844,7 +859,7 @@ class SyntaxChecker:
             import json
             json.loads(content)
         except json.JSONDecodeError as e:
-            errors.append(SyntaxError(
+            errors.append(DiagnosticError(
                 file_path=file_path,
                 line=e.lineno or 1,
                 column=e.colno or 0,
@@ -855,7 +870,7 @@ class SyntaxChecker:
         
         return errors
     
-    def _check_yaml(self, file_path: str, content: str) -> List[SyntaxError]:
+    def _check_yaml(self, file_path: str, content: str) -> List[DiagnosticError]:
         """Check YAML syntax."""
         errors = []
         
@@ -868,7 +883,7 @@ class SyntaxChecker:
             if hasattr(e, 'problem_mark') and e.problem_mark:
                 line = e.problem_mark.line + 1
             
-            errors.append(SyntaxError(
+            errors.append(DiagnosticError(
                 file_path=file_path,
                 line=line,
                 column=0,
@@ -882,7 +897,7 @@ class SyntaxChecker:
         
         return errors
     
-    def _check_html(self, file_path: str, content: str) -> List[SyntaxError]:
+    def _check_html(self, file_path: str, content: str) -> List[DiagnosticError]:
         """Check HTML for basic issues and embedded languages (JS/CSS)."""
         errors = []
         
@@ -901,12 +916,12 @@ class SyntaxChecker:
                     tag_stack.pop()
                 elif tag_name in tag_stack:
                     line_num = content[:match.start()].count('\n') + 1
-                    errors.append(SyntaxError(file_path, line_num, 0, f"Mismatched closing tag </{tag_name}>", "warning", source="html-tag"))
+                    errors.append(DiagnosticError(file_path, line_num, 0, f"Mismatched closing tag </{tag_name}>", "warning", source="html-tag"))
             else:
                 tag_stack.append(tag_name)
         
         if tag_stack:
-            errors.append(SyntaxError(file_path, 1, 0, f"Unclosed tags: {', '.join(tag_stack)}", "warning", source="html-tag"))
+            errors.append(DiagnosticError(file_path, 1, 0, f"Unclosed tags: {', '.join(tag_stack)}", "warning", source="html-tag"))
 
         # 2. Check Embedded JavaScript (<script> blocks)
         script_pattern = re.compile(r'<script[^>]*>(.*?)</script>', re.DOTALL)
@@ -933,14 +948,14 @@ class SyntaxChecker:
         
         return errors
     
-    def _check_css(self, file_path: str, content: str) -> List[SyntaxError]:
+    def _check_css(self, file_path: str, content: str) -> List[DiagnosticError]:
         """Check CSS for basic issues."""
         errors = []
         
         # Check for unmatched braces
         open_braces = content.count('{') - content.count('}')
         if open_braces != 0:
-            errors.append(SyntaxError(
+            errors.append(DiagnosticError(
                 file_path=file_path,
                 line=1,
                 column=0,
@@ -951,7 +966,7 @@ class SyntaxChecker:
         
         return errors
     
-    def _check_sql(self, file_path: str, content: str) -> List[SyntaxError]:
+    def _check_sql(self, file_path: str, content: str) -> List[DiagnosticError]:
         """Check SQL for basic issues."""
         errors = []
         
@@ -960,7 +975,7 @@ class SyntaxChecker:
         
         # Check for common keywords
         if 'SELECT' in content_upper and 'FROM' not in content_upper:
-            errors.append(SyntaxError(
+            errors.append(DiagnosticError(
                 file_path=file_path,
                 line=1,
                 column=0,
@@ -971,7 +986,7 @@ class SyntaxChecker:
         
         return errors
     
-    def _check_generic(self, file_path: str, content: str) -> List[SyntaxError]:
+    def _check_generic(self, file_path: str, content: str) -> List[DiagnosticError]:
         """Generic syntax check for unknown languages."""
         errors = []
         
@@ -981,7 +996,7 @@ class SyntaxChecker:
         open_brackets = content.count('[') - content.count(']')
         
         if open_parens != 0:
-            errors.append(SyntaxError(
+            errors.append(DiagnosticError(
                 file_path=file_path,
                 line=1,
                 column=0,
@@ -991,7 +1006,7 @@ class SyntaxChecker:
             ))
         
         if open_braces != 0:
-            errors.append(SyntaxError(
+            errors.append(DiagnosticError(
                 file_path=file_path,
                 line=1,
                 column=0,
@@ -1001,7 +1016,7 @@ class SyntaxChecker:
             ))
         
         if open_brackets != 0:
-            errors.append(SyntaxError(
+            errors.append(DiagnosticError(
                 file_path=file_path,
                 line=1,
                 column=0,

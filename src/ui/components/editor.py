@@ -2,24 +2,33 @@
 Code Editor Component — QPlainTextEdit with line numbers, syntax highlighting,
 current-line highlight, and auto-indent.
 """
-
 import ast
 import os
+import sys
+from typing import cast, List, Dict, Optional, Tuple, Any
+
 from PyQt6.QtWidgets import (
     QPlainTextEdit, QWidget, QTextEdit, QApplication,
-    QFrame, QLabel, QPushButton, QVBoxLayout, QHBoxLayout
+    QFrame, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
+    QToolTip, QListWidget
 )
-from PyQt6.QtCore import Qt, QRect, QSize, pyqtSignal, QSignalBlocker, QPoint, QTimer
+from PyQt6.QtCore import (
+    Qt, QRect, QSize, pyqtSignal, QSignalBlocker, QPoint, QTimer,
+    QEvent
+)
 from PyQt6.QtGui import (
     QColor, QPainter, QTextFormat, QFont, QSyntaxHighlighter,
-    QTextCharFormat, QKeyEvent, QFontMetrics, QTextOption, QPen, QPalette, QTextCursor
+    QTextCharFormat, QKeyEvent, QFontMetrics, QTextOption, QPen, QPalette, 
+    QTextCursor, QHelpEvent
 )
 from pygments import lex
 from pygments.lexers import get_lexer_by_name, TextLexer
 from pygments.token import Token
 from src.config.settings import get_settings
-from src.core.syntax_checker import get_syntax_checker, SyntaxError as DiagnosticError
+from src.core.syntax_checker import get_syntax_checker, DiagnosticError
+from src.core.lsp_manager import get_lsp_manager
 from src.utils.logger import get_logger
+
 
 log = get_logger("editor")
 
@@ -576,6 +585,56 @@ class InlineEditOverlay(QFrame):
 
 
 # ---------------------------------------------------------------------------
+# Autocomplete Sidebar/Overlay
+# ---------------------------------------------------------------------------
+class CompletionWidget(QWidget):
+    """A floating autocomplete selection widget (VS Code Style)."""
+    item_selected = pyqtSignal(dict)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.list = QListWidget()
+        self.list.setStyleSheet("""
+            QListWidget {
+                background-color: #252526;
+                color: #cccccc;
+                border: 1px solid #454545;
+                font-family: 'Consolas', monospace;
+                font-size: 11px;
+            }
+            QListWidget::item:selected {
+                background-color: #094771;
+                color: white;
+            }
+        """)
+        layout.addWidget(self.list)
+        self.setFixedSize(250, 150)
+        self.list.itemActivated.connect(self._on_activated)
+
+    def set_items(self, items: List[Dict]):
+        self.list.clear()
+        self._raw_items = items
+        for item in items:
+            label = item.get("label", "")
+            # Add icon based on kind
+            kind = item.get("kind", 1)
+            icons = {1: "📝", 2: "🔧", 3: "📦", 5: "🏷️", 6: "🎨"}
+            self.list.addItem(f"{icons.get(kind, '🔹')} {label}")
+        self.list.setCurrentRow(0)
+
+    def _on_activated(self, item):
+        idx = self.list.row(item)
+        if 0 <= idx < len(self._raw_items):
+            self.item_selected.emit(self._raw_items[idx])
+            self.hide()
+
+# ---------------------------------------------------------------------------
 # Main Code Editor
 # ---------------------------------------------------------------------------
 class CodeEditor(QPlainTextEdit):
@@ -637,12 +696,6 @@ class CodeEditor(QPlainTextEdit):
         print(f"[Editor] ✅ Applied dark theme: bg={bg_color.name()}, fg={fg_color.name()}")
         print(f"[Editor] Palette Base: {palette.color(QPalette.ColorRole.Base).name()}")
         print(f"[Editor] Palette Text: {palette.color(QPalette.ColorRole.Text).name()}")
-        
-        # DEBUG: Check if viewport has correct colors
-        if hasattr(self, 'viewport'):
-            vp = self.viewport()
-            print(f"[Editor] Viewport Base: {vp.palette().color(QPalette.ColorRole.Base).name()}")
-            print(f"[Editor] Viewport Text: {vp.palette().color(QPalette.ColorRole.Text).name()}")
 
     def __init__(self, parent=None, language: str = "python"):
         super().__init__(parent)
@@ -713,10 +766,27 @@ class CodeEditor(QPlainTextEdit):
         
         # Syntax Error Detection
         self._syntax_errors: List[DiagnosticError] = []
-        self._lint_timer = QTimer()
+        self._lint_timer = QTimer(self)
         self._lint_timer.setSingleShot(True)
         self._lint_timer.timeout.connect(self._run_linting)
-        self.document().contentsChanged.connect(lambda: self._lint_timer.start(800))
+        self.document().contentsChanged.connect(lambda: self._lint_timer.start(350))
+
+        # REACTIVE: Diagnostic Hover Timer (Fast Tooltips)
+        self._hover_timer = QTimer(self)
+        self._hover_timer.setSingleShot(True)
+        self._hover_timer.timeout.connect(self._show_hover_diagnostic)
+        self._last_hover_pos = QPoint(-1, -1)
+
+        # REACTIVE: Dynamic response to LSP background results
+        get_lsp_manager().diagnostics_updated.connect(self._handle_lsp_update)
+
+        # Completion Widget & Debounce Timer
+        self._completion_timer = QTimer(self)
+        self._completion_timer.setSingleShot(True)
+        self._completion_timer.timeout.connect(self._trigger_completion)
+        self._completion_widget = CompletionWidget(self.viewport())
+        self._completion_widget.hide()
+        self._completion_widget.item_selected.connect(self._insert_completion)
 
     def set_content(self, text: str, language: str = None, file_path: str = ""):
         """Set editor content and file context."""
@@ -752,6 +822,9 @@ class CodeEditor(QPlainTextEdit):
         # Trigger syntax highlighting via rehighlight() - this is the proper Qt way
         if hasattr(self, '_highlighter'):
             self._highlighter.rehighlight()
+            
+        # Initial Diagnostic check (No delay needed on load)
+        QTimer.singleShot(500, self._run_linting)
 
     def set_theme(self, is_dark: bool):
         """Set theme and refresh font family."""
@@ -831,88 +904,131 @@ class CodeEditor(QPlainTextEdit):
                     Qt.AlignmentFlag.AlignRight, num
                 )
                 
-                # Draw Syntax Error Marker (Red Dot)
-                error_lines = [e.line for e in self._syntax_errors]
-                if line_idx + 1 in error_lines:
-                    # Find highest severity error for this line
-                    line_errors = [e for e in self._syntax_errors if e.line == line_idx + 1]
-                    severity = "error"
-                    if any(e.severity == "error" for e in line_errors):
-                        color = QColor("#f44747")
-                    elif any(e.severity == "warning" for e in line_errors):
-                        color = QColor("#cca700")
-                        severity = "warning"
+                # Draw Syntax Error Marker (Gutter Dot)
+                line_errs = [e for e in self._syntax_errors if e.line == line_idx + 1]
+                if line_errs:
+                    # Pick highest severity color
+                    if any(e.severity == "error" for e in line_errs):
+                        color = QColor("#f44747") # Error Red
+                    elif any(e.severity == "warning" for e in line_errs):
+                        color = QColor("#cca700") # Warning Gold
                     else:
-                        color = QColor("#75beff")
-                        severity = "info"
+                        color = QColor("#75beff") # Info Blue
                         
                     painter.setPen(QPen(color, 5))
-                    painter.drawPoint(6, top + (self.fontMetrics().height() // 2))
+                    # Center the dot in the gutter area left of the line numbers
+                    painter.drawPoint(8, top + (self.fontMetrics().height() // 2))
 
             block = block.next()
             top = bottom
             bottom = top + round(self.blockBoundingRect(block).height())
 
     def _run_linting(self):
-        """Analyze code for syntax errors and draw visual markers using core SyntaxChecker."""
-        # Determine effective path and language for checking
+        """Request a fresh syntax check from the engine."""
+        if not self._syntax_checker: return
+        
         path = self._file_path or f"virtual_file.{self._language or 'py'}"
         content = self.toPlainText()
         
-        # Run core syntax checker
+        # Notify LSP of the latest content change
+        get_lsp_manager().notify_changed(path, content, self._language)
+        
+        # Run core syntax checker (Hybrid: LSP + Local)
+        # Note: Local errors appear immediately, LSP ones usually arrive via signal
         result = self._syntax_checker.check_file(path, content)
-        self._syntax_errors = result.errors
+        self._render_diagnostics(result.errors)
+
+    def _render_diagnostics(self, errors: List[DiagnosticError]):
+        """Pure visual rendering of provided diagnostic errors."""
+        self._syntax_errors = errors
         
-        # DEBUG LOG: Let the user see it's working in the console
-        if self._syntax_errors:
-            log.info(f"Diagnostics: Found {len(self._syntax_errors)} errors in {path}")
-        
-        # Clear old lint squiggles while preserving current line highlight
+        # 1. Clear old lint markers but keep other selections (like current line highlight)
         sels = [s for s in self.extraSelections() if not getattr(s, '_lint', False)]
         
+        # 2. Create precise squiggles
+        new_sels = []
         for err in self._syntax_errors:
-            # Create diagnostic squiggle
             s = QTextEdit.ExtraSelection()
             s._lint = True
             fmt = QTextCharFormat()
             
             # Map severity to color
-            if err.severity == "error":
-                color = QColor("#f44747")
-            elif err.severity == "warning":
-                color = QColor("#cca700")
-            else:
-                color = QColor("#75beff")
+            color = QColor("#f44747") # Default error red
+            if err.severity == "warning": color = QColor("#cca700")
+            elif err.severity == "info": color = QColor("#75beff")
                 
             fmt.setUnderlineColor(color)
             fmt.setUnderlineStyle(QTextCharFormat.UnderlineStyle.WaveUnderline)
             s.format = fmt
             
-            # Use Block-based cursor positioning (more reliable than MoveOperation.Down)
-            # Note: line index is 1-based in diagnostics, findBlockByNumber is 0-based
+            # Use Precise Word Positioning
             block = self.document().findBlockByNumber(max(0, err.line - 1))
             if block.isValid():
                 cur = QTextCursor(block)
-                # Select the specific column or the entire line
-                col = max(0, err.column - 1) if err.column > 0 else 0
+                # Ensure we don't move past the end of the block
+                start_col = min(block.length() - 1, max(0, err.column - 1))
+                cur.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.MoveAnchor, start_col)
                 
-                if col > 0:
-                    cur.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.MoveAnchor, col)
-                    # If it's a syntax error, typically selecting the word under the offset is best
-                    cur.select(QTextCursor.SelectionType.WordUnderCursor)
-                else:
-                    cur.select(QTextCursor.SelectionType.LineUnderCursor)
+                # Highlight length
+                length = (err.end_column - err.column) if (err.end_column > err.column) else 0
+                if length > 0:
+                    cur.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, length)
+                # Smart selection: try word, but fallback to single char to avoid line overflows
+                cur.select(QTextCursor.SelectionType.WordUnderCursor)
+                # If word selection is empty or spans multiple blocks, fallback
+                if cur.selectedText().strip() == "" or cur.blockNumber() != block.blockNumber():
+                    cur.setPosition(block.position() + start_col)
+                    cur.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, 1)
+                
+                # Enhancing visibility with a subtle background tint
+                bg_color = QColor(color)
+                bg_color.setAlpha(35) # Very subtle (max 255)
+                fmt.setBackground(bg_color)
                 
                 s.cursor = cur
-                sels.append(s)
-            
-        self.setExtraSelections(sels)
-        # FORCE update of both the gutter and the main text area
-        self._line_number_area.update()
+                new_sels.append(s)
+        
+        # Combine with non-lint selections (like current line highlight)
+        self.setExtraSelections(sels + new_sels)
+        
+        # Forced update of gutter and viewport for instant feedback
+        if hasattr(self, '_line_number_area'):
+            self._line_number_area.update()
         self.viewport().update()
 
+    def _handle_lsp_update(self, file_path: str, raw_diagnostics: List[Dict]):
+        """Reactive handler for LSP background results."""
+        if not self._file_path: return
+        
+        # Only process if it matches our file
+        # Use normpath to ensure cross-platform match (LSP might send / vs \)
+        my_path = os.path.normcase(os.path.normpath(self._file_path))
+        inc_path = os.path.normcase(os.path.normpath(file_path))
+        
+        if my_path != inc_path:
+            return
+            
+        # Convert raw LSP dicts to DiagnosticError objects
+        processed_errors = []
+        for d in raw_diagnostics:
+            processed_errors.append(DiagnosticError(
+                file_path=file_path,
+                message=d.get("message", ""),
+                line=d.get("range", {}).get("start", {}).get("line", 0) + 1,
+                column=d.get("range", {}).get("start", {}).get("character", 0) + 1,
+                severity=d.get("severity_label", "error").lower(),
+                source="LSP",
+                code=str(d.get("code", "")),
+                end_column=d.get("range", {}).get("end", {}).get("character", 0) + 1
+            ))
+            
+        # Render ONLY. Do NOT call _run_linting here to avoid infinite loops.
+        self._render_diagnostics(processed_errors)
+
     def _highlight_current_line(self):
-        extra = []
+        # Keep existing lint selections
+        extra = [s for s in self.extraSelections() if getattr(s, '_lint', False)]
+        
         if not self.isReadOnly():
             sel = QTextEdit.ExtraSelection()
             color = QColor("#2a2d2e") if self._is_dark else QColor("#f1f3f4")
@@ -921,6 +1037,7 @@ class CodeEditor(QPlainTextEdit):
             sel.cursor = self.textCursor()
             sel.cursor.clearSelection()
             extra.append(sel)
+            
         self.setExtraSelections(extra)
     
     def paintEvent(self, event):
@@ -978,7 +1095,27 @@ class CodeEditor(QPlainTextEdit):
         key = event.key()
         modifiers = event.modifiers()
 
-        # Inline edit (Ctrl/Cmd + K)
+        # 1. IntelliSense Navigation (Up/Down/Enter/Tab)
+        if self._completion_widget.isVisible():
+            if key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+                row = self._completion_widget.list.currentRow()
+                count = self._completion_widget.list.count()
+                if count > 0:
+                    if key == Qt.Key.Key_Up:
+                        self._completion_widget.list.setCurrentRow((row - 1) % count)
+                    else:
+                        self._completion_widget.list.setCurrentRow((row + 1) % count)
+                return
+            elif key in (Qt.Key.Key_Enter, Qt.Key.Key_Return, Qt.Key.Key_Tab):
+                current = self._completion_widget.list.currentItem()
+                if current:
+                    self._completion_widget._on_activated(current)
+                return
+            elif key == Qt.Key.Key_Escape:
+                self._completion_widget.hide()
+                return
+
+        # 2. Inline edit (Ctrl/Cmd + K)
         if key == Qt.Key.Key_K and (modifiers & Qt.KeyboardModifier.ControlModifier or
                                     modifiers & Qt.KeyboardModifier.MetaModifier):
             self._show_inline_overlay()
@@ -986,8 +1123,8 @@ class CodeEditor(QPlainTextEdit):
         if key == Qt.Key.Key_Escape and self._inline_overlay.isVisible():
             self._hide_inline_overlay()
             return
-        
-        # Auto-indent on Enter
+
+        # 3. Auto-indent on Enter
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             cursor = self.textCursor()
             block = cursor.block()
@@ -1004,27 +1141,74 @@ class CodeEditor(QPlainTextEdit):
             super().keyPressEvent(event)
             self.insertPlainText(indent)
             return
-        
-        # Tab handling - VS Code style
+
+        # 4. Tab handling - VS Code style
         if key == Qt.Key.Key_Tab:
             tab_size = self._settings.get("editor", "tab_size") or 4
-            
-            # Shift+Tab - Outdent
             if modifiers == Qt.KeyboardModifier.ShiftModifier:
                 self._outdent_selection(tab_size)
                 return
-            
-            # Tab with selection - Indent multiple lines
             cursor = self.textCursor()
             if cursor.hasSelection():
                 self._indent_selection(tab_size)
                 return
-            
-            # No selection - Insert tab as spaces
             self.insertPlainText(" " * tab_size)
             return
-        
+
+        # 5. Default edit + IntelliSense trigger (Debounced)
         super().keyPressEvent(event)
+        if event.text().isalnum() or event.text() in (".", "_"):
+            self._completion_timer.start(100) # 100ms delay to prevent flood
+
+    def mouseMoveEvent(self, event):
+        """Track mouse for instant diagnostic tooltips."""
+        super().mouseMoveEvent(event)
+        
+        pos = event.pos()
+        if pos == self._last_hover_pos:
+            return
+        self._last_hover_pos = pos
+        
+        # Check if mouse is over an error
+        cursor = self.cursorForPosition(pos)
+        line = cursor.blockNumber() + 1
+        col = cursor.columnNumber() + 1
+        
+        found_err = False
+        for err in self._syntax_errors:
+            if err.line == line:
+                # Small 2-char buffer for visibility
+                end = err.end_column if err.end_column > err.column else err.column + 2
+                if err.column <= col <= end:
+                    found_err = True
+                    break
+        
+        if found_err:
+            self._hover_timer.start(200) # Fast 200ms hover detection
+        else:
+            self._hover_timer.stop()
+            QToolTip.hideText()
+
+    def _show_hover_diagnostic(self):
+        """Triggered by _hover_timer to show tooltip near mouse."""
+        pos = self._last_hover_pos
+        cursor = self.cursorForPosition(pos)
+        line = cursor.blockNumber() + 1
+        col = cursor.columnNumber() + 1
+        
+        for err in self._syntax_errors:
+            if err.line == line:
+                end = err.end_column if err.end_column > err.column else err.column + 2
+                if err.column <= col <= end:
+                    icon = "❌" if err.severity == "error" else "⚠️"
+                    text = f"<div style='background-color:#1e1e1e; color:#cccccc; border:1px solid #3c3c3c; padding:5px;'>"
+                    text += f"<b style='color:#f44747'>{icon} {err.severity.capitalize()}</b>: {err.message}"
+                    if err.code:
+                        text += f"<br/><i style='color:#888'>({err.source}: {err.code})</i>"
+                    text += "</div>"
+                    
+                    QToolTip.showText(self.viewport().mapToGlobal(pos), text, self.viewport())
+                    return
     
     def _indent_selection(self, tab_size: int):
         """Indent selected lines (VS Code style)."""
@@ -1081,32 +1265,6 @@ class CodeEditor(QPlainTextEdit):
         cursor.setPosition(end_pos - removed_count, QTextCursor.MoveMode.KeepAnchor)
         self.setTextCursor(cursor)
 
-    def event(self, event):
-        """Handle tooltips for syntax errors."""
-        from PyQt6.QtWidgets import QToolTip
-        from PyQt6.QtCore import QEvent
-        if event.type() == QEvent.Type.ToolTip:
-            # Get line under mouse
-            pos = self.viewport().mapFromGlobal(event.globalPos())
-            cursor = self.cursorForPosition(pos)
-            line_idx = cursor.blockNumber() + 1
-            
-            # Find errors on this line
-            line_errors = [e for e in self._syntax_errors if e.line == line_idx]
-            if line_errors:
-                tooltip_parts = []
-                for err in line_errors:
-                    sev_color = "#f44747" if err.severity == "error" else "#cca700"
-                    if err.severity == "info": sev_color = "#75beff"
-                    
-                    header = f"<b style='color:{sev_color}'>{err.severity.upper()}</b>"
-                    source = f"<span style='color:#888'> [{err.source}]</span>" if err.source else ""
-                    tooltip_parts.append(f"{header}{source}<br/>{err.message}")
-                
-                QToolTip.showText(event.globalPos(), "<br/><hr/>".join(tooltip_parts), self)
-                return True
-        return super().event(event)
-
     def _show_inline_overlay(self):
         selection_text, line_range = self._get_selection_info()
         self._inline_selection_text = selection_text
@@ -1136,6 +1294,59 @@ class CodeEditor(QPlainTextEdit):
         self._inline_overlay.show()
         self._inline_overlay.raise_()
         self._inline_overlay.focus_prompt()
+
+
+    def _trigger_completion(self):
+        """Request completions from LSP Manager."""
+        cursor = self.textCursor()
+        line = cursor.blockNumber() + 1
+        col = cursor.columnNumber() + 1
+        
+        def on_results(res, err):
+            if err or not res: return
+            items = res.get("items", []) if isinstance(res, dict) else res
+            if not items: return
+            
+            # Show on main thread
+            QTimer.singleShot(0, lambda: self._show_completions(items))
+            
+        get_lsp_manager().get_completions(self._file_path, line, col, self._language, on_results)
+
+    def _show_completions(self, items: List[Dict]):
+        """Display the completion widget near the cursor with boundary checks."""
+        if not items:
+            self._completion_widget.hide()
+            return
+            
+        self._completion_widget.set_items(items[:50]) # Limit to top 50
+        
+        # Calculate position
+        cursor_rect = self.cursorRect()
+        global_pos = self.viewport().mapToGlobal(cursor_rect.bottomLeft())
+        
+        # Boundary Check: Keep on screen
+        screen = QApplication.primaryScreen().geometry()
+        widget_height = self._completion_widget.height()
+        
+        # If it goes off the bottom, flip to top
+        if global_pos.y() + widget_height > screen.height():
+            global_pos = self.viewport().mapToGlobal(cursor_rect.topLeft())
+            global_pos -= QPoint(0, widget_height + 5)
+        else:
+            global_pos += QPoint(0, 5)
+            
+        self._completion_widget.move(global_pos)
+        self._completion_widget.show()
+        self._completion_widget.raise_()
+
+    def _insert_completion(self, item: Dict):
+        """Insert the selected completion text into the editor."""
+        text = item.get("insertText") or item.get("label")
+        cursor = self.textCursor()
+        # Backtrack to the start of the word
+        cursor.movePosition(QTextCursor.MoveOperation.StartOfWord, QTextCursor.MoveMode.KeepAnchor)
+        cursor.insertText(text)
+        self.setFocus()
 
     def _hide_inline_overlay(self):
         if self._inline_overlay.isVisible():

@@ -32,9 +32,18 @@ if sys.platform == 'win32':
 # Add project root to path so 'src' imports work
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Set AppUserModelID for Windows Taskbar Taskbar icon fix
+if sys.platform == 'win32':
+    import ctypes
+    try:
+        myappid = 'cortex.ai.agent.ide.v1'
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+    except Exception:
+        pass
+
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QIcon
 
 from src.main_window import CortexMainWindow
 from src.utils.logger import get_logger
@@ -49,6 +58,11 @@ def main():
     app.setApplicationName("Cortex AI Agent")
     app.setApplicationVersion("1.0.0")
     app.setOrganizationName("Cortex")
+
+    # Set Application Icon (Taskbar/Alt+Tab) - Using focused logo-only version
+    icon_path = os.path.join(os.path.dirname(__file__), "assets", "logo", "taskbar.ico")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
 
     # Global font - try Segoe UI first, fall back to system font
     try:

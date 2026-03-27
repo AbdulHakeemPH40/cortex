@@ -574,6 +574,11 @@ class CortexMainWindow(QMainWindow):
         else:
             self.show()
 
+        # Set Window Icon (Title Bar) - Using focused logo-only version
+        logo_path = os.path.join(os.getcwd(), "src", "assets", "logo", "taskbar.ico")
+        if os.path.exists(logo_path):
+            self.setWindowIcon(QIcon(logo_path))
+
     # ------------------------------------------------------------------
     # UI Construction
     # ------------------------------------------------------------------
