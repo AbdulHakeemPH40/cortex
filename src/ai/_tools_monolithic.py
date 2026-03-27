@@ -1237,35 +1237,6 @@ class ToolRegistry:
                 
         call_signature = {"tool": tool_name, "params": normalized_params}
         
-        # Zero-tolerance for identical consecutive calls of stateful tools
-        stateful_tools = ["write_file", "edit_file", "run_command", "bash", "inject_after", "delete_path"]
-        
-        # Check last 5 calls for any identical signature (not just consecutive)
-        # ONLY apply to stateful tools that actually change the environment.
-        # read_file, list_directory, etc. are safe to repeat.
-        if tool_name in stateful_tools:
-            recent_calls = self._recent_tool_calls[-5:]
-            is_duplicate = any(call == call_signature for call in recent_calls)
-                
-            if is_duplicate:
-                log.warning(f"🚫 LOOP PREVENTION: Blocking repeated {tool_name} with same params.")
-                return ToolResult(
-                    success=False, 
-                    result=None, 
-                    error=(
-                        f"❌ [LOOP PREVENTION] You just performed this exact '{tool_name}' operation. "
-                        "Repeating the same call with the same content will NOT change anything. "
-                        "If you intended to fix something, your previous attempt already applied or failed. "
-                        "MOVE ON to the next task or check the file content with read_file to verify."
-                    ),
-                    duration_ms=0
-                )
-            
-        # Track this call
-        self._recent_tool_calls.append(call_signature)
-        if len(self._recent_tool_calls) > self._max_recent_calls:
-            self._recent_tool_calls.pop(0)
-        
         # ========== PERMISSION CHECK (MOVED BEFORE EXECUTION) ==========
         # Check if tool requires user confirmation
         from src.ai.permission_system import get_permission_manager, show_permission_dialog
@@ -1302,6 +1273,31 @@ class ToolRegistry:
             )
         # ===============================================================
         # ===============================================================
+        # Loop prevention should be applied only after permission is granted.
+        # Otherwise, the "approve" retry (same tool + same params) gets blocked
+        # even though no environment-changing action happened yet.
+        stateful_tools = ["write_file", "edit_file", "run_command", "bash", "inject_after", "delete_path"]
+        if tool_name in stateful_tools:
+            recent_calls = self._recent_tool_calls[-5:]
+            is_duplicate = any(call == call_signature for call in recent_calls)
+            if is_duplicate:
+                log.warning(f"🚫 LOOP PREVENTION: Blocking repeated {tool_name} with same params.")
+                return ToolResult(
+                    success=False,
+                    result=None,
+                    error=(
+                        f"❌ [LOOP PREVENTION] You just performed this exact '{tool_name}' operation. "
+                        "Repeating the same call with the same content will NOT change anything. "
+                        "If you intended to fix something, your previous attempt already applied or failed. "
+                        "MOVE ON to the next task or check the file content with read_file to verify."
+                    ),
+                    duration_ms=0
+                )
+
+            # Track this call only when permission is granted (i.e., we're about to execute)
+            self._recent_tool_calls.append(call_signature)
+            if len(self._recent_tool_calls) > self._max_recent_calls:
+                self._recent_tool_calls.pop(0)
         
         # ========== MODULAR TOOL EXECUTION (AFTER PERMISSION) ==========
         # Use modular tools if available for better architecture

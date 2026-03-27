@@ -218,6 +218,43 @@ def _draw_ai(p: QPainter, s: int, color: str):
     p.drawPath(path)
 
 
+def _draw_plus(p: QPainter, s: int, color: str):
+    """Clean VS Code style plus (+) icon with integer alignment for sharpness."""
+    _pen(p, color, 1.5)
+    # Use integer calculations to prevent sub-pixel blur
+    m = int(s * 0.3)
+    c = s // 2
+    # Horizontal line
+    p.drawLine(m, c, s - m, c)
+    # Vertical line
+    p.drawLine(c, m, c, s - m)
+
+
+def _draw_close(p: QPainter, s: int, color: str):
+    """Clean VS Code style close (x) icon."""
+    _pen(p, color, 1.5)
+    m = int(s * 0.3)
+    p.drawLine(m, m, s-m, s-m)
+    p.drawLine(s-m, m, m, s-m)
+
+
+def _draw_trash(p: QPainter, s: int, color: str):
+    """Simple bin/trash icon."""
+    _pen(p, color, 1.5)
+    m = int(s * 0.25)
+    # Lid
+    p.drawLine(m, m+2, s-m, m+2)
+    p.drawLine(s//2-2, m, s//2+2, m)
+    # Body
+    p.drawPolyline([
+        QPointF(m+2, m+2), QPointF(m+2, s-m),
+        QPointF(s-m-2, s-m), QPointF(s-m-2, m+2)
+    ])
+    # Vertical lines
+    p.drawLine(s//2-1, m+5, s//2-1, s-m-3)
+    p.drawLine(s//2+1, m+5, s//2+1, s-m-3)
+
+
 def _draw_moon(p: QPainter, s: int, color: str):
     """Crescent moon icon."""
     m = s * 0.1
@@ -604,7 +641,10 @@ _SVG_DEFAULT = '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><p
 
 
 # SVG icon mapping
+_SVG_FOLDER_BLUE = '''<svg viewBox="0 0 32 32"><defs><linearGradient id="fbg" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#00BFFF"/><stop offset="100%" stop-color="#0099FF"/></linearGradient></defs><path d="M4 10a2 2 0 012-2h6l2 3h12a2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V10z" fill="url(#fbg)"/><path d="M4 14.5a2 2 0 012-2h20a2 2 0 012 2v8.5a2 2 0 01-2 2H6a2 2 0 01-2-2v-8.5z" fill="#00AAFF" opacity="0.8"/></svg>'''
+
 _SVG_ICONS = {
+    'folder_blue': _SVG_FOLDER_BLUE,
     'python': _SVG_PYTHON,
     'javascript': _SVG_JAVASCRIPT,
     'typescript': _SVG_TYPESCRIPT,
@@ -646,6 +686,38 @@ _SVG_ICONS = {
     'files': _SVG_FILES,
     'config': _SVG_CONFIG,
     'default': _SVG_DEFAULT,
+    # Aliases — extensions mapped to an existing SVG icon
+    'tsx': _SVG_REACT,       # React + TypeScript → React icon
+    'jsx': _SVG_REACT,       # React + JavaScript → React icon
+    'mjs': _SVG_JAVASCRIPT,  # ES module
+    'cjs': _SVG_JAVASCRIPT,  # CommonJS module
+    'sass': _SVG_SCSS,       # SASS = same icon as SCSS
+    'less': _SVG_CSS,        # LESS → CSS-family
+    'rs': _SVG_RUST,         # .rs extension → Rust
+    'rb': _SVG_RUBY,         # .rb extension → Ruby
+    'cs': _SVG_CSHARP,       # .cs extension → C#
+    'ts': _SVG_TYPESCRIPT,   # .ts extension → TypeScript
+    'py': _SVG_PYTHON,       # .py extension → Python
+    'sh': _SVG_SHELL,        # shell scripts
+    'bash': _SVG_SHELL,      # bash scripts
+    'ps1': _SVG_SHELL,       # PowerShell (closest)
+    'kt': _SVG_KOTLIN,       # .kt extension → Kotlin
+    'jl': _SVG_JULIA,        # .jl extension → Julia
+    'ex': _SVG_ELIXIR,       # .ex extension → Elixir
+    'exs': _SVG_ELIXIR,      # .exs scripts → Elixir
+    'hs': _SVG_HASKELL,      # .hs extension → Haskell
+    'clj': _SVG_CLOJURE,     # .clj extension → Clojure
+    'yml': _SVG_YAML,        # .yml extension → YAML
+    'xml': _SVG_CONFIG,      # .xml → config icon
+    'toml': _SVG_CONFIG,     # .toml → config icon
+    'ini': _SVG_CONFIG,      # .ini → config icon
+    'cfg': _SVG_CONFIG,      # .cfg → config icon
+    'log': _SVG_TXT,         # log files
+    'lock': _SVG_CONFIG,     # lock files
+    'pdf': _SVG_FILES,        # PDF
+    'gz': _SVG_ZIP,          # gzip → zip icon
+    'tar': _SVG_ZIP,         # tarball → zip icon
+    'rar': _SVG_ZIP,         # rar → zip icon
 }
 
 
@@ -679,11 +751,247 @@ _DRAWERS = {
     "new_folder": _draw_new_folder,
     "refresh":    _draw_refresh,
     "collapse":   _draw_collapse,
+    "plus":       _draw_plus,
+    "close":      _draw_close,
+    "trash":      _draw_trash,
 }
 
 
 # Global cache to prevent redundant drawing operations
 _ICON_CACHE: dict[tuple[str, str, int], QIcon] = {}
+
+
+# ── OpenCode Sprite-based Icon Loader ────────────────────────────────────────
+# Loads individual symbol SVGs from the file-icons/sprite.svg bundled with the app.
+
+import xml.etree.ElementTree as _ET
+import re as _re
+
+# Parse the sprite XML only once and cache the tree
+_SPRITE_TREE: object = None
+
+_SPRITE_PATH: str | None = None
+_SPRITE_SYMBOL_CACHE: dict[str, str] = {}   # symbol_id → standalone SVG string
+_SPRITE_ICON_CACHE: dict[tuple[str, int], QIcon] = {}
+
+
+def _find_sprite_path() -> str | None:
+    """Locate sprite.svg relative to this file or inside a PyInstaller bundle."""
+    import sys
+    candidates = [
+        # Dev layout: src/utils/icons.py  →  src/ui/html/ai_chat/file-icons/sprite.svg
+        Path(__file__).parent.parent / "ui" / "html" / "ai_chat" / "file-icons" / "sprite.svg",
+        # PyInstaller: sys._MEIPASS layout mirrors the datas spec
+        Path(getattr(sys, '_MEIPASS', '')) / "src" / "ui" / "html" / "ai_chat" / "file-icons" / "sprite.svg",
+    ]
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    return None
+
+
+def _get_sprite_tree(sprite_path: str):
+    """Parse sprite.svg once and cache the ElementTree globally."""
+    global _SPRITE_TREE
+    if _SPRITE_TREE is None:
+        _ET.register_namespace('', 'http://www.w3.org/2000/svg')
+        _ET.register_namespace('xlink', 'http://www.w3.org/1999/xlink')
+        _SPRITE_TREE = _ET.parse(sprite_path)
+    return _SPRITE_TREE
+
+
+def _extract_symbol(sprite_path: str, symbol_id: str) -> str | None:
+    """
+    Extract <symbol id='symbol_id'> from sprite.svg as a self-contained SVG.
+
+    Key fixes:
+    - Only include <defs> entries actually referenced by this symbol
+    - Scope all id="X" → id="SYM_X" and url(#X) → url(#SYM_X)
+      so Qt never sees duplicate style ids across icons → no black gradients.
+    """
+    cache_key = f"{sprite_path}#{symbol_id}"
+    if cache_key in _SPRITE_SYMBOL_CACHE:
+        cached = _SPRITE_SYMBOL_CACHE[cache_key]
+        return cached if cached else None
+
+    try:
+        tree = _get_sprite_tree(sprite_path)
+        root = tree.getroot()
+
+        # ── 1. Find the target <symbol> ────────────────────────────────────
+        sym = None
+        for el in root.iter():
+            local = el.tag.split('}')[-1] if '}' in el.tag else el.tag
+            if local == 'symbol' and el.get('id') == symbol_id:
+                sym = el
+                break
+
+        if sym is None:
+            _SPRITE_SYMBOL_CACHE[cache_key] = ''
+            return None
+
+        vb = sym.get('viewBox', '0 0 32 32')
+
+        # ── 2. Serialize symbol children ───────────────────────────────────
+        body = ''.join(
+            _ET.tostring(child, encoding='unicode') for child in sym
+        )
+
+        # ── 3. Find which def IDs this symbol actually uses ────────────────
+        used_ids: set[str] = set()
+        used_ids |= set(_re.findall(r'url\(#([^)]+)\)', body))
+        used_ids |= set(_re.findall(r'href=["\']#([^"\']+)["\']', body))
+
+        # ── 4. Collect only the relevant <defs> from the sprite root ────────
+        needed_defs: list[str] = []
+        if used_ids:
+            for el in root:
+                local = el.tag.split('}')[-1] if '}' in el.tag else el.tag
+                if local == 'defs':
+                    for def_child in el:
+                        def_str = _ET.tostring(def_child, encoding='unicode')
+                        # Keep this def only if it defines a used ID
+                        def_ids = set(_re.findall(r'\bid=["\']([^"\']+)["\']', def_str))
+                        if def_ids & used_ids:
+                            needed_defs.append(def_str)
+
+        # ── 5. Scope all IDs with symbol-unique prefix ─────────────────────
+        prefix = f"x{symbol_id}_"
+
+        def scope(text: str) -> str:
+            text = _re.sub(r'\bid="([^"]+)"',
+                           lambda m: f'id="{prefix}{m.group(1)}"', text)
+            text = _re.sub(r'url\(#([^)]+)\)',
+                           lambda m: f'url(#{prefix}{m.group(1)})', text)
+            text = _re.sub(r'href="#([^"]+)"',
+                           lambda m: f'href="#{prefix}{m.group(1)}"', text)
+            return text
+
+        scoped_defs = scope(''.join(needed_defs))
+        scoped_body = scope(body)
+
+        defs_block = f'<defs>{scoped_defs}</defs>' if scoped_defs else ''
+
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg" '
+            'xmlns:xlink="http://www.w3.org/1999/xlink" '
+            f'viewBox="{vb}">'
+            + defs_block
+            + scoped_body
+            + '</svg>'
+        )
+        _SPRITE_SYMBOL_CACHE[cache_key] = svg
+        return svg
+
+    except Exception:
+        _SPRITE_SYMBOL_CACHE[cache_key] = ''
+        return None
+
+
+
+
+def _svg_icon_hq(svg_data: str, size: int) -> QPixmap:
+    """
+    Render SVG crisp on any display density.
+
+    Technique:
+      1. Detect the screen device-pixel-ratio (DPR) — e.g. 1.5× on a 150% Windows display.
+      2. Render at  (size × DPR × oversample)  pixels — large enough for perfect edges.
+      3. Scale down to  (size × DPR)  with smooth filtering.
+      4. Tag the pixmap with setDevicePixelRatio(dpr) so Qt maps
+         that physical pixel count back to the correct logical size.
+    Result: the icon appears at exactly `size` logical pixels but uses
+    all available physical pixels — identical sharpness to a browser icon.
+    """
+    from PyQt6.QtWidgets import QApplication
+    app = QApplication.instance()
+    dpr = app.devicePixelRatio() if app else 1.0
+
+    oversample  = 4                           # render 4× bigger than physical px
+    phys_render = int(size * dpr * oversample)
+    phys_target = int(size * dpr)
+
+    # ── Render at high resolution ──────────────────────────────────────────
+    big = QPixmap(phys_render, phys_render)
+    big.fill(Qt.GlobalColor.transparent)
+
+    renderer = QSvgRenderer(svg_data.encode('utf-8'))
+    if not renderer.isValid():
+        fallback = QPixmap(phys_target, phys_target)
+        fallback.fill(Qt.GlobalColor.transparent)
+        fallback.setDevicePixelRatio(dpr)
+        return fallback
+
+    painter = QPainter(big)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+    renderer.render(painter)
+    painter.end()
+
+    # ── Downsample to physical target size ────────────────────────────────
+    out = big.scaled(phys_target, phys_target,
+                     Qt.AspectRatioMode.KeepAspectRatio,
+                     Qt.TransformationMode.SmoothTransformation)
+    out.setDevicePixelRatio(dpr)   # tell Qt: this many physical px = `size` logical px
+    return out
+
+
+def make_sprite_icon(symbol_id: str, size: int = 20) -> QIcon:
+    """
+    Return a high-quality QIcon rendered from the OpenCode file-icons/sprite.svg.
+    Falls back to make_icon() (existing SVGs) if the sprite is not found.
+
+    symbol_id examples: 'Python', 'Typescript', 'FolderSrc', 'FolderSrcOpen'
+    """
+    cache_key = (symbol_id, size)
+    if cache_key in _SPRITE_ICON_CACHE:
+        return _SPRITE_ICON_CACHE[cache_key]
+
+    global _SPRITE_PATH
+    if _SPRITE_PATH is None:
+        _SPRITE_PATH = _find_sprite_path() or ''
+
+    icon = None
+    if _SPRITE_PATH:
+        svg_data = _extract_symbol(_SPRITE_PATH, symbol_id)
+        if svg_data:
+            try:
+                px = _svg_icon_hq(svg_data, size)
+                if not px.isNull():
+                    icon = QIcon(px)
+            except Exception:
+                icon = None
+
+    if icon is None:
+        # ── Graceful fallback to existing inline SVG icons ──────────────────
+        _SPRITE_TO_LEGACY = {
+            'Python': 'python', 'Javascript': 'javascript', 'Typescript': 'typescript',
+            'React': 'react', 'React_ts': 'react', 'Html': 'html',
+            'Css': 'css', 'Sass': 'scss', 'Less': 'scss',
+            'Vue': 'vue', 'Svelte': 'svelte',
+            'Java': 'java', 'Kotlin': 'kotlin', 'Csharp': 'csharp',
+            'Cpp': 'cpp', 'C': 'c', 'Rust': 'rust', 'Go': 'go',
+            'Ruby': 'ruby', 'Php': 'php', 'Dart': 'dart', 'Swift': 'swift',
+            'Lua': 'lua', 'R': 'r', 'Julia': 'julia', 'Zig': 'zig',
+            'Elixir': 'elixir', 'Haskell': 'haskell', 'Clojure': 'clojure',
+            'Console': 'shell', 'Powershell': 'shell',
+            'Json': 'json', 'Yaml': 'yaml', 'Markdown': 'markdown',
+            'Database': 'sql', 'Docker': 'docker', 'Git': 'git',
+            'Document': 'default', 'Log': 'files', 'Lock': 'config',
+            'Zip': 'zip', 'Image': 'files', 'Nodejs': 'javascript',
+            'Tune': 'env', 'Toml': 'config', 'Settings': 'config',
+            'Xml': 'config', 'Graphql': 'default', 'Svg': 'image',
+        }
+        if symbol_id.startswith('Folder'):
+            # Default to blue folder instead of generic if possible
+            legacy = 'folder_blue' if symbol_id == 'FolderBlue' else 'folder'
+        else:
+            legacy = _SPRITE_TO_LEGACY.get(symbol_id, 'default')
+        icon = make_icon(legacy, '#c0c0c0', size)
+
+    _SPRITE_ICON_CACHE[cache_key] = icon
+    return icon
+
 
 
 def make_icon(name: str, color: str = "#c0c0c0", size: int = 32) -> QIcon:

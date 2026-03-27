@@ -22,10 +22,12 @@ try:
 except ImportError:
     pass
 
-# Force Windows platform
+# HiDPI + Windows platform setup (BEFORE QApplication)
+os.environ['QT_ENABLE_HIGHDPI_SCALING'] = '1'
+os.environ['QT_SCALE_FACTOR_ROUNDING_POLICY'] = 'PassThrough'
 if sys.platform == 'win32':
     os.environ['QT_QPA_PLATFORM'] = 'windows'
-    os.environ['QT_OPENGL'] = 'software'
+    # Do NOT set QT_OPENGL=software — it disables hardware acceleration and blurs everything
 
 # Add project root to path so 'src' imports work
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

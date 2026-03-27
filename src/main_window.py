@@ -10,8 +10,9 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSplitter,
     QTabWidget, QLabel, QPushButton, QStatusBar, QFileDialog,
     QToolBar, QMenuBar, QMessageBox, QInputDialog, QTabBar,
-    QFrame, QSizePolicy
+    QFrame, QSizePolicy, QApplication
 )
+from PyQt6.QtWebEngineCore import QWebEnginePage
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtSlot, QTimer, QRect, QProcessEnvironment, QSignalBlocker, QEventLoop
 from PyQt6.QtGui import (QAction, QKeySequence, QIcon, QFont, QPainter, QColor, 
                          QMouseEvent, QCloseEvent, QPixmap)
@@ -597,7 +598,7 @@ class CortexMainWindow(QMainWindow):
         # --- Center: Editor + Terminal stacked vertically ---
         center_widget = QWidget()
         center_layout = QVBoxLayout(center_widget)
-        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.setContentsMargins(0, 0, 0, 2)  # 2px bottom gap above status bar
         center_layout.setSpacing(0)
 
         self._center_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -618,8 +619,8 @@ class CortexMainWindow(QMainWindow):
         self._terminal_tabs.setMinimumHeight(150)
         self._terminal_tabs.tabCloseRequested.connect(self._close_terminal_tab)
         
-        # Add a placeholder/first terminal
-        self._new_terminal()
+        # Add a single placeholder/first terminal (HIDDEN initially)
+        self._new_terminal(show_panel=False)
         
         self._center_splitter.addWidget(self._terminal_tabs)
 
@@ -903,7 +904,7 @@ class CortexMainWindow(QMainWindow):
 
         # Terminal
         term_menu = mb.addMenu("Terminal")
-        self._add_action(term_menu, "New Terminal", self._new_terminal, "Ctrl+Shift+`")
+        self._add_action(term_menu, "New Terminal", lambda: self._new_terminal(show_panel=True), "Ctrl+Shift+`")
         self._add_action(term_menu, "Kill Terminal", self._kill_current_terminal, "")
         term_menu.addSeparator()
         self._add_action(term_menu, "Toggle Terminal Panel", self._toggle_terminal, "Ctrl+`")
@@ -947,7 +948,7 @@ class CortexMainWindow(QMainWindow):
             ("📂", "Open Folder\nCtrl+O",   self._open_folder_dialog),
             ("💾", "Save File\nCtrl+S",     self._save_current),
             ("▶️", "Run Current File",      self._run_file),
-            ("➕", "New Terminal",          self._new_terminal),
+            ("➕", "New Terminal",          lambda: self._new_terminal(show_panel=True)),
             ("⚡", "Show/Hide Terminal\nCtrl+`", self._toggle_terminal),
         ]
         for icon, tip, slot in actions:
@@ -1685,7 +1686,11 @@ class CortexMainWindow(QMainWindow):
             return f'{mkdir_cmd}; {compile_cmd}; if ($LASTEXITCODE -eq 0) {{ {run_cmd} }}' if is_windows else f'{mkdir_cmd} && {compile_cmd} && {run_cmd}'
         return None
 
-    def _new_terminal(self) -> XTermWidget:
+    def _new_terminal(self, show_panel: bool = True) -> XTermWidget:
+        # If call comes from a signal (like clicked), show_panel might be the 'checked' state (False usually)
+        # So we force it to True if it's not explicitly False from our internal calls
+        if not isinstance(show_panel, bool): show_panel = True
+        
         term = XTermWidget()
         term.set_theme(self._theme_manager.is_dark)
         
@@ -1695,6 +1700,13 @@ class CortexMainWindow(QMainWindow):
             
         idx = self._terminal_tabs.addTab(term, f"Terminal {self._terminal_tabs.count() + 1}")
         self._terminal_tabs.setCurrentIndex(idx)
+        
+        if show_panel:
+            self._terminal_tabs.setVisible(True)
+            term.setFocus()
+            
+        # Hook up "New Terminal" button from within the terminal
+        term.new_terminal_requested.connect(lambda: self._new_terminal(show_panel=True))
         
         # Link to AI Agent immediately
         self._ai_agent.set_terminal(term)
@@ -1854,9 +1866,75 @@ class CortexMainWindow(QMainWindow):
             # TODO: Implement full command palette
 
     def _current_editor_action(self, action: str):
+        """Focus-aware edit action handler (supports Editor, AI Chat, and Terminal)."""
+        focused = QApplication.focusWidget()
+        log.debug(f"Action {action} requested. Current focus: {focused}")
+
+        # Map generic action strings to QWebEnginePage.WebAction enums
+        web_action_map = {
+            "copy": QWebEnginePage.WebAction.Copy,
+            "paste": QWebEnginePage.WebAction.Paste,
+            "cut": QWebEnginePage.WebAction.Cut,
+            "selectAll": QWebEnginePage.WebAction.SelectAll,
+            "undo": QWebEnginePage.WebAction.Undo,
+            "redo": QWebEnginePage.WebAction.Redo
+        }
+
+        # Determine which "logical" component has focus
+        logical_focused = None
+        widget = focused
+        max_depth = 10
+        while widget and max_depth > 0:
+            if hasattr(self, '_ai_chat') and (widget == self._ai_chat or widget == self._ai_chat._view):
+                logical_focused = "ai_chat"
+                break
+            
+            # Check if this widget belongs to a terminal tab
+            term = self._current_terminal()
+            if term and (widget == term or widget == term._webview):
+                logical_focused = "terminal"
+                break
+            
+            widget = widget.parentWidget()
+            max_depth -= 1
+
+        # 1. Route to AI Chat
+        if logical_focused == "ai_chat":
+            if action in web_action_map:
+                log.debug(f"Routing {action} to AI Chat WebEngineView")
+                self._ai_chat._view.page().triggerAction(web_action_map[action])
+                return
+
+        # 2. Route to Terminal
+        if logical_focused == "terminal":
+            term = self._current_terminal()
+            if action == "copy":
+                term.copy()
+                return
+            elif action == "paste":
+                term.paste()
+                return
+            elif action == "selectAll":
+                term.select_all()
+                return
+            elif action == "cut":
+                term.cut()
+                return
+            
+            if action in web_action_map:
+                term._webview.page().triggerAction(web_action_map[action])
+                return
+
+        # 3. Fallback to Editor (current tab)
         editor = self._editor_tabs.current_editor()
-        if editor and hasattr(editor, action):
-            getattr(editor, action)()
+        if editor:
+            log.debug(f"Routing {action} to Code Editor")
+            if action == "selectAll":
+                if hasattr(editor, "selectAll"): editor.selectAll()
+                elif hasattr(editor, "select_all"): editor.select_all()
+                return
+            if hasattr(editor, action):
+                getattr(editor, action)()
 
     # ------------------------------------------------------------------
     # VS Code Style Keyboard Shortcuts

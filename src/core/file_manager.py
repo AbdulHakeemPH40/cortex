@@ -438,9 +438,66 @@ class FileManager(QObject):
         new = old.parent / new_name
         try:
             old.rename(new)
+            # Clear caches for old path
+            self._open_files.pop(old_path, None)
+            self._hash_cache.pop(old_path, None)
             return str(new)
         except Exception as e:
             log.error(f"Cannot rename: {e}")
+            return None
+
+    def copy(self, src: str, dst_dir: str) -> str | None:
+        """Copy file or folder to a destination directory."""
+        try:
+            src_path = Path(src)
+            dst_path = Path(dst_dir) / src_path.name
+            
+            # If destination already exists, append "-copy"
+            if dst_path.exists():
+                stem = src_path.stem
+                suffix = src_path.suffix
+                count = 1
+                while dst_path.exists():
+                    dst_path = Path(dst_dir) / f"{stem}-copy{count}{suffix}"
+                    count += 1
+            
+            if src_path.is_dir():
+                shutil.copytree(src, str(dst_path))
+            else:
+                shutil.copy2(src, str(dst_path))
+            
+            log.info(f"Copied: {src} -> {dst_path}")
+            return str(dst_path)
+        except Exception as e:
+            log.error(f"Copy failed: {e}")
+            return None
+
+    def move(self, src: str, dst_dir: str) -> str | None:
+        """Move (cut/paste) file or folder to a destination directory."""
+        try:
+            src_path = Path(src)
+            dst_path = Path(dst_dir) / src_path.name
+            
+            # Handle collision
+            if dst_path.exists() and dst_path.resolve() != src_path.resolve():
+                stem = src_path.stem
+                suffix = src_path.suffix
+                count = 1
+                while dst_path.exists():
+                    dst_path = Path(dst_dir) / f"{stem}-moved{count}{suffix}"
+                    count += 1
+            
+            shutil.move(src, str(dst_path))
+            
+            # Clear caches for old path
+            resolved_src = str(src_path.resolve())
+            self._open_files.pop(resolved_src, None)
+            self._hash_cache.pop(resolved_src, None)
+            
+            log.info(f"Moved: {src} -> {dst_path}")
+            return str(dst_path)
+        except Exception as e:
+            log.error(f"Move failed: {e}")
             return None
 
     def delete(self, filepath: str) -> bool:

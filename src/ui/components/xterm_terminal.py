@@ -73,6 +73,12 @@ class TerminalBridge(QObject):
         """Receive console logs from JavaScript"""
         log.info(f"[JS] {message}")
 
+    @pyqtSlot(str)
+    def open_external_url(self, url):
+        """Open a URL in the system browser."""
+        import webbrowser
+        webbrowser.open(url)
+
 
 class XTermWidget(QWidget):
     """
@@ -84,6 +90,8 @@ class XTermWidget(QWidget):
     terminal_output_received = pyqtSignal(str) # For AI to listen to
     terminal_line_for_chat = pyqtSignal(str)   # clean line for chat card streaming display
     file_operation_detected = pyqtSignal(str, str, str)  # operation_type, file_path, status
+    new_terminal_requested = pyqtSignal()      # Signal to open a new terminal tab
+
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -147,9 +155,19 @@ class XTermWidget(QWidget):
         hlay.addWidget(self._shell_combo)
         
         self._title_label = QLabel("⚡ Terminal")
-        self._title_label.setStyleSheet("font-size:12px; font-weight:bold; margin-left: 20px;")
         hlay.addWidget(self._title_label)
         hlay.addStretch()
+        
+        # New Terminal Button (Added to the inner toolbar as requested)
+        self._plus_btn = QPushButton()
+        self._plus_btn.setObjectName("plusBtn")
+        self._plus_btn.setFixedSize(28, 22)
+        self._plus_btn.setFlat(True)
+        self._plus_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._plus_btn.setToolTip("New Terminal (Ctrl+Shift+`)")
+        self._plus_btn.clicked.connect(self.new_terminal_requested.emit)
+        hlay.addWidget(self._plus_btn)
+
         
         self._kill_btn = QPushButton("✕")
         self._kill_btn.setFixedSize(30, 22)
@@ -712,8 +730,32 @@ class XTermWidget(QWidget):
         self._update_header_style()
         if self._is_ready:
             self._bridge.update_theme.emit(is_dark)
+
+    def copy(self):
+        """Copy selection from xterm.js to clipboard."""
+        if self._is_ready:
+            self._webview.page().runJavaScript("if(window.term && term.hasSelection()) window.pyTerminal.copy_to_clipboard(term.getSelection());")
+
+    def paste(self):
+        """Paste from clipboard into xterm.js."""
+        if self._is_ready:
+            self._bridge.paste_from_clipboard()
+
+    def select_all(self):
+        """Select all text in xterm.js."""
+        if self._is_ready:
+            self._webview.page().runJavaScript("if(window.term) term.selectAll();")
+
+    def cut(self):
+        """Cut is not supported in terminal, but we can copy."""
+        self.copy()
             
     def _update_header_style(self):
+        from src.utils.icons import make_icon
+        icon_fg = "#cccccc" if self._is_dark else "#444444"
+        self._plus_btn.setIcon(make_icon("plus", icon_fg, 32))
+        self._plus_btn.setIconSize(QSize(14, 14))
+        
         if self._is_dark:
             self._header.setStyleSheet("""
                 QWidget {
@@ -723,9 +765,14 @@ class XTermWidget(QWidget):
                 QLabel { color: #cccccc; font-size: 12px; }
                 QPushButton {
                     background-color: #3c3c3c; color: #cccccc;
-                    border: 1px solid #3e3e42; border-radius: 3px; padding: 2px 8px;
+                    border: 1px solid #3e3e42; border-radius: 3px; padding: 2px 2px;
+                }
+                QPushButton#plusBtn {
+                    background-color: #3c3c3c;
+                    border: 1px solid #3e3e42; border-radius: 3px;
                 }
                 QPushButton:hover { background-color: #4c4c4c; }
+                QPushButton#plusBtn:hover { background-color: #4c4c4c; }
                 QComboBox {
                     background-color: #3c3c3c; color: #cccccc;
                     border: 1px solid #3e3e42; border-radius: 3px; padding: 2px 8px;
@@ -744,10 +791,15 @@ class XTermWidget(QWidget):
                 }
                 QLabel { color: #333333; font-size: 12px; }
                 QPushButton {
-                    background-color: #ffffff; color: #333333;
-                    border: 1px solid #d0d0d0; border-radius: 3px; padding: 2px 8px;
+                    background-color: #e1e1e1; color: #333333;
+                    border: 1px solid #cccccc; border-radius: 3px; padding: 2px 2px;
                 }
-                QPushButton:hover { background-color: #e0e0e0; }
+                QPushButton#plusBtn {
+                    background-color: #e1e1e1;
+                    border: 1px solid #cccccc; border-radius: 3px;
+                }
+                QPushButton:hover { background-color: #d1d1d1; }
+                QPushButton#plusBtn:hover { background-color: #d1d1d1; }
                 QComboBox {
                     background-color: #ffffff; color: #333333;
                     border: 1px solid #d0d0d0; border-radius: 3px; padding: 2px 8px;

@@ -28,6 +28,8 @@ a = Analysis(
     binaries=winpty_dlls,  # ← ADD THIS
     datas=[
         ('src/ui/html/ai_chat', 'src/ui/html/ai_chat'),
+        # OpenCode file-icons sprite (1096 language/folder icons)
+        ('src/ui/html/ai_chat/file-icons/sprite.svg', 'src/ui/html/ai_chat/file-icons'),
         ('src/ui/components/terminal.html', 'src/ui/components'),
         ('src/ui/components/assets', 'src/ui/components/assets'),
         ('src/ui/themes', 'src/ui/themes'),

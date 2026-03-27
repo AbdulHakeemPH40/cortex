@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="assets/xterm/xterm.css" />
     <script src="assets/xterm/xterm.js"></script>
     <script src="assets/xterm/xterm-addon-fit.js"></script>
+
     <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
     <style>
         html, body {
@@ -105,6 +106,9 @@
             fastScrollModifier: 'alt',
             // FIX: Disable local echo to prevent double-display (Python handles echoing)
             disableStdin: false,
+            // FIX: Ensure terminal scrolls to bottom on new output and user input
+            scrollOnUserInput: true,
+            scrollOnOutput: true,
             convertEol: true,
             theme: {
                 background: '#0c0c0c',
@@ -131,6 +135,59 @@
         // Load the Fit addon so it automatically resizes to the container
         const fitAddon = new FitAddon.FitAddon();
         term.loadAddon(fitAddon);
+        
+        // --- Custom URL Link Provider (no external CDN needed) ---
+        // Uses xterm.js built-in registerLinkProvider to detect and underline URLs
+        const URL_REGEX = /https?:\/\/[^\s"'>)]+/g;
+
+        function _openUrl(url) {
+            console.log('[TERMINAL] Opening URL:', url);
+            if (window.pyTerminal && window.pyTerminal.open_external_url) {
+                window.pyTerminal.open_external_url(url);
+            } else {
+                window.open(url, '_blank');
+            }
+        }
+
+        try {
+            if (typeof term.registerLinkProvider === 'function') {
+                term.registerLinkProvider({
+                    provideLinks(bufferLineNumber, callback) {
+                        const line = term.buffer.active.getLine(bufferLineNumber - 1);
+                        if (!line) { callback([]); return; }
+                        const text = line.translateToString(true);
+                        const links = [];
+                        let match;
+                        URL_REGEX.lastIndex = 0;
+                        while ((match = URL_REGEX.exec(text)) !== null) {
+                            const url = match[0];
+                            const startX = match.index;
+                            const endX = match.index + url.length;
+                            links.push({
+                                range: {
+                                    start: { x: startX + 1, y: bufferLineNumber },
+                                    end:   { x: endX,       y: bufferLineNumber }
+                                },
+                                text: url,
+                                decorations: {
+                                    underline: true,
+                                    pointerCursor: true
+                                },
+                                activate(event, text) { _openUrl(text); },
+                                hover(event, text) {},
+                                leave(event, text) {}
+                            });
+                        }
+                        callback(links);
+                    }
+                });
+                console.log('[TERMINAL] Custom URL link provider registered');
+            } else {
+                console.warn('[TERMINAL] registerLinkProvider not available in this xterm version');
+            }
+        } catch (e) {
+            console.error('[TERMINAL] Error registering link provider:', e);
+        }
         
         // Open the terminal in the container
         term.open(document.getElementById('terminal-container'));
@@ -163,14 +220,17 @@
 
             if (batch.length <= _MAX_BATCH) {
                 term.write(batch);
+                term.scrollToBottom();
             } else {
                 // Write in chunks across multiple frames to stay responsive
                 term.write(batch.slice(0, _MAX_BATCH));
+                term.scrollToBottom();
                 let offset = _MAX_BATCH;
                 function writeRest() {
                     if (offset >= batch.length) return;
                     const end = Math.min(offset + _MAX_BATCH, batch.length);
                     term.write(batch.slice(offset, end));
+                    term.scrollToBottom();
                     offset = end;
                     if (offset < batch.length) requestAnimationFrame(writeRest);
                 }
@@ -248,35 +308,57 @@
         }
         document.getElementById('terminal-container').addEventListener('paste', _handlePasteEvent, true);
 
-        // Handle custom keyboard shortcuts (Copy & Paste)
+        // Handle custom keyboard shortcuts (Copy & Paste & Select All)
         term.attachCustomKeyEventHandler(e => {
-            if (e.type === 'keydown') {
-                if (e.ctrlKey && e.code === 'KeyC') {
-                    if (term.hasSelection()) {
-                        if (window.pyTerminal) {
-                            window.pyTerminal.copy_to_clipboard(term.getSelection());
-                        }
-                        term.clearSelection();
-                        return false; 
-                    }
-                } else if (e.ctrlKey && e.code === 'KeyV') {
-                    // CRITICAL: Block Ctrl+V completely - don't let xterm process the 'v' key
+            if (e.type !== 'keydown') return true;
+
+            const isCtrl = e.ctrlKey || e.metaKey;
+            const isShift = e.shiftKey;
+            const key = e.key.toLowerCase();
+
+            // Ctrl+C or Ctrl+Shift+C: Copy if selection exists
+            if (isCtrl && key === 'c') {
+                if (term.hasSelection()) {
+                    const selText = term.getSelection();
                     if (window.pyTerminal) {
-                        _startIgnoreOnData();
-                        // Get clipboard text and write it directly (bypass xterm input)
-                        window.pyTerminal.paste_from_clipboard();
+                        window.pyTerminal.copy_to_clipboard(selText);
+                    } else {
+                        navigator.clipboard.writeText(selText);
                     }
-                    return false; // Block xterm from processing this key
+                    term.clearSelection();
+                    
+                    e.preventDefault();
+                    e.stopPropagation();
+                    return false; // Block ^C from reaching shell
                 }
+                
+                // If Ctrl+Shift+C is pressed but no selection, we should STILL block it 
+                // to avoid sending a weird character, OR just let it through.
+                // Usually Ctrl+C (no shift) is meant for SIGINT.
+                if (isShift) return false; 
+                
+                return true; // No selection: let Ctrl+C pass through as SIGINT
             }
-            return true;
-        });
-        
-        // ALSO block paste events to prevent double handling
-        term.attachCustomKeyEventHandler(e => {
-            if (e.type === 'keypress' && e.ctrlKey && e.key === 'v') {
+
+            // Ctrl+A: Select All
+            if (isCtrl && key === 'a') {
+                term.selectAll();
+                e.preventDefault();
+                e.stopPropagation();
                 return false;
             }
+
+            // Ctrl+V or Ctrl+Shift+V: Paste
+            if (isCtrl && key === 'v') {
+                if (window.pyTerminal) {
+                    _startIgnoreOnData();
+                    window.pyTerminal.paste_from_clipboard();
+                }
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
+            }
+
             return true;
         });
 
