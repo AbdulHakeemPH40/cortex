@@ -1925,7 +1925,12 @@ class CortexMainWindow(QMainWindow):
                 term._webview.page().triggerAction(web_action_map[action])
                 return
 
-        # 3. Fallback to Editor (current tab)
+        # 3. Route to Sidebar explicitly (if focused)
+        if hasattr(self, '_sidebar') and self._sidebar.is_explorer_focused():
+            log.debug(f"Action {action} ignored globally: Sidebar handles it locally")
+            return
+
+        # 4. Fallback to Editor (current tab)
         editor = self._editor_tabs.current_editor()
         if editor:
             log.debug(f"Routing {action} to Code Editor")
