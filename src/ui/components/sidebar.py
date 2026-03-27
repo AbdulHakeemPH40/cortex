@@ -374,6 +374,8 @@ class VsCodeFileTree(QTreeView):
         self.setMouseTracking(True)
         self.setExpandsOnDoubleClick(False)  # we handle manually
         self.setSelectionMode(QTreeView.SelectionMode.ExtendedSelection)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.viewport().setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
         self.setDropIndicatorShown(True)
@@ -399,9 +401,8 @@ class VsCodeFileTree(QTreeView):
 
         # ── 2. Delete / Backspace ──────────────────────────────────
         if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
-            indexes = self.selectionModel().selectedRows()
-            if indexes:
-                paths = [self.model().filePath(idx) for idx in indexes]
+            paths = self._get_selected_paths()
+            if paths:
                 self._delete_items(paths)
                 return
 
@@ -411,20 +412,31 @@ class VsCodeFileTree(QTreeView):
 
     def _handle_copy(self):
         paths = self._get_selected_paths()
+        print(f"[COPY] selected paths: {paths}")   # DEBUG
         if paths and self._explorer:
             self._explorer._clipboard_paths = paths
             self._explorer._clipboard_mode = "copy"
+            print(f"[COPY] clipboard set to: {paths}")   # DEBUG
             log.info(f"📋 Copied: {', '.join([Path(p).name for p in paths])}")
+        elif not paths:
+            print("[COPY] Nothing selected — no paths found")
+        elif not self._explorer:
+            print("[COPY] ERROR: _explorer is None")
 
     def _handle_cut(self):
         paths = self._get_selected_paths()
+        print(f"[CUT] selected paths: {paths}")   # DEBUG
         if paths and self._explorer:
             self._explorer._clipboard_paths = paths
             self._explorer._clipboard_mode = "cut"
             log.info(f"✂️ Cut: {', '.join([Path(p).name for p in paths])}")
+        elif not self._explorer:
+            print("[CUT] ERROR: _explorer is None")
 
     def _handle_paste(self):
+        print(f"[PASTE] explorer={self._explorer}, clipboard={getattr(self._explorer, '_clipboard_paths', None)}")  # DEBUG
         if not self._explorer or not self._explorer._clipboard_paths:
+            print("[PASTE] Aborted — clipboard empty or no explorer")
             return
 
         # Target directory: selected folder, or parent folder if file selected, or project root
@@ -435,12 +447,24 @@ class VsCodeFileTree(QTreeView):
         else:
             target_dir = self._explorer._root_path
 
+        print(f"[PASTE] target_dir={target_dir}")  # DEBUG
         if target_dir:
             self._explorer._paste_into(target_dir)
 
     def _get_selected_paths(self) -> list[str]:
-        indexes = self.selectionModel().selectedRows()
-        return [self.model().filePath(idx) for idx in indexes]
+        """Get all selected file paths. Uses selectedIndexes() filtered to col 0.
+        NOTE: selectedRows() does NOT work with QFileSystemModel — it always returns []
+        because QFileSystemModel uses SelectItems not SelectRows behaviour.
+        """
+        seen: set[str] = set()
+        paths: list[str] = []
+        for idx in self.selectionModel().selectedIndexes():
+            if idx.column() == 0:  # avoid duplicates from other columns
+                p = self.model().filePath(idx)
+                if p not in seen:
+                    seen.add(p)
+                    paths.append(p)
+        return paths
 
     # ── Drag and Drop Support ──────────────────────────────────────────
 
@@ -475,12 +499,29 @@ class VsCodeFileTree(QTreeView):
             if target_dir and paths:
                 explorer = self._find_explorer()
                 if explorer and self._file_manager:
-                    for p in paths:
-                        # Prevent moving into self or child
-                        if target_dir.startswith(p):
-                            continue
-                        self._file_manager.move(p, target_dir)
-                    event.acceptProposedAction()
+                    from PyQt6.QtWidgets import QMessageBox
+                    
+                    # Confirm drop operation
+                    target_name = Path(target_dir).name
+                    verb = "move"
+                    item_count = len(paths)
+                    item_desc = f"'{Path(paths[0]).name}'" if item_count == 1 else f"these {item_count} items"
+                    
+                    msg = f"Are you sure you want to {verb} {item_desc} into '{target_name}'?\n\nThis action can be undone with Ctrl+Z."
+                    reply = QMessageBox.question(
+                        self, 'Confirm Move', msg,
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.Yes
+                    )
+                    
+                    if reply == QMessageBox.StandardButton.Yes:
+                        for p in paths:
+                            # Prevent moving into self or child
+                            if target_dir.startswith(p):
+                                continue
+                            self._file_manager.move(p, target_dir)
+                        event.acceptProposedAction()
+                        
                     return
 
         super().dropEvent(event)
@@ -552,12 +593,18 @@ class VsCodeFileTree(QTreeView):
                     # It's a file - open it on single click (if no modifiers)
                     if not (event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)):
                         path = model.filePath(index)
-                        # We need access to the panel to emit file_opened, 
-                        # but usually parent of tree is FileExplorerPanel
+                        # Open the file in the editor (preview mode)
                         if hasattr(self.parent(), 'file_opened'):
                             self.parent().file_opened.emit(path)
                         elif hasattr(self.parent().parent(), 'file_opened'):
                              self.parent().parent().file_opened.emit(path)
+                        # VS Code behavior: keep focus on the tree after single-click open.
+                        # Since the CodeEditor explicitly tries to steal focus when opened,
+                        # we must assertively steal it back.
+                        self.setFocus()
+                        QTimer.singleShot(10, self.setFocus)
+                        QTimer.singleShot(100, self.setFocus)
+                        QTimer.singleShot(250, self.setFocus)
         super().mousePressEvent(event)
 
 
@@ -571,15 +618,25 @@ class FileExplorerPanel(QWidget):
 
     def __init__(self, file_manager=None, parent=None):
         super().__init__(parent)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._file_manager = file_manager
         self._root_path: str | None = None
         self._is_dark = True
         self._tree_collapsed = False
-        
+
         # Internal clipboard state
         self._clipboard_paths = []
-        self._clipboard_mode = "copy" # "copy" or "cut"
-        
+        self._clipboard_mode = "copy"  # "copy" or "cut"
+        self._explorer_active = False  # VS Code-style context key: True when tree was last clicked
+
+        # ── VS Code-style focus-aware shortcuts ────────────────────────────
+        # Instead of QShortcuts (which either don't fire or conflict with
+        # the editor's Ctrl+C), we install an application-level event filter.
+        # It intercepts KeyPress events and checks if the file tree has focus
+        # (equivalent to VS Code's `when: explorerViewletFocus && !inputFocus`).
+        # If yes → handle file copy/cut/paste.  If no → pass event through.
+        QApplication.instance().installEventFilter(self)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -772,7 +829,18 @@ class FileExplorerPanel(QWidget):
             if not ok or not name or name == Path(path).name:
                 return False
 
-            new_path = str(Path(path).parent / name)
+            new_path_obj = Path(path).parent / name
+            
+            # Prevent WinError 183 by explicitly checking for existence
+            if new_path_obj.exists() and new_path_obj.resolve() != Path(path).resolve():
+                QMessageBox.warning(
+                    self, 
+                    "Rename Failed", 
+                    f"A file or folder with the name '{name}' already exists at this location.\n\nPlease choose a different name."
+                )
+                return False
+
+            new_path = str(new_path_obj)
             Path(path).rename(new_path)
             self.file_renamed.emit(path, new_path)
             return True
@@ -826,14 +894,129 @@ class FileExplorerPanel(QWidget):
         from PyQt6.QtCore import QTimer
         QTimer.singleShot(30, self._tree.viewport().update)
 
+    def _is_explorer_focused(self) -> bool:
+        focused = QApplication.focusWidget()
+        if not focused:
+            return False
+        w = focused
+        while w is not None:
+            if w is self._tree:
+                return True
+            w = w.parent() if hasattr(w, 'parent') and callable(w.parent) else None
+        return False
+
+    def eventFilter(self, obj, event):
+        """Application-level event filter.
+        Handles Ctrl+C/X/V only when the file tree HAS FOCUS.
+        """
+        from PyQt6.QtCore import QEvent
+        from PyQt6.QtGui import QKeySequence
+        
+        # On Windows, standard keys like Ctrl+C might arrive as ShortcutOverride
+        if event.type() in (QEvent.Type.KeyPress, QEvent.Type.ShortcutOverride):
+            if self._is_explorer_focused():
+                mods = event.modifiers()
+                key = event.key()
+                if mods & Qt.KeyboardModifier.ControlModifier:
+                    if key == Qt.Key.Key_C:
+                        self._kb_copy()
+                        return True
+                    elif key == Qt.Key.Key_X:
+                        self._kb_cut()
+                        return True
+                    elif key == Qt.Key.Key_V:
+                        self._kb_paste()
+                        return True
+        return super().eventFilter(obj, event)
+
+
+    def _set_system_clipboard(self, paths: list[str], mode: str):
+        """Update the OS clipboard so Ctrl+V works everywhere."""
+        from PyQt6.QtCore import QMimeData, QUrl
+        mime = QMimeData()
+        urls = [QUrl.fromLocalFile(p) for p in paths]
+        mime.setUrls(urls)
+        # Set text representation so pasting into editor gives file path
+        mime.setText("\n".join(str(Path(p).resolve()) for p in paths))
+        # Optional: could set custom mime type for 'cut' vs 'copy'
+        QApplication.clipboard().setMimeData(mime)
+
+    def _kb_copy(self):
+        """Ctrl+C — copy selected files (panel-level, always fires)."""
+        paths = self._tree._get_selected_paths()
+        print(f"[KB COPY] paths={paths}")
+        if paths:
+            self._clipboard_paths = paths
+            self._clipboard_mode = "copy"
+            self._set_system_clipboard(paths, "copy")
+            log.info(f"📋 Copied: {', '.join(Path(p).name for p in paths)}")
+
+    def _kb_cut(self):
+        """Ctrl+X — cut selected files."""
+        paths = self._tree._get_selected_paths()
+        print(f"[KB CUT] paths={paths}")
+        if paths:
+            self._clipboard_paths = paths
+            self._clipboard_mode = "cut"
+            self._set_system_clipboard(paths, "cut")
+            log.info(f"✂️ Cut: {', '.join(Path(p).name for p in paths)}")
+
+    def _kb_paste(self):
+        """Ctrl+V — paste into currently selected/focused folder."""
+        print(f"[KB PASTE] start")
+        idx = self._tree.currentIndex()
+        if idx.isValid():
+            p = self._model.filePath(idx)
+            target = p if Path(p).is_dir() else str(Path(p).parent)
+        else:
+            target = self._root_path
+        print(f"[KB PASTE] target={target}")
+        if target:
+            self._paste_into(target)
+
     def _paste_into(self, target_dir: str):
         """Execute the actual file copy/move operations from clipboard."""
-        if not self._clipboard_paths or not self._file_manager:
+        if not self._file_manager:
+            return
+
+        from PyQt6.QtWidgets import QMessageBox
+        
+        # 1. Check internal clipboard first
+        paths = self._clipboard_paths
+        mode = self._clipboard_mode
+        
+        # 2. Check system clipboard if internal is empty
+        if not paths:
+            mime = QApplication.clipboard().mimeData()
+            if mime.hasUrls():
+                paths = [url.toLocalFile() for url in mime.urls() if url.isLocalFile()]
+                mode = "copy"  # external pastes are always treated as copies by default
+                
+        if not paths:
+            return
+
+        # Confirm paste/move operation
+        item_count = len(paths)
+        if item_count == 0:
+            return
+            
+        item_desc = f"'{Path(paths[0]).name}'" if item_count == 1 else f"these {item_count} items"
+        verb = "move" if mode == "cut" else "copy"
+        target_name = Path(target_dir).name
+        
+        msg = f"Are you sure you want to {verb} {item_desc} into '{target_name}'?\n\nThis action can be undone with Ctrl+Z."
+        reply = QMessageBox.question(
+            self, f'Confirm {verb.capitalize()}', msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes
+        )
+        
+        if reply != QMessageBox.StandardButton.Yes:
             return
 
         success_count = 0
-        for src in self._clipboard_paths:
-            if self._clipboard_mode == "cut":
+        for src in paths:
+            if mode == "cut":
                 res = self._file_manager.move(src, target_dir)
             else:
                 res = self._file_manager.copy(src, target_dir)
@@ -841,8 +1024,8 @@ class FileExplorerPanel(QWidget):
             if res:
                 success_count += 1
 
-        # If it was a 'cut', clear clipboard after moving
-        if self._clipboard_mode == "cut":
+        # If it was an internal 'cut', clear clipboard after moving
+        if self._clipboard_mode == "cut" and self._clipboard_paths:
             self._clipboard_paths = []
             self._clipboard_mode = "copy"
 
@@ -976,39 +1159,33 @@ class FileExplorerPanel(QWidget):
         if not action:
             return
 
-        # ── Execute ──────────────────────────────────────────
-        action = menu.exec(self._tree.mapToGlobal(pos))
-        if not action:
-            return
-
         txt = action.text().strip()
-        
+
         if is_dir and "New File" in txt:
             self._new_file_at(target_path)
         elif is_dir and "New Folder" in txt:
             self._new_folder_at(target_path)
-
         elif "Cut" in txt:
-            self._clipboard_paths = selected_paths if selected_paths else [target_path]
+            paths = selected_paths if selected_paths else [target_path]
+            self._clipboard_paths = paths
             self._clipboard_mode = "cut"
-            log.info(f"✂️ Cut {len(self._clipboard_paths)} items")
-            
+            self._set_system_clipboard(paths, "cut")
+            print(f"[CUT] stored: {self._clipboard_paths}")
         elif "Copy" in txt:
-            self._clipboard_paths = selected_paths if selected_paths else [target_path]
+            paths = selected_paths if selected_paths else [target_path]
+            self._clipboard_paths = paths
             self._clipboard_mode = "copy"
-            log.info(f"📋 Copied {len(self._clipboard_paths)} items")
-
+            self._set_system_clipboard(paths, "copy")
+            print(f"[COPY] stored: {self._clipboard_paths}")
         elif "Paste" in txt:
             dest_dir = target_path if is_dir else str(Path(target_path).parent)
+            print(f"[PASTE] into: {dest_dir}, clipboard: {self._clipboard_paths}")
             self._paste_into(dest_dir)
-
-        elif action == act_rename:
+        elif "Rename" in txt:
             self._rename_path(target_path)
-            
-        elif action == act_delete:
+        elif "Delete" in txt:
             self._tree._delete_items(selected_paths if selected_paths else [target_path])
-
-        elif action == act_copy_path:
+        elif "Copy Path" in txt:
             QApplication.clipboard().setText(target_path)
 
     def _new_file_at(self, directory):

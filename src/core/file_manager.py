@@ -446,19 +446,36 @@ class FileManager(QObject):
             log.error(f"Cannot rename: {e}")
             return None
 
+    def _record_operation(self, op_type: str, src: str, dst: str):
+        """Record an operation for undo support."""
+        if not hasattr(self, '_op_stack'):
+            self._op_stack = []
+            self._redo_stack = []
+        
+        self._op_stack.append({
+            'type': op_type,
+            'src': str(Path(src).resolve()),
+            'dst': str(Path(dst).resolve())
+        })
+        self._redo_stack.clear()
+
     def copy(self, src: str, dst_dir: str) -> str | None:
         """Copy file or folder to a destination directory."""
         try:
             src_path = Path(src)
             dst_path = Path(dst_dir) / src_path.name
             
-            # If destination already exists, append "-copy"
+            # If destination already exists, append Windows-style " - Copy (count)"
             if dst_path.exists():
                 stem = src_path.stem
-                suffix = src_path.suffix
+                if src_path.is_dir():
+                    stem = src_path.name
+                    suffix = ""
+                else:
+                    suffix = src_path.suffix
                 count = 1
                 while dst_path.exists():
-                    dst_path = Path(dst_dir) / f"{stem}-copy{count}{suffix}"
+                    dst_path = Path(dst_dir) / f"{stem} - Copy ({count}){suffix}"
                     count += 1
             
             if src_path.is_dir():
@@ -466,6 +483,7 @@ class FileManager(QObject):
             else:
                 shutil.copy2(src, str(dst_path))
             
+            self._record_operation('copy', src, str(dst_path))
             log.info(f"Copied: {src} -> {dst_path}")
             return str(dst_path)
         except Exception as e:
@@ -478,16 +496,22 @@ class FileManager(QObject):
             src_path = Path(src)
             dst_path = Path(dst_dir) / src_path.name
             
-            # Handle collision
+            # Handle collision Windows style
             if dst_path.exists() and dst_path.resolve() != src_path.resolve():
                 stem = src_path.stem
-                suffix = src_path.suffix
+                if src_path.is_dir():
+                    stem = src_path.name
+                    suffix = ""
+                else:
+                    suffix = src_path.suffix
                 count = 1
                 while dst_path.exists():
-                    dst_path = Path(dst_dir) / f"{stem}-moved{count}{suffix}"
+                    dst_path = Path(dst_dir) / f"{stem} - Moved ({count}){suffix}"
                     count += 1
             
             shutil.move(src, str(dst_path))
+            
+            self._record_operation('move', src, str(dst_path))
             
             # Clear caches for old path
             resolved_src = str(src_path.resolve())
@@ -517,6 +541,7 @@ class FileManager(QObject):
             
             # Store metadata for undo
             metadata = {
+                'type': 'delete',
                 'trash_id': trash_id,
                 'original_path': str(path.resolve()),
                 'trash_path': str(trash_path),
@@ -540,8 +565,11 @@ class FileManager(QObject):
                 for k in keys_to_del:
                     del self._file_cache.cache[k]
             
-            # Add to trash bin stack
-            self._trash_bin.append(metadata)
+            # Add to unified op stack
+            if not hasattr(self, '_op_stack'):
+                self._op_stack = []
+                self._redo_stack = []
+            self._op_stack.append(metadata)
             # Clear redo stack when new deletion happens
             self._redo_stack.clear()
             
@@ -554,103 +582,118 @@ class FileManager(QObject):
             log.error(f"Cannot delete {filepath}: {e}")
             return False
     
-    def undo_delete(self) -> Optional[str]:
-        """
-        Undo the last delete operation by restoring from trash.
-        Returns restored path or None if undo not possible.
-        """
-        if not self._trash_bin:
-            log.warning("Trash bin is empty - nothing to undo")
+    def undo_operation(self) -> Optional[str]:
+        """Undo the last file manager operation (copy, move, delete)."""
+        if not hasattr(self, '_op_stack') or not self._op_stack:
+            log.warning("Operation stack is empty - nothing to undo")
             return None
         
-        # Get last deleted item
-        metadata = self._trash_bin.pop()
-        trash_path = Path(metadata['trash_path'])
-        original_path = Path(metadata['original_path'])
-        
-        if not trash_path.exists():
-            log.error(f"Trash item not found: {trash_path}")
-            return None
+        op = self._op_stack.pop()
+        op_type = op.get('type')
         
         try:
-            # Restore to original location
-            if metadata['is_directory']:
+            if op_type == 'delete':
+                # Re-create exactly what was here
+                # In undo_delete logic, 'trash_path' moves back to 'original_path'
+                trash_path = Path(op['trash_path'])
+                original_path = Path(op['original_path'])
+                if not trash_path.exists():
+                    log.error("Trash item missing")
+                    self._op_stack.append(op)
+                    return None
+                if not op['is_directory']:
+                    original_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(trash_path), str(original_path))
-            else:
-                # Ensure parent directory exists
-                original_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(trash_path), str(original_path))
-            
-            # Add to redo stack
-            self._redo_stack.append(metadata)
-            
-            # Emit signal for UI updates
-            self.file_restored.emit(metadata['original_path'])
-            
-            log.info(f"Restored from trash: {metadata['original_path']}")
-            return metadata['original_path']
+                self.file_restored.emit(str(original_path))
+                self._redo_stack.append(op)
+                return str(original_path)
+
+            elif op_type == 'copy':
+                # Delete the created copy
+                dst = Path(op['dst'])
+                if dst.exists():
+                    if dst.is_dir():
+                        shutil.rmtree(dst)
+                    else:
+                        dst.unlink()
+                self._redo_stack.append(op)
+                return op['src']
+
+            elif op_type == 'move':
+                # Move it back to 'src'
+                src_path = Path(op['src'])
+                dst_path = Path(op['dst'])
+                if dst_path.exists():
+                    src_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(dst_path), str(src_path))
+                self._redo_stack.append(op)
+                return str(src_path)
+
         except Exception as e:
-            log.error(f"Failed to restore {metadata['original_path']}: {e}")
-            # Put back in trash bin if restore failed
-            self._trash_bin.append(metadata)
+            log.error(f"Failed to undo {op_type}: {e}")
+            self._op_stack.append(op)
             return None
-    
-    def redo_delete(self) -> Optional[str]:
-        """
-        Redo a previously undone delete operation.
-        Returns re-deleted path or None if redo not possible.
-        """
-        if not self._redo_stack:
-            log.warning("Redo stack is empty - nothing to redo")
+            
+    def redo_operation(self) -> Optional[str]:
+        """Redo the previously undone operation."""
+        if not hasattr(self, '_redo_stack') or not self._redo_stack:
+            log.warning("Redo stack is empty")
             return None
-        
-        # Get last redone item
-        metadata = self._redo_stack.pop()
-        trash_path = Path(metadata['trash_path'])
-        original_path = Path(metadata['original_path'])
-        
-        if not original_path.exists():
-            log.error(f"Original path not found: {original_path}")
-            return None
+            
+        op = self._redo_stack.pop()
+        op_type = op.get('type')
         
         try:
-            # Move back to trash
-            shutil.move(str(original_path), str(trash_path))
-            
-            # Add back to trash bin
-            self._trash_bin.append(metadata)
-            
-            # Emit signal for UI updates
-            self.file_deleted.emit(metadata['original_path'])
-            
-            log.info(f"Re-deleted: {metadata['original_path']}")
-            return metadata['original_path']
+            if op_type == 'delete':
+                trash_path = Path(op['trash_path'])
+                original_path = Path(op['original_path'])
+                if original_path.exists():
+                    shutil.move(str(original_path), str(trash_path))
+                self.file_deleted.emit(str(original_path))
+                self._op_stack.append(op)
+                return str(original_path)
+                
+            elif op_type == 'copy':
+                src = Path(op['src'])
+                dst = Path(op['dst'])
+                if src.exists():
+                    if src.is_dir():
+                        shutil.copytree(src, dst)
+                    else:
+                        shutil.copy2(src, dst)
+                self._op_stack.append(op)
+                return str(dst)
+                
+            elif op_type == 'move':
+                src = op['src']
+                dst = op['dst']
+                if Path(src).exists():
+                    shutil.move(src, dst)
+                self._op_stack.append(op)
+                return dst
+
         except Exception as e:
-            log.error(f"Failed to re-delete {metadata['original_path']}: {e}")
-            # Put back in redo stack if operation failed
-            self._redo_stack.append(metadata)
+            log.error(f"Failed to redo {op_type}: {e}")
+            self._redo_stack.append(op)
             return None
-    
+
     def can_undo(self) -> bool:
-        """Check if undo is available."""
-        return len(self._trash_bin) > 0
+        return hasattr(self, '_op_stack') and len(self._op_stack) > 0
     
     def can_redo(self) -> bool:
-        """Check if redo is available."""
-        return len(self._redo_stack) > 0
+        return hasattr(self, '_redo_stack') and len(self._redo_stack) > 0
     
     def get_trash_count(self) -> int:
-        """Get number of items in trash bin."""
-        return len(self._trash_bin)
+        return len([op for op in getattr(self, '_op_stack', []) if op.get('type') == 'delete'])
     
     def clear_trash(self):
-        """Permanently delete all items in trash."""
         try:
             if self._trash_dir.exists():
                 shutil.rmtree(self._trash_dir)
                 self._trash_dir.mkdir(parents=True, exist_ok=True)
-            self._trash_bin.clear()
-            self._redo_stack.clear()
-            log.info("Trash cleared permanently")
+            if hasattr(self, '_op_stack'):
+                self._op_stack = [op for op in self._op_stack if op.get('type') != 'delete']
+            if hasattr(self, '_redo_stack'):
+                self._redo_stack = [op for op in self._redo_stack if op.get('type') != 'delete']
         except Exception as e:
             log.error(f"Failed to clear trash: {e}")

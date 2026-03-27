@@ -2078,7 +2078,7 @@ class CortexMainWindow(QMainWindow):
         
         # If no editor or no undo available, try file restore
         if hasattr(self, '_file_manager') and self._file_manager.can_undo():
-            restored_path = self._file_manager.undo_delete()
+            restored_path = self._file_manager.undo_operation()
             if restored_path:
                 log.info(f"Restored file: {restored_path}")
                 self.statusBar().showMessage(f"Restored: {Path(restored_path).name}", 3000)
@@ -2091,9 +2091,8 @@ class CortexMainWindow(QMainWindow):
             editor.redo()
             return
         
-        # If no editor or no redo available, try file re-delete
         if hasattr(self, '_file_manager') and self._file_manager.can_redo():
-            deleted_path = self._file_manager.redo_delete()
+            deleted_path = self._file_manager.redo_operation()
             if deleted_path:
                 log.info(f"Re-deleted file: {deleted_path}")
                 self.statusBar().showMessage(f"Deleted: {Path(deleted_path).name}", 3000)
