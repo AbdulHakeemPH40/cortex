@@ -100,10 +100,10 @@ body {
     -moz-osx-font-smoothing: grayscale;
 }
 
-/* Custom Scrollbar */
+/* Custom Scrollbar — Liquid design matches Qt side */
 ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
 }
 
 ::-webkit-scrollbar-track {
@@ -111,13 +111,17 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-    background: var(--text-muted);
-    border-radius: var(--radius-full);
-    opacity: 0.5;
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 10px;
+    border: 1px solid transparent;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: var(--text-secondary);
+    background: rgba(255, 255, 255, 0.22);
+}
+
+::-webkit-scrollbar-thumb:active {
+    background: rgba(0, 122, 204, 0.6);
 }
 
 /* Loading Overlay */
@@ -1018,27 +1022,28 @@ body.light .numbered-card .card-content {
 
 .input-toolbar {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    padding-top: 8px;
-    margin-top: 4px;
+    padding-top: 6px;
+    margin-top: 2px;
     border-top: 1px solid var(--border);
     flex-wrap: nowrap;
-    gap: 8px;
+    gap: 4px;
     min-width: 0;
 }
 
-.toolbar-left, .toolbar-right {
+.toolbar-left {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 2px;
     flex-shrink: 0;
 }
 
 .toolbar-right {
-    flex-shrink: 1;
-    min-width: 0;
-    overflow: hidden;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+    margin-left: auto;
 }
 
 /* Toolbar Buttons & Toggles */
@@ -1074,21 +1079,26 @@ body.light .numbered-card .card-content {
 }
 
 .dropdown-trigger {
-    background: var(--hover-bg);
-    border: 1px solid var(--border);
+    background: transparent;
+    border: 1px solid transparent;
     color: var(--text-muted);
     font-size: 12px;
-    padding: 5px 10px;
+    padding: 4px 8px;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 5px;
     cursor: pointer;
-    border-radius: 8px;
+    border-radius: 6px;
     flex-shrink: 0;
-    transition: all 0.2s;
+    transition: all 0.15s;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    max-width: 140px;
+}
+
+#model-selector .dropdown-trigger {
+    max-width: 160px;
 }
 
 .dropdown-trigger span {
@@ -1098,8 +1108,8 @@ body.light .numbered-card .card-content {
 }
 
 .dropdown-trigger:hover {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: var(--accent);
+    background: var(--hover-bg);
+    border-color: var(--border);
     color: var(--text);
 }
 
@@ -5338,7 +5348,7 @@ body.light .permission-block {
 .cfs-accept-btn:hover { background: #fff; border-color: #fff; }
 
 .cfs-body  { overflow-y: auto; flex: 1; }
-.cfs-list  {}
+.cfs-list  { min-height: 0; }
 
 .cfs-row {
     display: flex;
@@ -7289,11 +7299,16 @@ body.light ::selection {
 }
 
 body.light ::-webkit-scrollbar-thumb {
-    background: #c0c0c0;
+    background: rgba(0, 0, 0, 0.12);
+    border-radius: 10px;
 }
 
 body.light ::-webkit-scrollbar-thumb:hover {
-    background: #a0a0a0;
+    background: rgba(0, 0, 0, 0.22);
+}
+
+body.light ::-webkit-scrollbar-thumb:active {
+    background: rgba(13, 110, 253, 0.6);
 }
 
 /* Additional hardcoded dark backgrounds - Light mode overrides */

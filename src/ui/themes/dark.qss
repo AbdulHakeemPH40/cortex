@@ -173,47 +173,71 @@ QTabBar::tab:selected::close-button:hover {
 }
 
 
-/* --- Scroll Bars --- */
+/* --- Scroll Bars — Liquid Design --- */
 QScrollBar:vertical {
-    background: #1e1e1e;
-    width: 10px;
+    background: transparent;
+    width: 6px;
+    margin: 2px 1px;
     border: none;
+    border-radius: 3px;
 }
 
 QScrollBar::handle:vertical {
-    background: #424242;
-    border-radius: 5px;
-    min-height: 20px;
+    background: rgba(120, 120, 130, 0.40);
+    border-radius: 3px;
+    min-height: 28px;
 }
 
 QScrollBar::handle:vertical:hover {
-    background: #686868;
+    background: rgba(160, 160, 175, 0.65);
+}
+
+QScrollBar::handle:vertical:pressed {
+    background: rgba(0, 122, 204, 0.80);
 }
 
 QScrollBar::add-line:vertical,
 QScrollBar::sub-line:vertical {
     height: 0px;
+    background: none;
+}
+
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
+    background: none;
 }
 
 QScrollBar:horizontal {
-    background: #1e1e1e;
-    height: 10px;
+    background: transparent;
+    height: 6px;
+    margin: 1px 2px;
     border: none;
+    border-radius: 3px;
 }
 
 QScrollBar::handle:horizontal {
-    background: #424242;
-    border-radius: 5px;
-    min-width: 20px;
+    background: rgba(120, 120, 130, 0.40);
+    border-radius: 3px;
+    min-width: 28px;
 }
 
 QScrollBar::handle:horizontal:hover {
-    background: #686868;
+    background: rgba(160, 160, 175, 0.65);
+}
+
+QScrollBar::handle:horizontal:pressed {
+    background: rgba(0, 122, 204, 0.80);
 }
 
 QScrollBar::add-line:horizontal,
 QScrollBar::sub-line:horizontal {
     width: 0px;
+    background: none;
+}
+
+QScrollBar::add-page:horizontal,
+QScrollBar::sub-page:horizontal {
+    background: none;
 }
 
 /* --- Tree View (File Explorer) --- */

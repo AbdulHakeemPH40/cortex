@@ -592,7 +592,7 @@ class CortexMainWindow(QMainWindow):
         # --- Left Sidebar ---
         self._sidebar = SidebarWidget(self._file_manager)
         self._sidebar.setMinimumWidth(44)
-        self._sidebar.setMaximumWidth(320)
+        self._sidebar.setMaximumWidth(700)
         self._main_splitter.addWidget(self._sidebar)
 
         # --- Center: Editor + Terminal stacked vertically ---
@@ -655,15 +655,16 @@ class CortexMainWindow(QMainWindow):
         self._find_replace_dialog.replace_all_requested.connect(self._on_replace_all_requested)
 
         # Splitter sizes for 3 panels: sidebar | editor | AI chat
-        sidebar_w = self._settings.get("window", "sidebar_width") or 220
-        right_w = self._settings.get("window", "right_panel_width") or 350
+        # Always start with compact defaults as per user request
+        sidebar_w = 200 
+        right_w = 300 
         total_w = (self._settings.get("window", "width") or 1400)
         center_w = max(400, total_w - sidebar_w - right_w)
         self._main_splitter.setSizes([sidebar_w, center_w, right_w])
         self._main_splitter.setHandleWidth(1)
         
-        # Limit AI chat panel max width to prevent it from getting too wide
-        self._right_panel.setMaximumWidth(480)
+        # Limit AI chat panel max width — much more flexible now
+        self._right_panel.setMaximumWidth(1200)
 
         root_layout.addWidget(self._main_splitter, 1)
 
@@ -944,27 +945,48 @@ class CortexMainWindow(QMainWindow):
 
         self._toolbar_btns = []
 
+        # 1. File / Build Controls
         actions = [
             ("📂", "Open Folder\nCtrl+O",   self._open_folder_dialog),
             ("💾", "Save File\nCtrl+S",     self._save_current),
             ("▶️", "Run Current File",      self._run_file),
             ("➕", "New Terminal",          lambda: self._new_terminal(show_panel=True)),
-            ("⚡", "Show/Hide Terminal\nCtrl+`", self._toggle_terminal),
         ]
         for icon, tip, slot in actions:
             btn = QPushButton(icon)
             btn.setToolTip(tip)
-            btn.setFixedSize(44, 40)
+            btn.setFixedSize(40, 40)
             btn.clicked.connect(slot)
             self._toolbar_btns.append(btn)
             tb.addWidget(btn)
 
         tb.addWidget(self._make_spacer())
 
-        # Theme toggle button
+        # 2. Layout Toggle Controls (VS Code Style) - On the right side
+        layout_actions = [
+            ("◧", "Toggle Left Sidebar\nCtrl+B", self._toggle_sidebar),
+            ("⬒", "Toggle Bottom Panel\nCtrl+`", self._toggle_terminal),
+            ("◨", "Toggle AI Chat", self._toggle_ai_chat),
+        ]
+        for icon, tip, slot in layout_actions:
+            btn = QPushButton(icon)
+            btn.setToolTip(tip)
+            btn.setFixedSize(40, 40)
+            btn.clicked.connect(slot)
+            # Custom font size for layout icons to make them clear
+            btn.setObjectName("layout_btn")
+            self._toolbar_btns.append(btn)
+            tb.addWidget(btn)
+
+        self._toolbar_sep2 = QFrame()
+        self._toolbar_sep2.setFrameShape(QFrame.Shape.VLine)
+        self._toolbar_sep2.setFixedHeight(30)
+        tb.addWidget(self._toolbar_sep2)
+
+        # 3. Theme toggle button
         self._theme_btn = QPushButton("🌙")
         self._theme_btn.setToolTip("Toggle Theme\nCtrl+Shift+T")
-        self._theme_btn.setFixedSize(44, 40)
+        self._theme_btn.setFixedSize(40, 40)
         self._theme_btn.clicked.connect(self._toggle_theme)
         self._toolbar_btns.append(self._theme_btn)
         tb.addWidget(self._theme_btn)
@@ -985,10 +1007,14 @@ class CortexMainWindow(QMainWindow):
             }}
         """)
         self._toolbar_sep.setStyleSheet(f"color:{border_color};")
+        self._toolbar_sep2.setStyleSheet(f"color:{border_color};")
+        
+        fg_color = "#dcdcdc" if is_dark else "#1a1a1a"
         
         btn_style = f"""
             QPushButton {{
                 font-size: 22px;
+                color: {fg_color};
                 border-radius: 6px;
                 background: transparent;
                 border: none;
@@ -1002,7 +1028,10 @@ class CortexMainWindow(QMainWindow):
             }}
         """
         for btn in self._toolbar_btns:
-            btn.setStyleSheet(btn_style)
+            style = btn_style
+            if btn.objectName() == "layout_btn":
+                style += f" QPushButton {{ font-size: 24px; color: {fg_color}; }}"
+            btn.setStyleSheet(style)
 
 
     def _make_spacer(self) -> QWidget:
@@ -1801,17 +1830,57 @@ class CortexMainWindow(QMainWindow):
             term.setFocus()
 
     def _toggle_terminal(self):
-        self._terminal_tabs.setVisible(not self._terminal_tabs.isVisible())
+        visible = self._terminal_tabs.isVisible()
+        sizes = self._center_splitter.sizes()
+        # If already visible but dragged to be hidden (tiny size), just restore the size
+        if visible and len(sizes) > 1 and sizes[1] < 40:
+            self._center_splitter.setSizes([sizes[0], 200])
+            self._terminal_tabs.setFocus()
+            return
+            
+        self._terminal_tabs.setVisible(not visible)
         if self._terminal_tabs.isVisible():
             if self._terminal_tabs.count() == 0:
                 self._new_terminal()
+            
+            # Ensure it has a non-zero height if it was collapsed
+            new_sizes = self._center_splitter.sizes()
+            if len(new_sizes) > 1 and new_sizes[1] < 40:
+                self._center_splitter.setSizes([max(100, new_sizes[0]), 200])
+                
             term = self._current_terminal()
             if term:
                 term.setFocus()
 
     def _toggle_sidebar(self):
         visible = self._sidebar.isVisible()
+        sizes = self._main_splitter.sizes()
+        # If visible but tiny (dragged hidden), restore size instead of toggling 
+        if visible and sizes[0] < 40:
+            self._main_splitter.setSizes([260, sizes[1], sizes[2]])
+            self._sidebar.setFocus()
+            return
+            
         self._sidebar.setVisible(not visible)
+        if self._sidebar.isVisible():
+            new_sizes = self._main_splitter.sizes()
+            if new_sizes[0] < 40:
+                 self._main_splitter.setSizes([200, new_sizes[1], new_sizes[2]])
+            self._sidebar.setFocus()
+
+    def _toggle_ai_chat(self):
+        visible = self._right_panel.isVisible()
+        sizes = self._main_splitter.sizes()
+        # If visible but tiny (dragged hidden), restore size
+        if visible and len(sizes) > 2 and sizes[2] < 40:
+            self._main_splitter.setSizes([sizes[0], sizes[1], 300])
+            return
+            
+        self._right_panel.setVisible(not visible)
+        if self._right_panel.isVisible():
+            new_sizes = self._main_splitter.sizes()
+            if len(new_sizes) > 2 and new_sizes[2] < 40:
+                 self._main_splitter.setSizes([new_sizes[0], new_sizes[1], 300])
 
     def _zoom_in(self):
         """Zoom in (Ctrl+=)."""
