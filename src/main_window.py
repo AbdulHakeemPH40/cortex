@@ -309,7 +309,7 @@ class EditorTabWidget(QTabWidget):
                     if current_content != content:
                         # Content changed, reload it
                         with QSignalBlocker(editor.document()):
-                            editor.set_content(content, language)
+                            editor.set_content(content, language, filepath)
                         print(f"[EditorTabs] Updated content for already-open file: {filepath}")
                     else:
                         print(f"[EditorTabs] File already open with same content: {filepath}")
@@ -325,7 +325,7 @@ class EditorTabWidget(QTabWidget):
         # Disconnect the internal document→editor connection temporarily
         # Use blockSignals instead of disconnect to avoid errors
         with QSignalBlocker(editor.document()):
-            editor.set_content(content, language)
+            editor.set_content(content, language, filepath)
         
         # NOW connect OUR handler - anything after this is a user edit
         editor.content_modified.connect(lambda: self._mark_modified(filepath))

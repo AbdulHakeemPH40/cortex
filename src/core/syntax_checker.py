@@ -883,18 +883,16 @@ class SyntaxChecker:
         return errors
     
     def _check_html(self, file_path: str, content: str) -> List[SyntaxError]:
-        """Check HTML for basic issues."""
+        """Check HTML for basic issues and embedded languages (JS/CSS)."""
         errors = []
         
-        # Check for unmatched tags (basic)
+        # 1. Basic HTML Tag Check
         tag_stack = []
         pattern = r'<(/?)(\w+)[^>]*>'
         
         for match in re.finditer(pattern, content):
             is_closing = match.group(1) == '/'
             tag_name = match.group(2).lower()
-            
-            # Skip self-closing tags
             if tag_name in ('br', 'hr', 'img', 'input', 'meta', 'link', 'area', 'base', 'col', 'embed', 'param', 'source', 'track', 'wbr'):
                 continue
             
@@ -902,30 +900,36 @@ class SyntaxChecker:
                 if tag_stack and tag_stack[-1] == tag_name:
                     tag_stack.pop()
                 elif tag_name in tag_stack:
-                    # Mismatched closing tag
-                    lines = content[:match.start()].split('\n')
-                    line_num = len(lines)
-                    errors.append(SyntaxError(
-                        file_path=file_path,
-                        line=line_num,
-                        column=0,
-                        message=f"Mismatched closing tag </{tag_name}>",
-                        severity="warning",
-                        source="html-check"
-                    ))
+                    line_num = content[:match.start()].count('\n') + 1
+                    errors.append(SyntaxError(file_path, line_num, 0, f"Mismatched closing tag </{tag_name}>", "warning", source="html-tag"))
             else:
                 tag_stack.append(tag_name)
         
-        # Check for unclosed tags
         if tag_stack:
-            errors.append(SyntaxError(
-                file_path=file_path,
-                line=1,
-                column=0,
-                message=f"Unclosed tags: {', '.join(tag_stack)}",
-                severity="warning",
-                source="html-check"
-            ))
+            errors.append(SyntaxError(file_path, 1, 0, f"Unclosed tags: {', '.join(tag_stack)}", "warning", source="html-tag"))
+
+        # 2. Check Embedded JavaScript (<script> blocks)
+        script_pattern = re.compile(r'<script[^>]*>(.*?)</script>', re.DOTALL)
+        for match in script_pattern.finditer(content):
+            inner_js = match.group(1)
+            line_offset = content[:match.start()].count('\n')
+            if inner_js.strip():
+                js_errors = self._check_javascript(file_path, inner_js)
+                for e in js_errors:
+                    e.line += line_offset
+                    e.source = f"html-js ({e.source})"
+                    errors.append(e)
+
+        # 3. Check Embedded CSS (<style> blocks)
+        style_pattern = re.compile(r'<style[^>]*>(.*?)</style>', re.DOTALL)
+        for match in style_pattern.finditer(content):
+            inner_css = match.group(1)
+            line_offset = content[:match.start()].count('\n')
+            if inner_css.strip():
+                css_errors = self._check_css(file_path, inner_css)
+                for e in css_errors:
+                    e.line += line_offset
+                    errors.append(e)
         
         return errors
     

@@ -3,11 +3,13 @@ Code Editor Component — QPlainTextEdit with line numbers, syntax highlighting,
 current-line highlight, and auto-indent.
 """
 
+import ast
+import os
 from PyQt6.QtWidgets import (
     QPlainTextEdit, QWidget, QTextEdit, QApplication,
     QFrame, QLabel, QPushButton, QVBoxLayout, QHBoxLayout
 )
-from PyQt6.QtCore import Qt, QRect, QSize, pyqtSignal, QSignalBlocker, QPoint
+from PyQt6.QtCore import Qt, QRect, QSize, pyqtSignal, QSignalBlocker, QPoint, QTimer
 from PyQt6.QtGui import (
     QColor, QPainter, QTextFormat, QFont, QSyntaxHighlighter,
     QTextCharFormat, QKeyEvent, QFontMetrics, QTextOption, QPen, QPalette, QTextCursor
@@ -16,6 +18,10 @@ from pygments import lex
 from pygments.lexers import get_lexer_by_name, TextLexer
 from pygments.token import Token
 from src.config.settings import get_settings
+from src.core.syntax_checker import get_syntax_checker, SyntaxError as DiagnosticError
+from src.utils.logger import get_logger
+
+log = get_logger("editor")
 
 
 # ---------------------------------------------------------------------------
@@ -642,10 +648,16 @@ class CodeEditor(QPlainTextEdit):
         super().__init__(parent)
         self._settings = get_settings()
         self._language = language
+        self._file_path = ""
         self._is_dark = True
+        self._syntax_checker = get_syntax_checker()
         
         # CRITICAL: Apply dark theme FIRST before any other setup
         self._apply_editor_theme()
+
+        # Enable mouse tracking for tooltips
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
 
         # Font - Premium programming fonts (Dracula theme style)
         font_family = self._get_preferred_programming_font()
@@ -698,9 +710,18 @@ class CodeEditor(QPlainTextEdit):
         self._inline_overlay.diff_requested.connect(self.inline_diff_requested.emit)
         self._inline_selection_text = ""
         self._inline_selection_range = (0, 0)
+        
+        # Syntax Error Detection
+        self._syntax_errors: List[DiagnosticError] = []
+        self._lint_timer = QTimer()
+        self._lint_timer.setSingleShot(True)
+        self._lint_timer.timeout.connect(self._run_linting)
+        self.document().contentsChanged.connect(lambda: self._lint_timer.start(800))
 
-    def set_content(self, text: str, language: str = None):
-        """Set editor content without triggering modification signal."""
+    def set_content(self, text: str, language: str = None, file_path: str = ""):
+        """Set editor content and file context."""
+        if file_path:
+            self._file_path = file_path
         if language:
             self._language = language
             # Only set highlighter language if it exists (during init, it doesn't)
@@ -769,11 +790,8 @@ class CodeEditor(QPlainTextEdit):
         self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)
 
     def _update_line_number_area(self, rect, dy):
-        if dy:
-            self._line_number_area.scroll(0, dy)
-        else:
-            self._line_number_area.update(0, rect.y(),
-                                          self._line_number_area.width(), rect.height())
+        # Fix scrolling drift: using update() instead of scroll() for better sync
+        self._line_number_area.update()
         if rect.contains(self.viewport().rect()):
             self._update_line_number_area_width(0)
 
@@ -800,20 +818,98 @@ class CodeEditor(QPlainTextEdit):
 
         while block.isValid() and top <= event.rect().bottom():
             if block.isVisible() and bottom >= event.rect().top():
-                num = str(block.blockNumber() + 1)
-                if block.blockNumber() == current_line:
+                line_idx = block.blockNumber()
+                num = str(line_idx + 1)
+                if line_idx == current_line:
                     painter.setPen(cur_color)
                 else:
                     painter.setPen(num_color)
                 painter.drawText(
                     0, top,
-                    self._line_number_area.width() - 6,
+                    self._line_number_area.width() - 8,
                     self.fontMetrics().height(),
                     Qt.AlignmentFlag.AlignRight, num
                 )
+                
+                # Draw Syntax Error Marker (Red Dot)
+                error_lines = [e.line for e in self._syntax_errors]
+                if line_idx + 1 in error_lines:
+                    # Find highest severity error for this line
+                    line_errors = [e for e in self._syntax_errors if e.line == line_idx + 1]
+                    severity = "error"
+                    if any(e.severity == "error" for e in line_errors):
+                        color = QColor("#f44747")
+                    elif any(e.severity == "warning" for e in line_errors):
+                        color = QColor("#cca700")
+                        severity = "warning"
+                    else:
+                        color = QColor("#75beff")
+                        severity = "info"
+                        
+                    painter.setPen(QPen(color, 5))
+                    painter.drawPoint(6, top + (self.fontMetrics().height() // 2))
+
             block = block.next()
             top = bottom
             bottom = top + round(self.blockBoundingRect(block).height())
+
+    def _run_linting(self):
+        """Analyze code for syntax errors and draw visual markers using core SyntaxChecker."""
+        # Determine effective path and language for checking
+        path = self._file_path or f"virtual_file.{self._language or 'py'}"
+        content = self.toPlainText()
+        
+        # Run core syntax checker
+        result = self._syntax_checker.check_file(path, content)
+        self._syntax_errors = result.errors
+        
+        # DEBUG LOG: Let the user see it's working in the console
+        if self._syntax_errors:
+            log.info(f"Diagnostics: Found {len(self._syntax_errors)} errors in {path}")
+        
+        # Clear old lint squiggles while preserving current line highlight
+        sels = [s for s in self.extraSelections() if not getattr(s, '_lint', False)]
+        
+        for err in self._syntax_errors:
+            # Create diagnostic squiggle
+            s = QTextEdit.ExtraSelection()
+            s._lint = True
+            fmt = QTextCharFormat()
+            
+            # Map severity to color
+            if err.severity == "error":
+                color = QColor("#f44747")
+            elif err.severity == "warning":
+                color = QColor("#cca700")
+            else:
+                color = QColor("#75beff")
+                
+            fmt.setUnderlineColor(color)
+            fmt.setUnderlineStyle(QTextCharFormat.UnderlineStyle.WaveUnderline)
+            s.format = fmt
+            
+            # Use Block-based cursor positioning (more reliable than MoveOperation.Down)
+            # Note: line index is 1-based in diagnostics, findBlockByNumber is 0-based
+            block = self.document().findBlockByNumber(max(0, err.line - 1))
+            if block.isValid():
+                cur = QTextCursor(block)
+                # Select the specific column or the entire line
+                col = max(0, err.column - 1) if err.column > 0 else 0
+                
+                if col > 0:
+                    cur.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.MoveAnchor, col)
+                    # If it's a syntax error, typically selecting the word under the offset is best
+                    cur.select(QTextCursor.SelectionType.WordUnderCursor)
+                else:
+                    cur.select(QTextCursor.SelectionType.LineUnderCursor)
+                
+                s.cursor = cur
+                sels.append(s)
+            
+        self.setExtraSelections(sels)
+        # FORCE update of both the gutter and the main text area
+        self._line_number_area.update()
+        self.viewport().update()
 
     def _highlight_current_line(self):
         extra = []
@@ -838,41 +934,37 @@ class CodeEditor(QPlainTextEdit):
         """Draw vertical indentation guide lines like VS Code."""
         painter = QPainter(self.viewport())
         
-        # Guide line color (subtle gray)
-        guide_color = QColor("#808080") if self._is_dark else QColor("#cccccc")
-        painter.setPen(QPen(guide_color, 1, Qt.PenStyle.SolidLine))
+        # Guide line color (very subtle gray)
+        guide_color = QColor("#3a3a3a") if self._is_dark else QColor("#e0e0e0")
+        painter.setPen(QPen(guide_color, 1, Qt.PenStyle.DotLine))
         
-        # Get tab width in pixels
-        tab_width = self.fontMetrics().horizontalAdvance(' ' * 4)  # Default 4 spaces
+        # Get horizontal offset and char width
+        offset_x = self.horizontalScrollBar().value()
+        char_w = self.fontMetrics().horizontalAdvance(' ')
+        # VS Code style: draw lines at 4, 8, 12... spaces
+        indent_char_count = 4 
         
         block = self.firstVisibleBlock()
         while block.isValid():
-            # Get block geometry
             top = int(self.blockBoundingGeometry(block).translated(self.contentOffset()).top())
             bottom = top + int(self.blockBoundingRect(block).height())
             
-            # Only draw if visible
-            if block.isVisible() and bottom >= 0 and top <= self.height():
+            if block.isVisible() and bottom >= 0 and top <= self.viewport().height():
                 text = block.text()
-                
-                # Calculate indent level
                 indent = 0
                 for char in text:
-                    if char == ' ':
-                        indent += 1
-                    elif char == '\t':
-                        indent += 4
-                    else:
-                        break
+                    if char == ' ': indent += 1
+                    elif char == '\t': indent += 4
+                    else: break
                 
-                # Draw guide lines for each indent level
-                if indent > 0:
-                    for i in range(0, indent, 4):  # Every 4 spaces
-                        x = i * self.fontMetrics().horizontalAdvance(' ')
-                        if x < self.width():  # Don't draw if outside viewport
+                if indent >= indent_char_count:
+                    for i in range(indent_char_count, indent + 1, indent_char_count):
+                        x = (i * char_w) - offset_x
+                        if 0 <= x < self.viewport().width():
                             painter.drawLine(x, top, x, bottom)
             
             block = block.next()
+            if top > self.viewport().height(): break
         
         painter.end()
 
@@ -988,6 +1080,32 @@ class CodeEditor(QPlainTextEdit):
         cursor.setPosition(start_pos)
         cursor.setPosition(end_pos - removed_count, QTextCursor.MoveMode.KeepAnchor)
         self.setTextCursor(cursor)
+
+    def event(self, event):
+        """Handle tooltips for syntax errors."""
+        from PyQt6.QtWidgets import QToolTip
+        from PyQt6.QtCore import QEvent
+        if event.type() == QEvent.Type.ToolTip:
+            # Get line under mouse
+            pos = self.viewport().mapFromGlobal(event.globalPos())
+            cursor = self.cursorForPosition(pos)
+            line_idx = cursor.blockNumber() + 1
+            
+            # Find errors on this line
+            line_errors = [e for e in self._syntax_errors if e.line == line_idx]
+            if line_errors:
+                tooltip_parts = []
+                for err in line_errors:
+                    sev_color = "#f44747" if err.severity == "error" else "#cca700"
+                    if err.severity == "info": sev_color = "#75beff"
+                    
+                    header = f"<b style='color:{sev_color}'>{err.severity.upper()}</b>"
+                    source = f"<span style='color:#888'> [{err.source}]</span>" if err.source else ""
+                    tooltip_parts.append(f"{header}{source}<br/>{err.message}")
+                
+                QToolTip.showText(event.globalPos(), "<br/><hr/>".join(tooltip_parts), self)
+                return True
+        return super().event(event)
 
     def _show_inline_overlay(self):
         selection_text, line_range = self._get_selection_info()
