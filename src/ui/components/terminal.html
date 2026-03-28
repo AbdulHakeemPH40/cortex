@@ -36,6 +36,28 @@
         .xterm-viewport::-webkit-scrollbar-thumb:hover {
             background: #4f4f4f;
         }
+        
+        /* URL Link Styling - Underline and hover highlighting */
+        .xterm-decoration-container .xterm-decoration {
+            pointer-events: auto;
+            cursor: pointer;
+        }
+        
+        .xterm-decoration-container .xterm-decoration:hover {
+            text-decoration: underline;
+            background-color: rgba(0, 120, 212, 0.3) !important;
+        }
+        
+        /* Link styling in dark mode */
+        .xterm .xterm-decoration {
+            pointer-events: auto;
+            cursor: pointer;
+        }
+        
+        .xterm .xterm-decoration:hover {
+            text-decoration: underline;
+            background-color: rgba(0, 120, 212, 0.3);
+        }
     </style>
 </head>
 <body>
@@ -213,6 +235,7 @@
 
         // Track paste operation to prevent double handling
         let _isPasting = false;
+        let _pasteTimer = null;
         
         // Handle paste events - prevent browser default and use Python clipboard
         function _handlePasteEvent(e) {
@@ -221,6 +244,11 @@
             }
             e.preventDefault();
             e.stopPropagation();
+            
+            // Clear any existing paste timer
+            if (_pasteTimer) {
+                clearTimeout(_pasteTimer);
+            }
             
             // Mark that we're pasting
             _isPasting = true;
@@ -236,8 +264,21 @@
             }
             
             // Reset paste flag after a short delay
-            setTimeout(() => { _isPasting = false; }, 100);
+            _pasteTimer = setTimeout(() => { 
+                _isPasting = false; 
+                _pasteTimer = null;
+            }, 100);
         }
+        
+        // Cleanup function for page unload
+        window.addEventListener('beforeunload', () => {
+            if (_ignoreTimer) clearTimeout(_ignoreTimer);
+            if (_pasteTimer) clearTimeout(_pasteTimer);
+            if (_resizeTimer) clearTimeout(_resizeTimer);
+            if (_inputTimer) clearTimeout(_inputTimer);
+            if (_contextMenuTimer) clearTimeout(_contextMenuTimer);
+            if (_rafId) cancelAnimationFrame(_rafId);
+        });
 
         // Add paste listener to textarea
         if (term.textarea) {
@@ -285,6 +326,7 @@
         });
 
         // Handle right-click (Copy if selection exists, Paste otherwise)
+        let _contextMenuTimer = null;
         document.getElementById('terminal-container').addEventListener('contextmenu', async (e) => {
             e.preventDefault();
             if (window.pyTerminal) {
@@ -296,10 +338,15 @@
                     try {
                         const text = await navigator.clipboard.readText();
                         if (text && window.pyTerminal) {
+                            // Clear any existing timer
+                            if (_contextMenuTimer) clearTimeout(_contextMenuTimer);
                             _isPasting = true;
                             _startIgnoreOnData();
                             window.pyTerminal.receive_input(text);
-                            setTimeout(() => { _isPasting = false; }, 100);
+                            _contextMenuTimer = setTimeout(() => { 
+                                _isPasting = false; 
+                                _contextMenuTimer = null;
+                            }, 100);
                         }
                     } catch (err) {
                         console.error('[TERMINAL] Failed to read clipboard:', err);
@@ -348,6 +395,44 @@
             // Connect Python -> JS (incoming text from stdout) — use write queue
             window.pyTerminal.send_output.connect(function(text) {
                 writeToTerm(text);
+            });
+            
+            // URL Link Handler - Make URLs clickable with hover underline
+            const URL_REGEX = /https?:\/\/[^\s"'<>]+/g;
+            
+            term.registerLinkProvider({
+                provideLinks(bufferLineNumber, callback) {
+                    const line = term.buffer.active.getLine(bufferLineNumber - 1);
+                    if (!line) {
+                        callback([]);
+                        return;
+                    }
+                    
+                    const text = line.translateToString(true);
+                    const links = [];
+                    let match;
+                    
+                    while ((match = URL_REGEX.exec(text)) !== null) {
+                        const url = match[0];
+                        const startX = match.index + 1;
+                        const endX = match.index + url.length;
+                        
+                        links.push({
+                            text: url,
+                            range: {
+                                start: { x: startX, y: bufferLineNumber },
+                                end: { x: endX, y: bufferLineNumber }
+                            },
+                            activate: function(event, url) {
+                                if (window.pyTerminal) {
+                                    window.pyTerminal.open_external_url(url);
+                                }
+                            }
+                        });
+                    }
+                    
+                    callback(links);
+                }
             });
             
             // Connect Python -> JS (theme update)

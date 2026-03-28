@@ -71,6 +71,15 @@ class TerminalBridge(QObject):
     def js_log(self, message):
         """Receive console logs from JavaScript"""
         log.info(f"[JS] {message}")
+    
+    @pyqtSlot(str)
+    def open_external_url(self, url):
+        """Open URL in default browser when clicked in terminal"""
+        import webbrowser
+        try:
+            webbrowser.open(url)
+        except Exception as e:
+            log.error(f"Failed to open URL {url}: {e}")
 
 
 class XTermWidget(QWidget):
@@ -566,15 +575,26 @@ class XTermWidget(QWidget):
         self._start_shell()
         
     def _kill_process(self):
+        """Kill terminal process and cleanup all resources."""
+        # Stop timers first to prevent callbacks during cleanup
+        if hasattr(self, '_emit_timer') and self._emit_timer:
+            self._emit_timer.stop()
+        if hasattr(self, '_render_timer') and self._render_timer:
+            self._render_timer.stop()
+        
+        # Kill PTY process and reader thread
         if self._pty_process:
             try:
-                if hasattr(self, '_pty_reader'):
+                if hasattr(self, '_pty_reader') and self._pty_reader:
                     self._pty_reader.running = False
+                    self._pty_reader.wait(500)  # Wait up to 500ms for thread to stop
+                    self._pty_reader = None
                 self._pty_process.terminate()
+                self._pty_process = None
             except Exception:
                 pass
-            self._pty_process = None
             
+        # Kill QProcess
         if self._process:
             try:
                 self._process.finished.disconnect()
