@@ -10,32 +10,105 @@
 
     <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
     <style>
+        * {
+            box-sizing: border-box;
+        }
+        
         html, body {
             margin: 0;
             padding: 0;
             height: 100%;
-            background-color: #0c0c0c; /* Default dark mode background */
-            overflow: hidden;
+            width: 100%;
+            background-color: #0c0c0c;
             font-family: 'Cascadia Code', 'Consolas', monospace;
+            overflow: hidden;
         }
+        
+        /* CRITICAL: Hide any native scrollbars from QWebEngineView - only show xterm scrollbar */
+        html::-webkit-scrollbar,
+        body::-webkit-scrollbar {
+            display: none !important;
+            width: 0 !important;
+        }
+        
         #terminal-container {
             width: 100%;
             height: 100%;
-            padding: 4px;
+            padding: 0;
             box-sizing: border-box;
         }
-        .xterm-viewport::-webkit-scrollbar {
-            width: 10px;
+        
+        /* CRITICAL: Show scrollbar in xterm viewport */
+        .xterm {
+            width: 100%;
+            height: 100%;
+            display: block;
         }
-        .xterm-viewport::-webkit-scrollbar-track {
-            background: transparent;
+        
+        /* Ensure terminal content can overflow and scrollbar shows */
+        .xterm .xterm-screen {
+            display: block;
         }
-        .xterm-viewport::-webkit-scrollbar-thumb {
-            background: #424242;
-            border-radius: 5px;
+        
+        /* CRITICAL: Ensure xterm-viewport is visible and has proper overflow */
+        .xterm .xterm-viewport {
+            width: 100%;
+            height: 100%;
+            overflow-y: scroll;
+            overflow-x: hidden;
+            scrollbar-width: thin;
+            scrollbar-color: #79797966 transparent;
         }
-        .xterm-viewport::-webkit-scrollbar-thumb:hover {
-            background: #4f4f4f;
+        
+        body.light-mode .xterm .xterm-viewport {
+            scrollbar-color: #00000066 transparent;
+        }
+        
+        /* ===== WEBKIT SCROLLBAR STYLING - VS CODE STYLE ===== */
+        
+        /* Main scrollbar width */
+        .xterm .xterm-viewport::-webkit-scrollbar {
+            width: 12px !important;
+        }
+        
+        /* Scrollbar track - completely invisible */
+        .xterm .xterm-viewport::-webkit-scrollbar-track {
+            background: #0c0c0c !important;  /* Match terminal background */
+        }
+        
+        body.light-mode .xterm .xterm-viewport::-webkit-scrollbar-track {
+            background: #ffffff !important;  /* Match light terminal background */
+        }
+        
+        /* Scrollbar thumb - VS Code style metallic gray (dark mode) */
+        .xterm .xterm-viewport::-webkit-scrollbar-thumb {
+            background: #79797966 !important;  /* Metallic gray with transparency */
+            border-radius: 6px !important;
+            min-height: 30px !important;
+        }
+        
+        /* Hover state - lighter gray */
+        .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
+            background: #797979cc !important;  /* More opaque when hovered */
+        }
+        
+        /* Active state - full opacity */
+        .xterm .xterm-viewport::-webkit-scrollbar-thumb:active {
+            background: #797979ff !important;
+        }
+        
+        /* ===== LIGHT MODE SCROLLBAR ===== */
+        /* When body has light-mode class (add this class on light mode switch) */
+        body.light-mode .xterm .xterm-viewport::-webkit-scrollbar-thumb {
+            background: #00000033 !important;  /* Dark black with transparency */
+        }
+        
+        body.light-mode .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
+            background: #00000066 !important;  /* Darker on hover */
+        }
+        
+        body.light-mode .xterm .xterm-viewport::-webkit-scrollbar-thumb:active {
+            background: #000000cc !important;  /* Nearly black on active */
         }
     </style>
 </head>
@@ -97,40 +170,42 @@
         try {
             term = new Terminal({
                 fontFamily: "'Cascadia Code', 'Consolas', monospace",
-            fontSize: 13,
-            cursorBlink: true,
-            // PERFORMANCE: Limit scrollback to prevent memory bloat
-            scrollback: 3000,
-            // PERFORMANCE: Disable features we don't need
-            allowTransparency: false,
-            fastScrollModifier: 'alt',
-            // FIX: Disable local echo to prevent double-display (Python handles echoing)
-            disableStdin: false,
-            // FIX: Ensure terminal scrolls to bottom on new output and user input
-            scrollOnUserInput: true,
-            scrollOnOutput: true,
-            convertEol: true,
-            theme: {
-                background: '#0c0c0c',
-                foreground: '#cccccc',
-                black: '#0c0c0c',
-                red: '#c50f1f',
-                green: '#13a10e',
-                yellow: '#c19c00',
-                blue: '#0037da',
-                magenta: '#881798',
-                cyan: '#3a96dd',
-                white: '#cccccc',
-                brightBlack: '#767676',
-                brightRed: '#e74856',
-                brightGreen: '#16c60c',
-                brightYellow: '#f9f1a5',
-                brightBlue: '#3b78ff',
-                brightMagenta: '#b4009e',
-                brightCyan: '#61d6d6',
-                brightWhite: '#f2f2f2'
-            }
-        });
+                fontSize: 13,
+                cursorBlink: true,
+                // PERFORMANCE: Limit scrollback to prevent memory bloat
+                scrollback: 5000,
+                // PERFORMANCE: Disable features we don't need
+                allowTransparency: false,
+                fastScrollModifier: 'alt',
+                // FIX: Disable local echo to prevent double-display (Python handles echoing)
+                disableStdin: false,
+                // FIX: Ensure terminal scrolls to bottom on new output and user input
+                scrollOnUserInput: true,
+                scrollOnOutput: true,
+                convertEol: true,
+                // Enable mouse wheel scrolling
+                mouseWheelMode: 'line',
+                theme: {
+                    background: '#0c0c0c',
+                    foreground: '#cccccc',
+                    black: '#0c0c0c',
+                    red: '#c50f1f',
+                    green: '#13a10e',
+                    yellow: '#c19c00',
+                    blue: '#0037da',
+                    magenta: '#881798',
+                    cyan: '#3a96dd',
+                    white: '#cccccc',
+                    brightBlack: '#767676',
+                    brightRed: '#e74856',
+                    brightGreen: '#16c60c',
+                    brightYellow: '#f9f1a5',
+                    brightBlue: '#3b78ff',
+                    brightMagenta: '#b4009e',
+                    brightCyan: '#61d6d6',
+                    brightWhite: '#f2f2f2'
+                }
+            });
 
         // Load the Fit addon so it automatically resizes to the container
         const fitAddon = new FitAddon.FitAddon();
@@ -191,7 +266,34 @@
         
         // Open the terminal in the container
         term.open(document.getElementById('terminal-container'));
+        
+        // CRITICAL: Ensure scrollbar is visible immediately
+        _ensureScrollbarVisible();
+        console.log('[TERMINAL] Scrollbar visibility enforced after terminal.open()');
+        
+        // Wait for DOM to settle, then force scrollbar again
+        setTimeout(() => {
+            _ensureScrollbarVisible();
+            console.log('[TERMINAL] Scrollbar re-enforced after DOM settlement');
+        }, 50);
+        
         fitAddon.fit();
+        
+        // Force scrollbar visibility after fit
+        setTimeout(() => {
+            _ensureScrollbarVisible();
+            console.log('[TERMINAL] Scrollbar re-enforced after fitAddon.fit()');
+            
+            // Write initial content to ensure scrollbar appears
+            // This fills the buffer so scrollbar shows even before user types
+            let initialLines = Math.max(term.rows + 5, 30);  // Ensure overflow
+            for (let i = 0; i < initialLines; i++) {
+                term.writeln('');
+            }
+            term.scrollToBottom();
+            _ensureScrollbarVisible();
+            console.log('[TERMINAL] Initial content written to enable scrollbar');
+        }, 100);
 
         // OPTIMIZATION 1: Resize debounce — prevents 100 resize events
         let _resizeTimer = null;
@@ -221,6 +323,8 @@
             if (batch.length <= _MAX_BATCH) {
                 term.write(batch);
                 term.scrollToBottom();
+                // Ensure viewport shows scrollbar
+                _ensureScrollbarVisible();
             } else {
                 // Write in chunks across multiple frames to stay responsive
                 term.write(batch.slice(0, _MAX_BATCH));
@@ -235,6 +339,84 @@
                     if (offset < batch.length) requestAnimationFrame(writeRest);
                 }
                 requestAnimationFrame(writeRest);
+                _ensureScrollbarVisible();
+            }
+        }
+        
+        let _scrollbarStyleInjected = false;
+        
+        function _ensureScrollbarVisible() {
+            const viewport = document.querySelector('.xterm-viewport');
+            if (viewport) {
+                // Force scrollbar to always show with inline styles (for QWebEngineView)
+                viewport.style.overflowY = 'scroll';
+                viewport.style.overflowX = 'hidden';
+                viewport.style.width = '100%';
+                viewport.style.height = '100%';
+                viewport.style.scrollbarWidth = 'thin';
+                
+                // Apply VS Code style scrollbar colors based on current theme
+                const isDarkMode = !document.body.classList.contains('light-mode');
+                if (isDarkMode) {
+                    viewport.style.scrollbarColor = '#79797966 transparent';
+                } else {
+                    viewport.style.scrollbarColor = '#00000066 transparent';
+                }
+                
+                // Only inject styles ONCE (prevents duplicates)
+                if (!_scrollbarStyleInjected) {
+                    const style = document.createElement('style');
+                    style.textContent = `
+                        /* Hide any native scrollbars from parent containers */
+                        html::-webkit-scrollbar,
+                        body::-webkit-scrollbar {
+                            display: none !important;
+                            width: 0 !important;
+                        }
+                        
+                        .xterm .xterm-viewport {
+                            overflow-y: scroll !important;
+                            overflow-x: hidden !important;
+                            width: 100% !important;
+                            height: 100% !important;
+                        }
+                        
+                        .xterm .xterm-viewport::-webkit-scrollbar {
+                            width: 12px !important;
+                        }
+                        /* Match track color to terminal background */
+                        .xterm .xterm-viewport::-webkit-scrollbar-track {
+                            background: #0c0c0c !important;
+                        }
+                        body.light-mode .xterm .xterm-viewport::-webkit-scrollbar-track {
+                            background: #ffffff !important;
+                        }
+                        /* Scrollbar thumb - VS Code metallic style */
+                        .xterm .xterm-viewport::-webkit-scrollbar-thumb {
+                            background: #79797966 !important;
+                            border-radius: 6px !important;
+                            min-height: 30px !important;
+                        }
+                        .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
+                            background: #797979cc !important;
+                        }
+                        .xterm .xterm-viewport::-webkit-scrollbar-thumb:active {
+                            background: #797979ff !important;
+                        }
+                        body.light-mode .xterm .xterm-viewport::-webkit-scrollbar-thumb {
+                            background: #00000033 !important;
+                        }
+                        body.light-mode .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
+                            background: #00000066 !important;
+                        }
+                        body.light-mode .xterm .xterm-viewport::-webkit-scrollbar-thumb:active {
+                            background: #000000cc !important;
+                        }
+                    `;
+                    style.setAttribute('data-scrollbar-fix', 'true');
+                    document.head.appendChild(style);
+                    _scrollbarStyleInjected = true;
+                }
             }
         }
 
@@ -387,6 +569,10 @@
             window.pyTerminal = channel.objects.pyTerminal;
             console.log('[TERMINAL] QWebChannel connected, pyTerminal available');
             
+            // CRITICAL: Ensure scrollbar styling is applied in QWebEngineView
+            _ensureScrollbarVisible();
+            console.log('[TERMINAL] Scrollbar enforced in QWebChannel callback');
+            
             // Flush any queued logs
             flushLogQueue();
             
@@ -407,17 +593,24 @@
                 writeToTerm(text);
             });
             
-            // Connect Python -> JS (theme update)
+            // Connect Python -> JS (theme update) - with scrollbar color update
             window.pyTerminal.update_theme.connect(function(is_dark) {
                 if (is_dark) {
                     document.body.style.backgroundColor = '#0c0c0c';
+                    document.body.classList.remove('light-mode');  // Remove light mode class
                     term.options.theme = {
                         background: '#0c0c0c',
                         foreground: '#cccccc',
                         cursor: '#ffffff'
                     };
+                    // Apply dark mode scrollbar color
+                    const viewport = document.querySelector('.xterm-viewport');
+                    if (viewport) {
+                        viewport.style.setProperty('scrollbar-color', '#79797966 transparent', 'important');
+                    }
                 } else {
                     document.body.style.backgroundColor = '#ffffff';
+                    document.body.classList.add('light-mode');  // Add light mode class
                     term.options.theme = {
                         background: '#ffffff',
                         foreground: '#0c0c0c',
@@ -439,7 +632,14 @@
                         brightCyan: '#0598bc',
                         brightWhite: '#a5a5a5'
                     };
+                    // Apply light mode scrollbar color
+                    const viewport = document.querySelector('.xterm-viewport');
+                    if (viewport) {
+                        viewport.style.setProperty('scrollbar-color', '#00000066 transparent', 'important');
+                    }
                 }
+                // Ensure scrollbar is visible after theme change
+                _ensureScrollbarVisible();
             });
             
             // Let Python know we are ready

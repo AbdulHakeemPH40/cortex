@@ -196,6 +196,7 @@ class XTermWidget(QWidget):
         settings = self._webview.settings()
         settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
+        # CRITICAL FIX: DISABLE QWebEngineView's native scrollbars (we use xterm's internal scrollbar)
         settings.setAttribute(QWebEngineSettings.WebAttribute.ShowScrollBars, False)
         
         self._webview.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
