@@ -3,8 +3,10 @@ import sys
 import json
 import platform
 import shutil
+import re
+import difflib
 from typing import Optional, Callable
-from PyQt6.QtCore import Qt, pyqtSignal, QUrl, QObject, pyqtSlot, QProcess, QProcessEnvironment, QTimer, QThread
+from PyQt6.QtCore import Qt, pyqtSignal, QUrl, QObject, pyqtSlot, QProcess, QProcessEnvironment, QTimer, QThread, QMutex
 from PyQt6.QtWidgets import QWidget, QVBoxLayout
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebChannel import QWebChannel
@@ -33,6 +35,9 @@ class VisionWorker(QObject):
 
 class ChatBridge(QObject):
     """Bridge for communication between JS and Python."""
+    def __init__(self, view):
+        super().__init__()
+        self._view = view
     message_submitted = pyqtSignal(str)
     message_with_images = pyqtSignal(str, str)  # text, image_data_json
     clear_chat_requested = pyqtSignal()
@@ -71,9 +76,17 @@ class ChatBridge(QObject):
     smart_paste_check_requested = pyqtSignal(str)  # pasted_text
     search_files_requested = pyqtSignal(str)       # @ mention file search
     
+    # Vision response signal
+    _vision_response_received = pyqtSignal(str)  # response text
+    
     # Chat persistence signals
     save_chats_requested = pyqtSignal(str, str)  # storage_key, json_data
     load_chats_requested = pyqtSignal(str)       # storage_key
+    save_finished = pyqtSignal(str)              # status
+    
+    # Permission system signal (NEW!)
+    on_permission_response = pyqtSignal(bool, bool)  # approved, remember
+    answer_question_requested = pyqtSignal(str, str) # tool_call_id, answer
     
     @pyqtSlot(str, str, str)
     def on_model_changed(self, model_id, perf, cost):
@@ -132,6 +145,16 @@ class ChatBridge(QObject):
         """Open file at specific line number."""
         self.open_file_at_line_requested.emit(file_path, line_number)
 
+    def show_question(self, question_info: dict):
+        """Send a question to the JS chat UI for user response."""
+        js_data = json.dumps(question_info)
+        self._view.page().runJavaScript(f"if(window.showQuestionCard) window.showQuestionCard({js_data});")
+
+    @pyqtSlot(str, str)
+    def on_answer_question(self, tool_call_id, answer):
+        """User answered a pending question from the AI."""
+        self.answer_question_requested.emit(tool_call_id, answer)
+
     @pyqtSlot(str)
     def on_show_diff(self, file_path):
         self.show_diff_requested.emit(file_path)
@@ -147,6 +170,17 @@ class ChatBridge(QObject):
     def on_check_smart_paste(self, pasted_text):
         """Check if pasted text matches current editor selection."""
         self.smart_paste_check_requested.emit(pasted_text)
+    
+    @pyqtSlot()
+    def on_toggle_autogen(self):
+        """Toggle AutoGen multi-agent mode."""
+        from src.ai.agent import AIAgent
+        # Find the AI agent instance and toggle AutoGen
+        # This will be handled by main_window
+        self.toggle_autogen_requested.emit()
+    
+    # Add new signal for AutoGen toggle
+    toggle_autogen_requested = pyqtSignal()
 
     @pyqtSlot(bool)
     def handle_permission_response(self, allowed):
@@ -183,6 +217,38 @@ class ChatBridge(QObject):
         # Open file in editor and emit accept signal
         self.open_file_requested.emit(file_path)
         self.accept_file_edit_requested.emit(file_path)
+    
+    # ========== PERMISSION DIALOG BRIDGE (NEW) ==========
+    
+    # Signal to request permission from user
+    permission_requested = pyqtSignal(str, str, object)  # tool_name, details_html, callback
+    
+    @pyqtSlot(str, str)
+    def request_permission(self, tool_name: str, details_html: str):
+        """
+        Request permission from user via web dialog.
+        Called by ToolRegistry when tool requires confirmation.
+        
+        Args:
+            tool_name: Name of the tool (e.g., 'edit_file', 'write_file')
+            details_html: HTML content showing what will be changed
+        """
+        log.info(f"Permission requested for: {tool_name}")
+        # Emit signal with callback to handle response
+        self.permission_requested.emit(tool_name, details_html, self._handle_permission_response)
+    
+    def _handle_permission_response(self, approved: bool, remember: bool):
+        """
+        Handle permission response from user.
+        This is called by JavaScript when user clicks Approve/Deny.
+        
+        Args:
+            approved: True if user approved, False if denied
+            remember: True if user wants to remember choice
+        """
+        log.info(f"Permission response: approved={approved}, remember={remember}")
+        # Store response for ToolRegistry to pick up
+        # This will be handled by a waiting mechanism in ToolRegistry
 
     @pyqtSlot(str)
     def on_reject_file_edit(self, file_path: str):
@@ -395,6 +461,13 @@ class ChatBridge(QObject):
             log.error(f'✗ Failed to save chats to SQLite: {e}')
             return f"ERROR: {str(e)}"
     
+    @pyqtSlot(str)
+    def on_save_finished(self, status: str):
+        """Called by JS when save process is completed (success or error)."""
+        log.info(f"JS Save finished signal received from bridge: {status}")
+        # Emit signal to notify waiting components (like MainWindow.closeEvent)
+        self.save_finished.emit(status)
+    
     @pyqtSlot(str, result=str)
     def load_chats_from_sqlite(self, storage_key: str) -> str:
         """
@@ -512,11 +585,15 @@ class AIChatWidget(QWidget):
     
     open_file_requested = pyqtSignal(str)
     open_file_at_line_requested = pyqtSignal(str, int)  # file_path, line_number
+    answer_question_requested = pyqtSignal(str, str)   # tool_call_id, answer
     show_diff_requested = pyqtSignal(str)
 
     # File edit accept/reject signals
     accept_file_edit_requested = pyqtSignal(str)  # file_path
     reject_file_edit_requested = pyqtSignal(str)  # file_path
+    
+    # Vision processing signal
+    _vision_response_received = pyqtSignal(str)
 
     # Terminal panel signal
     open_terminal_requested = pyqtSignal()  # Request main window to open terminal panel
@@ -526,7 +603,36 @@ class AIChatWidget(QWidget):
 
     # Smart paste signal - emitted when user pastes code, to check if it matches editor selection
     smart_paste_check_requested = pyqtSignal(str)  # pasted_text
+    
+    # AutoGen multi-agent toggle signal
+    toggle_autogen_requested = pyqtSignal()
+    
+    # Load full chat from database signal
+    load_full_chat_requested = pyqtSignal(str)  # conversation_id
+    save_finished = pyqtSignal(str)             # status
+    
+    def show_question(self, info: dict):
+        """Show a question card in the chat UI."""
+        self._bridge.show_question(info)
 
+    def show_indexing_status(self, message: str, auto_hide: bool = False):
+        """Show indexing status in the chat UI."""
+        js_bool = 'true' if auto_hide else 'false'
+        safe_message = json.dumps(message)
+        self._view.page().runJavaScript(f"if(window.showIndexingStatus) window.showIndexingStatus({safe_message}, {js_bool});")
+
+    def hide_indexing_status(self):
+        """Hide indexing status in the chat UI."""
+        self._view.page().runJavaScript("if(window.hideIndexingStatus) window.hideIndexingStatus();")
+
+    def clear_project_info(self):
+        """Clear project-specific info from the chat UI."""
+        self._current_project_path = ""
+        self._view.page().runJavaScript("if(window.clearProjectInfo) window.clearProjectInfo();")
+
+    def _add_ai_bubble_streaming(self):
+        """Pre-emptively show assistant thinking/bubble for streaming."""
+        self.show_thinking()
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -545,6 +651,13 @@ class AIChatWidget(QWidget):
         self._vision_worker = None
         # Connect vision response signal
         self._vision_response_received.connect(self._on_vision_response)
+        
+        # Terminal state
+        self._terminal_output_buffer = ""
+        self._terminal_last_emit = 0
+        self._terminal_emit_interval = 0.05
+        self._current_project_path = ""
+        
         self._build_ui()
         # Terminal backend starts lazily when first requested
         
@@ -594,7 +707,7 @@ class AIChatWidget(QWidget):
         
         # Setup Channel
         self._channel = QWebChannel()
-        self._bridge = ChatBridge()
+        self._bridge = ChatBridge(self._view)
         self._bridge.message_submitted.connect(self._on_js_message)
         self._bridge.message_with_images.connect(self._on_js_message_with_images)
         self._bridge.clear_chat_requested.connect(self.clear_chat)
@@ -612,9 +725,20 @@ class AIChatWidget(QWidget):
         self._bridge.reject_file_edit_requested.connect(self.reject_file_edit_requested.emit)
         self._bridge.open_terminal_requested.connect(self.open_terminal_requested.emit)
         self._bridge.search_files_requested.connect(self._on_search_files)
+        self._bridge.answer_question_requested.connect(self.answer_question_requested.emit)
+        
+        # Persistence Handshake: JS -> Bridge -> Widget
+        self._bridge.save_finished.connect(self.save_finished.emit)
         
         # NEW: Lazy load full chat when JS requests it
         self._bridge.load_full_chat_requested.connect(self._on_load_full_chat_requested)
+        
+        # Terminal signals
+        self._bridge.terminal_input.connect(lambda d: self._pty_process.write(d) if self._pty_process else (self._terminal_process.write(d.encode()) if self._terminal_process else None))
+        self._bridge.terminal_resize.connect(lambda c, r: self._pty_process.setwinsize(r, c) if self._pty_process else None)
+        
+        # Connect vision response signal
+        self._bridge._vision_response_received.connect(self._on_vision_response)
         
         self._channel.registerObject("bridge", self._bridge)
 
@@ -626,14 +750,27 @@ class AIChatWidget(QWidget):
 
         # Apply initial theme once the page has finished loading
         self._view.loadFinished.connect(self._on_page_loaded)
-        
         layout.addWidget(self._view)
+        
+    def run_javascript(self, script: str):
+        """Execute JavaScript in the chat context."""
+        if hasattr(self, '_view') and self._view.page():
+            self._view.page().runJavaScript(script)
         
     def _on_page_loaded(self, ok):
         """Apply the current theme immediately after the page finishes loading."""
         if ok:
             js_bool = 'true' if self._is_dark else 'false'
             self._view.page().runJavaScript(f"if(window.setTheme) window.setTheme({js_bool});")
+
+    def on_chunk(self, chunk):
+        """Handle AI streaming chunk - async to prevent UI blocking."""
+        # Use JSON encoding to properly escape for JavaScript
+        safe_chunk = json.dumps(chunk)
+        self._view.page().runJavaScript(
+            f"if(window.onChunk) window.onChunk({safe_chunk});",
+            lambda result: None  # Async callback
+        )
 
     def _on_js_message(self, text):
         """Handle message from JS."""
@@ -701,7 +838,7 @@ class AIChatWidget(QWidget):
                     "https://api.siliconflow.com/v1/chat/completions",
                     headers=headers,
                     json=payload,
-                    timeout=60
+                    timeout=(30, 180)  # 30s connect, 180s read
                 )
                 
                 if response.status_code == 200:
@@ -717,6 +854,12 @@ class AIChatWidget(QWidget):
                 log.error(f"[AIChat] Vision processing error: {e}")
                 self._vision_response_received.emit(f"Error: {str(e)}")
         
+        # Cleanup previous thread if exists and running
+        if hasattr(self, '_vision_thread') and self._vision_thread is not None and self._vision_thread.isRunning():
+            log.warning("Cleaning up previous vision thread...")
+            self._vision_thread.quit()
+            self._vision_thread.wait(3000)  # Wait up to 3s
+        
         # Create thread for vision processing
         self._vision_thread = QThread()
         self._vision_worker = VisionWorker(process_vision)
@@ -725,6 +868,7 @@ class AIChatWidget(QWidget):
         self._vision_worker.moveToThread(self._vision_thread)
         self._vision_thread.started.connect(self._vision_worker.run)
         self._vision_thread.start()
+        log.info("Vision thread started")
     
     def _show_thinking_in_js(self):
         """Show thinking indicator in JS chat."""
@@ -744,19 +888,34 @@ class AIChatWidget(QWidget):
             # Add response as assistant message
             js_code = f"if(window.appendMessage) window.appendMessage({json.dumps(response)}, 'assistant', true);"
             self._view.page().runJavaScript(js_code)
+            
+            # Cleanup thread after response
+            self._cleanup_vision_thread()
         except Exception:
             pass
     
     def _on_vision_error(self, error: str):
         """Handle vision error."""
         try:
+            # Hide thinking
             js_code = "if(window.hideThinkingIndicator) window.hideThinkingIndicator();"
             self._view.page().runJavaScript(js_code)
             
+            # Add response as assistant message
             js_code = f"if(window.appendMessage) window.appendMessage({json.dumps('Error: ' + error)}, 'assistant', true);"
             self._view.page().runJavaScript(js_code)
+            
+            # Cleanup thread after error
+            self._cleanup_vision_thread()
         except Exception:
             pass
+    
+    def _cleanup_vision_thread(self):
+        """Cleanup vision thread after worker finishes."""
+        if hasattr(self, '_vision_thread') and self._vision_thread:
+            log.debug("Cleaning up vision thread...")
+            self._vision_thread.quit()
+            self._vision_thread.wait(3000)  # Wait up to 3s for thread to finish
     
     def _on_load_full_chat_requested(self, conversation_id: str):
         """Handle lazy load request for full chat messages from JS."""
@@ -781,136 +940,126 @@ class AIChatWidget(QWidget):
             log.error(f"✗ Failed to handle chat load for {conversation_id}: {e}")
 
     def _on_search_files(self, query: str):
-        """Handle @ mention file search from JS - OPTIMIZED."""
+        """Search for files matching the query for @ citations."""
+        if not self._project_root:
+            return
+            
         try:
-            from pathlib import Path
             results = []
-            root = getattr(self, '_project_root', None) or '.'
-            root_path = Path(root)
+            import os
             
-            # Performance optimization: limit to top 2 levels and 10 results
-            for level in range(2):
-                for p in root_path.glob("*/" * level + "*"):
-                    if p.is_file() and (not query or query.lower() in p.name.lower()):
-                        parts = str(p)
-                        if not any(skip in parts for skip in ['.git', '__pycache__', 'node_modules', '.pyc']):
-                            try:
-                                results.append({
-                                    'name': p.name,
-                                    'path': str(p),
-                                    'rel_path': str(p.relative_to(root_path))
-                                })
-                            except ValueError:
-                                results.append({'name': p.name, 'path': str(p), 'rel_path': p.name})
-                        if len(results) >= 10:
-                            break
-                if len(results) >= 10:
-                    break
+            # Simple recursive search
+            count = 0
+            for root, dirs, files in os.walk(self._project_root):
+                if '.git' in dirs: dirs.remove('.git')
+                if 'node_modules' in dirs: dirs.remove('node_modules')
+                if '__pycache__' in dirs: dirs.remove('__pycache__')
+                if 'venv' in dirs: dirs.remove('venv')
+                if '.venv' in dirs: dirs.remove('.venv')
+                
+                for file in files:
+                    if query.lower() in file.lower():
+                        rel_path = os.path.relpath(os.path.join(root, file), self._project_root)
+                        results.append(rel_path.replace("\\", "/"))
+                        count += 1
+                        if count >= 10: break
+                if count >= 10: break
             
-            safe_results = json.dumps(results)
-            self._view.page().runJavaScript(
-                f'if(window.populateMentionResults) populateMentionResults({safe_results});'
-            )
+            # Return results to JS
+            js_results = json.dumps(results)
+            self._view.page().runJavaScript(f"if(window.onFileSearchResults) window.onFileSearchResults({js_results});")
+            
         except Exception as e:
-            log.warning(f'_on_search_files error: {e}')
-        
+            log.error(f"Error searching files: {e}")
+
+    def set_project_root(self, path: str):
+        """Set the project root for file searching."""
+        self._project_root = path
+
+    def set_code_context_callback(self, callback):
+        """Used by main_window to provide editor code context."""
+        self._get_code_context = callback
+
+    def set_theme(self, is_dark: bool):
+        """Update the UI theme. Matches MainWindow naming convention."""
+        self._is_dark = is_dark
+        js_bool = 'true' if is_dark else 'false'
+        self._view.page().runJavaScript(f"if(window.setTheme) window.setTheme({js_bool});")
+
+    def update_theme(self, is_dark: bool):
+        """Alias for set_theme."""
+        self.set_theme(is_dark)
+
     def on_chunk(self, chunk):
-        """Handle AI streaming chunk - async to prevent UI blocking."""
-        # Use JSON encoding to properly escape for JavaScript
+        """Handle AI streaming chunk - supporting both string and dict formats."""
+        if not chunk: return
+        
+        # Proper escaping for JS
         safe_chunk = json.dumps(chunk)
         self._view.page().runJavaScript(
             f"if(window.onChunk) window.onChunk({safe_chunk});",
-            lambda result: None  # Async callback
+            lambda result: None
         )
-        
-    def on_complete(self, full_text):
-        """Handle AI completion."""
+
+    def on_complete(self, full_response: str):
+        """Handle completion of the AI response."""
         self._view.page().runJavaScript("if(window.onComplete) window.onComplete();")
-        
-    def on_error(self, error):
-        """Handle error."""
-        safe_error = json.dumps(f"❌ Error: {error}")
-        self._view.page().runJavaScript(f"if(window.appendMessage) window.appendMessage({safe_error}, 'assistant', false);")
-        
-    def clear_chat(self):
-        """Clear chat."""
-        # This will be handled by the clear_chat_requested signal in JS, 
-        # but if called from Python, we use the correct ID:
-        self._view.page().runJavaScript("const msg = document.getElementById('chatMessages'); if(msg) msg.innerHTML = '';")
-        
-    def set_theme(self, is_dark):
-        """Update theme — called from main_window toggle and on page load."""
-        self._is_dark = is_dark
-        # Python True/False must become JS true/false (lowercase)
-        js_bool = 'true' if is_dark else 'false'
-        self._view.page().runJavaScript(f"if(window.setTheme) window.setTheme({js_bool});")
-        
-    def focus_input(self):
-        """Focus the input field in web view."""
-        self._view.page().runJavaScript("const input = document.getElementById('chatInput'); if(input) input.focus();")
-        
-    def add_system_message(self, text):
-        """Add a system message."""
-        safe_text = json.dumps(text)
-        self._view.page().runJavaScript(f"if(window.appendMessage) window.appendMessage({safe_text}, 'system', false);")
 
-    def _add_ai_bubble_streaming(self):
-        """Start a new AI streaming message bubble."""
-        self._view.page().runJavaScript("if(window.startStreaming) window.startStreaming();")
-    
-    def show_tool_activity(self, tool_type: str, info: str, status: str = "running"):
-        """Show tool activity card in the chat UI and track for completion summary."""
-        safe_info = json.dumps(info)
-        # Track this activity for the completion summary
-        self._view.page().runJavaScript(
-            f"if(window.trackActivity) window.trackActivity('{tool_type}', {safe_info}, '{status}');",
-            lambda result: None
-        )
-        # Show tool activity card
-        self._view.page().runJavaScript(
-            f"if(window.showToolActivity) window.showToolActivity('{tool_type}', {safe_info}, '{status}');",
-            lambda result: None
-        )
-    
-    def show_directory_contents(self, path: str, contents: str):
-        """Show directory contents in the chat UI with file/folder icons."""
-        import json
-        print(f"[DIR-DEBUG] Python: show_directory_contents called path={path}, content_len={len(contents) if contents else 0}")
-        safe_path = json.dumps(path)
-        safe_contents = json.dumps(contents)
-        js = f"console.log('[DIR-DEBUG] JS: showDirectoryContents called'); if(window.showDirectoryContents) {{ window.showDirectoryContents({safe_path}, {safe_contents}); console.log('[DIR-DEBUG] JS: showDirectoryContents executed'); }} else {{ console.error('[DIR-DEBUG] JS: showDirectoryContents NOT FOUND'); }}"
-        self._view.page().runJavaScript(js, lambda result: None)
+    def on_error(self, error_message: str):
+        """Handle an error from the AI agent."""
+        safe_error = json.dumps(error_message)
+        self._view.page().runJavaScript(f"if(window.onError) window.onError({safe_error});")
 
-    def clear_tool_activity(self):
-        """Clear tool activity cards."""
-        self._view.page().runJavaScript("if(window.clearToolActivity) window.clearToolActivity();")
-    
     def show_thinking(self):
-        """Show thinking indicator."""
+        """Show the thinking indicator."""
         self._view.page().runJavaScript("if(window.showThinking) window.showThinking();")
-    
+
     def hide_thinking(self):
-        """Hide thinking indicator and show duration."""
+        """Hide the thinking indicator."""
         self._view.page().runJavaScript("if(window.hideThinking) window.hideThinking();")
-    
-    def update_todos(self, todos: list, main_task: str = ""):
-        """Update the TODO list in the UI."""
-        todos_json = json.dumps(todos)
-        main_task_safe = json.dumps(main_task)
-        self._view.page().runJavaScript(
-            f"if(window.updateTodos) window.updateTodos({todos_json}, {main_task_safe});"
-        )
-    
-    def clear_todos(self):
-        """Clear the TODO list from the UI."""
-        self._view.page().runJavaScript("if(window.clearTodos) window.clearTodos();")
+
+    def update_todos(self, todos: list):
+        """Update the todo list in the UI."""
+        safe_todos = json.dumps(todos)
+        self._view.page().runJavaScript(f"if(window.updateTodos) window.updateTodos({safe_todos});")
+
+    def show_tool_activity(self, activity: dict):
+        """Show tool execution progress."""
+        safe_activity = json.dumps(activity)
+        self._view.page().runJavaScript(f"if(window.showToolActivity) window.showToolActivity({safe_activity});")
+
+    def show_directory_contents(self, data: dict):
+        """Show directory contents for the 'ls' command."""
+        safe_data = json.dumps(data)
+        self._view.page().runJavaScript(f"if(window.showDirectoryContents) window.showDirectoryContents({safe_data});")
+
+    def add_system_message(self, message: str):
+        """Append a system notification message to the chat view."""
+        self._view.page().runJavaScript(f"if(window.appendMessage) window.appendMessage({json.dumps(message)}, 'system');")
+
+    def clear_chat(self):
+        """Clear the chat window."""
+        self._view.page().runJavaScript("if(window.clearChat) window.clearChat();")
+
+    def set_project_info(self, name: str, path: str, chats_json: str = "[]"):
+        """Initialize chat with project details and history."""
+        import json
+        safe_name = json.dumps(name)
+        safe_path = json.dumps(path)
+        self._current_project_path = path
+        
+        # Ensure chats_json is passed correctly to JS (avoid double-stringified data)
+        try:
+            # Parse it first if it's a string, then JSON-ify properly for the JS call
+            chats_data = json.loads(chats_json) if isinstance(chats_json, str) else chats_json
+            safe_chats = json.dumps(chats_data)
+        except:
+            safe_chats = "[]"
+            
+        self._view.page().runJavaScript(f"if(window.setProjectInfoWithChats) window.setProjectInfoWithChats({safe_name}, {safe_path}, {safe_chats});")
 
     def on_file_edited_diff(self, path: str, original: str, new_content: str):
-        """
-        Called when the agent edits a file.
-        Calculates +/- diff line counts and updates the Changed Files panel in JS.
-        Connect to agent.file_edited_diff signal (or call directly).
-        """
+        """Called when the agent edits a file to show +/- diff line counts."""
         import difflib
         orig_lines = original.splitlines()
         new_lines  = new_content.splitlines()
@@ -918,59 +1067,38 @@ class AIChatWidget(QWidget):
         added   = sum(1 for l in diff if l.startswith('+ '))
         removed = sum(1 for l in diff if l.startswith('- '))
         p = json.dumps(path)
-        self._view.page().runJavaScript(
-            f"if(window.addChangedFile) addChangedFile({p}, {added}, {removed}, 'M');"
-        )
-        log.debug(f'File edited diff: {path} +{added} -{removed}')
-
-    # ── THREE FEATURES: Project Tree Card, Terminal Card, Todo Updates ─
+        self._view.page().runJavaScript(f"if(window.addChangedFile) addChangedFile({p}, {added}, {removed}, 'M');")
 
     def emit_directory_tree(self, root_path: str, listing_text: str):
-        """
-        Parse listing_text from list_directory tool result
-        and send structured data to JS for tree card rendering.
-        """
+        """Send hierarchical tree data to JS for tree card rendering."""
         items = self._parse_listing(root_path, listing_text)
         root_js  = json.dumps(root_path)
         items_js = json.dumps(items)
-        self._view.page().runJavaScript(
-            f"if(window.showDirectoryTree) window.showDirectoryTree({root_js}, {items_js});"
-        )
+        self._view.page().runJavaScript(f"if(window.showDirectoryTree) window.showDirectoryTree({root_js}, {items_js});")
 
     def _parse_listing(self, root_path: str, text: str) -> list:
-        """Convert list_directory output to hierarchical tree structure [{name, path, size, isDir, isLast, depth, parentIdx}]"""
+        """Convert list_directory output to hierarchical tree structure."""
+        import re
         lines = [l for l in text.split('\n') if l.strip()]
         items = []
         root = root_path.rstrip('/\\')
         sep = '\\' if '\\' in root else '/'
-
-        # Stack to track parent paths at each depth level
         parent_stack = [root]
 
         for i, line in enumerate(lines):
-            # Calculate depth by counting leading spaces or tree characters
             leading = len(line) - len(line.lstrip())
-            depth = leading // 2  # Assume 2 spaces per indent level
-
-            # Remove tree branch characters and get clean name
+            depth = leading // 2
             stripped = line.strip()
-            if not stripped:
-                continue
+            if not stripped: continue
 
-            # Check for tree branch characters
             is_dir = stripped.startswith('📁') or stripped.endswith('/')
-            
-            # Remove tree branch characters (├──, └──, │, etc.)
             name = stripped
-            for prefix in ['├──', '└──', '│', '├──', '└──']:
+            for prefix in ['├──', '└──', '│']:
                 name = name.replace(prefix, '')
             name = name.lstrip('📁📄').strip()
 
             size = ''
             desc = ''
-
-            # Parse "(4KB) - description" pattern
-            import re
             m = re.match(r'^(.*?)\s*\(([^)]+)\)\s*(?:-\s*(.+))?$', name)
             if m:
                 name = m.group(1).strip().rstrip('/')
@@ -979,286 +1107,70 @@ class AIChatWidget(QWidget):
             else:
                 name = name.rstrip('/')
 
-            # Adjust parent stack based on depth
             while len(parent_stack) > depth + 1:
                 parent_stack.pop()
-
-            # Build full path
             current_path = sep.join(parent_stack) + sep + name
 
-            # Check if next item is at same depth (to determine isLast)
             is_last = True
             if i < len(lines) - 1:
-                next_line = lines[i + 1]
-                next_leading = len(next_line) - len(next_line.lstrip())
-                next_depth = next_leading // 2
-                # If next item is at same depth, this one is not last
-                if next_depth == depth:
-                    is_last = False
-                # If next item is deeper, this one has children (so not last in its group)
-                elif next_depth > depth:
-                    is_last = False
+                next_leading = len(lines[i + 1]) - len(lines[i + 1].lstrip())
+                if (next_leading // 2) >= depth: is_last = False
 
-            items.append({
-                'name':        name,
-                'path':        current_path,
-                'size':        size,
-                'description': desc,
-                'isDir':       is_dir,
-                'isLast':      is_last,
-                'depth':       depth,
-                'hasChildren': False  # Will be set in second pass
-            })
-
-            # If this is a directory, add it to parent stack for children
+            items.append({'name': name, 'path': current_path, 'size': size, 'description': desc, 'isDir': is_dir, 'isLast': is_last, 'depth': depth})
             if is_dir:
-                if len(parent_stack) <= depth + 1:
-                    parent_stack.append(name)
-                else:
-                    parent_stack[depth + 1] = name
-
-        # Second pass: mark which items have children
-        for i, item in enumerate(items):
-            for j in range(i + 1, len(items)):
-                if items[j]['depth'] == item['depth'] + 1:
-                    item['hasChildren'] = True
-                    break
-                elif items[j]['depth'] <= item['depth']:
-                    break
-
+                if len(parent_stack) <= depth + 1: parent_stack.append(name)
+                else: parent_stack[depth + 1] = name
         return items
 
     def emit_terminal_result(self, card_id: str, output: str, exit_code: int):
-        """Update the terminal card in chat with result."""
-        self._view.page().runJavaScript(
-            f"if(window.setTerminalOutput) window.setTerminalOutput({json.dumps(card_id)}, "
-            f"{json.dumps(output[:3000])}, {exit_code});"
-        )
-
-    def set_code_context_callback(self, callback):
-        self._get_code_context = callback
-
-    def set_project_root(self, root_path: str):
-        """Set project root for @ mention file search."""
-        self._project_root = root_path
-
-    def set_project_info(self, name: str, path: str = ""):
-        """Update the project indicator in the chat header and switch to project-specific chat history."""
-        import json
-        
-        safe_name = json.dumps(name)
-        safe_path = json.dumps(path)
-        
-        # Set the path immediately in Python so saveChats can use it
-        self._current_project_path = path
-        
-        # Wait longer for WebView to fully load before calling JS
-        from PyQt6.QtCore import QTimer
-        # Try calling once after a longer delay
-        QTimer.singleShot(3000, lambda: self._actually_call_set_project_info(safe_name, safe_path))
-    
-    def _actually_call_set_project_info(self, safe_name: str, safe_path: str):
-        """Actually call the JS function after waiting."""
-        # First, load the chat data from file on the Python side
-        import hashlib
-        
-        # Generate storage key using same logic as JavaScript
-        if self._current_project_path:
-            normalized_path = self._current_project_path.replace('\\', '/').lower().strip()
-            hash_val = 0
-            for char in normalized_path:
-                hash_val = ((hash_val << 5) - hash_val) + ord(char)
-                # JavaScript's `hash & hash` is equivalent to just keeping the value
-                # but ensuring it stays within 32-bit signed integer range
-                hash_val = hash_val & 0xFFFFFFFF
-                # Convert to signed 32-bit if needed
-                if hash_val > 0x7FFFFFFF:
-                    hash_val = hash_val - 0x100000000
-            # Convert to hex to match JavaScript's toString(16)
-            hash_str = format(abs(hash_val), 'x')
-            storage_key = f"cortex_chats_{hash_str}"
-            
-            # Load chats from SQLite (returns JSON string)
-            chats_json = self._bridge.load_chats_from_sqlite(storage_key)
-            log.info(f"✓ Loaded {len(chats_json)} chars of metadata from SQLite")
-            
-            # Push both project info AND chat data to JavaScript
-            # Note: chats_json is already a JSON string from bridge.load_chats_from_sqlite,
-            # so we pass it directly into the JS call as a literal.
-            self._page.runJavaScript(
-                f"""
-                if(window.setProjectInfoWithChats) {{
-                    console.log('[CHAT] Python calling setProjectInfoWithChats');
-                    window.setProjectInfoWithChats({safe_name}, {safe_path}, `{chats_json}`);
-                }} else if(window.setProjectInfo) {{
-                    window.setProjectInfo({safe_name}, {safe_path});
-                }}
-                """
-            )
-        else:
-            # No project path, just set the info
-            self._page.runJavaScript(
-                f"if(window.setProjectInfo) {{ console.log('[CHAT] Python calling setProjectInfo'); window.setProjectInfo({safe_name}, {safe_path}); }} else {{ console.log('[CHAT] setProjectInfo still not ready'); }}"
-            )
-
-    def clear_project_info(self):
-        """Hide the project indicator."""
-        self._page.runJavaScript("if(window.clearProjectInfo) window.clearProjectInfo();")
-
-    def show_indexing_status(self, message: str, auto_hide: bool = False):
-        """Show project indexing status bar."""
-        import json
-        safe_msg = json.dumps(message)
-        safe_hide = 'true' if auto_hide else 'false'
-        self._view.page().runJavaScript(
-            f"if(window.showIndexingStatus) showIndexingStatus({safe_msg}, {safe_hide});"
-        )
-
-    def hide_indexing_status(self):
-        """Hide project indexing status bar."""
-        self._view.page().runJavaScript(
-            "if(window.hideIndexingStatus) hideIndexingStatus();"
-        )
+        """Update terminal card with result."""
+        self._view.page().runJavaScript(f"if(window.setTerminalOutput) window.setTerminalOutput({json.dumps(card_id)}, {json.dumps(output[:3000])}, {exit_code});")
 
     def _ensure_terminal_backend(self):
-        """Lazy initialization of terminal backend - only starts when first requested."""
-        if self._pty_process is not None or self._terminal_process is not None:
-            return  # Already started
-            
+        """Lazy initialization of terminal backend."""
+        if self._pty_process is not None or self._terminal_process is not None: return
         shell = "powershell.exe" if platform.system() == "Windows" else "bash"
-        
         try:
             import winpty
-            # Configure winpty with larger buffer for better performance
-            self._pty_process = winpty.PtyProcess.spawn(
-                shell,
-                dimensions=(24, 80),
-                backend=winpty.Backend.WinPTY  # Use WinPTY for better performance
-            )
-            
-            from PyQt6.QtCore import QThread, QMutex
-            import threading
-
+            import time
+            from PyQt6.QtCore import Qt, QThread, pyqtSignal
+            self._pty_process = winpty.PtyProcess.spawn(shell, dimensions=(24, 80), backend=winpty.Backend.WinPTY)
             class Reader(QThread):
                 data = pyqtSignal(str)
-
                 def __init__(self, pty):
-                    super().__init__()
-                    self.pty = pty
-                    self._running = True
-                    self._buffer = ""
-                    self._buffer_mutex = QMutex()
-                    self._max_buffer_size = 8192
-                    self._read_timeout = 0.05  # 50ms max wait per read
-
+                    super().__init__(); self.pty = pty; self._running = True
                 def run(self):
-                    """Non-blocking read loop with periodic flushing."""
-                    import time
-                    last_flush = time.time()
-                    flush_interval = 0.1  # Flush every 100ms max
-
                     while self._running and self.pty.isalive():
                         try:
-                            # Non-blocking read with small chunk size
-                            d = None
-                            if self.pty.isalive():
-                                try:
-                                    # Check if data available without blocking
-                                    d = self.pty.read(timeout=self._read_timeout)
-                                except Exception:
-                                    pass
-
-                            if d:
-                                self._buffer_mutex.lock()
-                                self._buffer += d
-                                should_flush = len(self._buffer) > self._max_buffer_size
-                                self._buffer_mutex.unlock()
-
-                                if should_flush:
-                                    self._flush_buffer()
-                                    last_flush = time.time()
-
-                            # Periodic flush for small data
-                            current_time = time.time()
-                            if current_time - last_flush > flush_interval:
-                                self._flush_buffer()
-                                last_flush = current_time
-
-                            # Small sleep to prevent CPU spinning
-                            time.sleep(0.01)
-
-                        except EOFError:
-                            break
-                        except Exception:
-                            time.sleep(0.01)
-
-                    # Final flush on exit
-                    self._flush_buffer()
-
-                def _flush_buffer(self):
-                    """Emit buffered data safely."""
-                    self._buffer_mutex.lock()
-                    data_to_emit = self._buffer if self._buffer else None
-                    self._buffer = ""
-                    self._buffer_mutex.unlock()
-
-                    if data_to_emit:
-                        self.data.emit(data_to_emit)
-
-                def stop(self):
-                    self._running = False
-                    self.wait(500)  # Wait up to 500ms for clean shutdown
-            
+                            d = self.pty.read(timeout=0.05)
+                            if d: self.data.emit(d)
+                        except: time.sleep(0.01)
+                def stop(self): self._running = False; self.wait(500)
             self._terminal_reader = Reader(self._pty_process)
-
-            # Rate-limited emitter to prevent UI freezing
-            self._terminal_output_buffer = ""
-            self._terminal_last_emit = 0
-            self._terminal_emit_interval = 0.05  # 50ms minimum between emits
-
             def _emit_terminal_data(data):
-                import time
-                now = time.time()
                 self._terminal_output_buffer += data
-
-                # Emit if enough time passed or buffer is large
-                if (now - self._terminal_last_emit > self._terminal_emit_interval or
-                    len(self._terminal_output_buffer) > 2048):
-                    if self._terminal_output_buffer:
-                        self._bridge.terminal_output.emit(self._terminal_output_buffer)
-                        self._terminal_output_buffer = ""
-                        self._terminal_last_emit = now
-
-            self._terminal_reader.data.connect(
-                _emit_terminal_data,
-                Qt.ConnectionType.QueuedConnection
-            )
+                if len(self._terminal_output_buffer) > 2048:
+                    self._bridge.terminal_output.emit(self._terminal_output_buffer)
+                    self._terminal_output_buffer = ""
+            self._terminal_reader.data.connect(_emit_terminal_data, Qt.ConnectionType.QueuedConnection)
             self._terminal_reader.start()
-            
-            self._bridge.terminal_input.connect(lambda d: self._pty_process.write(d) if self._pty_process else None)
-            self._bridge.terminal_resize.connect(lambda c, r: self._pty_process.setwinsize(r, c) if self._pty_process else None)
-            
         except Exception as e:
-            log.warning(f"Could not start winpty for AI chat terminal: {e}. Falling back to QProcess.")
+            log.warning(f"WinPTY not available ({e}), falling back to QProcess")
             self._terminal_process = QProcess(self)
-            self._terminal_process.readyReadStandardOutput.connect(self._on_stdout)
+            self._terminal_process.readyReadStandardOutput.connect(self._on_terminal_output)
             self._terminal_process.start(shell)
-            self._bridge.terminal_input.connect(lambda d: self._terminal_process.write(d.encode()) if self._terminal_process else None)
 
-    def _on_stdout(self):
+    def _on_terminal_output(self):
+        """Handle output from terminal process."""
         if self._terminal_process:
             data = self._terminal_process.readAllStandardOutput().data().decode(errors="replace")
-            if data:
-                self._bridge.terminal_output.emit(data)
+            if data: self._bridge.terminal_output.emit(data)
 
     def closeEvent(self, event):
-        # Flush any pending terminal output before closing
-        if hasattr(self, '_terminal_output_buffer') and self._terminal_output_buffer:
-            self._bridge.terminal_output.emit(self._terminal_output_buffer)
-            self._terminal_output_buffer = ""
+        """Cleanup on close."""
+        self._cleanup_vision_thread()
         if self._pty_process:
             self._pty_process.terminate()
         if self._terminal_process:
             self._terminal_process.terminate()
         super().closeEvent(event)
-

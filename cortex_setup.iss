@@ -2,7 +2,7 @@
 ; Creates professional Windows installer with Next/Back wizard
 
 #define MyAppName "Cortex AI IDE"
-#define MyAppVersion "1.0.2"
+#define MyAppVersion "1.0.5"
 #define MyAppPublisher "Cortex"
 #define MyAppURL "https://github.com/cortex-ai"
 #define MyAppExeName "Cortex.exe"
@@ -20,7 +20,7 @@ DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir=.\installer_output
 OutputBaseFilename=Cortex_Setup_v{#MyAppVersion}
-; SetupIconFile=src\assets\icons\app.ico
+SetupIconFile=src\assets\logo\app.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern

@@ -1,4 +1,4 @@
-var bridge = null;
+﻿var bridge = null;
 var term = null;
 var fitAddon = null;
 var currentChatId = null;
@@ -27,193 +27,158 @@ function getStorageKey() {
     return 'cortex_chats';
 }
 
-// Load chats for current project
+// --- CHAT PERSISTENCE (Consolidated & Handled for Robust Shutdown) ---
+
+// Load chats for current project - MERGE with SQLite source-of-truth
 function loadProjectChats() {
     var key = getStorageKey();
+    var lsChats = [];
     try {
         var data = localStorage.getItem(key);
-        console.log('[CHAT] LOAD - Key:', key);
-        console.log('[CHAT] LOAD - Data:', data ? 'found (' + data.length + ' chars)' : 'NULL (no saved chats)');
-        var parsed = JSON.parse(data || '[]');
-        console.log('[CHAT] LOAD - Parsed', parsed.length, 'chat(s)');
-        if (parsed.length > 0) {
-            parsed.forEach(function(c, i) {
-                var msgCount = (c.messages && c.messages.length) ? c.messages.length : 0;
-                if (typeof c.message_count === 'number' && c.message_count > msgCount) {
-                    c.truncated = true;
-                }
-                console.log('[CHAT]   Chat ' + (i+1) + ': "' + c.title + '" with ' + msgCount + ' messages');
-            });
-            return parsed;
-        }
-        
-        // If localStorage is empty or returns NULL, try loading from SQLite
-        console.log('[CHAT] LOAD - localStorage empty or no data, trying SQLite...');
-        return loadChatsFromSQLite();
+        lsChats = JSON.parse(data || '[]');
+        console.log('[CHAT] LOAD LS - Parsed', lsChats.length, 'chat(s) from localStorage');
     } catch (e) {
-        console.error('[CHAT] LOAD ERROR:', e.message);
-        // On error, try loading from SQLite
-        console.log('[CHAT] LOAD - Error in localStorage, trying SQLite...');
-        return loadChatsFromSQLite();
+        console.warn('[CHAT] LOAD LS - Error parsing localStorage:', e.message);
     }
-}
-
-// SQLITE PERSISTENCE - Save chats for current project
-function saveProjectChatsToSQLite(chatList) {
-    var key = getStorageKey();
-    var data = JSON.stringify(chatList);
-    var success = false;
     
-    console.log('[CHAT] SAVE SQLITE - Saving', chatList.length, 'chat(s),', data.length, 'chars');
+    // Load from SQLite (Authority for history)
+    var sqlChats = loadChatsFromSQLite() || [];
+    console.log('[CHAT] LOAD SQLITE - Found', sqlChats.length, 'chat(s) in SQLite');
     
-    try {
-        if (bridge && typeof bridge.save_chats_to_sqlite === 'function') {
-            var result = bridge.save_chats_to_sqlite(key, data);
-            if (result === "OK") {
-                console.log('[CHAT] SAVE SQLITE - SUCCESS');
-                success = true;
-            } else {
-                console.error('[CHAT] SAVE SQLITE - FAILED:', result);
+    if (sqlChats.length === 0) return lsChats;
+    
+    // Merge: Create a map of LS chats for easy lookup
+    var lsMap = {};
+    lsChats.forEach(function(c) { 
+        if (c && c.id) lsMap[c.id] = c; 
+    });
+    
+    // Build final merged list based on SQLite's authoritative list
+    var merged = sqlChats.map(function(sqlChat) {
+        var lsChat = lsMap[sqlChat.id];
+        if (lsChat) {
+            // Update LS chat metadata if SQLite has newer info
+            var sqlCount = sqlChat.message_count || 0;
+            var lsCount = (lsChat.messages && lsChat.messages.length) || lsChat.message_count || 0;
+            
+            if (sqlCount > lsCount) {
+                console.log('[CHAT]   Chat "' + sqlChat.title + '" has newer messages in SQLite ('+sqlCount+' vs '+lsCount+')');
+                lsChat.message_count = sqlCount;
+                lsChat.truncated = true; // Mark as needing lazy load
             }
+            return lsChat;
         } else {
-            console.warn('[CHAT] SAVE SQLITE - Bridge not ready');
+            // New chat from SQLite that isn't in LS cache
+            console.log('[CHAT]   Adding missing chat from SQLite:', sqlChat.title);
+            return sqlChat;
         }
-    } catch (e) {
-        console.error('[CHAT] SAVE SQLITE - ERROR:', e.message);
-    }
+    });
     
-    return success;
+    return merged;
 }
 
-// SQLITE PERSISTENCE - Load chats from SQLite database
+// SQLITE PERSISTENCE - Load chats metadata from SQLite
 function loadChatsFromSQLite() {
     var key = getStorageKey();
-    console.log('[CHAT] LOAD SQLITE - Key:', key);
-    
     if (!bridge || typeof bridge.load_chats_from_sqlite !== 'function') {
         console.warn('[CHAT] LOAD SQLITE - Bridge not ready');
         return [];
     }
     
     try {
-        // The bridge method returns a string directly (synchronous)
         var result = bridge.load_chats_from_sqlite(key);
-        console.log('[CHAT] LOAD SQLITE - Raw result type:', typeof result);
-        console.log('[CHAT] LOAD SQLITE - Raw result:', result);
-        
-        // If result is a Promise or looks like "[object Promise]", we need to handle it differently
-        if (result && result.toString() === '[object Promise]') {
-            console.error('[CHAT] LOAD SQLITE - Got Promise instead of direct result. Bridge not ready.');
-            return [];
-        }
-        
-        // Check if we got a valid string result
         if (result && typeof result === 'string' && result !== "[]") {
-            console.log('[CHAT] LOAD SQLITE - Found', result.length, 'chars of data');
-            try {
-                var parsed = JSON.parse(result);
-                // Ensure all chats from SQLite (which are metadata-only) are marked as unloaded
-                var chatsWithMetadata = parsed.map(function(c) {
-                    return {
-                        id: c.id,
-                        title: c.title,
-                        created_at: c.created_at,
-                        message_count: c.message_count || 0,
-                        messages: [],
-                        loaded: false
-                    };
-                });
-                console.log('[CHAT] LOAD SQLITE - Successfully parsed', chatsWithMetadata.length, 'chats (marked as metadata)');
-                return chatsWithMetadata;
-            } catch (parseError) {
-                console.error('[CHAT] LOAD SQLITE - JSON parse error:', parseError.message);
-                console.error('[CHAT] LOAD SQLITE - Invalid JSON:', result.substring(0, 100));
-            }
-        } else if (result === "[]") {
-            console.log('[CHAT] LOAD SQLITE - Empty array returned (no saved chats)');
-            return [];
+            var parsed = JSON.parse(result);
+            return parsed.map(function(c) {
+                return {
+                    id: c.id,
+                    title: c.title,
+                    created_at: c.created_at,
+                    message_count: c.message_count || 0,
+                    messages: [],
+                    loaded: false
+                };
+            });
         }
     } catch (e) {
-        console.error('[CHAT] LOAD SQLITE - ERROR:', e.message);
-        console.error('[CHAT] LOAD SQLITE - Error stack:', e.stack);
+        console.error('[CHAT] LOAD SQLITE ERROR:', e.message);
     }
-    
-    console.log('[CHAT] LOAD SQLITE - No data or error occurred');
     return [];
 }
 
-// Save chats for current project - saves to both localStorage and file
+// CONSOLIDATED SAVE - Captures partial responses and ensures persistence
 function saveProjectChats(chatList) {
+    if (!chatList || chatList.length === 0) {
+        // Even if no chats, signal finish to allow shutdown to proceed
+        if (bridge && typeof bridge.on_save_finished === 'function') bridge.on_save_finished("EMPTY");
+        return false;
+    }
+    
+    // ── IMPORTANT: Capture partial AI response if streaming during shutdown ──
+    if (typeof _isGenerating !== 'undefined' && _isGenerating && currentAssistantMessage && currentContent && currentContent.trim()) {
+        var chat = chatList.find(function(c) { return c.id == currentChatId; });
+        if (chat) {
+            var messages = chat.messages || [];
+            var lastMsg = messages[messages.length - 1];
+            var isDuplicate = lastMsg && (lastMsg.role === 'assistant' || lastMsg.sender === 'assistant') && (lastMsg.text === currentContent || lastMsg.content === currentContent);
+            
+            if (!isDuplicate) {
+                console.log('[CHAT] SAVE - Capturing partial AI response:', currentContent.substring(0, 30) + '...');
+                if (!chat.messages) chat.messages = [];
+                chat.messages.push({ 
+                    text: currentContent, 
+                    content: currentContent, 
+                    role: 'assistant', 
+                    sender: 'assistant',
+                    partial: true 
+                });
+            }
+        }
+    }
+    
     var key = getStorageKey();
     var fullData = JSON.stringify(chatList);
+    
+    // Truncate for localStorage (performance)
     var MAX_LOCAL_MESSAGES = 50;
     var storageChats = chatList.map(function(chat) {
         var messages = chat.messages || [];
-        var messageCount = (typeof chat.message_count === 'number') ? chat.message_count : messages.length;
-        var storedMessages = messages;
-        if (messages.length > MAX_LOCAL_MESSAGES) {
-            storedMessages = messages.slice(-MAX_LOCAL_MESSAGES);
-        }
+        var msgCount = (typeof chat.message_count === 'number') ? chat.message_count : messages.length;
         return {
             id: chat.id,
             title: chat.title,
             created_at: chat.created_at,
-            message_count: messageCount,
-            messages: storedMessages,
-            truncated: messageCount > storedMessages.length
+            message_count: msgCount,
+            messages: messages.slice(-MAX_LOCAL_MESSAGES),
+            truncated: msgCount > MAX_LOCAL_MESSAGES
         };
     });
-    var data = JSON.stringify(storageChats);
-    var saveSuccess = false;
+    var lsData = JSON.stringify(storageChats);
     
-    console.log('[CHAT] SAVE - Saving', chatList.length, 'chat(s),', data.length, 'chars');
+    console.log('[CHAT] SAVE - Persisting', chatList.length, 'chat(s) to LS and SQLite');
     
-    // Method 1: localStorage (fast but may not persist)
     try {
-        localStorage.setItem(key, data);
-        var verify = localStorage.getItem(key);
-        if (verify) {
-            console.log('[CHAT] SAVE - localStorage: OK (' + verify.length + ' chars)');
-            saveSuccess = true;
-        } else {
-            console.error('[CHAT] SAVE - localStorage: FAILED (verify returned null)');
-        }
-    } catch (e) {
-        console.error('[CHAT] SAVE ERROR (localStorage):', e.message);
-    }
-    
-    // Method 2: SQLite storage (high-performance persistent storage)
-    try {
-        // FAST PATH: Only serialize and sync the active chat across the QWebChannel bridge
+        localStorage.setItem(key, lsData);
+        
+        // Priority 1: Save Active Chat (Fast Path)
         var activeChat = chatList.find(function(c) { return c.id === currentChatId; });
         if (activeChat && bridge && typeof bridge.save_single_chat_to_sqlite === 'function') {
-            var singleData = JSON.stringify(activeChat);
-            var promise = bridge.save_single_chat_to_sqlite(key, singleData);
-            if (promise && typeof promise.then === 'function') {
-                promise.catch(function(err) {
-                    console.error('[CHAT] SAVE - SQLite Single: ERROR:', err);
-                });
-            }
+            var activeData = JSON.stringify(activeChat);
+            bridge.save_single_chat_to_sqlite(key, activeData);
         } else if (bridge && typeof bridge.save_chats_to_sqlite === 'function') {
-            // FALLBACK FULL SYNC
-            var promise = bridge.save_chats_to_sqlite(key, fullData);
-            if (promise && typeof promise.then === 'function') {
-                promise.catch(function(err) {
-                    console.error('[CHAT] SAVE - SQLite Full: ERROR:', err);
-                });
-            }
-        } else {
-            console.warn('[CHAT] SAVE - SQLite: Bridge not ready');
+            // Fallback: Full Sync
+            bridge.save_chats_to_sqlite(key, fullData);
         }
     } catch (e) {
-        console.error('[CHAT] SAVE ERROR (SQLite):', e.message);
+        console.error('[CHAT] SAVE ERROR:', e.message);
     }
     
-    if (!saveSuccess) {
-        console.error('[CHAT] SAVE - ALL METHODS FAILED - chats may be lost on restart!');
+    // CRITICAL: Notify Python bridge that save is complete for shutdown handshake
+    if (bridge && typeof bridge.on_save_finished === 'function') {
+        bridge.on_save_finished("OK");
     }
     
-    return saveSuccess;
+    return true;
 }
 
 // Initialize chats as empty - will be loaded when project is set
@@ -550,59 +515,229 @@ function initMarked() {
     return html;
 }
 
+// ── OPENCODE SPRITE ICON SYSTEM ─────────────────────────────────────────────
+// Uses OpenCode's file-icons/sprite.svg (1096 icons) via <use href="...#Name">
+// sprite.svg is bundled at: src/ui/html/ai_chat/file-icons/sprite.svg
+
+var SPRITE_URL = 'file-icons/sprite.svg';
+
+// Map file extension → OpenCode IconName
+var EXT_TO_SPRITE = {
+    // JS / TS
+    'js': 'Javascript', 'mjs': 'Javascript', 'cjs': 'Javascript',
+    'ts': 'Typescript', 'tsx': 'React_ts', 'jsx': 'React',
+    'd.ts': 'TypescriptDef', 'js.map': 'JavascriptMap',
+    // Web
+    'html': 'Html', 'htm': 'Html',
+    'css': 'Css', 'scss': 'Sass', 'sass': 'Sass', 'less': 'Less', 'styl': 'Stylus',
+    // Languages
+    'py': 'Python', 'pyx': 'Python', 'pyw': 'Python',
+    'java': 'Java', 'kt': 'Kotlin', 'scala': 'Scala',
+    'cs': 'Csharp', 'vb': 'Visualstudio',
+    'cpp': 'Cpp', 'cc': 'Cpp', 'cxx': 'Cpp', 'c': 'C', 'h': 'H', 'hpp': 'Hpp',
+    'rs': 'Rust', 'go': 'Go', 'rb': 'Ruby', 'php': 'Php',
+    'swift': 'Swift', 'm': 'ObjectiveC', 'mm': 'ObjectiveCpp',
+    'dart': 'Dart', 'lua': 'Lua', 'pl': 'Perl',
+    'r': 'R', 'jl': 'Julia', 'hs': 'Haskell', 'elm': 'Elm',
+    'ex': 'Elixir', 'exs': 'Elixir', 'erl': 'Erlang',
+    'clj': 'Clojure', 'cljs': 'Clojure', 'ml': 'Ocaml', 'fs': 'Fsharp',
+    'nim': 'Nim', 'zig': 'Zig', 'v': 'Vlang', 'odin': 'Odin',
+    'gleam': 'Gleam', 'grain': 'Grain',
+    // Shell
+    'sh': 'Console', 'bash': 'Console', 'zsh': 'Console', 'fish': 'Console',
+    'ps1': 'Powershell', 'bat': 'Console',
+    // Data / config
+    'json': 'Json', 'xml': 'Xml', 'yaml': 'Yaml', 'yml': 'Yaml',
+    'toml': 'Toml', 'hjson': 'Hjson', 'env': 'Tune',
+    'cfg': 'Settings', 'ini': 'Settings', 'conf': 'Settings',
+    'properties': 'Settings',
+    // Docs
+    'md': 'Markdown', 'mdx': 'Mdx', 'tex': 'Tex',
+    // DB / query
+    'sql': 'Database', 'db': 'Database', 'sqlite': 'Database',
+    'graphql': 'Graphql', 'gql': 'Graphql', 'proto': 'Proto',
+    // Media
+    'svg': 'Svg', 'png': 'Image', 'jpg': 'Image', 'jpeg': 'Image',
+    'gif': 'Image', 'webp': 'Image', 'bmp': 'Image', 'ico': 'Favicon',
+    'mp4': 'Video', 'mov': 'Video', 'avi': 'Video', 'webm': 'Video',
+    'mp3': 'Audio', 'wav': 'Audio', 'flac': 'Audio',
+    // Archives
+    'zip': 'Zip', 'tar': 'Zip', 'gz': 'Zip', 'rar': 'Zip', '7z': 'Zip',
+    // Docs
+    'pdf': 'Pdf', 'doc': 'Word', 'docx': 'Word',
+    'ppt': 'Powerpoint', 'pptx': 'Powerpoint',
+    // Other
+    'log': 'Log', 'lock': 'Lock', 'key': 'Key',
+    'pem': 'Certificate', 'crt': 'Certificate',
+    'wasm': 'Webassembly', 'dockerfile': 'Docker',
+    // Test files
+    'spec.ts': 'TestTs', 'test.ts': 'TestTs',
+    'spec.js': 'TestJs', 'test.js': 'TestJs',
+    'spec.tsx': 'TestJsx', 'test.tsx': 'TestJsx',
+    'spec.jsx': 'TestJsx', 'test.jsx': 'TestJsx',
+    // Vue / Svelte
+    'vue': 'Vue', 'svelte': 'Svelte',
+};
+
+// Exact filename → OpenCode IconName
+var FILENAME_TO_SPRITE = {
+    'package.json': 'Nodejs', 'package-lock.json': 'Nodejs',
+    '.nvmrc': 'Nodejs', '.node-version': 'Nodejs',
+    'yarn.lock': 'Yarn', 'pnpm-lock.yaml': 'Pnpm',
+    'bun.lock': 'Bun', 'bun.lockb': 'Bun', 'bunfig.toml': 'Bun',
+    'dockerfile': 'Docker', 'docker-compose.yml': 'Docker',
+    'docker-compose.yaml': 'Docker', '.dockerignore': 'Docker',
+    '.gitignore': 'Git', '.gitattributes': 'Git',
+    'tsconfig.json': 'Tsconfig', 'jsconfig.json': 'Jsconfig',
+    'vite.config.js': 'Vite', 'vite.config.ts': 'Vite',
+    'tailwind.config.js': 'Tailwindcss', 'tailwind.config.ts': 'Tailwindcss',
+    'jest.config.js': 'Jest', 'jest.config.ts': 'Jest',
+    'vitest.config.js': 'Vitest', 'vitest.config.ts': 'Vitest',
+    '.eslintrc': 'Eslint', '.eslintrc.js': 'Eslint', '.eslintrc.json': 'Eslint',
+    '.prettierrc': 'Prettier', '.prettierrc.js': 'Prettier',
+    'webpack.config.js': 'Webpack', 'rollup.config.js': 'Rollup',
+    'next.config.js': 'Next', 'next.config.mjs': 'Next',
+    'nuxt.config.js': 'Nuxt', 'nuxt.config.ts': 'Nuxt',
+    'svelte.config.js': 'Svelte', 'astro.config.mjs': 'AstroConfig',
+    'gatsby-config.js': 'Gatsby', 'remix.config.js': 'Remix',
+    '.gitpod.yml': 'Gitpod', 'turbo.json': 'Turborepo',
+    'cargo.toml': 'Rust', 'go.mod': 'GoMod', 'go.sum': 'GoMod',
+    'requirements.txt': 'Python', 'pyproject.toml': 'Python',
+    'pipfile': 'Python', 'poetry.lock': 'Poetry',
+    'gemfile': 'Gemfile', 'rakefile': 'Ruby',
+    'composer.json': 'Php', 'build.gradle': 'Gradle', 'pom.xml': 'Maven',
+    'deno.json': 'Deno', 'deno.jsonc': 'Deno',
+    'vercel.json': 'Vercel', 'netlify.toml': 'Netlify',
+    '.env': 'Tune', '.env.local': 'Tune', '.env.example': 'Tune',
+    '.editorconfig': 'Editorconfig', 'makefile': 'Makefile',
+    'robots.txt': 'Robots', 'favicon.ico': 'Favicon',
+    '.babelrc': 'Babel', 'babel.config.js': 'Babel',
+    'firebase.json': 'Firebase', 'angular.json': 'Angular',
+    'nx.json': 'Nx', 'lerna.json': 'Lerna',
+    'cypress.config.js': 'Cypress', 'playwright.config.js': 'Playwright',
+    'wrangler.toml': 'Wrangler', 'renovate.json': 'Renovate',
+    'readme.md': 'Readme', 'changelog.md': 'Changelog',
+    'license': 'Certificate',
+};
+
+// Folder name → sprite icon name (collapsed / open)
+var FOLDER_TO_SPRITE = {
+    'src': 'FolderSrc', 'source': 'FolderSrc',
+    'lib': 'FolderLib', 'libs': 'FolderLib',
+    'test': 'FolderTest', 'tests': 'FolderTest', '__tests__': 'FolderTest',
+    'spec': 'FolderTest', 'specs': 'FolderTest', 'e2e': 'FolderTest',
+    'node_modules': 'FolderNode',
+    'vendor': 'FolderPackages', 'packages': 'FolderPackages',
+    'build': 'FolderBuildkite', 'dist': 'FolderDist',
+    'out': 'FolderDist', 'output': 'FolderDist', 'target': 'FolderTarget',
+    'config': 'FolderConfig', 'configs': 'FolderConfig',
+    'env': 'FolderEnvironment', 'environments': 'FolderEnvironment',
+    'docker': 'FolderDocker', 'containers': 'FolderDocker',
+    'docs': 'FolderDocs', 'doc': 'FolderDocs', 'documentation': 'FolderDocs',
+    'public': 'FolderPublic', 'static': 'FolderPublic',
+    'assets': 'FolderImages', 'images': 'FolderImages',
+    'img': 'FolderImages', 'icons': 'FolderImages', 'media': 'FolderImages',
+    'fonts': 'FolderFont',
+    'styles': 'FolderCss', 'stylesheets': 'FolderCss', 'css': 'FolderCss',
+    'sass': 'FolderSass', 'scss': 'FolderSass',
+    'scripts': 'FolderScripts', 'script': 'FolderScripts',
+    'utils': 'FolderUtils', 'utilities': 'FolderUtils',
+    'helpers': 'FolderHelper', 'tools': 'FolderTools',
+    'components': 'FolderComponents', 'component': 'FolderComponents',
+    'views': 'FolderViews', 'view': 'FolderViews',
+    'layouts': 'FolderLayout', 'layout': 'FolderLayout',
+    'templates': 'FolderTemplate', 'template': 'FolderTemplate',
+    'hooks': 'FolderHook', 'hook': 'FolderHook',
+    'store': 'FolderStore', 'stores': 'FolderStore',
+    'reducers': 'FolderReduxReducer', 'reducer': 'FolderReduxReducer',
+    'services': 'FolderApi', 'service': 'FolderApi',
+    'api': 'FolderApi', 'apis': 'FolderApi',
+    'routes': 'FolderRoutes', 'route': 'FolderRoutes',
+    'middleware': 'FolderMiddleware', 'middlewares': 'FolderMiddleware',
+    'controllers': 'FolderController', 'controller': 'FolderController',
+    'models': 'FolderDatabase', 'model': 'FolderDatabase',
+    'schemas': 'FolderDatabase', 'migrations': 'FolderDatabase',
+    'types': 'FolderTypescript', 'typing': 'FolderTypescript',
+    'typings': 'FolderTypescript', '@types': 'FolderTypescript',
+    'interfaces': 'FolderInterface', 'interface': 'FolderInterface',
+    'android': 'FolderAndroid', 'ios': 'FolderIos',
+    'flutter': 'FolderFlutter', 'mobile': 'FolderMobile',
+    'kubernetes': 'FolderKubernetes', 'k8s': 'FolderKubernetes',
+    'terraform': 'FolderTerraform',
+    'aws': 'FolderAws', 'firebase': 'FolderFirebase',
+    '.github': 'FolderGithub', '.gitlab': 'FolderGitlab',
+    '.circleci': 'FolderCircleci', '.git': 'FolderGit',
+    'workflows': 'FolderGhWorkflows',
+    '.vscode': 'FolderVscode', '.idea': 'FolderIntellij',
+    '.cursor': 'FolderCursor', '.storybook': 'FolderStorybook',
+    'i18n': 'FolderI18n', 'locales': 'FolderI18n', 'lang': 'FolderI18n',
+    'temp': 'FolderTemp', 'tmp': 'FolderTemp',
+    'logs': 'FolderLog', 'log': 'FolderLog',
+    'mocks': 'FolderMock', 'mock': 'FolderMock',
+    'data': 'FolderDatabase', 'database': 'FolderDatabase', 'db': 'FolderDatabase',
+    'prisma': 'FolderPrisma', 'drizzle': 'FolderDrizzle',
+    'functions': 'FolderFunctions', 'lambda': 'FolderFunctions',
+    'security': 'FolderSecure', 'auth': 'FolderSecure',
+    'keys': 'FolderKeys', 'certs': 'FolderKeys',
+    'examples': 'FolderExamples', 'example': 'FolderExamples',
+    'demo': 'FolderExamples', 'demos': 'FolderExamples',
+    'content': 'FolderContent', 'posts': 'FolderContent',
+    'jobs': 'FolderJob', 'tasks': 'FolderTasks',
+    'desktop': 'FolderDesktop',
+};
+
+/**
+ * Get sprite-based SVG icon for a file/folder.
+ * Works in: tree view, diff cards, @mention pickers, file links.
+ *
+ * @param {string} nameOrExt  - filename "main.py", extension "py", or "" for folder
+ * @param {boolean} isDir     - true for folders
+ * @param {boolean} expanded  - if dir, use open variant
+ * @param {number} size       - icon size in px (default 16)
+ * @returns {string} HTML string with <svg><use> referencing sprite.svg
+ */
+function getFileIcon(nameOrExt, isDir, expanded, size) {
+    size = size || 16;
+    var iconName;
+
+    if (isDir) {
+        var folderKey = (nameOrExt || '').toLowerCase().replace(/^[._]+/, '').replace(/\/$/, '');
+        // Check with leading dots too (e.g. ".github")
+        var origLower = (nameOrExt || '').toLowerCase().replace(/\/$/, '');
+        iconName = FOLDER_TO_SPRITE[origLower] || FOLDER_TO_SPRITE[folderKey] || 'Folder';
+        if (expanded && !iconName.endsWith('Open')) iconName = iconName + 'Open';
+    } else {
+        var fn = (nameOrExt || '').toLowerCase();
+        // 1. Exact filename match
+        iconName = FILENAME_TO_SPRITE[fn];
+        // 2. Compound extension (spec.ts, test.js etc)
+        if (!iconName && fn.includes('.')) {
+            var firstDot = fn.indexOf('.');
+            var compoundExt = fn.slice(firstDot + 1);
+            iconName = EXT_TO_SPRITE[compoundExt];
+        }
+        // 3. Last extension
+        if (!iconName) {
+            var lastDot = fn.lastIndexOf('.');
+            if (lastDot !== -1) iconName = EXT_TO_SPRITE[fn.slice(lastDot + 1)];
+        }
+        // 4. Fallback
+        if (!iconName) iconName = 'Document';
+    }
+
+    return '<svg class="file-type-icon" width="' + size + '" height="' + size + '" viewBox="0 0 32 32" aria-hidden="true">' +
+           '<use href="' + SPRITE_URL + '#' + iconName + '"></use>' +
+           '</svg>';
+}
+
+// ── Legacy alias used by tree renderer ───────────────────────────────────────
 function getFileIconForTree(ext, isDir) {
     if (isDir) {
-        return '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M3 9c0-1.1.9-2 2-2h8l3 3h11c1.1 0 2 .9 2 2v13c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V9z" fill="#DCB67A"/><path d="M3 13h26v11c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V13z" fill="#ECBD78"/></svg>';
+        return getFileIcon('', true, false, 18);
     }
-    
-    var iconMap = {
-        'py': '<svg viewBox="0 0 32 32" width="18" height="18"><defs><linearGradient id="pyg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#387EB8"/><stop offset="100%" stop-color="#366994"/></linearGradient><linearGradient id="pyy" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#FFE052"/><stop offset="100%" stop-color="#FFC331"/></linearGradient></defs><path d="M15.9 5C10.3 5 10.7 7.4 10.7 7.4l.01 2.5h5.3v.7H8.7S5 10.1 5 15.8c0 5.7 3.2 5.5 3.2 5.5h1.9v-2.6s-.1-3.2 3.1-3.2h5.4s3 .05 3-2.9V8.5S22.1 5 15.9 5z" fill="url(#pyg)"/><circle cx="12.5" cy="8.2" r="1.1" fill="#fff" opacity=".8"/><path d="M16.1 27c5.6 0 5.2-2.4 5.2-2.4l-.01-2.5h-5.3v-.7h7.3S27 21.9 27 16.2c0-5.7-3.2-5.5-3.2-5.5h-1.9v2.6s.1 3.2-3.1 3.2h-5.4s-3-.05-3 2.9v4.6S9.9 27 16.1 27z" fill="url(#pyy)"/><circle cx="19.5" cy="23.8" r="1.1" fill="#fff" opacity=".8"/></svg>',
-        'js': '<svg viewBox="0 0 32 32" width="18" height="18"><rect width="32" height="32" rx="3" fill="#F7DF1E"/><path d="M20.8 24.3c.5.9 1.2 1.5 2.4 1.5 1 0 1.6-.5 1.6-1.2 0-.8-.7-1.1-1.8-1.6l-.6-.3c-1.8-.8-3-1.7-3-3.7 0-1.9 1.4-3.3 3.6-3.3 1.6 0 2.7.5 3.5 1.9l-1.9 1.2c-.4-.8-.9-1.1-1.6-1.1-.7 0-1.2.5-1.2 1.1 0 .8.5 1.1 1.6 1.5l.6.3c2.1.9 3.3 1.8 3.3 3.9 0 2.2-1.7 3.5-4 3.5-2.2 0-3.7-1.1-4.4-2.5l2-.1z" fill="#222"/><path d="M12.2 24.6c.4.6.7 1.2 1.6 1.2.8 0 1.3-.3 1.3-1.5V16h2.4v8.3c0 2.5-1.5 3.7-3.6 3.7-1.9 0-3-1-3.6-2.2l1.9-1.2z" fill="#222"/></svg>',
-        'ts': '<svg viewBox="0 0 32 32" width="18" height="18"><rect width="32" height="32" rx="3" fill="#3178C6"/><path d="M18 17.4h3.4v.9H19v1.2h2.2v.9H19V23h-1V17.4zM9 17.4h5.8v1H12V23h-1v-4.6H9v-1z" fill="#fff"/><path d="M14.2 19.9c0-1.8 1.2-2.7 2.8-2.7.7 0 1.3.1 1.8.4l-.3.9c-.4-.2-.9-.3-1.4-.3-1 0-1.7.6-1.7 1.7 0 1.1.7 1.8 1.8 1.8.3 0 .6 0 .8-.1v-1.2H17v-.9h2v2.7c-.5.3-1.2.5-2 .5-1.8 0-2.8-1-2.8-2.8z" fill="#fff"/></svg>',
-        'jsx': '<svg viewBox="0 0 32 32" width="18" height="18"><circle cx="16" cy="16" r="2.5" fill="#61DAFB"/><ellipse cx="16" cy="16" rx="11" ry="4.2" fill="none" stroke="#61DAFB" stroke-width="1.3"/><ellipse cx="16" cy="16" rx="11" ry="4.2" fill="none" stroke="#61DAFB" stroke-width="1.3" transform="rotate(60 16 16)"/><ellipse cx="16" cy="16" rx="11" ry="4.2" fill="none" stroke="#61DAFB" stroke-width="1.3" transform="rotate(120 16 16)"/></svg>',
-        'tsx': '<svg viewBox="0 0 32 32" width="18" height="18"><circle cx="16" cy="16" r="2.5" fill="#61DAFB"/><ellipse cx="16" cy="16" rx="11" ry="4.2" fill="none" stroke="#61DAFB" stroke-width="1.3"/><ellipse cx="16" cy="16" rx="11" ry="4.2" fill="none" stroke="#61DAFB" stroke-width="1.3" transform="rotate(60 16 16)"/><ellipse cx="16" cy="16" rx="11" ry="4.2" fill="none" stroke="#61DAFB" stroke-width="1.3" transform="rotate(120 16 16)"/></svg>',
-        'html': '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M4 3l2.3 25.7L16 31l9.7-2.3L28 3z" fill="#E44D26"/><path d="M16 28.4V5.7l10.2 22.7z" fill="#F16529"/><path d="M9.4 13.5l.4 3.9H16v-3.9zM8.7 8H16V4.1H8.3zM16 21.5l-.05.01-4.1-1.1-.26-3h-3.9l.5 5.7 7.8 2.2z" fill="#EBEBEB"/><path d="M16 13.5v3.9h5.9l-.6 6.1-5.3 1.5v4l7.8-2.2.06-.6 1.2-13.1.12-1.6zm0-9.4v3.9h10.2l.08-1 .18-2.9z" fill="#fff"/></svg>',
-        'css': '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M4 3l2.3 25.7L16 31l9.7-2.3L28 3z" fill="#1572B6"/><path d="M16 28.4V5.7l10.2 22.7z" fill="#33A9DC"/><path d="M21.5 13.5H16v-3.9h6l.4-3.6H9.6L10 9.6h5.9v3.9H9.3l.4 3.6H16v4.1l-4.2-1.2-.3-3.1H7.7l.6 6.3 7.7 2.1z" fill="#fff"/><path d="M16 17.2v-3.7h5.1l-.5 5.2L16 19.9v4.1l7.7-2.1.1-.6 1-10.4.1-1.4H16v4zM16 5.7v3.9h5.7l.1-1 .2-2.9z" fill="#EBEBEB"/></svg>',
-        'scss': '<svg viewBox="0 0 32 32" width="18" height="18"><circle cx="16" cy="16" r="13" fill="#CD6799"/><path d="M22.5 14.7c-.7-.3-1.1-.4-1.6-.6-.3-.1-.6-.2-.8-.3-.2-.1-.4-.2-.4-.4 0-.3.4-.6 1.2-.6.9 0 1.7.3 2.1.5l.8-1.8c-.5-.3-1.5-.7-2.9-.7-1.5 0-2.7.4-3.5 1.1-.7.7-1 1.5-.9 2.4.1.9.7 1.6 1.9 2.1.5.2 1 .3 1.4.5.3.1.5.2.7.3.2.2.3.4.2.7-.1.5-.7.8-1.5.8-1 0-1.9-.3-2.5-.7l-.8 1.9c.7.4 1.8.7 3 .7h.3c1.3-.05 2.4-.4 3.1-1.1.7-.7 1-1.5.9-2.5-.1-.9-.7-1.6-1.7-2.3zm-7.6-4.2c-1.5 0-2.8.5-3.7 1.3l-.8-1.2-2.1 1.2.9 1.4c-.6.9-1 2-1 3.2s.4 2.3 1.1 3.2l-1.1 1.2 1.6 1.4 1.2-1.3c.9.5 1.9.8 3.1.8 3.4 0 5.7-2.5 5.7-5.7-.1-3-2.1-5.5-4.9-5.5zm-.3 9c-1.9 0-3.2-1.4-3.2-3.3s1.3-3.3 3.2-3.3c.8 0 1.5.3 2 .8l-3.4 4.2c.4.4.9.6 1.4.6z" fill="#fff"/></svg>',
-        'java': '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M12.2 22.1s-1.2.7.8 1c2.4.3 3.6.2 6.2-.2 0 0 .7.4 1.6.8-5.7 2.4-12.9-.1-8.6-1.6zM11.5 19s-1.3 1 .7 1.2c2.5.3 4.5.3 8-.4 0 0 .5.5 1.2.8-7.1 2.1-15-.2-9.9-1.6z" fill="#E76F00"/><path d="M17.2 13.4c1.4 1.7-.4 3.2-.4 3.2s3.6-1.9 2-4.2c-1.5-2.2-2.6-3.3 3.6-7.1 0 0-9.8 2.4-5.2 8.1z" fill="#E76F00"/><path d="M23.2 24.4s.9.7-.9 1.3c-3.4 1-14.1 1.3-17.1 0-1.1-.5.9-1.1 1.5-1.2.6-.1 1-.1 1-.1-1.1-.8-7.4 1.6-3.2 2.3 11.6 1.9 21.1-.8 18.7-2.3zM12.6 15.9s-5.3 1.3-1.9 1.8c1.5.2 4.4.2 7.1-.1 2.2-.3 4.5-.8 4.5-.8s-.8.3-1.3.7c-5.4 1.4-15.7.8-12.8-.7 2.5-1.3 4.4-1 4.4-.9zM20.6 20.8c5.4-2.8 2.9-5.6 1.2-5.2-.4.1-.6.2-.6.2s.2-.3.5-.4c3.6-1.3 6.4 3.8-1.1 5.8 0 0 .1-.1 0-.4z" fill="#E76F00"/><path d="M18.5 3s3 3-2.9 7.7c-4.7 3.8-1.1 5.9 0 8.3-2.7-2.5-4.7-4.7-3.4-6.7 2-3 7.5-4.4 6.3-9.3z" fill="#E76F00"/></svg>',
-        'kt': '<svg viewBox="0 0 32 32" width="18" height="18"><defs><linearGradient id="kot" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#7F52FF"/><stop offset="50%" stop-color="#C811E1"/><stop offset="100%" stop-color="#E54857"/></linearGradient></defs><path d="M4 4h10l14 12-14 12H4L4 4z" fill="url(#kot)"/><path d="M18 4l14 12-14 12V4z" fill="url(#kot)" opacity=".6"/></svg>',
-        'swift': '<svg viewBox="0 0 32 32" width="18" height="18"><defs><linearGradient id="swf" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#F05138"/><stop offset="100%" stop-color="#F8981E"/></linearGradient></defs><path d="M16 4c-3 2-6 6-6 10s2 6 4 7c-1-3 1-7 4-9 2 2 4 5 3 9 2-1 4-3 4-7s-3-8-6-10h-3z" fill="url(#swf)"/><circle cx="16" cy="16" r="4" fill="#fff"/></svg>',
-        'go': '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M16 5C9.4 5 4 10.4 4 17s5.4 12 12 12 12-5.4 12-12S22.6 5 16 5zm0 21c-5 0-9-4-9-9s4-9 9-9 9 4 9 9-4 9-9 9z" fill="#00ACD7"/><circle cx="12.5" cy="14.5" r="1.3" fill="#00ACD7"/><circle cx="19.5" cy="14.5" r="1.3" fill="#00ACD7"/><path d="M13 19s.7 2 3 2 3-2 3-2H13z" fill="#00ACD7"/></svg>',
-        'rs': '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M16 3L18.1 7.3 22.8 6.2 22.7 11 27.1 12.9 24.5 17 27.1 21.1 22.7 23 22.8 27.8 18.1 26.7 16 31 13.9 26.7 9.2 27.8 9.3 23 4.9 21.1 7.5 17 4.9 12.9 9.3 11 9.2 6.2 13.9 7.3z" fill="#DEA584"/><circle cx="16" cy="17" r="5" fill="none" stroke="#DEA584" stroke-width="2"/><circle cx="16" cy="17" r="2.5" fill="#DEA584"/></svg>',
-        'c': '<svg viewBox="0 0 32 32" width="18" height="18"><circle cx="16" cy="16" r="13" fill="#005B9F"/><path d="M22.5 20.4c-.8 2.5-3.1 4.3-5.8 4.3-3.4 0-6.1-2.7-6.1-6.1 0-3.4 2.7-6.1 6.1-6.1 2.8 0 5.1 1.9 5.9 4.4H20c-.6-1.3-1.9-2.1-3.3-2.1-2 0-3.7 1.6-3.7 3.7s1.7 3.7 3.7 3.7c1.5 0 2.7-.9 3.3-2.2h2.5z" fill="#fff"/></svg>',
-        'cpp': '<svg viewBox="0 0 32 32" width="18" height="18"><circle cx="16" cy="16" r="13" fill="#00599C"/><path d="M18 20.4c-.8 2.5-3.1 4.3-5.8 4.3-3.4 0-6.1-2.7-6.1-6.1 0-3.4 2.7-6.1 6.1-6.1 2.8 0 5.1 1.9 5.9 4.4h-2.6c-.6-1.3-1.9-2.1-3.3-2.1-2 0-3.7 1.6-3.7 3.7s1.7 3.7 3.7 3.7c1.5 0 2.7-.9 3.3-2.2H18z" fill="#fff"/><path d="M21 13.3v1.5h-1.5V16H21v1.7h1.5V16H24v-1.2h-1.5v-1.5zm4.5 0v1.5H24V16h1.5v1.7H27V16h1.5v-1.2H27v-1.5z" fill="#fff"/></svg>',
-        'cs': '<svg viewBox="0 0 32 32" width="18" height="18"><defs><linearGradient id="csg2" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#9B4F96"/><stop offset="100%" stop-color="#68217A"/></linearGradient></defs><circle cx="16" cy="16" r="13" fill="url(#csg2)"/><path d="M10 19.8c-.8-2.1.1-4.6 2.1-5.8s4.5-1 6.3.5l-1 1.7c-1.2-.9-2.8-1.1-4.1-.3-1.3.7-1.9 2.2-1.5 3.6l-1.8.3zm12 0c-.5 1.4-1.7 2.5-3.1 2.8l-.4-1.9c.8-.2 1.4-.8 1.7-1.5l1.8.6z" fill="#fff"/><path d="M20 13.4h1.2v1.2H20zm0 2.4h1.2v1.2H20zm2.4-2.4h1.2v1.2h-1.2zm0 2.4h1.2v1.2h-1.2z" fill="#fff"/></svg>',
-        'rb': '<svg viewBox="0 0 32 32" width="18" height="18"><defs><linearGradient id="rbg2" x1="0%" y1="100%" x2="100%" y2="0%"><stop offset="0%" stop-color="#FF0000"/><stop offset="100%" stop-color="#A30000"/></linearGradient></defs><path d="M22.9 5L27 9.1l.1 17.8-4.2 4.1H9L5 27.1 4.9 9.3 9 5z" fill="url(#rbg2)"/><path d="M11 10l-3 3v9l3 3h10l3-3v-9l-3-3zm.5 13l-2-2v-7l2-2h9l2 2v7l-2 2z" fill="#fff" opacity=".7"/><circle cx="16" cy="16" r="2.5" fill="#fff"/></svg>',
-        'php': '<svg viewBox="0 0 32 32" width="18" height="18"><ellipse cx="16" cy="16" rx="14" ry="9" fill="#8892BF"/><path d="M10.5 12H8l-2 8h2l.5-2h2l.5 2h2zm-.5 4.5H9l.5-2h.5zm6.5-4.5h-3l-2 8h2l.5-2h1c1.7 0 3-1.3 3-3s-1.3-3-2.5-3zm-.5 4.5H16l.5-2h.5c.5 0 1 .5 1 1s-.5 1-1 1zm7.5-4.5h-3l-2 8h2l.5-2h2l.5 2h2zm-.5 4.5h-1l.5-2h.5z" fill="#fff"/></svg>',
-        'dart': '<svg viewBox="0 0 32 32" width="18" height="18"><defs><linearGradient id="dart" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#0175C2"/><stop offset="100%" stop-color="#02569B"/></linearGradient></defs><path d="M16 4L4 12v12l12 8 12-8V12z" fill="url(#dart)"/><path d="M16 4v24l12-8V12z" fill="url(#dart)" opacity=".7"/><path d="M10 14h12v2H10zm2 4h8v2h-8z" fill="#fff"/></svg>',
-        'lua': '<svg viewBox="0 0 32 32" width="18" height="18"><circle cx="16" cy="16" r="13" fill="#000080"/><path d="M22 10c-2 0-3 1-3.5 2.5-.5-1-1.5-1.5-2.5-1.5-1.5 0-2.5 1-2.5 2.5 0 2 2 2.5 4 3 2 .5 4 1 4 3 0 1.5-1 2.5-2.5 2.5-2 0-3-1.5-4-3-.5 1.5-1.5 3-3 3v-2c1 0 2-.5 2.5-1.5.5 1 1.5 1.5 2.5 1.5 1.5 0 2.5-1 2.5-2.5 0-2-2-2.5-4-3-2-.5-4-1-4-3C12 8.5 13.5 7 16 7c1.5 0 2.5 1 3.5 2 .5-1.5 1.5-2.5 3-2.5v2z" fill="#fff"/></svg>',
-        'r': '<svg viewBox="0 0 32 32" width="18" height="18"><rect width="32" height="32" rx="3" fill="#276DC3"/><path d="M8 8h4v16h-4zM14 8h10l-2 5h-3l-1 3h3l-2 8H14z" fill="#fff"/></svg>',
-        'jl': '<svg viewBox="0 0 32 32" width="18" height="18"><circle cx="16" cy="16" r="13" fill="#9558B2"/><circle cx="16" cy="16" r="9" fill="none" stroke="#fff" stroke-width="1.5"/><circle cx="16" cy="16" r="4" fill="#fff"/><path d="M16 7v4M16 21v4M7 16h4M21 16h4" stroke="#fff" stroke-width="1.5"/></svg>',
-        'zig': '<svg viewBox="0 0 32 32" width="18" height="18"><defs><linearGradient id="zig" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#F7A800"/><stop offset="100%" stop-color="#FF9500"/></linearGradient></defs><path d="M16 4L4 16l12 12 12-12z" fill="url(#zig)"/><path d="M16 10l-6 6 6 6 6-6z" fill="#000" opacity=".3"/></svg>',
-        'ex': '<svg viewBox="0 0 32 32" width="18" height="18"><defs><linearGradient id="elx" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#4B275F"/><stop offset="100%" stop-color="#6E3A8E"/></linearGradient></defs><circle cx="16" cy="16" r="13" fill="url(#elx)"/><path d="M10 10c0-1 1-2 2-2h8c1 0 2 1 2 2v2l-6 8-6-8v-2z" fill="#fff"/><ellipse cx="16" cy="14" rx="4" ry="2" fill="#4B275F"/></svg>',
-        'hs': '<svg viewBox="0 0 32 32" width="18" height="18"><defs><linearGradient id="hs" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#5D4F85"/><stop offset="100%" stop-color="#453A6B"/></linearGradient></defs><path d="M8 4h10l6 6v18H8V4z" fill="url(#hs)"/><path d="M18 4v6h6" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><text x="16" y="22" font-family="Segoe UI,sans-serif" font-size="6" font-weight="bold" fill="#fff" text-anchor="middle">HS</text></svg>',
-        'clj': '<svg viewBox="0 0 32 32" width="18" height="18"><circle cx="16" cy="16" r="13" fill="#588526"/><path d="M10 10l6 12 6-12H10z" fill="#96CA50"/><circle cx="16" cy="16" r="3" fill="#fff"/></svg>',
-        'vue': '<svg viewBox="0 0 32 32" width="18" height="18"><polygon points="16,27 2,5 8.5,5 16,18.5 23.5,5 30,5" fill="#41B883"/><polygon points="16,20 9.5,9 13,9 16,14 19,9 22.5,9" fill="#35495E"/></svg>',
-        'svelte': '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M26.1 5.8c-2.8-4-8.4-5-12.4-2.3L7.2 7.7C5.3 9 4 11 3.8 13.3c-.2 1.9.3 3.8 1.4 5.3-.8 1.2-1.2 2.7-1.1 4.1.2 2.7 1.9 5.1 4.4 6.2 2.8 1.2 6 .7 8.3-1.2l6.5-4.2c1.9-1.3 3.2-3.3 3.4-5.6.2-1.9-.3-3.8-1.4-5.3.8-1.2 1.2-2.7 1.1-4.1-.1-1.1-.5-2.2-1.3-2.7z" fill="#FF3E00"/><path d="M13.7 27c-1.6.4-3.3 0-4.6-.9-1.8-1.3-2.5-3.5-1.8-5.5l.2-.5.4.3c1 .7 2 1.2 3.2 1.5l.3.1-.03.3c-.05.7.2 1.4.7 1.9.9.8 2.3.9 3.3.2l6.5-4.2c.6-.4 1-.9 1.1-1.6.1-.7-.1-1.4-.6-1.9-.9-.8-2.3-.9-3.3-.2l-2.5 1.6c-1.1.7-2.4 1-3.7.8-1.5-.2-2.8-1-3.6-2.2-1.4-2-1-4.7.9-6.2l6.5-4.2c1.6-1.1 3.7-1.3 5.5-.6 1.8.7 3 2.3 3.2 4.2.1.7 0 1.5-.3 2.2l-.2.5-.4-.3c-1-.7-2-1.2-3.2-1.5l-.3-.1.03-.3c.05-.7-.2-1.4-.7-1.9-.9-.8-2.3-.9-3.3-.2l-6.5 4.2c-.6.4-1 .9-1.1 1.6-.1.7.1 1.4.6 1.9.9.8 2.3.9 3.3.2l2.5-1.6c1.1-.7 2.4-1 3.7-.8 1.5.2 2.8 1 3.6 2.2 1.4 2 1 4.7-.9 6.2L18 26.3c-.8.5-1.5.8-2.3.7z" fill="#fff"/></svg>',
-        'sql': '<svg viewBox="0 0 32 32" width="18" height="18"><ellipse cx="16" cy="10" rx="10" ry="4" fill="#4479A1"/><path d="M6 10v4c0 2.2 4.5 4 10 4s10-1.8 10-4v-4c0 2.2-4.5 4-10 4S6 12.2 6 10z" fill="#4479A1"/><path d="M6 14v4c0 2.2 4.5 4 10 4s10-1.8 10-4v-4c0 2.2-4.5 4-10 4S6 16.2 6 14z" fill="#336791"/><path d="M6 18v4c0 2.2 4.5 4 10 4s10-1.8 10-4v-4c0 2.2-4.5 4-10 4S6 20.2 6 18z" fill="#336791"/></svg>',
-        'md': '<svg viewBox="0 0 32 32" width="18" height="18"><rect x="2" y="7" width="28" height="18" rx="3" fill="#42A5F5"/><path d="M7 22V10h3l3 4 3-4h3v12h-3v-7l-3 4-3-4v7zm16 0l-4-6h2.5v-6h3v6H27z" fill="#fff"/></svg>',
-        'json': '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M12.7 6c-1.5 0-2.5.4-3 1.1-.5.7-.5 1.7-.5 2.5v2.2c0 .8-.2 1.5-.8 1.9-.3.2-.7.3-1.4.3v4c.7 0 1.1.1 1.4.3.6.4.8 1.1.8 1.9v2.2c0 .8 0 1.8.5 2.5.5.7 1.5 1.1 3 1.1H14v-2h-1.3c-.7 0-.9-.2-1-.4-.1-.2-.1-.7-.1-1.4v-2.2c0-1.2-.3-2.2-1.2-2.8-.2-.2-.5-.3-.8-.4.3-.1.5-.2.8-.4.9-.6 1.2-1.6 1.2-2.8V9.8c0-.7 0-1.2.1-1.4.1-.2.3-.4 1-.4H14V6h-1.3zm6.6 0v2h1.3c.7 0 .9.2 1 .4.1.2.1.7.1 1.4v2.2c0 1.2.3 2.2 1.2 2.8.2.2.5.3.8.4-.3.1-.5.2-.8.4-.9.6-1.2 1.6-1.2 2.8v2.2c0 .7 0 1.2-.1 1.4-.1.2-.3.4-1 .4H18v2h1.3c1.5 0 2.5-.4 3-1.1.5-.7.5-1.7.5-2.5v-2.2c0-.8.2-1.5.8-1.9.3-.2.7-.3 1.4-.3v-4c-.7 0-1.1-.1-1.4-.3-.6-.4-.8-1.1-.8-1.9V9.8c0-.8 0-1.8-.5-2.5C21.8 6.4 20.8 6 19.3 6z" fill="#F5A623"/></svg>',
-        'yaml': '<svg viewBox="0 0 32 32" width="18" height="18"><rect width="32" height="32" rx="3" fill="#CC1018"/><path d="M7 9h2.5l3 5 3-5H18l-4.5 7v6h-2v-6zm11 4h7v2h-2.5v8h-2v-8H18z" fill="#fff"/></svg>',
-        'xml': '<svg viewBox="0 0 32 32" width="18" height="18"><rect width="32" height="32" rx="3" fill="#607D8B"/><circle cx="16" cy="16" r="5" fill="none" stroke="#fff" stroke-width="2"/><path d="M16 5v4M16 23v4M5 16h4M23 16h4M8.5 8.5l2.8 2.8M20.7 20.7l2.8 2.8M8.5 23.5l2.8-2.8M20.7 11.3l2.8-2.8" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>',
-        'sh': '<svg viewBox="0 0 32 32" width="18" height="18"><rect width="32" height="32" rx="3" fill="#1E1E1E"/><path d="M6 10l7 6-7 6" fill="none" stroke="#4EC9B0" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 22h10" stroke="#4EC9B0" stroke-width="2.5" stroke-linecap="round"/></svg>',
-        'bat': '<svg viewBox="0 0 32 32" width="18" height="18"><rect width="32" height="32" rx="3" fill="#1E1E1E"/><path d="M6 10l7 6-7 6" fill="none" stroke="#4EC9B0" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 22h10" stroke="#4EC9B0" stroke-width="2.5" stroke-linecap="round"/></svg>',
-        'ps1': '<svg viewBox="0 0 32 32" width="18" height="18"><rect width="32" height="32" rx="3" fill="#1E1E1E"/><path d="M6 10l7 6-7 6" fill="none" stroke="#4EC9B0" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 22h10" stroke="#4EC9B0" stroke-width="2.5" stroke-linecap="round"/></svg>',
-        'txt': '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M8 4h10l6 6v18H8V4z" fill="#9AAABB"/><path d="M18 4v6h6" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><line x1="10" y1="13" x2="22" y2="13" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/><line x1="10" y1="17" x2="22" y2="17" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/><line x1="10" y1="21" x2="18" y2="21" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg>',
-        'env': '<svg viewBox="0 0 32 32" width="18" height="18"><rect width="32" height="32" rx="3" fill="#4A9B4F"/><path d="M8 4h10l6 6v18H8V4z" fill="#5DBA5F"/><path d="M18 4v6h6" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><text x="16" y="22" font-family="Segoe UI,sans-serif" font-size="7" font-weight="bold" fill="#fff" text-anchor="middle">ENV</text></svg>',
-        'zip': '<svg viewBox="0 0 32 32" width="18" height="18"><rect width="32" height="32" rx="3" fill="#8E44AD"/><path d="M16 7l-2 2h-3l-1 3h3l-2 2 2 2h-3l1 3h3l2 2 2-2h3l1-3h-3l2-2-2-2h3l-1-3h-3z" fill="#F39C12"/><rect x="10" y="12" width="12" height="10" rx="1" fill="none" stroke="#fff" stroke-width="1.5"/></svg>',
-        'git': '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M29.5 14.5L17.5 2.5c-.7-.7-1.8-.7-2.5 0L12.4 5l3 3c.7-.2 1.5 0 2 .6.6.5.8 1.3.6 2l2.9 2.9c.7-.2 1.5 0 2 .6.9.9.9 2.3 0 3.2-.9.9-2.3.9-3.2 0-.6-.6-.8-1.5-.5-2.2L16.5 12v8c.2.1.4.2.6.4.9.9.9 2.3 0 3.2-.9.9-2.3.9-3.2 0-.9-.9-.9-2.3 0-3.2.2-.2.5-.4.7-.5v-8c-.2-.1-.5-.3-.7-.5-.6-.6-.8-1.5-.5-2.2L10.5 6.1 2.5 14c-.7.7-.7 1.8 0 2.5l12 12c.7.7 1.8.7 2.5 0l12.5-12.5c.7-.7.7-1.8 0-2.5z" fill="#F34F29"/></svg>',
-        'gitignore': '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M29.5 14.5L17.5 2.5c-.7-.7-1.8-.7-2.5 0L12.4 5l3 3c.7-.2 1.5 0 2 .6.6.5.8 1.3.6 2l2.9 2.9c.7-.2 1.5 0 2 .6.9.9.9 2.3 0 3.2-.9.9-2.3.9-3.2 0-.6-.6-.8-1.5-.5-2.2L16.5 12v8c.2.1.4.2.6.4.9.9.9 2.3 0 3.2-.9.9-2.3.9-3.2 0-.9-.9-.9-2.3 0-3.2.2-.2.5-.4.7-.5v-8c-.2-.1-.5-.3-.7-.5-.6-.6-.8-1.5-.5-2.2L10.5 6.1 2.5 14c-.7.7-.7 1.8 0 2.5l12 12c.7.7 1.8.7 2.5 0l12.5-12.5c.7-.7.7-1.8 0-2.5z" fill="#F34F29"/></svg>',
-        'gitattributes': '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M29.5 14.5L17.5 2.5c-.7-.7-1.8-.7-2.5 0L12.4 5l3 3c.7-.2 1.5 0 2 .6.6.5.8 1.3.6 2l2.9 2.9c.7-.2 1.5 0 2 .6.9.9.9 2.3 0 3.2-.9.9-2.3.9-3.2 0-.6-.6-.8-1.5-.5-2.2L16.5 12v8c.2.1.4.2.6.4.9.9.9 2.3 0 3.2-.9.9-2.3.9-3.2 0-.9-.9-.9-2.3 0-3.2.2-.2.5-.4.7-.5v-8c-.2-.1-.5-.3-.7-.5-.6-.6-.8-1.5-.5-2.2L10.5 6.1 2.5 14c-.7.7-.7 1.8 0 2.5l12 12c.7.7 1.8.7 2.5 0l12.5-12.5c.7-.7.7-1.8 0-2.5z" fill="#F34F29"/></svg>',
-        'docker': '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M28.8 14.5c-.5-.3-1.6-.5-2.5-.3-.1-.9-.7-1.7-1.6-2.3l-.5-.3-.4.4c-.5.6-.7 1.6-.6 2.3.1.5.3.9.6 1.3-.3.1-.8.3-1.5.3H4.1c-.3 1.3-.1 3 .9 4.2.9 1.2 2.3 1.9 4.3 1.9 4 0 7-1.8 8.9-5 1.1.1 3.4.1 4.6-2.2.1 0 .6-.3 1.6-.9l.5-.3-.1-.1z" fill="#2396ED"/><rect x="7" y="13" width="2" height="2" rx=".3" fill="#2396ED"/><rect x="9.7" y="13" width="2" height="2" rx=".3" fill="#2396ED"/><rect x="12.4" y="13" width="2" height="2" rx=".3" fill="#2396ED"/><rect x="15.1" y="13" width="2" height="2" rx=".3" fill="#2396ED"/><rect x="17.8" y="13" width="2" height="2" rx=".3" fill="#2396ED"/><rect x="12.4" y="11" width="2" height="2" rx=".3" fill="#2396ED"/><rect x="15.1" y="11" width="2" height="2" rx=".3" fill="#2396ED"/><rect x="17.8" y="11" width="2" height="2" rx=".3" fill="#2396ED"/><rect x="15.1" y="9" width="2" height="2" rx=".3" fill="#2396ED"/></svg>',
-    };
-    
-    return iconMap[ext] || '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M8 4h10l6 6v18H8V4z" fill="#90A4AE"/><path d="M18 4v6h6" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    return getFileIcon(ext, false, false, 18);
 }
+
     
     // Configure marked with all options
     marked.setOptions({ 
@@ -851,6 +986,73 @@ document.addEventListener('DOMContentLoaded', function () {
     var newChatBtn = document.getElementById('new-chat-btn');
     if (newChatBtn) newChatBtn.onclick = startNewChat;
 
+    // AutoGen Multi-Agent Toggle (Compact Banner in Dropdown)
+    var autogenBanner = document.getElementById('autogen-banner');
+    var autogenToggleSwitch = document.getElementById('autogen-toggle-switch');
+    var autogenBannerText = document.getElementById('autogen-banner-text');
+    
+    console.log('[AutoGen] Banner elements:', {
+        banner: !!autogenBanner,
+        switch: !!autogenToggleSwitch,
+        text: !!autogenBannerText
+    });
+    
+    if (autogenBanner && autogenToggleSwitch) {
+        console.log('[AutoGen] Click handler attached');
+        
+        autogenToggleSwitch.onclick = function(e) {
+            e.stopPropagation();
+            e.preventDefault();
+            
+            console.log('[AutoGen] Toggle clicked! Bridge available:', !!bridge);
+            console.log('[AutoGen] on_toggle_autogen method:', typeof (bridge && bridge.on_toggle_autogen));
+            
+            if (bridge && bridge.on_toggle_autogen) {
+                console.log('[AutoGen] Calling bridge.on_toggle_autogen()...');
+                // Toggle AutoGen using the correct method name
+                bridge.on_toggle_autogen();
+                
+                // Update UI after small delay
+                setTimeout(function() {
+                    autogenBanner.classList.toggle('active');
+                    var isActive = autogenBanner.classList.contains('active');
+                    autogenBannerText.textContent = isActive ? 
+                        'Multi-Agent: ON' : 'Multi-Agent: OFF';
+                    
+                    console.log('[AutoGen] UI updated, active:', isActive);
+                    
+                    // Show toast notification (inline to avoid hoisting issues)
+                    try {
+                        if (typeof showToast === 'function') {
+                            showToast(
+                                isActive ? '✅ Multi-Agent Mode ENABLED' : '⚪ Multi-Agent Mode DISABLED',
+                                isActive ? 'success' : 'info',
+                                3000
+                            );
+                        } else {
+                            console.log('[AutoGen] Mode toggled:', isActive ? 'ON' : 'OFF');
+                        }
+                    } catch (err) {
+                        console.log('[AutoGen] Toast error:', err);
+                    }
+                }, 200);
+            } else {
+                console.error('[AutoGen] Bridge method not ready!', {
+                    bridge: !!bridge,
+                    on_toggle_autogen: typeof (bridge && bridge.on_toggle_autogen)
+                });
+            }
+        };
+        
+        // Prevent dropdown from closing when clicking banner
+        autogenBanner.onclick = function(e) {
+            e.stopPropagation();
+            e.preventDefault();
+        };
+    } else {
+        console.error('[AutoGen] Banner or switch element not found!');
+    }
+
     var send = document.getElementById('sendBtn');
     if (send) send.onclick = sendMessage;
 
@@ -1053,6 +1255,7 @@ function renderHistoryList() {
         item.className = 'history-item' + (chat.id === currentChatId ? ' active' : '');
         
         var titleSpan = document.createElement('span');
+        titleSpan.className = 'title-text'; // Add class for proper ellipsis
         titleSpan.textContent = chat.title;
         
         var deleteBtn = document.createElement('button');
@@ -1194,8 +1397,13 @@ function hideLoadingIndicator() {
 }
 
 function loadChat(id) {
+    console.log('[CHAT] loadChat called with ID:', id);
     var chat = chats.find(function (c) { return c.id == id; });
-    if (!chat) return;
+    if (!chat) {
+        console.error('[CHAT] Chat not found in list:', id);
+        return;
+    }
+    console.log('[CHAT] Found chat:', chat.title, 'Messages:', chat.messages ? chat.messages.length : 0, 'Message count:', chat.message_count);
     currentChatId = id;
     
     // LAZY LOADING: If messages are not loaded yet, request them from the bridge
@@ -1205,6 +1413,7 @@ function loadChat(id) {
     if (chat.truncated && canLazyLoad) {
         needsLazyLoad = true;
     }
+    console.log('[CHAT] canLazyLoad:', canLazyLoad, 'needsLazyLoad:', needsLazyLoad, 'msgCount:', msgCount, 'message_count:', chat.message_count);
     if (needsLazyLoad && canLazyLoad) {
         console.log('[CHAT] Lazy loading messages for chat:', id);
         clearMessages();
@@ -1217,13 +1426,15 @@ function loadChat(id) {
         console.log('[CHAT] Requesting lazy load from bridge for:', id);
         if (bridge && typeof bridge.load_full_chat === 'function') {
             bridge.load_full_chat(id);
-            console.log('[CHAT] bridge.load_full_chat CALLED');
+            console.log('[CHAT] bridge.load_full_chat CALLED for ID:', id);
         } else {
             console.warn('[CHAT] Bridge not ready for lazy load. bridge exists:', !!bridge, 'type:', typeof (bridge && bridge.load_full_chat));
             hideLoadingIndicator();
         }
         return;
     }
+    
+    // ... rest of loadChat implementation
     
     clearMessages();
     
@@ -1345,6 +1556,93 @@ function normalizeMessageRoles(messages) {
     return false;
 }
 
+// Handle full chat load response from Python
+window.handleFullChatLoad = function(conversationId, chatData) {
+    console.log('[CHAT] handleFullChatLoad called for:', conversationId);
+    console.log('[CHAT] Chat data received:', chatData ? 'YES' : 'NO', 'Type:', typeof chatData);
+    if (chatData) {
+        console.log('[CHAT] Chat data keys:', Object.keys(chatData));
+        console.log('[CHAT] Messages count:', chatData.messages ? chatData.messages.length : 0);
+    }
+    hideLoadingIndicator();
+    
+    if (!chatData || !chatData.messages || chatData.messages.length === 0) {
+        console.warn('[CHAT] No chat data received for:', conversationId);
+        // Show empty state
+        var container = document.getElementById('chatMessages');
+        if (container && !document.getElementById('empty-state')) {
+            var emptyState = document.createElement('div');
+            emptyState.id = 'empty-state';
+            emptyState.innerHTML = '<p>No chat history found</p>';
+            container.appendChild(emptyState);
+        }
+        return;
+    }
+    
+    console.log('[CHAT] Received', chatData.messages.length, 'messages');
+    
+    // Find the chat in our list
+    var chat = chats.find(function(c) { return c.id == conversationId; });
+    if (!chat) {
+        console.error('[CHAT] Chat not found in list:', conversationId);
+        return;
+    }
+    
+    // Update chat with full data
+    chat.messages = chatData.messages || [];
+    chat.loaded = true;
+    chat.truncated = false;
+    
+    // Clear and render messages
+    clearMessages();
+    normalizeMessageRoles(chat.messages);
+    
+    chat.messages.forEach(function(msg) {
+        var msgText = msg.content || msg.text;
+        var msgSender = msg.role || msg.sender;
+        
+        if (!msgText || msgText === 'undefined' || msgText.trim() === '') return;
+        appendMessage(msgText, msgSender || 'user', false);
+        
+        // Restore tool activities
+        if (msg.toolActivities && msg.toolActivities.length > 0) {
+            msg.toolActivities.forEach(function(activity) {
+                if (activity.type === 'directory' && activity.contents) {
+                    var container = document.getElementById('chatMessages');
+                    var bubbles = container.querySelectorAll('.message-bubble.assistant');
+                    if (bubbles.length > 0) {
+                        currentAssistantMessage = bubbles[bubbles.length - 1];
+                        renderDirectoryContents(activity.path, activity.contents);
+                    }
+                }
+            });
+        }
+    });
+    
+    // Restore changed files if present
+    if (chatData.changedFiles && Object.keys(chatData.changedFiles).length > 0) {
+        _changedFiles = chatData.changedFiles;
+        Object.keys(_changedFiles).forEach(function(filePath) {
+            var file = _changedFiles[filePath];
+            if (file.status !== 'rejected') {
+                renderChangedFileRow(filePath, file.added, file.removed, file.editType, file.status);
+            }
+        });
+        _refreshCfsHeader();
+    }
+    
+    // Restore todos if present
+    if (chatData.todos && chatData.todos.length > 0) {
+        currentTodoList = chatData.todos;
+        updateTodos(currentTodoList, '');
+    } else {
+        currentTodoList = [];
+        updateTodos([], '');
+    }
+    
+    console.log('[CHAT] Chat loaded successfully:', conversationId);
+};
+
 function appendMessage(text, sender, shouldSave) {
     console.log('[CHAT] appendMessage called:', sender, 'length:', text ? text.length : 0);
     var container = document.getElementById('chatMessages');
@@ -1443,6 +1741,16 @@ function appendMessage(text, sender, shouldSave) {
             saveChats();
         }
     }
+    
+    // Re-verify title for first message if needed
+    if (sender === 'user' && shouldSave) {
+        var chat = chats.find(function(c) { return c.id == currentChatId; });
+        if (chat && (chat.messages.length === 1 || !chat.title || chat.title === 'New Chat')) {
+             chat.title = text.substring(0, 40) + (text.length > 40 ? '...' : '');
+             renderHistoryList();
+        }
+    }
+    
     return bubble;
 }
 
@@ -4155,6 +4463,16 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 });
                 renderHistoryList();
+                
+                // Auto-scroll to bottom to show latest message
+                setTimeout(function() {
+                    var container = document.getElementById('chat-output') || document.getElementById('chatMessages');
+                    if (container) {
+                        container.scrollTop = container.scrollHeight;
+                        console.log('[CHAT] Auto-scrolled to bottom after loading', chat.messages.length, 'messages');
+                    }
+                }, 100);
+                
                 console.log('[CHAT] chatFullLoadHandler: Render complete.');
             } else {
                 console.warn('[CHAT] chatFullLoadHandler: currentChatId mismatch. current:', currentChatId, 'loaded:', id);
@@ -5710,3 +6028,235 @@ function hideIndexingStatus() {
 
 window.showIndexingStatus = showIndexingStatus;
 window.hideIndexingStatus = hideIndexingStatus;
+
+// ================================================
+// PERMISSION CARD SYSTEM (IN-CHAT) (NEW)
+// ================================================
+
+/**
+ * Show permission card inside chat messages area
+ * @param {string} toolName - Name of the tool requesting permission
+ * @param {string} details - HTML content showing what will be changed
+ * @param {function} callback - Function to call with (approved, remember) when user responds
+ */
+function showPermissionCard(toolName, details, callback) {
+    console.log('[PERMISSION] Showing card for:', toolName);
+    
+    // Get chat messages container
+    var chatMessages = document.getElementById('chatMessages');
+    if (!chatMessages) {
+        console.error('[PERMISSION] Chat messages container not found!');
+        return;
+    }
+    
+    // Create permission card from template
+    var template = document.getElementById('permission-card-template');
+    if (!template) {
+        console.error('[PERMISSION] Template not found!');
+        return;
+    }
+    
+    var card = template.content.cloneNode(true);
+    
+    // Populate card content
+    card.querySelector('.permission-tool-name').textContent = toolName;
+    card.querySelector('.permission-card-details').innerHTML = details;
+    
+    // Store callback on card element
+    card._permissionCallback = callback;
+    
+    // Add to chat messages
+    chatMessages.appendChild(card);
+    
+    // Scroll to bottom to show card
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+    
+    // Setup button handlers
+    var approveBtn = card.querySelector('.permission-btn-approve');
+    var denyBtn = card.querySelector('.permission-btn-deny');
+    var rememberCheckbox = card.querySelector('.permission-remember-checkbox');
+    
+    if (approveBtn) {
+        approveBtn.addEventListener('click', function() {
+            var remember = rememberCheckbox ? rememberCheckbox.checked : false;
+            console.log('[PERMISSION] User approved');
+            if (card._permissionCallback) {
+                card._permissionCallback(true, remember);
+            }
+            // Remove card after response
+            card.remove();
+        });
+    }
+    
+    if (denyBtn) {
+        denyBtn.addEventListener('click', function() {
+            var remember = rememberCheckbox ? rememberCheckbox.checked : false;
+            console.log('[PERMISSION] User denied');
+            if (card._permissionCallback) {
+                card._permissionCallback(false, remember);
+            }
+            // Remove card after response
+            card.remove();
+        });
+    }
+}
+
+// Expose to Python bridge
+window.showPermissionCard = showPermissionCard;
+
+
+// ── INTERACTIVE QUESTION SUPPORT (STOP-AND-WAIT PIPELINE) ──────────
+
+/**
+ * Shows a premium interaction card in the chat for AI questions.
+ * @param {Object} info - {id, text, type, choices, default}
+ */
+window.showQuestionCard = function(info) {
+    console.log('[CHAT] showQuestionCard called:', info);
+    var container = document.getElementById('chatMessages');
+    if (!container) return;
+
+    // Use Template for permissions if available (Planned UI support)
+    if (info.type === 'permission') {
+        var template = document.getElementById('permission-card-template');
+        if (template) {
+            var card = template.content.cloneNode(true).querySelector('.permission-card');
+            card.id = 'interaction-' + info.id;
+            
+            var titleEl = card.querySelector('.permission-tool-name');
+            if (titleEl) titleEl.textContent = info.tool_name || 'Action Request';
+            
+            var detailsEl = card.querySelector('.permission-card-details');
+            if (detailsEl) detailsEl.innerHTML = info.details || '';
+            
+            var approveBtn = card.querySelector('.permission-btn-approve');
+            if (approveBtn) approveBtn.onclick = function() { 
+                var checkbox = card.querySelector('.permission-remember-checkbox');
+                var answer = (checkbox && checkbox.checked) ? 'always' : 'allow';
+                submitInteractionAnswer(info.id, answer); 
+            };
+            
+            var denyBtn = card.querySelector('.permission-btn-deny');
+            if (denyBtn) denyBtn.onclick = function() { submitInteractionAnswer(info.id, 'deny'); };
+            
+            container.appendChild(card);
+            setTimeout(function() {
+                container.scrollTop = container.scrollHeight;
+                console.log('[CHAT] Template permission card appended and scrolled');
+            }, 50);
+            return;
+        }
+    }
+
+    var card = document.createElement('div');
+    card.className = 'interaction-card';
+    card.id = 'interaction-' + info.id;
+
+    var html = '<div class="interaction-header">' +
+               '<span class="interaction-icon">❓</span>' +
+               '<span class="interaction-title">AI Question</span>' +
+               '</div>' +
+               '<div class="interaction-body">' +
+               '<p class="interaction-text">' + (info.text || "I have a question before I continue.") + '</p>';
+
+    if (info.type === 'confirm') {
+        html += '<div class="interaction-actions">' +
+                '<button class="interaction-btn deny" onclick="submitInteractionAnswer(\'' + info.id + '\', \'no\')">No</button>' +
+                '<button class="interaction-btn approve" onclick="submitInteractionAnswer(\'' + info.id + '\', \'yes\')">Yes</button>' +
+                '</div>';
+    } else if (info.type === 'permission') {
+        html += '<div class="interaction-permission-details">' + (info.details || "") + '</div>' +
+                '<div class="interaction-actions permission-grid">' +
+                '<button class="interaction-btn secondary" onclick="submitInteractionAnswer(\'' + info.id + '\', \'deny\')">Deny</button>' +
+                '<button class="interaction-btn primary" onclick="submitInteractionAnswer(\'' + info.id + '\', \'allow\')">Allow</button>' +
+                '<button class="interaction-btn ghost" onclick="submitInteractionAnswer(\'' + info.id + '\', \'always\')">Always</button>' +
+                '</div>';
+    } else if (info.type === 'choice' && info.choices && info.choices.length > 0) {
+        html += '<div class="interaction-choices">';
+        info.choices.forEach(function(choice) {
+            html += '<button class="interaction-choice-btn" onclick="submitInteractionAnswer(\'' + info.id + '\', \'' + choice.replace(/'/g, "\\'") + '\')">' + choice + '</button>';
+        });
+        html += '</div>';
+    } else {
+        // Default text input
+        html += '<div class="interaction-input-group">' +
+                '<input type="text" id="input-' + info.id + '" class="interaction-input" placeholder="' + (info.default || 'Type your answer...') + '" />' +
+                '<button class="interaction-submit-btn" onclick="submitInteractionByInput(\'' + info.id + '\')">Send</button>' +
+                '</div>';
+    }
+
+    html += '</div>';
+    card.innerHTML = html;
+    container.appendChild(card);
+    
+    // FORCE scroll to bottom for interactions - high priority
+    setTimeout(function() {
+        container.scrollTop = container.scrollHeight;
+        console.log('[CHAT] Interaction card appended and scrolled to bottom');
+    }, 50);
+
+    // Focus input if it's a text type and handle Enter key
+    if (info.type !== 'confirm' && info.type !== 'choice' && info.type !== 'permission') {
+        setTimeout(function() {
+            var input = document.getElementById('input-' + info.id);
+            if (input) {
+                input.focus();
+                input.onkeydown = function(e) {
+                    if (e.key === 'Enter') {
+                        submitInteractionByInput(info.id);
+                    }
+                };
+            }
+        }, 150);
+    }
+};
+
+/**
+ * Submits the answer back to the Python AIAgent.
+ */
+window.submitInteractionAnswer = function(id, answer) {
+    console.log('[CHAT] Submitting interaction answer:', id, answer);
+    var card = document.getElementById('interaction-' + id);
+    if (card) {
+        card.classList.add('answered');
+        var answeredContainer = card.querySelector('.interaction-answered') || card.querySelector('.permission-card-body') || card;
+        
+        if (card.classList.contains('permission-card')) {
+            // Special handling for template card
+            var actions = card.querySelector('.permission-card-actions');
+            var remember = card.querySelector('.permission-card-remember');
+            if (actions) actions.style.display = 'none';
+            if (remember) remember.style.display = 'none';
+            
+            var statusDiv = document.createElement('div');
+            statusDiv.className = 'interaction-answered';
+            statusDiv.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>' +
+                                 ' Decision: ' + answer.toUpperCase();
+            answeredContainer.appendChild(statusDiv);
+        } else {
+            card.innerHTML = '<div class="interaction-answered">' +
+                             '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>' +
+                             ' Answered: ' + answer + '</div>';
+        }
+    }
+
+    if (window.bridge && typeof window.bridge.on_answer_question === 'function') {
+        window.bridge.on_answer_question(id, answer);
+    } else {
+        console.error('[CHAT] Bridge not ready to send interaction answer');
+    }
+};
+
+/**
+ * Helper to submit answer from a text input field.
+ */
+window.submitInteractionByInput = function(id) {
+    var input = document.getElementById('input-' + id);
+    var answer = input ? input.value : '';
+    // If empty but has a default (placeholder), use it
+    if (!answer && input && input.placeholder !== 'Type your answer...') {
+        answer = input.placeholder;
+    }
+    if (!answer) answer = ""; // Ensure not null
+    window.submitInteractionAnswer(id, answer);
+};

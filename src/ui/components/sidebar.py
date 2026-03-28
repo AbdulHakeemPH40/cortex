@@ -18,88 +18,192 @@ from PyQt6.QtGui import (
 )
 from src.utils.helpers import detect_language
 from src.utils.logger import get_logger
-from src.utils.icons import make_icon, make_button_icon
+from src.utils.icons import make_icon, make_button_icon, make_sprite_icon
 
 log = get_logger("sidebar")
 
 def _get_icon_name(path: str) -> str:
-    """Map file extension to icon factory name."""
+    """Map file/folder path → OpenCode sprite IconName (e.g. 'Python', 'Typescript')."""
     p = Path(path)
     if p.is_dir():
-        return "folder"
-    suffix = p.suffix.lower()
-    mapping = {
-        # Python
-        ".py": "python", ".pyw": "python", ".pyi": "python",
-        # JavaScript/TypeScript
-        ".js": "javascript", ".mjs": "javascript", ".cjs": "javascript",
-        ".ts": "typescript", ".tsx": "react", ".jsx": "react",
-        # Web
-        ".html": "html", ".htm": "html",
-        ".css": "css", ".scss": "scss", ".sass": "scss", ".less": "scss",
-        # Java/Kotlin
-        ".java": "java", ".jar": "java", ".groovy": "java",
-        ".kt": "kotlin", ".kts": "kotlin",
-        ".swift": "swift",
-        # C/C++
-        ".cpp": "cpp", ".cc": "cpp", ".cxx": "cpp", ".h": "c", ".hpp": "cpp",
-        # C#
-        ".cs": "csharp",
-        # Rust
-        ".rs": "rust",
-        # Go
-        ".go": "go",
-        # PHP
-        ".php": "php",
-        # Ruby
-        ".rb": "ruby", ".erb": "ruby", ".rake": "ruby",
-        # Dart
-        ".dart": "dart",
-        # Lua
-        ".lua": "lua",
-        # R
-        ".r": "r", ".R": "r",
-        # Julia
-        ".jl": "julia",
-        # Zig
-        ".zig": "zig",
-        # Elixir
-        ".ex": "elixir", ".exs": "elixir",
-        # Haskell
-        ".hs": "haskell", ".lhs": "haskell",
-        # Clojure
-        ".clj": "clojure", ".cljs": "clojure", ".cljc": "clojure",
-        # Shell
-        ".sh": "shell", ".bash": "shell", ".zsh": "shell", ".bat": "shell", ".cmd": "shell", ".ps1": "shell",
-        # Data/Config
-        ".json": "json", ".json5": "json",
-        ".yaml": "yaml", ".yml": "yaml",
-        ".toml": "config", ".ini": "config", ".cfg": "config",
-        ".xml": "config",
-        # SQL
-        ".sql": "sql", ".sqlite": "sql",
-        # Markdown
-        ".md": "markdown", ".mdx": "markdown", ".markdown": "markdown",
-        # Git
-        ".git": "git", ".gitignore": "git", ".gitattributes": "git",
-        # Docker
-        ".dockerfile": "docker", ".dockerignore": "docker",
-        # Vue/Svelte
-        ".vue": "vue",
-        ".svelte": "svelte",
-        # Images
-        ".pdf": "pdf",
-        ".jpg": "image", ".jpeg": "image", ".png": "image", ".gif": "image", ".svg": "image",
-        ".doc": "word", ".docx": "word",
-        ".xlsx": "excel", ".xls": "excel",
-        ".pptx": "powerpoint", ".ppt": "powerpoint",
-        ".csv": "csv",
-        ".log": "files",
-        ".txt": "txt",
-        ".env": "env",
-        ".zip": "zip", ".tar": "zip", ".gz": "zip", ".rar": "zip", ".7z": "zip",
+        folder = p.name.lower().strip('/')
+        _FOLDER_MAP = {
+            'src': 'FolderSrc', 'source': 'FolderSrc',
+            'lib': 'FolderLib', 'libs': 'FolderLib',
+            'test': 'FolderTest', 'tests': 'FolderTest',
+            '__tests__': 'FolderTest', 'spec': 'FolderTest', 'e2e': 'FolderTest',
+            'node_modules': 'FolderNode',
+            'vendor': 'FolderPackages', 'packages': 'FolderPackages',
+            'build': 'FolderBuildkite', 'dist': 'FolderDist',
+            'out': 'FolderDist', 'output': 'FolderDist', 'target': 'FolderTarget',
+            'config': 'FolderConfig', 'configs': 'FolderConfig',
+            'env': 'FolderEnvironment', 'environments': 'FolderEnvironment',
+            'docker': 'FolderDocker', 'containers': 'FolderDocker',
+            'docs': 'FolderDocs', 'doc': 'FolderDocs', 'documentation': 'FolderDocs',
+            'public': 'FolderPublic', 'static': 'FolderPublic',
+            'assets': 'FolderImages', 'images': 'FolderImages',
+            'img': 'FolderImages', 'icons': 'FolderImages', 'media': 'FolderImages',
+            'fonts': 'FolderFont',
+            'styles': 'FolderCss', 'stylesheets': 'FolderCss', 'css': 'FolderCss',
+            'sass': 'FolderSass', 'scss': 'FolderSass',
+            'scripts': 'FolderScripts', 'script': 'FolderScripts',
+            'utils': 'FolderUtils', 'utilities': 'FolderUtils',
+            'helpers': 'FolderHelper', 'tools': 'FolderTools',
+            'components': 'FolderComponents', 'component': 'FolderComponents',
+            'views': 'FolderViews', 'view': 'FolderViews',
+            'layouts': 'FolderLayout', 'layout': 'FolderLayout',
+            'templates': 'FolderTemplate', 'template': 'FolderTemplate',
+            'hooks': 'FolderHook', 'hook': 'FolderHook',
+            'store': 'FolderStore', 'stores': 'FolderStore',
+            'reducers': 'FolderReduxReducer', 'reducer': 'FolderReduxReducer',
+            'services': 'FolderApi', 'service': 'FolderApi',
+            'api': 'FolderApi', 'apis': 'FolderApi',
+            'routes': 'FolderRoutes', 'route': 'FolderRoutes',
+            'middleware': 'FolderMiddleware', 'middlewares': 'FolderMiddleware',
+            'controllers': 'FolderController', 'controller': 'FolderController',
+            'models': 'FolderDatabase', 'model': 'FolderDatabase',
+            'schemas': 'FolderDatabase', 'migrations': 'FolderDatabase',
+            'types': 'FolderTypescript', 'typing': 'FolderTypescript',
+            'typings': 'FolderTypescript', '@types': 'FolderTypescript',
+            'android': 'FolderAndroid', 'ios': 'FolderIos',
+            'flutter': 'FolderFlutter', 'mobile': 'FolderMobile',
+            'kubernetes': 'FolderKubernetes', 'k8s': 'FolderKubernetes',
+            'terraform': 'FolderTerraform',
+            'aws': 'FolderAws', 'firebase': 'FolderFirebase',
+            '.github': 'FolderGithub', '.gitlab': 'FolderGitlab',
+            '.git': 'FolderGit', 'workflows': 'FolderGhWorkflows',
+            '.vscode': 'FolderVscode', '.idea': 'FolderIntellij',
+            '.cursor': 'FolderCursor', '.storybook': 'FolderStorybook',
+            'i18n': 'FolderI18n', 'locales': 'FolderI18n', 'lang': 'FolderI18n',
+            'temp': 'FolderTemp', 'tmp': 'FolderTemp',
+            'logs': 'FolderLog', 'log': 'FolderLog',
+            'mocks': 'FolderMock', 'mock': 'FolderMock',
+            'data': 'FolderDatabase', 'database': 'FolderDatabase', 'db': 'FolderDatabase',
+            'prisma': 'FolderPrisma', 'drizzle': 'FolderDrizzle',
+            'functions': 'FolderFunctions', 'lambda': 'FolderFunctions',
+            'security': 'FolderSecure', 'auth': 'FolderSecure',
+            'keys': 'FolderKeys', 'certs': 'FolderKeys',
+            'examples': 'FolderExamples', 'example': 'FolderExamples',
+            'venv': 'FolderPython', '.venv': 'FolderPython',
+        }
+        return _FOLDER_MAP.get(folder, _FOLDER_MAP.get(folder.lstrip('.'), 'FolderBlue'))
+
+    # Exact filename matches
+    name_lower = p.name.lower()
+    _FILENAME_MAP = {
+        'package.json': 'Nodejs', 'package-lock.json': 'Nodejs',
+        '.nvmrc': 'Nodejs', '.node-version': 'Nodejs',
+        'yarn.lock': 'Yarn', 'pnpm-lock.yaml': 'Pnpm',
+        'bun.lock': 'Bun', 'bun.lockb': 'Bun', 'bunfig.toml': 'Bun',
+        'dockerfile': 'Docker', 'docker-compose.yml': 'Docker',
+        'docker-compose.yaml': 'Docker', '.dockerignore': 'Docker',
+        '.gitignore': 'Git', '.gitattributes': 'Git', '.gitmodules': 'Git',
+        'tsconfig.json': 'Tsconfig', 'jsconfig.json': 'Jsconfig',
+        'vite.config.js': 'Vite', 'vite.config.ts': 'Vite',
+        'tailwind.config.js': 'Tailwindcss', 'tailwind.config.ts': 'Tailwindcss',
+        'jest.config.js': 'Jest', 'jest.config.ts': 'Jest',
+        'vitest.config.js': 'Vitest', 'vitest.config.ts': 'Vitest',
+        '.eslintrc': 'Eslint', '.eslintrc.js': 'Eslint', '.eslintrc.json': 'Eslint',
+        '.prettierrc': 'Prettier', '.prettierrc.js': 'Prettier',
+        'webpack.config.js': 'Webpack', 'rollup.config.js': 'Rollup',
+        'next.config.js': 'Next', 'next.config.mjs': 'Next',
+        'nuxt.config.js': 'Nuxt', 'nuxt.config.ts': 'Nuxt',
+        'svelte.config.js': 'Svelte', 'astro.config.mjs': 'AstroConfig',
+        'gatsby-config.js': 'Gatsby', 'remix.config.js': 'Remix',
+        'cargo.toml': 'Rust', 'go.mod': 'GoMod', 'go.sum': 'GoMod',
+        'requirements.txt': 'Python', 'pyproject.toml': 'Python',
+        'pipfile': 'Python', 'poetry.lock': 'Poetry',
+        'gemfile': 'Gemfile', 'rakefile': 'Ruby',
+        'composer.json': 'Php', 'build.gradle': 'Gradle', 'pom.xml': 'Maven',
+        'deno.json': 'Deno', 'deno.jsonc': 'Deno',
+        'vercel.json': 'Vercel', 'netlify.toml': 'Netlify',
+        '.env': 'Tune', '.env.local': 'Tune', '.env.example': 'Tune',
+        '.editorconfig': 'Editorconfig', 'makefile': 'Makefile',
+        'robots.txt': 'Robots', 'favicon.ico': 'Favicon',
+        '.babelrc': 'Babel', 'babel.config.js': 'Babel',
+        'firebase.json': 'Firebase', 'angular.json': 'Angular',
+        'nx.json': 'Nx', 'lerna.json': 'Lerna',
+        'turbo.json': 'Turborepo',
+        'readme.md': 'Readme', 'readme': 'Readme',
+        'changelog.md': 'Changelog', 'license': 'Certificate',
+        'wrangler.toml': 'Wrangler', 'renovate.json': 'Renovate',
     }
-    return mapping.get(suffix, "default")
+    icon = _FILENAME_MAP.get(name_lower)
+    if icon:
+        return icon
+
+    # Extension map → OpenCode sprite IconName
+    suffix = p.suffix.lower()
+    _EXT_MAP = {
+        # Python
+        '.py': 'Python', '.pyw': 'Python', '.pyi': 'Python', '.pyx': 'Python',
+        # JS/TS
+        '.js': 'Javascript', '.mjs': 'Javascript', '.cjs': 'Javascript',
+        '.ts': 'Typescript', '.tsx': 'React_ts', '.jsx': 'React',
+        '.d.ts': 'TypescriptDef',
+        # Web
+        '.html': 'Html', '.htm': 'Html',
+        '.css': 'Css', '.scss': 'Sass', '.sass': 'Sass', '.less': 'Less', '.styl': 'Stylus',
+        '.vue': 'Vue', '.svelte': 'Svelte',
+        # Java ecosystem
+        '.java': 'Java', '.jar': 'Java', '.groovy': 'Groovy',
+        '.kt': 'Kotlin', '.kts': 'Kotlin', '.scala': 'Scala',
+        # .NET
+        '.cs': 'Csharp', '.vb': 'Visualstudio', '.fs': 'Fsharp',
+        # C/C++
+        '.cpp': 'Cpp', '.cc': 'Cpp', '.cxx': 'Cpp',
+        '.c': 'C', '.h': 'H', '.hpp': 'Hpp',
+        # Systems
+        '.rs': 'Rust', '.go': 'Go', '.nim': 'Nim', '.zig': 'Zig',
+        '.v': 'Vlang', '.odin': 'Odin', '.gleam': 'Gleam',
+        # Scripting
+        '.rb': 'Ruby', '.erb': 'Ruby',
+        '.php': 'Php',
+        '.pl': 'Perl', '.pm': 'Perl',
+        # Shell
+        '.sh': 'Console', '.bash': 'Console', '.zsh': 'Console', '.fish': 'Console',
+        '.bat': 'Console', '.cmd': 'Console', '.ps1': 'Powershell',
+        # Mobile
+        '.swift': 'Swift', '.dart': 'Dart', '.m': 'ObjectiveC', '.mm': 'ObjectiveCpp',
+        # Functional
+        '.hs': 'Haskell', '.lhs': 'Haskell', '.elm': 'Elm',
+        '.ex': 'Elixir', '.exs': 'Elixir', '.erl': 'Erlang',
+        '.clj': 'Clojure', '.cljs': 'Clojure', '.cljc': 'Clojure',
+        '.ml': 'Ocaml', '.mli': 'Ocaml',
+        '.lua': 'Lua', '.r': 'R', '.jl': 'Julia',
+        # Data/config
+        '.json': 'Json', '.json5': 'Json', '.jsonc': 'Json',
+        '.yaml': 'Yaml', '.yml': 'Yaml',
+        '.toml': 'Toml', '.ini': 'Settings', '.cfg': 'Settings', '.conf': 'Settings',
+        '.xml': 'Xml', '.xsd': 'Xml', '.xsl': 'Xml',
+        '.env': 'Tune',
+        '.sql': 'Database', '.sqlite': 'Database', '.db': 'Database',
+        '.graphql': 'Graphql', '.gql': 'Graphql',
+        '.proto': 'Proto', '.wasm': 'Webassembly',
+        # Docs
+        '.md': 'Markdown', '.mdx': 'Mdx', '.markdown': 'Markdown', '.tex': 'Tex',
+        '.rst': 'Readme',
+        # Git
+        '.gitignore': 'Git', '.gitattributes': 'Git',
+        # Docker
+        '.dockerfile': 'Docker', '.dockerignore': 'Docker',
+        # Media
+        '.svg': 'Svg', '.png': 'Image', '.jpg': 'Image', '.jpeg': 'Image',
+        '.gif': 'Image', '.webp': 'Image', '.bmp': 'Image', '.ico': 'Favicon',
+        '.mp4': 'Video', '.mov': 'Video', '.avi': 'Video', '.webm': 'Video',
+        '.mp3': 'Audio', '.wav': 'Audio', '.flac': 'Audio',
+        # Documents
+        '.pdf': 'Pdf', '.doc': 'Word', '.docx': 'Word',
+        '.ppt': 'Powerpoint', '.pptx': 'Powerpoint',
+        '.xls': 'Document', '.xlsx': 'Document', '.csv': 'Document',
+        # Archives
+        '.zip': 'Zip', '.tar': 'Zip', '.gz': 'Zip', '.rar': 'Zip', '.7z': 'Zip',
+        # Other
+        '.log': 'Log', '.lock': 'Lock', '.key': 'Key',
+        '.pem': 'Certificate', '.crt': 'Certificate',
+        '.txt': 'Document',
+    }
+    return _EXT_MAP.get(suffix, 'Document')
 
 
 # ── Custom delegate for VS Code-style rows ─────────────────────────────────────
@@ -149,14 +253,19 @@ class FileTreeDelegate(QStyledItemDelegate):
             painter.restore()
             x += 14  # shift rest right
 
-        # ── VS Code-style SVG Icons ───────────────────────────────
+        # ── VS Code-style SVG Icons from OpenCode sprite ─────────────────
         icon_name = _get_icon_name(filepath)
-        
-        # Use 18px size for better visibility
-        icon_size = 18
-        icon = make_icon(icon_name, "", icon_size)
+        # Mark expanded folders with open variant
+        if is_dir:
+            view = option.widget
+            expanded = view.isExpanded(index) if (view and hasattr(view, 'isExpanded')) else False
+            if expanded and not icon_name.endswith('Open'):
+                icon_name = icon_name + 'Open'
+
+        icon_size = 20
+        icon = make_sprite_icon(icon_name, icon_size)
         pixmap = icon.pixmap(icon_size, icon_size)
-        
+
         icon_rect = QRect(x, option.rect.top() + (option.rect.height() - icon_size) // 2, icon_size, icon_size)
         painter.drawPixmap(icon_rect, pixmap)
         x += icon_size + 6
@@ -199,8 +308,15 @@ QTreeView::item {
     border-radius: 3px;
     padding-left: 2px;
 }
-QTreeView::item:hover      { background: #2a2d2e; }
-QTreeView::item:selected   { background: #094771; color: #ffffff; }
+QTreeView::item:hover      { 
+    background: #37373d;
+    color: #ffffff;
+}
+QTreeView::item:selected   { 
+    background: #094771; 
+    color: #ffffff;
+    border: 1px solid #007acc;
+}
 QTreeView::branch {
     background: #1e1e1e;
 }
@@ -229,8 +345,15 @@ QTreeView::item {
     border-radius: 3px;
     padding-left: 2px;
 }
-QTreeView::item:hover      { background: #e8f0fe; }
-QTreeView::item:selected   { background: #cce5ff; color: #003d80; }
+QTreeView::item:hover      { 
+    background: #d4d4d4;
+    color: #1a1a1a;
+}
+QTreeView::item:selected   { 
+    background: #cce5ff; 
+    color: #003d80;
+    border: 1px solid #007acc;
+}
 QTreeView::branch {
     background: #ffffff;
 }
@@ -242,29 +365,246 @@ SKIP_DIRS = {'.git', '__pycache__', 'node_modules', '.venv',
 
 class VsCodeFileTree(QTreeView):
     """QTreeView subclass: single-click expands folders."""
+    file_deleted = pyqtSignal(str)
 
-    def __init__(self, parent=None):
+    def __init__(self, file_manager=None, explorer=None, parent=None):
         super().__init__(parent)
+        self._file_manager = file_manager
+        self._explorer = explorer  # Direct reference to FileExplorerPanel
         self.setMouseTracking(True)
         self.setExpandsOnDoubleClick(False)  # we handle manually
+        self.setSelectionMode(QTreeView.SelectionMode.ExtendedSelection)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.viewport().setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+        self.setDragDropMode(QTreeView.DragDropMode.InternalMove)
+
+    def _find_explorer(self):
+        """Return the directly linked explorer panel."""
+        return self._explorer
+
+    def keyPressEvent(self, event):
+        """Handle keyboard shortcuts for file operations."""
+        # ── 1. Copy / Cut / Paste (VS Code style) ───────────────────
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            if event.key() == Qt.Key.Key_C:
+                self._handle_copy()
+                return
+            elif event.key() == Qt.Key.Key_X:
+                self._handle_cut()
+                return
+            elif event.key() == Qt.Key.Key_V:
+                self._handle_paste()
+                return
+
+        # ── 2. Delete / Backspace ──────────────────────────────────
+        if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            paths = self._get_selected_paths()
+            if paths:
+                self._delete_items(paths)
+                return
+
+        super().keyPressEvent(event)
+        if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+            self.viewport().update()
+
+    def _handle_copy(self):
+        paths = self._get_selected_paths()
+        print(f"[COPY] selected paths: {paths}")   # DEBUG
+        if paths and self._explorer:
+            self._explorer._clipboard_paths = paths
+            self._explorer._clipboard_mode = "copy"
+            print(f"[COPY] clipboard set to: {paths}")   # DEBUG
+            log.info(f"📋 Copied: {', '.join([Path(p).name for p in paths])}")
+        elif not paths:
+            print("[COPY] Nothing selected — no paths found")
+        elif not self._explorer:
+            print("[COPY] ERROR: _explorer is None")
+
+    def _handle_cut(self):
+        paths = self._get_selected_paths()
+        print(f"[CUT] selected paths: {paths}")   # DEBUG
+        if paths and self._explorer:
+            self._explorer._clipboard_paths = paths
+            self._explorer._clipboard_mode = "cut"
+            log.info(f"✂️ Cut: {', '.join([Path(p).name for p in paths])}")
+        elif not self._explorer:
+            print("[CUT] ERROR: _explorer is None")
+
+    def _handle_paste(self):
+        print(f"[PASTE] explorer={self._explorer}, clipboard={getattr(self._explorer, '_clipboard_paths', None)}")  # DEBUG
+        if not self._explorer or not self._explorer._clipboard_paths:
+            print("[PASTE] Aborted — clipboard empty or no explorer")
+            return
+
+        # Target directory: selected folder, or parent folder if file selected, or project root
+        idx = self.currentIndex()
+        if idx.isValid():
+            path = self.model().filePath(idx)
+            target_dir = path if Path(path).is_dir() else str(Path(path).parent)
+        else:
+            target_dir = self._explorer._root_path
+
+        print(f"[PASTE] target_dir={target_dir}")  # DEBUG
+        if target_dir:
+            self._explorer._paste_into(target_dir)
+
+    def _get_selected_paths(self) -> list[str]:
+        """Get all selected file paths. Uses selectedIndexes() filtered to col 0.
+        NOTE: selectedRows() does NOT work with QFileSystemModel — it always returns []
+        because QFileSystemModel uses SelectItems not SelectRows behaviour.
+        """
+        seen: set[str] = set()
+        paths: list[str] = []
+        for idx in self.selectionModel().selectedIndexes():
+            if idx.column() == 0:  # avoid duplicates from other columns
+                p = self.model().filePath(idx)
+                if p not in seen:
+                    seen.add(p)
+                    paths.append(p)
+        return paths
+
+    # ── Drag and Drop Support ──────────────────────────────────────────
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        """Handle drops: move files into target directory."""
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            paths = [url.toLocalFile() for url in urls]
+            
+            # Find drop target
+            index = self.indexAt(event.position().toPoint())
+            target_dir = None
+            if index.isValid():
+                path = self.model().filePath(index)
+                if Path(path).is_dir():
+                    target_dir = path
+                else:
+                    target_dir = str(Path(path).parent)
+            else:
+                explorer = self._find_explorer()
+                target_dir = explorer._root_path if explorer else None
+
+            if target_dir and paths:
+                explorer = self._find_explorer()
+                if explorer and self._file_manager:
+                    from PyQt6.QtWidgets import QMessageBox
+                    
+                    # Confirm drop operation
+                    target_name = Path(target_dir).name
+                    verb = "move"
+                    item_count = len(paths)
+                    item_desc = f"'{Path(paths[0]).name}'" if item_count == 1 else f"these {item_count} items"
+                    
+                    msg = f"Are you sure you want to {verb} {item_desc} into '{target_name}'?\n\nThis action can be undone with Ctrl+Z."
+                    reply = QMessageBox.question(
+                        self, 'Confirm Move', msg,
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.Yes
+                    )
+                    
+                    if reply == QMessageBox.StandardButton.Yes:
+                        for p in paths:
+                            # Prevent moving into self or child
+                            if target_dir.startswith(p):
+                                continue
+                            self._file_manager.move(p, target_dir)
+                        event.acceptProposedAction()
+                        
+                    return
+
+        super().dropEvent(event)
+
+    def _delete_items(self, paths):
+        """Show confirmation dialog and delete multiple files/folders (moves to trash)."""
+        if not paths: return
+        
+        from PyQt6.QtWidgets import QMessageBox
+        from pathlib import Path
+        
+        count = len(paths)
+        if count == 1:
+            name = Path(paths[0]).name
+            msg = f"Are you sure you want to delete '{name}'?"
+        else:
+            msg = f"Are you sure you want to delete {count} selected items?"
+            
+        msg_box = QMessageBox(
+            QMessageBox.Icon.Question, "Delete",
+            msg + "\n\nThis action can be undone with Ctrl+Z.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            self
+        )
+        msg_box.setDefaultButton(QMessageBox.StandardButton.Yes)
+        
+        reply = msg_box.exec()
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            if self._file_manager:
+                success_count = 0
+                for path in paths:
+                    if self._file_manager.delete(path):
+                        success_count += 1
+                
+                if success_count < len(paths):
+                    QMessageBox.warning(self, "Delete Partial", f"Successfully deleted {success_count} of {len(paths)} items.")
+            else:
+                QMessageBox.critical(self, "Delete Failed", "FileManager not available")
 
     def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.RightButton:
+            # Right click: select item if not already selected
+            index = self.indexAt(event.pos())
+            if index.isValid():
+                if not self.selectionModel().isSelected(index):
+                    self.setCurrentIndex(index)
+            super().mousePressEvent(event)
+            return
+
         index = self.indexAt(event.pos())
         if index.isValid():
             model = self.model()
             if hasattr(model, 'filePath'):
                 path = model.filePath(index)
                 if Path(path).is_dir():
-                    # Call super first so selection + model loading fires
-                    super().mousePressEvent(event)
-                    if self.isExpanded(index):
-                        self.collapse(index)
-                    else:
-                        self.expand(index)
-                    # Force icon repaint for open/closed folder icon
-                    from PyQt6.QtCore import QTimer
-                    QTimer.singleShot(50, self.viewport().update)
-                    return
+                    # Handle folder expand/collapse logic
+                    # If Ctrl/Shift is held, standard selection behavior applies
+                    if not (event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)):
+                        if self.isExpanded(index):
+                            self.collapse(index)
+                        else:
+                            self.expand(index)
+                        QTimer.singleShot(50, self.viewport().update)
+                        # We still want to select it
+                        self.setCurrentIndex(index)
+                        return
+                else:
+                    # It's a file - open it on single click (if no modifiers)
+                    if not (event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)):
+                        path = model.filePath(index)
+                        # Open the file in the editor (preview mode)
+                        if hasattr(self.parent(), 'file_opened'):
+                            self.parent().file_opened.emit(path)
+                        elif hasattr(self.parent().parent(), 'file_opened'):
+                             self.parent().parent().file_opened.emit(path)
+                        # VS Code behavior: keep focus on the tree after single-click open.
+                        # Since the CodeEditor explicitly tries to steal focus when opened,
+                        # we must assertively steal it back.
+                        self.setFocus()
+                        QTimer.singleShot(10, self.setFocus)
+                        QTimer.singleShot(100, self.setFocus)
+                        QTimer.singleShot(250, self.setFocus)
         super().mousePressEvent(event)
 
 
@@ -276,11 +616,27 @@ class FileExplorerPanel(QWidget):
     file_deleted = pyqtSignal(str)
     file_renamed = pyqtSignal(str, str)
 
-    def __init__(self, parent=None):
+    def __init__(self, file_manager=None, parent=None):
         super().__init__(parent)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._file_manager = file_manager
         self._root_path: str | None = None
         self._is_dark = True
         self._tree_collapsed = False
+
+        # Internal clipboard state
+        self._clipboard_paths = []
+        self._clipboard_mode = "copy"  # "copy" or "cut"
+        self._explorer_active = False  # VS Code-style context key: True when tree was last clicked
+
+        # ── VS Code-style focus-aware shortcuts ────────────────────────────
+        # Instead of QShortcuts (which either don't fire or conflict with
+        # the editor's Ctrl+C), we install an application-level event filter.
+        # It intercepts KeyPress events and checks if the file tree has focus
+        # (equivalent to VS Code's `when: explorerViewletFocus && !inputFocus`).
+        # If yes → handle file copy/cut/paste.  If no → pass event through.
+        QApplication.instance().installEventFilter(self)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -369,7 +725,7 @@ class FileExplorerPanel(QWidget):
         self._model.setNameFilterDisables(False)
 
         # ── Tree view ──────────────────────────────────────────────────────
-        self._tree = VsCodeFileTree()
+        self._tree = VsCodeFileTree(file_manager=self._file_manager, explorer=self, parent=self)
         self._tree.setModel(self._model)
         self._tree.setHeaderHidden(True)
         for col in (1, 2, 3):
@@ -384,6 +740,8 @@ class FileExplorerPanel(QWidget):
         self._tree.collapsed.connect(self._on_collapsed)
         # Repaint when async directory listing finishes loading
         self._model.directoryLoaded.connect(lambda _: self._tree.viewport().update())
+        # Connect file deletion signal
+        self._tree.file_deleted.connect(self.file_deleted)
 
         # Custom delegate
         self._delegate = FileTreeDelegate(self._model)
@@ -471,7 +829,18 @@ class FileExplorerPanel(QWidget):
             if not ok or not name or name == Path(path).name:
                 return False
 
-            new_path = str(Path(path).parent / name)
+            new_path_obj = Path(path).parent / name
+            
+            # Prevent WinError 183 by explicitly checking for existence
+            if new_path_obj.exists() and new_path_obj.resolve() != Path(path).resolve():
+                QMessageBox.warning(
+                    self, 
+                    "Rename Failed", 
+                    f"A file or folder with the name '{name}' already exists at this location.\n\nPlease choose a different name."
+                )
+                return False
+
+            new_path = str(new_path_obj)
             Path(path).rename(new_path)
             self.file_renamed.emit(path, new_path)
             return True
@@ -524,6 +893,144 @@ class FileExplorerPanel(QWidget):
     def _on_collapsed(self, index: QModelIndex):
         from PyQt6.QtCore import QTimer
         QTimer.singleShot(30, self._tree.viewport().update)
+
+    def _is_explorer_focused(self) -> bool:
+        focused = QApplication.focusWidget()
+        if not focused:
+            return False
+        w = focused
+        while w is not None:
+            if w is self._tree:
+                return True
+            w = w.parent() if hasattr(w, 'parent') and callable(w.parent) else None
+        return False
+
+    def eventFilter(self, obj, event):
+        """Application-level event filter.
+        Handles Ctrl+C/X/V only when the file tree HAS FOCUS.
+        """
+        from PyQt6.QtCore import QEvent
+        from PyQt6.QtGui import QKeySequence
+        
+        # On Windows, standard keys like Ctrl+C might arrive as ShortcutOverride
+        if event.type() in (QEvent.Type.KeyPress, QEvent.Type.ShortcutOverride):
+            if self._is_explorer_focused():
+                mods = event.modifiers()
+                key = event.key()
+                if mods & Qt.KeyboardModifier.ControlModifier:
+                    if key == Qt.Key.Key_C:
+                        self._kb_copy()
+                        return True
+                    elif key == Qt.Key.Key_X:
+                        self._kb_cut()
+                        return True
+                    elif key == Qt.Key.Key_V:
+                        self._kb_paste()
+                        return True
+        return super().eventFilter(obj, event)
+
+
+    def _set_system_clipboard(self, paths: list[str], mode: str):
+        """Update the OS clipboard so Ctrl+V works everywhere."""
+        from PyQt6.QtCore import QMimeData, QUrl
+        mime = QMimeData()
+        urls = [QUrl.fromLocalFile(p) for p in paths]
+        mime.setUrls(urls)
+        # Set text representation so pasting into editor gives file path
+        mime.setText("\n".join(str(Path(p).resolve()) for p in paths))
+        # Optional: could set custom mime type for 'cut' vs 'copy'
+        QApplication.clipboard().setMimeData(mime)
+
+    def _kb_copy(self):
+        """Ctrl+C — copy selected files (panel-level, always fires)."""
+        paths = self._tree._get_selected_paths()
+        print(f"[KB COPY] paths={paths}")
+        if paths:
+            self._clipboard_paths = paths
+            self._clipboard_mode = "copy"
+            self._set_system_clipboard(paths, "copy")
+            log.info(f"📋 Copied: {', '.join(Path(p).name for p in paths)}")
+
+    def _kb_cut(self):
+        """Ctrl+X — cut selected files."""
+        paths = self._tree._get_selected_paths()
+        print(f"[KB CUT] paths={paths}")
+        if paths:
+            self._clipboard_paths = paths
+            self._clipboard_mode = "cut"
+            self._set_system_clipboard(paths, "cut")
+            log.info(f"✂️ Cut: {', '.join(Path(p).name for p in paths)}")
+
+    def _kb_paste(self):
+        """Ctrl+V — paste into currently selected/focused folder."""
+        print(f"[KB PASTE] start")
+        idx = self._tree.currentIndex()
+        if idx.isValid():
+            p = self._model.filePath(idx)
+            target = p if Path(p).is_dir() else str(Path(p).parent)
+        else:
+            target = self._root_path
+        print(f"[KB PASTE] target={target}")
+        if target:
+            self._paste_into(target)
+
+    def _paste_into(self, target_dir: str):
+        """Execute the actual file copy/move operations from clipboard."""
+        if not self._file_manager:
+            return
+
+        from PyQt6.QtWidgets import QMessageBox
+        
+        # 1. Check internal clipboard first
+        paths = self._clipboard_paths
+        mode = self._clipboard_mode
+        
+        # 2. Check system clipboard if internal is empty
+        if not paths:
+            mime = QApplication.clipboard().mimeData()
+            if mime.hasUrls():
+                paths = [url.toLocalFile() for url in mime.urls() if url.isLocalFile()]
+                mode = "copy"  # external pastes are always treated as copies by default
+                
+        if not paths:
+            return
+
+        # Confirm paste/move operation
+        item_count = len(paths)
+        if item_count == 0:
+            return
+            
+        item_desc = f"'{Path(paths[0]).name}'" if item_count == 1 else f"these {item_count} items"
+        verb = "move" if mode == "cut" else "copy"
+        target_name = Path(target_dir).name
+        
+        msg = f"Are you sure you want to {verb} {item_desc} into '{target_name}'?\n\nThis action can be undone with Ctrl+Z."
+        reply = QMessageBox.question(
+            self, f'Confirm {verb.capitalize()}', msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes
+        )
+        
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        success_count = 0
+        for src in paths:
+            if mode == "cut":
+                res = self._file_manager.move(src, target_dir)
+            else:
+                res = self._file_manager.copy(src, target_dir)
+            
+            if res:
+                success_count += 1
+
+        # If it was an internal 'cut', clear clipboard after moving
+        if self._clipboard_mode == "cut" and self._clipboard_paths:
+            self._clipboard_paths = []
+            self._clipboard_mode = "copy"
+
+        log.info(f"Pasted {success_count} items into {target_dir}")
+        self._tree.viewport().update()
 
     def _toggle_tree(self, _event=None):
         """Collapse/expand all items in tree (like VS Code's root arrow)."""
@@ -602,57 +1109,157 @@ class FileExplorerPanel(QWidget):
             self.file_opened.emit(path)
 
     def _show_context_menu(self, pos):
-        index = self._tree.indexAt(pos)
-        path = self._model.filePath(index) if index.isValid() else self._root_path
-        if not path:
+        indexes = self._tree.selectedIndexes()
+        # Filter for column 0 only
+        selected_paths = [self._model.filePath(idx) for idx in indexes if idx.column() == 0]
+        
+        # Target for Paste is either the folder clicked on, or its parent folder if a file was clicked
+        click_index = self._tree.indexAt(pos)
+        target_path = self._model.filePath(click_index) if click_index.isValid() else self._root_path
+        
+        if not target_path:
             return
 
         menu = QMenu(self)
-        is_dir = Path(path).is_dir()
+        menu.setStyleSheet(f"""
+            QMenu {{ background-color: {'#252526' if self._is_dark else '#ffffff'}; color: {'#cccccc' if self._is_dark else '#333333'}; border: 1px solid #3c3c3c; }}
+            QMenu::item:selected {{ background-color: #094771; color: white; }}
+        """)
+        
+        is_dir = Path(target_path).is_dir()
+        
         if is_dir:
             act_new_file   = menu.addAction("📄  New File")
             act_new_folder = menu.addAction("📁  New Folder")
             menu.addSeparator()
 
+        if selected_paths:
+            act_cut = menu.addAction("✂️  Cut")
+            act_copy = menu.addAction("📋  Copy")
+            menu.addSeparator()
+            
+        # Paste logic: Check internal or system clipboard
+        can_paste = bool(self._clipboard_paths)
+        if not can_paste:
+            clipboard = QApplication.clipboard()
+            mime = clipboard.mimeData()
+            if mime.hasUrls():
+                can_paste = True
+                
+        if can_paste:
+            act_paste = menu.addAction("📥  Paste")
+            menu.addSeparator()
+
         act_rename = menu.addAction("✏️  Rename")
         act_delete = menu.addAction("🗑️  Delete")
         menu.addSeparator()
-        act_copy_path = menu.addAction("📋  Copy Path")
+        act_copy_path = menu.addAction("🔗  Copy Path")
 
         action = menu.exec(self._tree.viewport().mapToGlobal(pos))
         if not action:
             return
 
-        if is_dir and action.text().strip().endswith("New File"):
-            name, ok = QInputDialog.getText(self, "New File", "File name:")
-            if ok and name:
-                new_path = str(Path(path) / name)
+        txt = action.text().strip()
+
+        if is_dir and "New File" in txt:
+            self._new_file_at(target_path)
+        elif is_dir and "New Folder" in txt:
+            self._new_folder_at(target_path)
+        elif "Cut" in txt:
+            paths = selected_paths if selected_paths else [target_path]
+            self._clipboard_paths = paths
+            self._clipboard_mode = "cut"
+            self._set_system_clipboard(paths, "cut")
+            print(f"[CUT] stored: {self._clipboard_paths}")
+        elif "Copy" in txt:
+            paths = selected_paths if selected_paths else [target_path]
+            self._clipboard_paths = paths
+            self._clipboard_mode = "copy"
+            self._set_system_clipboard(paths, "copy")
+            print(f"[COPY] stored: {self._clipboard_paths}")
+        elif "Paste" in txt:
+            dest_dir = target_path if is_dir else str(Path(target_path).parent)
+            print(f"[PASTE] into: {dest_dir}, clipboard: {self._clipboard_paths}")
+            self._paste_into(dest_dir)
+        elif "Rename" in txt:
+            self._rename_path(target_path)
+        elif "Delete" in txt:
+            self._tree._delete_items(selected_paths if selected_paths else [target_path])
+        elif "Copy Path" in txt:
+            QApplication.clipboard().setText(target_path)
+
+    def _new_file_at(self, directory):
+        name, ok = QInputDialog.getText(self, "New File", "File name:")
+        if ok and name:
+            new_path = str(Path(directory) / name)
+            try:
                 Path(new_path).touch()
                 self.file_created.emit(new_path)
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Could not create file: {e}")
 
-        elif is_dir and action.text().strip().endswith("New Folder"):
-            name, ok = QInputDialog.getText(self, "New Folder", "Folder name:")
-            if ok and name:
-                (Path(path) / name).mkdir(exist_ok=True)
+    def _new_folder_at(self, directory):
+        name, ok = QInputDialog.getText(self, "New Folder", "Folder name:")
+        if ok and name:
+            try:
+                (Path(directory) / name).mkdir(exist_ok=True)
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Could not create folder: {e}")
 
-        elif action == act_rename:
-            self._rename_path(path)
+    def _handle_paste(self, dest_dir):
+        """Handle pasting from internal or external clipboard."""
+        import shutil
+        
+        # 1. Check system clipboard first (files from Explorer)
+        clipboard = QApplication.clipboard()
+        mime = clipboard.mimeData()
+        if mime.hasUrls():
+            for url in mime.urls():
+                src_path = url.toLocalFile()
+                if src_path:
+                    try:
+                        self._copy_item(src_path, dest_dir)
+                    except Exception as e:
+                        log.error(f"Failed to paste external file {src_path}: {e}")
+            return
 
-        elif action == act_delete:
-            reply = QMessageBox.question(
-                self, "Delete", f"Delete '{Path(path).name}'?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-            if reply == QMessageBox.StandardButton.Yes:
-                import shutil
-                if Path(path).is_dir():
-                    shutil.rmtree(path)
+        # 2. Internal clipboard
+        if not self._clipboard_paths:
+            return
+
+        for src_path in self._clipboard_paths:
+            try:
+                if self._clipboard_mode == "cut":
+                    shutil.move(src_path, dest_dir)
                 else:
-                    Path(path).unlink()
-                self.file_deleted.emit(path)
+                    self._copy_item(src_path, dest_dir)
+            except Exception as e:
+                log.error(f"Failed to paste {src_path}: {e}")
+                
+        if self._clipboard_mode == "cut":
+            self._clipboard_paths = []
+            
+        self._refresh_explorer()
 
-        elif action == act_copy_path:
-            QApplication.clipboard().setText(str(path))
+    def _copy_item(self, src_path, dest_dir):
+        """Helper to copy file or folder to destination."""
+        import shutil
+        src = Path(src_path)
+        dest = Path(dest_dir) / src.name
+        
+        # Handle filename collisions (e.g. file.txt -> file (copy).txt)
+        if dest.exists():
+            stem = src.stem
+            ext = src.suffix
+            counter = 1
+            while dest.exists():
+                dest = Path(dest_dir) / f"{stem} (copy {counter}){ext}"
+                counter += 1
+                
+        if src.is_dir():
+            shutil.copytree(str(src), str(dest))
+        else:
+            shutil.copy2(str(src), str(dest))
 
 
 
@@ -1032,6 +1639,7 @@ class SidebarWidget(QWidget):
     file_search_opened = pyqtSignal(str, int)
     ai_action_requested = pyqtSignal(str)
     file_renamed = pyqtSignal(str, str)
+    file_deleted = pyqtSignal(str)
     
     # Changed files signals
     file_accepted = pyqtSignal(str)
@@ -1039,8 +1647,9 @@ class SidebarWidget(QWidget):
     accept_all_requested = pyqtSignal()
     reject_all_requested = pyqtSignal()
 
-    def __init__(self, parent=None):
+    def __init__(self, file_manager=None, parent=None):
         super().__init__(parent)
+        self._file_manager = file_manager
         self._build_ui()
 
     def _build_ui(self):
@@ -1074,7 +1683,7 @@ class SidebarWidget(QWidget):
 
         # Stacked panels
         self._stack = QStackedWidget()
-        self._explorer = FileExplorerPanel()
+        self._explorer = FileExplorerPanel(self._file_manager)
         self._search = SearchPanel()
         self._ai_tools = AIToolsPanel()
         self._changed_files = ChangedFilesPanel()
@@ -1088,6 +1697,7 @@ class SidebarWidget(QWidget):
         # Connect signals
         self._explorer.file_opened.connect(self.file_opened)
         self._explorer.file_renamed.connect(self.file_renamed)
+        self._explorer.file_deleted.connect(self.file_deleted)
         self._search.file_opened.connect(self.file_search_opened)
         self._ai_tools.action_requested.connect(self.ai_action_requested)
         
@@ -1153,6 +1763,11 @@ class SidebarWidget(QWidget):
 
     def restore_expanded_paths(self, paths: list[str]):
         self._explorer.restore_expanded_paths(paths)
+
+    def refresh(self):
+        """Refresh the file explorer to reflect changes."""
+        if hasattr(self._explorer, '_refresh_explorer'):
+            self._explorer._refresh_explorer()
 
 
     def get_ai_model(self) -> str:

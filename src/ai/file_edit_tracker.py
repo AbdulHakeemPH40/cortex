@@ -62,23 +62,63 @@ class FileEditTracker(QObject):
         return self._generate_chat_html(file_path, file_name)
     
     def _generate_chat_html(self, file_path: str, file_name: str) -> str:
-        """Generate HTML to show in chat"""
+        """Generate Cursor-style file edit card HTML"""
+        # Calculate diff stats
+        import difflib
+        original = self._edits[file_path].original_content
+        new = self._edits[file_path].new_content
+        
+        added = sum(1 for line in difflib.unified_diff(
+            original.splitlines(), 
+            new.splitlines(), 
+            lineterm=''
+        ) if line.startswith('+') and not line.startswith('+++'))
+        
+        removed = sum(1 for line in difflib.unified_diff(
+            original.splitlines(), 
+            new.splitlines(), 
+            lineterm=''
+        ) if line.startswith('-') and not line.startswith('---'))
+        
         return f"""
-<div class="file-edit-card" id="edit-{self._escape_id(file_path)}">
-    <div class="file-edit-header">
-        <span class="file-icon">📄</span>
-        <span class="edit-label">Edited</span>
-        <code class="file-name" onclick="openFile('{file_path}')">`{file_name}`</code>
+<div class="fec" data-path="{file_path}" data-status="pending">
+  <div class="fec-left">
+    <div class="fec-icon">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+        <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+      </svg>
     </div>
-    <div class="file-edit-actions">
-        <button class="diff-btn" onclick="showDiff('{file_path}')">
-            <span class="diff-badge">DIFF</span>
-        </button>
-        <span class="file-path">{file_path}</span>
+    <button class="fec-name" onclick="openFileInEditor('{file_path}')">
+      {file_name}
+    </button>
+    <span class="fec-stat fec-added">+{added}</span>
+    <span class="fec-stat fec-removed">-{removed}</span>
+    <span class="fec-badge fec-modified">M</span>
+  </div>
+  
+  <div class="fec-right">
+    <div class="fec-actions fec-actions-pending">
+      <button class="fec-btn fec-btn-diff"
+              onclick="requestDiff('{file_path}', this)">
+        Diff
+      </button>
+      <button class="fec-btn fec-btn-accept"
+              onclick="acceptFileEdit('{file_path}', this)">
+        Accept
+      </button>
+      <button class="fec-btn fec-btn-reject"
+              onclick="rejectFileEdit('{file_path}', this)">
+        Reject
+      </button>
     </div>
-    <div class="file-status" id="status-{self._escape_id(file_path)}">
-        <span class="pending">⏳ Pending review</span>
+    <div class="fec-actions fec-actions-applied" style="display:none;">
+      <span class="fec-status-label">Applied</span>
     </div>
+    <div class="fec-actions fec-actions-rejected" style="display:none;">
+      <span class="fec-status-label fec-status-rejected">Rejected</span>
+    </div>
+  </div>
 </div>
 """
     

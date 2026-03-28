@@ -71,6 +71,15 @@ class TerminalBridge(QObject):
     def js_log(self, message):
         """Receive console logs from JavaScript"""
         log.info(f"[JS] {message}")
+    
+    @pyqtSlot(str)
+    def open_external_url(self, url):
+        """Open URL in default browser when clicked in terminal"""
+        import webbrowser
+        try:
+            webbrowser.open(url)
+        except Exception as e:
+            log.error(f"Failed to open URL {url}: {e}")
 
 
 class XTermWidget(QWidget):
@@ -83,6 +92,7 @@ class XTermWidget(QWidget):
     terminal_output_received = pyqtSignal(str) # For AI to listen to
     terminal_line_for_chat = pyqtSignal(str)   # clean line for chat card streaming display
     file_operation_detected = pyqtSignal(str, str, str)  # operation_type, file_path, status
+    new_terminal_requested = pyqtSignal()      # Request to open new terminal tab
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -123,27 +133,29 @@ class XTermWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         
-        # Header with shell selector (Borrowed from WindowsTerminalWidget)
+        # Header - PowerShell only
         self._header = QWidget()
         self._header.setFixedHeight(35)
         hlay = QHBoxLayout(self._header)
         hlay.setContentsMargins(10, 0, 8, 0)
         
-        self._shell_combo = QComboBox()
-        self._shell_combo.addItems(["PowerShell", "Command Prompt", "Git Bash"])
-        if not WINPTY_AVAILABLE:
-            self._shell_combo.setToolTip("Install 'pywinpty' for better interacting shell support.")
-        self._shell_combo.currentTextChanged.connect(self._on_shell_changed)
-        self._shell_combo.setFixedWidth(120)
-        
-        self._shell_label = QLabel("Shell:")
+        # PowerShell label only (no dropdown)
+        self._shell_label = QLabel("PowerShell")
+        self._shell_label.setStyleSheet("color: #0078d4; font-weight: 600;")
         hlay.addWidget(self._shell_label)
-        hlay.addWidget(self._shell_combo)
         
         self._title_label = QLabel("⚡ Terminal")
         self._title_label.setStyleSheet("font-size:12px; font-weight:bold; margin-left: 20px;")
         hlay.addWidget(self._title_label)
         hlay.addStretch()
+        
+        # New Terminal Button
+        self._plus_btn = QPushButton("+ New")
+        self._plus_btn.setFixedHeight(22)
+        self._plus_btn.setMinimumWidth(65)
+        self._plus_btn.setToolTip("New Terminal (Ctrl+Shift+`)")
+        self._plus_btn.clicked.connect(self.new_terminal_requested.emit)
+        hlay.addWidget(self._plus_btn)
         
         self._kill_btn = QPushButton("✕")
         self._kill_btn.setFixedSize(30, 22)
@@ -354,38 +366,10 @@ class XTermWidget(QWidget):
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
         
-        shell = self._shell_combo.currentText()
-        
         if WINPTY_AVAILABLE:
             # --- START WINPTY (REAL TERMINAL) ---
             try:
                 cmd = "powershell.exe -NoLogo"
-                if shell == "Command Prompt":
-                    cmd = "cmd.exe"
-                elif shell == "Git Bash":
-                    # Locate git bash
-                    bash_path = shutil.which("bash.exe")
-                    git_bin = None
-                    if bash_path and "Git" in bash_path:
-                        git_bin = os.path.dirname(bash_path)
-                    else:
-                        potential_paths = [
-                            r"C:\Program Files\Git\bin", 
-                            r"C:\Program Files\Git\usr\bin",
-                            r"C:\Program Files (x86)\Git\bin",
-                            os.path.expandvars(r"%LocalAppData%\Programs\Git\bin"),
-                            os.path.expandvars(r"%LocalAppData%\Programs\Git\usr\bin")
-                        ]
-                        for p in potential_paths:
-                            if os.path.exists(os.path.join(p, "bash.exe")):
-                                git_bin = p
-                                break
-                    
-                    if git_bin:
-                        env["PATH"] = git_bin + os.pathsep + env.get("PATH", "")
-                        cmd = "bash.exe --login -i"
-                    else:
-                        cmd = "bash.exe --login -i" # Fallback and hope it is in PATH
                             
                 self._pty_process = winpty.PtyProcess.spawn(
                     cmd,
@@ -494,29 +478,8 @@ class XTermWidget(QWidget):
             self._process.readyReadStandardError.connect(self._on_stderr)
             self._process.finished.connect(self._on_process_finished)
             
-            if shell == "PowerShell":
-                self._process.start("powershell.exe", ["-NoLogo"])
-            elif shell == "Command Prompt":
-                self._process.start("cmd.exe", ["/K", "prompt", "$P$G"])
-            elif shell == "Git Bash":
-                 bash_path = shutil.which("bash.exe")
-                 if bash_path and "Git" in bash_path:
-                     self._process.start(bash_path, ["--login", "-i"])
-                 else:
-                     found = False
-                     paths = [
-                         r"C:\Program Files\Git\bin\bash.exe", 
-                         r"C:\Program Files\Git\usr\bin\bash.exe",
-                         r"C:\Program Files (x86)\Git\bin\bash.exe",
-                         os.path.expandvars(r"%LocalAppData%\Programs\Git\bin\bash.exe")
-                     ]
-                     for p in paths:
-                         if os.path.exists(p):
-                             self._process.start(p, ["--login", "-i"])
-                             found = True
-                             break
-                     if not found:
-                         self._process.start("bash.exe", ["--login", "-i"])
+            # Always use PowerShell
+            self._process.start("powershell.exe", ["-NoLogo"])
                          
             # OPTIMIZATION: Adaptive render timer — starts at 30ms, slows when idle
             self._render_interval = 30
@@ -612,15 +575,26 @@ class XTermWidget(QWidget):
         self._start_shell()
         
     def _kill_process(self):
+        """Kill terminal process and cleanup all resources."""
+        # Stop timers first to prevent callbacks during cleanup
+        if hasattr(self, '_emit_timer') and self._emit_timer:
+            self._emit_timer.stop()
+        if hasattr(self, '_render_timer') and self._render_timer:
+            self._render_timer.stop()
+        
+        # Kill PTY process and reader thread
         if self._pty_process:
             try:
-                if hasattr(self, '_pty_reader'):
+                if hasattr(self, '_pty_reader') and self._pty_reader:
                     self._pty_reader.running = False
+                    self._pty_reader.wait(500)  # Wait up to 500ms for thread to stop
+                    self._pty_reader = None
                 self._pty_process.terminate()
+                self._pty_process = None
             except Exception:
                 pass
-            self._pty_process = None
             
+        # Kill QProcess
         if self._process:
             try:
                 self._process.finished.disconnect()
@@ -647,16 +621,8 @@ class XTermWidget(QWidget):
             
     def set_cwd(self, path: str):
         self._cwd = path
-        # Try to change dir dynamically without restarting if possible
-        shell = self._shell_combo.currentText()
-        if shell == "PowerShell":
-             self.execute_command(f'Set-Location -Path "{path}"')
-        elif shell == "Command Prompt":
-             # In CMD, we need /D to change drive as well
-             self.execute_command(f'cd /D "{path}"')
-        else: # Git Bash or others
-             # Git Bash uses Unix-style paths essentially, but usually handles quoted Windows paths too
-             self.execute_command(f'cd "{path}"')
+        # PowerShell only - change directory
+        self.execute_command(f'Set-Location -Path "{path}"')
              
     def activate_virtual_env(self, venv_path: str):
         if sys.platform == "win32":

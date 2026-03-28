@@ -7,6 +7,9 @@
     <title>Cortex AI Chat</title>
     
     <!-- External Libraries (Local for reliability) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Outfit:wght@400;600;700&display=swap" rel="stylesheet">
     <script src="../../components/assets/marked.min.js"></script>
     <script src="../../components/assets/highlight.min.js"></script>
     
@@ -121,6 +124,105 @@
       @keyframes idxPulse {
           0%, 100% { opacity: 1; }
           50%       { opacity: 0.3; }
+      }
+      
+      /* AutoGen Multi-Agent Toggle */
+      #autogen-toggle {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px 12px;
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 6px;
+          color: #9ca3af;
+          cursor: pointer;
+          transition: all 0.2s;
+          font-size: 12px;
+          margin-right: 8px;
+      }
+      
+      #autogen-toggle:hover {
+          background: rgba(255, 255, 255, 0.08);
+          border-color: rgba(255, 255, 255, 0.2);
+      }
+      
+      #autogen-toggle.active {
+          background: rgba(59, 130, 246, 0.15);
+          border-color: rgba(59, 130, 246, 0.4);
+          color: #60a5fa;
+      }
+      
+      #autogen-toggle .status-dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          background: #4b5563;
+          transition: background 0.3s;
+      }
+      
+      #autogen-toggle.active .status-dot {
+          background: #22c55e;
+          box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
+      }
+      
+      /* Compact AutoGen Banner inside dropdown */
+      .autogen-status-banner {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 12px;
+          margin: 4px 8px;
+          background: rgba(255, 255, 255, 0.03);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 6px;
+          font-size: 11px;
+          color: #9ca3af;
+          cursor: pointer;
+          transition: all 0.2s;
+      }
+      
+      .autogen-status-banner:hover {
+          background: rgba(255, 255, 255, 0.05);
+          border-color: rgba(255, 255, 255, 0.15);
+      }
+      
+      .autogen-status-banner.active {
+          background: rgba(34, 197, 94, 0.1);
+          border-color: rgba(34, 197, 94, 0.3);
+          color: #22c55e;
+      }
+      
+      .autogen-toggle-switch {
+          margin-left: auto;
+          width: 36px;
+          height: 20px;
+          background: rgba(255, 255, 255, 0.1);
+          border-radius: 10px;
+          position: relative;
+          cursor: pointer;
+          transition: background 0.3s;
+      }
+      
+      .autogen-status-banner.active .autogen-toggle-switch {
+          background: rgba(34, 197, 94, 0.4);
+      }
+      
+      .switch-knob {
+          width: 16px;
+          height: 16px;
+          background: #9ca3af;
+          border-radius: 50%;
+          position: absolute;
+          top: 2px;
+          left: 2px;
+          transition: all 0.3s;
+      }
+      
+      .autogen-status-banner.active .switch-knob {
+          background: #22c55e;
+          transform: translateX(16px);
+          box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
       }
     </style>
     
@@ -411,12 +513,28 @@
                             <!-- Model Selector -->
                             <div class="custom-dropdown" id="model-selector">
                                 <button class="dropdown-trigger" title="Select AI Model">
-                                    <span id="selected-model">DeepSeek V3</span>
+                                    <span id="selected-model">DeepSeek V3 (Recommended)</span>
                                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"></polyline></svg>
                                 </button>
                                 <div class="dropdown-menu model-dropdown-menu">
-                                    <div class="dropdown-header">DeepSeek</div>
-                                    <div class="dropdown-item active" data-value="deepseek-chat" data-provider="deepseek" data-perf="8.0" data-cost="$0.27/1M">
+                                    <!-- AutoGen Status Banner -->
+                                    <div class="autogen-status-banner" id="autogen-banner" title="Multi-Agent Mode Status">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                                            <circle cx="9" cy="7" r="4"></circle>
+                                            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                                            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                                        </svg>
+                                        <span id="autogen-banner-text">Multi-Agent: OFF</span>
+                                        <div class="autogen-toggle-switch" id="autogen-toggle-switch" title="Click to toggle">
+                                            <div class="switch-knob"></div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="dropdown-divider"></div>
+                                    
+                                    <div class="dropdown-header">DeepSeek Models</div>
+                                    <div class="dropdown-item active" data-value="deepseek-chat" data-provider="deepseek" data-perf="8.0">
                                         <div class="item-icon deepseek-icon">
                                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
                                         </div>
@@ -426,24 +544,52 @@
                                                 Active
                                             </span></span>
                                         </div>
-                                        <span class="model-cost">$0.27/1M</span>
+                                    </div>
+                                    
+                                    <div class="dropdown-item" data-value="deepseek-coder" data-provider="deepseek" data-perf="6.5">
+                                        <div class="item-icon deepseek-icon">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>DeepSeek Coder</span>
+                                        </div>
                                     </div>
                                     
                                     <div class="dropdown-divider"></div>
-                                    <div class="dropdown-header">DeepSeek</div>
-                                    <div class="dropdown-item" data-value="deepseek-chat" data-provider="deepseek" data-perf="1.2" data-cost="$0.27/1M">
-                                        <div class="item-icon deepseek-icon">
+                                    <div class="dropdown-header">Together AI Models</div>
+                                    
+                                    <!-- Kimi K2.5 with streaming compatibility layer -->
+                                    <div class="dropdown-item" data-value="moonshotai/Kimi-K2.5" data-provider="together" data-perf="9.0">
+                                        <div class="item-icon together-icon">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>Kimi K2.5</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- DeepSeek models - proven stable -->
+                                    <div class="dropdown-item" data-value="deepseek-ai/DeepSeek-V3" data-provider="together" data-perf="9.0">
+                                        <div class="item-icon together-icon">
                                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
                                         </div>
                                         <div class="item-text">
                                             <span>DeepSeek V3</span>
                                         </div>
-                                        <span class="model-cost">$0.27/1M</span>
+                                    </div>
+                                    
+                                    <div class="dropdown-item" data-value="deepseek-ai/DeepSeek-R1" data-provider="together" data-perf="9.2">
+                                        <div class="item-icon together-icon">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>DeepSeek R1</span>
+                                        </div>
                                     </div>
                                     
                                     <div class="dropdown-divider"></div>
                                     <div class="dropdown-footer">
-                                        Cost per 1M tokens • API key required
+                                        API key required in Settings
                                     </div>
                                 </div>
                             </div>
@@ -518,6 +664,32 @@
             });
         })();
     </script>
+    
+    <!-- ========== PERMISSION CARD TEMPLATE (NEW) ========== -->
+    <template id="permission-card-template">
+        <div class="permission-card">
+            <div class="permission-card-header">
+                <span class="permission-card-icon">⚠️</span>
+                <span class="permission-card-title">Permission Required</span>
+            </div>
+            <div class="permission-card-body">
+                <div class="permission-tool-name"></div>
+                <p class="permission-card-description">AI wants to perform this action:</p>
+                <div class="permission-card-details"></div>
+                <div class="permission-card-actions">
+                    <button class="permission-btn permission-btn-deny">❌ Deny</button>
+                    <button class="permission-btn permission-btn-approve">✅ Approve</button>
+                </div>
+                <div class="permission-card-remember">
+                    <label>
+                        <input type="checkbox" class="permission-remember-checkbox">
+                        Remember my choice for this session
+                    </label>
+                </div>
+            </div>
+        </div>
+    </template>
+    
     <script src="script.js"></script>
 
 </body>

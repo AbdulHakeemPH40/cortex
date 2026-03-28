@@ -11,13 +11,35 @@ import time
 from pathlib import Path
 import hashlib
 from typing import Optional, List, Dict, Any
-from PyQt6.QtCore import QObject, QThread, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, pyqtSignal, QTimer
+
+# Load .env FIRST - before any other imports that might use API keys
+try:
+    from dotenv import load_dotenv
+    import sys
+    
+    # Possible locations for .env file
+    env_paths = [
+        Path(__file__).parent.parent.parent / ".env",  # Development
+        Path.cwd() / ".env",  # Current working directory
+        Path(sys.executable).parent / ".env",  # Next to EXE (packaged)
+    ]
+    
+    for env_path in env_paths:
+        if env_path.exists():
+            load_dotenv(env_path)
+            break
+except ImportError:
+    pass
+
+# NOW import other modules (after .env is loaded)
 from src.utils.logger import get_logger
+log = get_logger("ai_agent")
+
 from src.core.key_manager import get_key_manager
 from src.ai.providers import get_provider_registry, ProviderType, ChatMessage
 from src.ai.decision_framework import get_decision_framework, reset_decision_framework, ActionType
-
-log = get_logger("ai_agent")
+from src.ai.autogen_wrapper import get_autogen_system, init_autogen_system
 
 
 def _categorize_error_message(error_msg: str) -> str:
@@ -34,25 +56,44 @@ def _categorize_error_message(error_msg: str) -> str:
         return "tool_timeout"
     return "unknown"
 
-# Load .env if available - check multiple locations for dev and packaged modes
-try:
-    from dotenv import load_dotenv
-    import sys
-    
-    # Possible locations for .env file
-    env_paths = [
-        Path(__file__).parent.parent.parent / ".env",  # Development
-        Path.cwd() / ".env",  # Current working directory
-        Path(sys.executable).parent / ".env",  # Next to EXE (packaged)
-    ]
-    
-    for env_path in env_paths:
-        if env_path.exists():
-            load_dotenv(env_path)
-            log.info(f"Loaded .env from: {env_path}")
-            break
-except ImportError:
-    pass
+# PERFORMANCE: API response cache to avoid repeating identical requests
+_api_response_cache: Dict[str, Any] = {}
+_api_cache_max_size = 100  # LRU cache size
+_api_cache_ttl = 3600  # Cache TTL: 1 hour
+
+def _get_api_cache_key(messages: List[Dict], model: str, provider: str) -> str:
+    """Generate cache key for API request."""
+    # Create hash of messages + model + provider
+    hasher = hashlib.sha256()
+    for msg in messages:
+        hasher.update(json.dumps(msg, sort_keys=True).encode())
+    hasher.update(model.encode())
+    hasher.update(provider.encode())
+    return hasher.hexdigest()
+
+def _cache_api_response(key: str, response: Any):
+    """Cache API response with LRU eviction."""
+    global _api_response_cache
+    if len(_api_response_cache) >= _api_cache_max_size:
+        # Remove oldest entry (LRU)
+        oldest_key = next(iter(_api_response_cache))
+        del _api_response_cache[oldest_key]
+    _api_response_cache[key] = {
+        'response': response,
+        'timestamp': time.time()
+    }
+
+def _get_cached_api_response(key: str) -> Optional[Any]:
+    """Get cached API response if not expired."""
+    global _api_response_cache
+    if key in _api_response_cache:
+        entry = _api_response_cache[key]
+        if time.time() - entry['timestamp'] < _api_cache_ttl:
+            return entry['response']
+        else:
+            # Expired - remove
+            del _api_response_cache[key]
+    return None
 
 
 class ToolWorker(QThread):
@@ -227,11 +268,18 @@ class ToolWorker(QThread):
                     "name": name,
                     "content": content,
                     "success": result.success,
-                    "duration_ms": result.duration_ms
+                    "duration_ms": result.duration_ms,
+                    "status": getattr(result, 'status', 'completed'),
+                    "metadata": getattr(result, 'metadata', {}) or {}
                 })
 
                 # Emit completed signal
                 self.tool_completed.emit(name, args, result)
+
+                # Stop batch if tool is pending (Interactive stop-and-wait)
+                if getattr(result, 'status', 'completed') == 'pending':
+                    log.info(f"Stopping batch execution: {name} is PENDING")
+                    break
 
             # Emit all completed
             self.all_tools_completed.emit(self._results)
@@ -258,6 +306,7 @@ class AIWorker(QThread):
         self.tools = tools
         self._full_response = ""
         self._tool_calls = {}  # index -> {"id": id, "name": name, "arguments": args}
+        self.tool_calls = None  # Final parsed tool calls (list format)
 
     def run(self):
         log.info("AIWorker.run() started")
@@ -280,12 +329,7 @@ class AIWorker(QThread):
             "together": ProviderType.TOGETHER,  # Qwen, Kimi, MiniMax, DeepSeek-R1
         }
         
-        # Together AI models (use "together" provider with these model IDs):
-        # - Qwen/Qwen3.5-397B-A17B
-        # - moonshotai/Kimi-K2.5
-        # - MiniMaxAI/MiniMax-M2.5
-        # - deepseek-ai/DeepSeek-R1
-        
+        # Use selected provider directly (no auto-switching)
         provider_type = provider_map.get(self.provider, ProviderType.DEEPSEEK)
         
         # Get provider instance from registry
@@ -309,6 +353,8 @@ class AIWorker(QThread):
         # Set the API key on the provider
         provider.set_api_key(api_key)
         
+        log.info(f"   Using {self.provider} provider")
+        
         # Convert messages to ChatMessage objects
         chat_messages = []
         for msg in self.messages:
@@ -320,47 +366,56 @@ class AIWorker(QThread):
                 name=msg.get("name")
             ))
         
-        # Stream the response with proper tool call handling
-        # Exponential backoff for rate limits
-        max_retries = 3
-        for attempt in range(max_retries):
+        # PERFORMANCE: Check cache first (before making API call)
+        cache_key = _get_api_cache_key(self.messages, self.model, self.provider)
+        cached_response = _get_cached_api_response(cache_key)
+        if cached_response:
+            log.info(f"✅ CACHE HIT: Reusing cached API response")
+            self._full_response = cached_response
+            self.finished.emit(self._full_response)
+            return
+        
+        log.info(f"💾 CACHE MISS: Making fresh API call")
+        
+        # Stream the response for live UI updates
+        log.info(f"Starting streaming request to {self.provider}...")
+        
+        try:
+            chunk_count = 0
+            tool_call_buffer = {}
+            
+            log.info(f"Starting streaming with OpenAI SDK (SSL disabled)...")
+            
+            # For Kimi, don't emit "Thinking..." since it has its own thinking blocks
+            if "kimi" not in self.model.lower():
+                self.chunk_received.emit("Thinking...\n")
+            
+            # Simple streaming via OpenAI SDK
+            stream = provider.chat_stream(
+                messages=chat_messages,
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                tools=self.tools
+            )
+            
+            # Process chunks
             try:
-                log.info(f"Starting to stream from provider... (attempt {attempt + 1})")
-                chunk_count = 0
-                tool_call_buffer = {}  # index -> accumulated tool call data
-                
-                import time
-                last_chunk_time = time.time()
-                
-                for chunk in provider.chat_stream(
-                    messages=chat_messages,
-                    model=self.model,
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
-                    tools=self.tools
-                ):
-                    if not chunk:
-                        # Check for timeout on empty chunks
-                        if time.time() - last_chunk_time > 30:  # 30 second timeout
-                            log.warning("Stream timeout - no data received for 30 seconds")
-                            break
+                for chunk in stream:
+                    if not chunk or chunk.isspace():
                         continue
                     
-                    last_chunk_time = time.time()
                     chunk_count += 1
                     
                     # Handle tool call deltas
                     if chunk.startswith("__TOOL_CALL_DELTA__:"):
                         try:
                             deltas = json.loads(chunk[len("__TOOL_CALL_DELTA__:"):])
+                            log.debug(f"[AIWorker] Received {len(deltas)} tool call deltas")
                             for delta in deltas:
                                 index = delta.get("index", 0)
                                 if index not in tool_call_buffer:
                                     tool_call_buffer[index] = {"id": "", "name": "", "arguments": ""}
-                                
-                                # Debug: log each delta
-                                args_preview = delta.get("function", {}).get("arguments", "")[:50] if delta.get("function", {}).get("arguments") else "EMPTY"
-                                log.debug(f"Tool delta: idx={index}, id={delta.get('id')}, name={delta.get('function', {}).get('name')}, args={args_preview}...")
                                 
                                 if delta.get("id"):
                                     tool_call_buffer[index]["id"] += delta["id"]
@@ -368,77 +423,77 @@ class AIWorker(QThread):
                                     tool_call_buffer[index]["name"] += delta["function"]["name"]
                                 if delta.get("function", {}).get("arguments"):
                                     tool_call_buffer[index]["arguments"] += delta["function"]["arguments"]
-                        except Exception as e:
-                            log.error(f"Error parsing tool call delta: {e}")
+                        except json.JSONDecodeError as e:
+                            log.error(f"Error parsing tool delta JSON: {e}")
+                            log.debug(f"Raw delta: {chunk[:200]}")
                     else:
-                        # Regular content chunk
-                        self._full_response += chunk
-                        self.chunk_received.emit(chunk)
-                
-                log.info(f"Stream completed, received {chunk_count} chunks")
-                
-                # Convert tool call buffer to final format
-                if tool_call_buffer:
-                    log.debug(f"Tool call buffer contents: {tool_call_buffer}")
-                    final_tool_calls = []
-                    for idx in sorted(tool_call_buffer.keys()):
-                        tc = tool_call_buffer[idx]
-                        # Validate tool call has all required fields
-                        if tc["id"] and tc["name"]:
-                            args = tc["arguments"].strip() if tc["arguments"] else ""
-                            # Tools that don't require arguments (can be called with empty {})
-                            no_args_tools = {"git_status", "read_terminal", "undo_last_action", 
-                                            "get_problems"}  # git_diff, list_directory need args
-                            # Skip only if args are completely missing AND tool requires args
-                            if not args or args == "":
-                                # Empty args - only allow for tools that don't need args
-                                if tc["name"] not in no_args_tools:
-                                    log.warning(f"Skipping tool call {tc['name']}: missing required arguments")
-                                    continue
-                                # For no-args tools, use empty object
-                                args = "{}"
-                            log.debug(f"Valid tool call: {tc['name']} with args length {len(args)}")
-                            final_tool_calls.append({
-                                "id": tc["id"],
-                                "type": "function",
-                                "function": {
-                                    "name": tc["name"],
-                                    "arguments": args
-                                }
-                            })
-                    if final_tool_calls:
-                        self.tool_calls = final_tool_calls
-                        log.info(f"Worker has {len(final_tool_calls)} tool calls to return")
-                    elif tool_call_buffer:
-                        # Some tool calls were skipped due to empty arguments
-                        # Add a note to the response so AI knows to retry
-                        self._full_response += "\n\n[SYSTEM ERROR: Tool call was rejected because arguments were empty. This is a streaming issue. Please try again and make sure to include the file path and content in your tool call.]\n"
-                
-                log.info(f"Emitting finished signal with response length {len(self._full_response)}")
-                self.finished.emit(self._full_response)
-                return  # Success, exit retry loop
+                        # Regular content - strip any stray tool call markers and thinking blocks as safety
+                        import re
+                        # Strip thinking blocks first
+                        cleaned_chunk = re.sub(r'<\|thinking\|>.*?</\|thinking\|>', '', chunk, flags=re.DOTALL)
+                        # Strip tool call markers
+                        cleaned_chunk = re.sub(r'<\|tool_calls_section_begin\|>.*?<\|tool_calls_section_end\|>', '', cleaned_chunk, flags=re.DOTALL)
+                        cleaned_chunk = re.sub(r'<\|tool_call_begin\|>', '', cleaned_chunk)
+                        cleaned_chunk = re.sub(r'<\|tool_call_argument_begin\|>', '', cleaned_chunk)
+                        cleaned_chunk = re.sub(r'<\|tool_call_end\|>', '', cleaned_chunk)
+                        cleaned_chunk = re.sub(r'<\|tool_calls_section_end\|>', '', cleaned_chunk)
+                        cleaned_chunk = re.sub(r'<\|tool_calls_section_begin\|>', '', cleaned_chunk)
+                        self._full_response += cleaned_chunk
+                        self.chunk_received.emit(cleaned_chunk)
             except Exception as e:
-                error_msg = str(e)
-                category = _categorize_error_message(error_msg)
-                log.warning(
-                    f"AIWorker attempt {attempt + 1}/{max_retries} failed "
-                    f"category={category}: {error_msg[:200]}"
-                )
-                if "rate limit" in error_msg.lower() and attempt < max_retries - 1:
-                    wait_time = 2 ** attempt  # 1s, 2s, 4s
-                    log.warning(f"Rate limit hit, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
-                    time.sleep(wait_time)
-                    continue
-                if "authentication" in error_msg.lower() or "api key" in error_msg.lower():
-                    error_msg = f"Invalid API key for {self.provider}. Please check your settings."
-                elif "rate limit" in error_msg.lower():
-                    error_msg = f"Rate limit exceeded for {self.provider}. Please try again later."
-                raise Exception(error_msg)
+                log.error(f"Stream processing error: {e}")
+                # Continue to process what we have
+            
+            log.info(f"Stream completed: {chunk_count} chunks, full_response={len(self._full_response)} chars, tool_calls={len(tool_call_buffer)}")
+            
+            # Process tool calls
+            if tool_call_buffer:
+                final_tool_calls = []
+                for idx in sorted(tool_call_buffer.keys()):
+                    tc = tool_call_buffer[idx]
+                    if tc["id"] and tc["name"]:
+                        args = tc["arguments"].strip() if tc["arguments"] else "{}"
+                        final_tool_calls.append({
+                            "id": tc["id"],
+                            "type": "function",
+                            "function": {"name": tc["name"], "arguments": args}
+                        })
+                if final_tool_calls:
+                    self.tool_calls = final_tool_calls
+                    log.info(f"✅ Processed {len(final_tool_calls)} tool calls from stream")
+            
+            # Cache and finish - succeed if we have EITHER content OR tool calls
+            if self._full_response:
+                cache_key = _get_api_cache_key(self.messages, self.model, self.provider)
+                _cache_api_response(cache_key, self._full_response)
+                self.finished.emit(self._full_response)
+                return
+            
+            # If no content but we have tool calls, that's a valid response!
+            if self.tool_calls:
+                self.finished.emit("")  # Empty content, but tool calls exist
+                return
+            
+            # Handle truncated response (max_tokens exceeded)
+            if chunk_count > 0:
+                # We received chunks but no content/tool calls - likely truncated
+                log.warning(f"[AIWorker] Response truncated (received {chunk_count} chunks but no content/tool_calls)")
+                truncated_msg = "[Truncated] Response was cut off. Please try again or the task may be incomplete."
+                self.finished.emit(truncated_msg)
+                return
+            
+            # No content AND no tool calls - that's an error
+            raise Exception("No response from stream")
+            
+        except Exception as e:
+            log.error(f"API call failed: {e}")
+            raise
 
 
 class AIAgent(QObject):
     """
-    High-level AI agent — creates workers and manages conversation history.
+    High-level AI agent with MAXIMUM performance optimizations.
+    Features: Async file loading, predictive prefetching, LRU caching.
     """
     response_chunk = pyqtSignal(str)
     response_complete = pyqtSignal(str)
@@ -450,72 +505,83 @@ class AIAgent(QObject):
     thinking_started = pyqtSignal()
     thinking_stopped = pyqtSignal()
     todos_updated = pyqtSignal(list, str)  # todos_list, main_task
+    
+    # Performance: File prefetch signal
+    files_prefetch = pyqtSignal(list)  # list of file paths to prefetch
 
-    SYSTEM_PROMPT = """# CORTEX AI — Pragmatic Coding Assistant
+    SYSTEM_PROMPT = """# CORTEX AI — ACTION-ORIENTED BUILD AGENT
 
-You solve problems efficiently. You READ code, UNDERSTAND logic, and FIX root causes surgically.
+You are a BUILD AGENT. Your PRIMARY job is to BUILD, not chat.
 
-## CRITICAL RULES
+## CORE RULE: USE TOOLS
 
-### 1. READ → UNDERSTAND → FIX
-- Read actual code before suggesting fixes
-- Trace function calls to understand logic flow  
-- Fix ONLY what's broken - don't rewrite working code
+When the user asks to build something:
+1. IMMEDIATELY use `read_file` tool to read any spec/documentation
+2. Use `write_file` tool to create files with COMPLETE code
+3. NEVER describe what you'll do — DO IT
 
-### 2. SURGICAL EDITS
-- Use `edit_file` with unique context (3+ lines minimum)
-- Use `delete_lines` / `replace_lines` for large changes (>20 lines)
-- NEVER rewrite entire files >50 lines in one call
-- Verify edit worked by reading changed lines immediately after
+## TOOL USAGE RULES
 
-### 3. NO UNNECESSARY WORK
-- Don't create .md files unless explicitly asked
-- Don't write tests unless requested  
-- Don't create tasklists for simple fixes (<5 steps)
-- Don't over-analyze obvious problems
+- `read_file` — Read any file to understand context
+- `write_file` — Create new files with COMPLETE implementation
+- `edit_file` — Make surgical edits to existing files
+- `list_directory` — Explore project structure
 
-### 4. TRACE LOGIC PROPERLY
-When debugging:
-1. Find where error originates (`get_problems`)
-2. Trace call stack (which functions call which)
-3. Read THOSE specific functions with line numbers
-4. Fix ROOT CAUSE, not symptoms
+## WHAT TO SAY
 
-### 5. BE DIRECT
-- "fix X" → Fix X immediately
-- "hi" → Brief greeting, ask what they need
-- Questions → Answer directly, don't assume they want code
+✅ "Reading PROJECT_SPEC.md..." [calls read_file]
+✅ "Creating src/main.py..." [calls write_file with complete code]
 
-### 6. PATH DISCIPLINE
-- Use project-relative paths: `src/main.py` NOT `C:/Users/...`
-- Call `list_directory` if unsure of path
+## WHAT NOT TO SAY
 
-## EDIT WORKFLOW (MANDATORY)
+❌ "I'll start by creating the main file" (no tool = useless)
+❌ "First, let me understand the requirements" (stop talking, start building)
 
-For files >100 lines:
-1. `get_file_outline` → find line numbers
-2. `read_file(start_line, end_line)` → see relevant section  
-3. `edit_file` OR `delete_lines`/`replace_lines` with exact line numbers
-4. Verify with `read_file` on changed lines
+## BUILDING WORKFLOW
 
-## QUALITY OVER QUANTITY
-Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
+1. Read spec (read_file)
+2. Create directory structure (write_file calls)
+3. Implement each file completely
+4. Keep moving — don't stop to explain
 
-    def __init__(self, parent=None):
+## RESPONSE STYLE
+
+- Short intro (1 sentence max)
+- Tool call
+- Brief confirmation
+- Next tool call
+- Repeat until done
+
+REMEMBER: Every response should contain a TOOL CALL unless the task is truly complete."""
+    # Internal signal to bridge background tool processing back to main thread safely
+    _tool_batch_finished = pyqtSignal(list, list, str) # results, tool_calls, assistant_content
+    
+    # Signal for interactive user questions (Pending status)
+    # user_question_requested.emit(tool_call_id, question_text, metadata)
+    user_question_requested = pyqtSignal(str, str, dict)
+    
+    def __init__(self, file_manager: Optional[Any] = None, terminal_widget=None, parent=None):
         super().__init__(parent)
         from src.config.settings import get_settings
-        from src.ai.tools import ToolRegistry
+        # Import ToolRegistry from _tools_monolithic.py (to avoid tools/ package conflict)
+        from src.ai._tools_monolithic import ToolRegistry
         from src.ai.context_manager import get_context_manager
         from src.core.change_orchestrator import get_change_orchestrator
         self._settings = get_settings()
         self._project_root: Optional[str] = None
-        self._tool_registry = ToolRegistry(project_root=self._project_root)
+        self._tool_registry = ToolRegistry(
+            file_manager=file_manager,
+            terminal_widget=terminal_widget,
+            project_root=self._project_root
+        )
         self._history: list[dict] = []
         self._history_summary: str = ""
         self._worker: AIWorker | None = None
         self._pending_tool_calls: list[dict] = []
         self._always_allowed: bool = False
         self._continue_after_tools_flag: bool = False  # Reset on error
+        self._waiting_for_user_response = False
+        self._pending_tool_call_id = None
         self._check_configuration()
         self._mode = "Agent"  # Default mode
         self._always_allowed = True  # Agent mode has full autonomy by default
@@ -531,6 +597,10 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
         self._request_started_at: float | None = None
         self._request_in_flight = False
         self._auto_verify_enabled = bool(self._settings.get("ai", "auto_verify", default=True))
+        
+        # AutoGen Multi-Agent System
+        self._autogen_system = None
+        self._autogen_enabled = bool(self._settings.get("ai", "autogen_enabled", default=False))
         self._auto_verify_command = (self._settings.get("ai", "test_command", default="") or "").strip()
         if not self._auto_verify_command:
             env_test_command = os.getenv("CORTEX_TEST_COMMAND", "").strip()
@@ -540,6 +610,12 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
         self._auto_verify_attempts = 0
         self._auto_verify_in_progress = False
         self._pending_verify_files: set[str] = set()
+        # AutoGen multi-agent system configuration
+        self._use_autogen = False  # Disabled by default, enable via UI toggle
+        self._autogen_system: Optional[CortexMultiAgentSystem] = None
+        # Human-in-the-loop configuration
+        self._require_human_approval = False  # Enabled via enable_human_in_loop()
+        
         self._metrics = {
             "requests_total": 0,
             "requests_success": 0,
@@ -556,9 +632,77 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
             "lint_clean": 0,
             "retries_total": 0
         }
+        
+        # Connect internal signal for thread-safe cross-turn handover
+        self._tool_batch_finished.connect(self._on_all_tools_completed)
+        
+        # Event bus integration for proactive AI suggestions (NEW)
+        self._setup_event_bus()
+        
         log.info(
             "Metrics enabled: edit success rate, lint clean rate, time-to-answer, tool timeout rate"
         )
+
+    def _setup_event_bus(self):
+        """Setup event bus integration for proactive AI suggestions."""
+        try:
+            from src.core.event_bus import get_event_bus, EventType
+            self._event_bus = get_event_bus()
+            
+            # Subscribe to critical events
+            self._event_bus.subscribe(EventType.CRITICAL_ERRORS_FOUND, self._on_critical_errors)
+            self._event_bus.subscribe(EventType.PROBLEMS_DETECTED, self._on_problems_detected)
+            
+            log.info("Event bus integration enabled for proactive suggestions")
+        except Exception as e:
+            log.warning(f"Could not setup event bus: {e}")
+            self._event_bus = None
+    
+    def _on_critical_errors(self, event_type, data):
+        """Handle critical errors detected - offer immediate help."""
+        if hasattr(data, 'error_count') and data.error_count > 0:
+            # Only auto-offer if there are multiple critical errors
+            if data.error_count >= 3:
+                self.response_chunk.emit(
+                    f"\n\n🔴 **I noticed {data.error_count} critical errors** in your code. "
+                    f"Would you like me to analyze and fix them?"
+                )
+    
+    def _on_problems_detected(self, event_type, data):
+        """Handle problems detected - track for pattern recognition."""
+        # Track error patterns for proactive suggestions
+        if not hasattr(self, '_recent_problems'):
+            self._recent_problems = []
+        
+        self._recent_problems.append({
+            'severity': getattr(data, 'severity', 'info'),
+            'message': getattr(data, 'message', ''),
+            'file_path': getattr(data, 'file_path', ''),
+            'timestamp': getattr(data, 'timestamp', 0)
+        })
+        
+        # Keep only recent problems (last 20)
+        if len(self._recent_problems) > 20:
+            self._recent_problems = self._recent_problems[-20:]
+        
+        # Detect error spikes (5+ errors in short time)
+        recent_errors = [p for p in self._recent_problems if p['severity'] == 'error']
+        if len(recent_errors) >= 5:
+            # Check if we haven't already offered help recently
+            if not getattr(self, '_offered_help_recently', False):
+                self.response_chunk.emit(
+                    f"\n\n⚠️ **I'm seeing multiple errors** ({len(recent_errors)} recent). "
+                    f"Shall I investigate what's going wrong?"
+                )
+                self._offered_help_recently = True
+                
+                # Reset flag after 30 seconds
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(30000, self._reset_help_flag)
+    
+    def _reset_help_flag(self):
+        """Reset the help offered flag to allow future suggestions."""
+        self._offered_help_recently = False
 
     def get_metrics(self) -> dict:
         """Return a copy of current metrics."""
@@ -598,7 +742,104 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
         if mode == "Agent":
             self._always_allowed = True
             log.info("AI Agent: Auto-approval enabled for Agent mode")
-
+    
+    def enable_human_in_loop(self, enabled: bool = True):
+        """
+        Enable human-in-the-loop mode for critical operations.
+        
+        When enabled:
+        - AI must get user confirmation before executing file modifications
+        - Prevents Groq from making rapid destructive changes
+        - Slows down the system to safe human speed
+        
+        Args:
+            enabled: True to enable human approval required, False for full autonomy
+        """
+        self._require_human_approval = enabled
+        if enabled:
+            log.info("👤 Human-in-the-loop ENABLED - AI will ask before critical changes")
+        else:
+            log.info("⚡ Human-in-the-loop DISABLED - AI has full autonomy")
+    
+    def enable_autogen(self, enabled: bool = True):
+        """Enable or disable AutoGen multi-agent mode (uses DeepSeek)."""
+        if not enabled:
+            self._use_autogen = False
+            log.info("⚪ AutoGen MULTI-AGENT MODE DISABLED")
+            return
+        
+        try:
+            from src.core.key_manager import get_key_manager
+            key_manager = get_key_manager()
+            deepseek_key = key_manager.get_key("deepseek")
+            
+            if not deepseek_key:
+                log.warning("❌ DeepSeek API key not found. Add to .env file first.")
+                return False
+            
+            self._autogen_system = init_autogen_system(deepseek_key)
+            self._use_autogen = True
+            log.info("✅ AutoGen MULTI-AGENT MODE ENABLED! 🤖")
+            log.info("   🚀 Powered by DeepSeek V3 for reliable tool execution")
+            log.info("   🤖 Agents: PM + Architect + Developer + QA + Reviewer")
+            log.info("   🔒 Safe code execution with multi-agent review")
+            return True
+            
+        except Exception as e:
+            log.error(f"Failed to enable AutoGen: {e}")
+            return False
+    
+    def disable_autogen(self):
+        """Disable AutoGen and return to single-agent mode."""
+        self._use_autogen = False
+        self._autogen_system = None
+        log.info("ℹ️ AutoGen disabled - using single-agent mode")
+    
+    def is_autogen_enabled(self) -> bool:
+        """Check if AutoGen multi-agent mode is active."""
+        return self._use_autogen and self._autogen_system is not None
+        
+    def _process_via_autogen(self, user_message: str, code_context: str):
+        """Process message through AutoGen multi-agent system (1-2s responses!)."""
+        try:
+            log.info(f"🤖 AutoGen processing: {user_message[:50]}...")
+                
+            # Determine if code execution should be allowed
+            execute_code = any(keyword in user_message.lower() for keyword in [
+                "run", "execute", "test", "calculate", "compute", "generate"
+            ])
+                
+            # Process through multi-agent system
+            result = self._autogen_system.chat(user_message, execute_code=execute_code)
+                
+            if result["success"]:
+                # Emit response
+                response_text = result["response"]
+                self.response_chunk.emit(response_text)
+                self.response_complete.emit("✅ Multi-agent complete")
+                    
+                # Add to history
+                self._history.append({
+                    "role": "user",
+                    "content": user_message
+                })
+                self._history.append({
+                    "role": "assistant", 
+                    "content": response_text
+                })
+                self._save_history_to_disk()
+                    
+                log.info(f"✅ AutoGen response emitted ({len(response_text)} chars)")
+            else:
+                error_msg = f"❌ AutoGen Error: {result.get('error', 'Unknown error')}"
+                log.error(error_msg)
+                self.request_error.emit(error_msg)
+                    
+        except Exception as e:
+            error_msg = f"❌ AutoGen Exception: {str(e)}"
+            log.error(error_msg)
+            self.request_error.emit(error_msg)
+        
     def _is_greeting(self, message: str) -> bool:
         """Check if message is a simple greeting - DISABLED for context-aware responses."""
         # Always return False to ensure all messages go through the AI
@@ -679,6 +920,11 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
             terminal_widget.terminal_line_for_chat.connect(
                 self._on_terminal_line_for_chat
             )
+    
+    def set_ui_parent(self, ui_parent):
+        """Set the UI parent widget for permission dialogs."""
+        self._tool_registry.set_ui_parent(ui_parent)
+        log.info("Permission system connected to UI")
 
     def set_project_root(self, path: str):
         """Set project root and load project-specific history."""
@@ -693,11 +939,30 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
         self._pending_verify_files.clear()
         
         self._project_root = path
-        self._tool_registry.project_root = path
+        self._tool_registry.set_project_root(path)
         
         # Initialize decision framework for this project
         self._decision_framework = get_decision_framework(path)
         reset_decision_framework()  # Start fresh for new project
+        
+        # Initialize AutoGen multi-agent system if enabled
+        if self._autogen_enabled and self._autogen_system is None:
+            try:
+                from src.ai.autogen_wrapper import create_standard_team
+                from src.core.key_manager import get_key_manager
+                
+                key_manager = get_key_manager()
+                deepseek_key = key_manager.get_key("deepseek")
+                
+                if deepseek_key:
+                    self._autogen_system = create_standard_team(deepseek_key)
+                    log.info("✅ AutoGen Multi-Agent System initialized with DeepSeek")
+                else:
+                    log.warning("⚠️ DeepSeek API key not found - AutoGen disabled")
+                    self._autogen_enabled = False
+            except Exception as e:
+                log.error(f"Failed to initialize AutoGen: {e}")
+                self._autogen_enabled = False
         
         log.info(f"AI Agent context switched to project: {path}")
     
@@ -709,13 +974,13 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
     
     # Token budget for context window management
     TOKEN_BUDGET = {
-        "system_prompt":    3000,   # SYSTEM_PROMPT constant
-        "project_context":  2000,   # ProjectContext.to_system_prompt_block()
-        "history_summary":  1000,   # _history_summary
-        "recent_history":   8000,   # last 10-15 turns
-        "current_message":  2000,   # user's current message + context
-        "response_reserve": 8192,   # max_tokens for response
-        # Total: ~24K — well within 64K window
+        "system_prompt":    2000,   # SYSTEM_PROMPT constant
+        "project_context":  10000,  # ProjectContext.to_system_prompt_block()
+        "history_summary":  5000,    # _history_summary
+        "recent_history":  25000,   # last 10-15 turns
+        "current_message":  8000,    # user's current message + context
+        "response_reserve": 16384,   # max_tokens for response
+        # Total: ~65K — within 64K window
     }
     
     def _build_system_content(self) -> str:
@@ -746,6 +1011,56 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
                     parts.append(f"## PROJECT ROOT\n{self._project_root}")
                     log.debug("No project context available, using minimal placeholder")
         
+        # 🚀 FRAMEWORK-SPECIFIC GUIDANCE (CRITICAL FOR REDUCING HALLUCINATION)
+        framework_guidance = []
+        ctx = get_project_context(self._project_root) if self._project_root else None
+        
+        if ctx and ctx.is_ready:
+            fws = [fw.lower() for fw in (ctx.frameworks or [])]
+            if "django" in fws:
+                framework_guidance.append(
+                    "## DJANGO TECHNICAL GUIDANCE\n"
+                    "- Use Django template syntax: `{% static '...' %}`, `{% url '...' %}`, `{% csrf_token %}`.\n"
+                    "- DO NOT use Flask's `url_for`.\n"
+                    "- Check `settings.py` for INSTALLED_APPS and TEMPLATES config.\n"
+                    "- Models should inherit from `models.Model`."
+                )
+            elif "flask" in fws:
+                framework_guidance.append(
+                    "## FLASK TECHNICAL GUIDANCE\n"
+                    "- Use Flask's `{{ url_for('static', filename='...') }}` and `{{ url_for(...) }}`.\n"
+                    "- Check `app.py` or `wsgi.py` for route definitions."
+                )
+            elif "react" in fws:
+                framework_guidance.append(
+                    "## REACT TECHNICAL GUIDANCE\n"
+                    "- Use functional components and hooks (useEffect, useState).\n"
+                    "- Prefer Tailwind CSS if requested or present in dependencies.\n"
+                    "- Check `package.json` for React version and scripts."
+                )
+        
+        if framework_guidance:
+            parts.append("\n\n".join(framework_guidance))
+
+        # 🖥️ OS & SHELL CONTEXT (PREVENT WINDOWS/LINUX CONFUSION)
+        import platform
+        os_name = platform.system()
+        parts.append(
+            f"## ENVIRONMENT CONTEXT\n"
+            f"- **Operating System**: {os_name}\n"
+            f"- **Preferred Shell**: {'PowerShell' if os_name == 'Windows' else 'Bash'}\n"
+            f"- **Guidance**: You are on {os_name}. Use appropriate syntax. "
+            f"{'In PowerShell, `ls`, `cat`, `rm`, `cp`, `mv` are available as aliases. Use `(Get-Content file | Measure-Object -Line).Lines` for line counting.' if os_name == 'Windows' else ''}"
+        )
+
+        # 🔄 INFINITE LOOP PROTECTION
+        parts.append(
+            "## INFINTIE LOOP PROTECTION\n"
+            "1. **Never repeat failed tools**: If a tool fails, don't just try it again with the same arguments. Change your approach.\n"
+            "2. **Verify before write**: Before using `write_file` or `edit_file`, check if the file already exists and has the desired content. Do not overwrite if no change is needed.\n"
+            "3. **Detect 'Already Done' status**: If the user's goal is already met by existing files, stop and explain what you found instead of recreating them."
+        )
+            
         # History summary
         if self._history_summary:
             summary = self._history_summary
@@ -827,16 +1142,23 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
 
     def chat(self, user_message: Optional[str], code_context: str = ""):
         """Send a message and get a streamed response."""
+            
+        # 🤖 AUTOGEN MULTI-AGENT MODE CHECK
+        if self._use_autogen and self._autogen_system and user_message:
+            log.info("🤖 Processing via AutoGen multi-agent system...")
+            self._process_via_autogen(user_message, code_context)
+            return
+            
         # Clean up finished worker if exists
         if self._worker and not self._worker.isRunning():
             log.debug("Cleaning up finished worker")
             self._worker.wait(100)  # Brief wait to ensure cleanup
             self._worker = None
-        
+            
         if self._worker and self._worker.isRunning():
             log.warning("AI worker already running, skipping request.")
             return
-
+            
         if user_message is not None:
             # Check if this is a greeting - if so, do warmup instead of AI call
             if self._is_greeting(user_message):
@@ -1234,10 +1556,34 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
                 log.warning(f"Sanitized history: removed {len(raw_history) - len(self._history)} corrupted messages")
             
             log.info(f"Restored history for project {project_id} ({len(self._history)} messages)")
+            
+            # 🚀 RESUME INTELLIGENCE: Reparse todos and offer to continue
+            if self._history:
+                # Find last assistant message to restore UI state (todos, plan)
+                for msg in reversed(self._history):
+                    if msg.get("role") == "assistant" and msg.get("content"):
+                        log.info("Restoring UI todos from last session...")
+                        self._parse_and_emit_todos(msg["content"])
+                        break
+                        
+                # Proactively offer to resume work after a short delay (once bridge is ready)
+                QTimer.singleShot(1500, self._emit_resume_hint)
+                
         except Exception as e:
             log.error(f"Failed to load history: {e}")
             self._history = []
             self._history_summary = ""
+
+    def _emit_resume_hint(self):
+        """Emit a friendly nudge to resume work when project is reopened."""
+        if not self._history or self._warmup_shown:
+            return
+            
+        # Only show if the user hasn't typed anything yet
+        resume_msg = "\n\n👋 **Welcome back!** I've restored your last session's context and task list. Ready to continue where we left off?"
+        self.response_chunk.emit(resume_msg)
+        self.response_complete.emit("Session restored.")
+        self._warmup_shown = True # Prevent double warmup
     
     def _sanitize_loaded_history(self, history: list[dict]) -> list[dict]:
         """Remove corrupted messages with mismatched tool calls from loaded history."""
@@ -1348,26 +1694,101 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
         self._save_history_to_disk()
 
     def _execute_tools(self, tool_calls, assistant_content=""):
-        """Execute tool calls in a background thread and then continue the chat.
-        
-        Args:
-            tool_calls: List of tool call objects from the assistant
-            assistant_content: The assistant's message content (to be added atomically with tools)
-        """
+        """Execute tool calls in background thread for MAXIMUM UI responsiveness."""
         # Start exploration block for UI display
         self.response_chunk.emit("\n<exploration>\n")
         
-        # Create ToolWorker to run tools in background
-        self._tool_worker = ToolWorker(self._tool_registry, tool_calls)
+        # PERFORMANCE: Group independent tool calls for parallel execution
+        independent_groups = self._group_independent_tools(tool_calls)
         
-        # Connect signals
-        self._tool_worker.tool_started.connect(self._on_tool_started)
-        self._tool_worker.tool_completed.connect(lambda n, a, r: self._on_tool_completed(n, a, r))
-        self._tool_worker.all_tools_completed.connect(lambda res: self._on_all_tools_completed(res, tool_calls, assistant_content))
-        self._tool_worker.error_occurred.connect(self._on_tool_error)
-        self._tool_worker.tool_timeout.connect(self._on_tool_timeout)
+        # Define the background runner to avoid blocking main thread
+        def run_in_background():
+            try:
+                all_results = []
+                for group_idx, tool_group in enumerate(independent_groups):
+                    log.debug(f"Executing tool group {group_idx + 1}/{len(independent_groups)} with {len(tool_group)} tools")
+                    
+                    # Create ToolWorker for this group
+                    group_worker = ToolWorker(self._tool_registry, tool_group)
+                    
+                    # Important: Since we are in a background thread already, 
+                    # we must connect signals across threads. 
+                    # By default, signals from the QThread worker will still deliver to the receiving 
+                    # thread (which might be the main thread if connected to 'self'/AIAgent).
+                    # We can use QueuedConnection or simply rely on QObject's default thread-safe signal delivery.
+                    
+                    group_worker.tool_started.connect(self._on_tool_started)
+                    group_worker.tool_completed.connect(lambda n, a, r: self._on_tool_completed(n, a, r))
+                    
+                    # Start and wait for completion (WE ARE IN BACKGROUND THREAD, SO WAIT IS SAFE)
+                    group_worker.start()
+                    group_worker.wait()  # Blocks background thread only
+                    
+                    # Collect results from the worker
+                    all_results.extend(group_worker._results)
+                
+                # Once ALL groups are done, trigger final results processing
+                log.info(f"All {len(independent_groups)} tool groups finished execution. Emitting finish signal.")
+                self._tool_batch_finished.emit(all_results, tool_calls, assistant_content)
+                
+            except Exception as e:
+                log.error(f"Error in background tool execution: {e}", exc_info=True)
+                self.request_error.emit(f"Tool execution failed: {str(e)}")
+
+        # Launch background runner
+        import threading
+        t = threading.Thread(target=run_in_background, daemon=True)
+        t.start()
+        log.info(f"🚀 Launched {len(tool_calls)} tools in background execution thread.")
+    
+    def _group_independent_tools(self, tool_calls: list) -> List[List[dict]]:
+        """
+        Group independent tool calls for parallel execution.
         
-        self._tool_worker.start()
+        STRATEGY:
+        - Tools that read different files → Can run in parallel
+        - Tools that write to same file → Must run sequentially
+        - Mixed read/write operations → Group by dependency
+        
+        Returns:
+            List of tool groups (each group can run in parallel)
+        """
+        if not tool_calls:
+            return []
+        
+        # Simple heuristic: Group by tool type and path
+        read_tools = []  # Can parallelize
+        write_tools = []  # Must serialize
+        other_tools = []  # Serialize for safety
+        
+        for tool_call in tool_calls:
+            tool_name = tool_call["function"]["name"]
+            
+            if tool_name in ["read_file", "search_code", "find_function", "find_class", "find_symbol"]:
+                read_tools.append(tool_call)
+            elif tool_name in ["write_file", "edit_file", "delete_path"]:
+                write_tools.append(tool_call)
+            else:
+                other_tools.append(tool_call)
+        
+        # Build execution groups
+        groups = []
+        
+        # Group 1: All reads can run in parallel (up to 4 at once)
+        if read_tools:
+            groups.append(read_tools)
+        
+        # Group 2+: Writes must run one at a time
+        for write_tool in write_tools:
+            groups.append([write_tool])
+        
+        # Group 3: Other tools run one at a time
+        for other_tool in other_tools:
+            groups.append([other_tool])
+        
+        log.debug(f"Tool grouping: {len(read_tools)} reads + {len(write_tools)} writes + {len(other_tools)} others = {len(groups)} groups")
+        
+        return groups
 
     def _on_tool_started(self, name, args):
         """Called when a tool starts execution in background."""
@@ -1550,48 +1971,202 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
 
     def _on_all_tools_completed(self, results, original_tool_calls, assistant_content):
         """Called when ALL tools in the batch are finished."""
-        log.info(f"All {len(results)} tools completed")
+        log.info(f"Processing final results for {len(results)} tool calls")
         self.response_chunk.emit("\n</exploration>\n")
         self.thinking_stopped.emit()  # Hide spinner after tool execution
         
+        # 1. Check for PENDING status (Interactive Interaction)
+        pending_tool = next((r for r in results if r.get("status") == "pending"), None)
+        if pending_tool:
+            log.info(f"Tool {pending_tool['name']} is PENDING. Waiting for user response.")
+            self._waiting_for_user_response = True
+            self._pending_tool_call_id = pending_tool["tool_call_id"]
+            
+            # Store the current batch state to resume later
+            self._pending_tool_results = results
+            self._pending_original_tool_calls = original_tool_calls
+            self._pending_assistant_content = assistant_content
+            
+            # Signal the UI to show a question/interaction card
+            question = pending_tool["content"]
+            metadata = pending_tool.get("metadata", {})
+            self.user_question_requested.emit(self._pending_tool_call_id, question, metadata)
+            
+            # Important: DO NOT call response_complete or continue_chat here.
+            # We are pausing the agentic loop.
+            return
+        
+        # Generate summary report for file operations
+        summary = self._generate_tool_summary(results)
+        if summary:
+            self.response_chunk.emit(summary)
+        
         # Add assistant message and tool responses to history
-        self._history.append({
+        assistant_msg = {
             "role": "assistant",
-            "content": assistant_content,
-            "tool_calls": original_tool_calls
-        })
+            "content": assistant_content or "",
+        }
+        if original_tool_calls:
+            assistant_msg["tool_calls"] = original_tool_calls
+        self._history.append(assistant_msg)
         
         for res in results:
-            tool_json = json.dumps({
-                "success": res["success"],
-                "output": str(res["content"]) if res["success"] else None,
-                "error": str(res["content"]) if not res["success"] else None,
-                "duration_ms": res.get("duration_ms", 0)
-            })
+            # Use raw content instead of JSON wrapper to match OpenAI-style expectations
+            # (especially for models like DeepSeek which can be picky about tool content)
+            content = str(res["content"])
+            
             self._history.append({
                 "role": "tool",
                 "tool_call_id": res["tool_call_id"],
                 "name": res["name"],
-                "content": tool_json
+                "content": content
             })
             
         self._save_history_to_disk()
         self.response_complete.emit("")
-
+        
+        # Handle auto-verify
         if self._auto_verify_in_progress:
             self._handle_auto_verify_results(results)
             return
-
+        
         if self._should_auto_verify():
             if self._start_auto_verify():
                 return
         
+        # Trigger continuation after tools complete
         self._continue_after_tools_flag = True
+        log.info("Triggering continuation after tools completed")
+        QTimer.singleShot(200, self._continue_chat_after_tools)
+    
+    def _generate_tool_summary(self, results: list) -> str:
+        """Generate a summary report of all tool operations."""
+        if not results:
+            return ""
         
-        # Trigger continuation
-        from PyQt6.QtCore import QTimer
-        QTimer.singleShot(100, self._continue_chat_after_tools)
-
+        # Categorize results
+        file_writes = []
+        file_reads = []
+        file_edits = []
+        commands = []
+        errors = []
+        other = []
+        
+        for res in results:
+            name = res.get("name", "")
+            content = str(res.get("content", ""))[:200]  # Truncate for summary
+            
+            if not res.get("success"):
+                errors.append({
+                    "name": name,
+                    "error": content
+                })
+                continue
+            
+            if name in ("write_file", "edit_file", "create_directory"):
+                # Extract file path from content or args
+                file_path = res.get("content", "").split("\n")[0] if res.get("content") else "Unknown"
+                if "Created:" in file_path or "Written:" in file_path or "Edited:" in file_path:
+                    file_writes.append({"name": name, "path": file_path})
+                else:
+                    file_writes.append({"name": name, "path": content})
+            elif name in ("read_file", "read_multiple_files"):
+                file_reads.append({"name": name, "content": content})
+            elif name in ("run_command", "execute_command"):
+                commands.append({"name": name, "output": content})
+            elif name in ("search_code", "find_function", "find_class"):
+                other.append({"name": name, "result": content})
+            else:
+                other.append({"name": name, "result": content})
+        
+        lines = []
+        lines.append("\n" + "=" * 60)
+        lines.append("📋 TOOL EXECUTION SUMMARY")
+        lines.append("=" * 60)
+        
+        # File write summary
+        if file_writes:
+            lines.append(f"\n📁 **Files Created/Modified ({len(file_writes)}):**")
+            lines.append("-" * 40)
+            
+            for item in file_writes:
+                path = item.get("path", "Unknown")
+                tool_name = item.get("name", "")
+                
+                # Get file details if path looks valid
+                if path and path != "Unknown" and not path.startswith("Error"):
+                    try:
+                        import os
+                        if os.path.exists(path):
+                            size = os.path.getsize(path)
+                            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                                content = f.read()
+                            line_count = len(content.split('\n'))
+                            
+                            size_str = self._format_size(size)
+                            icon = "✏️" if tool_name == "edit_file" else "✅"
+                            lines.append(f"  {icon} `{path}`")
+                            lines.append(f"     Size: {size_str} | Lines: {line_count}")
+                        else:
+                            lines.append(f"  ✅ {path}")
+                    except:
+                        lines.append(f"  ✅ {path}")
+                else:
+                    lines.append(f"  ✅ {path}")
+            
+            lines.append("")
+        
+        # File read summary
+        if file_reads:
+            lines.append(f"\n📖 **Files Read ({len(file_reads)}):**")
+            lines.append("-" * 40)
+            for item in file_reads:
+                lines.append(f"  👁️ {item.get('name', 'read')}: {item.get('content', '')[:80]}...")
+            lines.append("")
+        
+        # Command summary
+        if commands:
+            lines.append(f"\n⚙️ **Commands Executed ({len(commands)}):**")
+            lines.append("-" * 40)
+            for item in commands:
+                lines.append(f"  ▶️ {item.get('name', 'command')}")
+                output = item.get("output", "")
+                if output:
+                    lines.append(f"     Output: {output[:100]}...")
+            lines.append("")
+        
+        # Errors
+        if errors:
+            lines.append(f"\n❌ **Errors ({len(errors)}):**")
+            lines.append("-" * 40)
+            for item in errors:
+                lines.append(f"  ❌ {item.get('name', 'tool')}: {item.get('error', 'Unknown error')[:100]}")
+            lines.append("")
+        
+        # Other operations
+        if other:
+            lines.append(f"\n🔧 **Other Operations ({len(other)}):**")
+            lines.append("-" * 40)
+            for item in other:
+                lines.append(f"  ⚡ {item.get('name', 'operation')}")
+            lines.append("")
+        
+        lines.append("=" * 60)
+        lines.append("")
+        
+        return "\n".join(lines)
+    
+    def _format_size(self, size_bytes: int) -> str:
+        """Format file size in human readable format."""
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 * 1024:
+            return f"{size_bytes / 1024:.1f} KB"
+        elif size_bytes < 1024 * 1024 * 1024:
+            return f"{size_bytes / (1024 * 1024):.1f} MB"
+        else:
+            return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
+    
     def _should_auto_verify(self) -> bool:
         if not self._auto_verify_enabled:
             return False
@@ -1716,8 +2291,87 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
             log.warning("Worker still exists in _continue_chat_after_tools, clearing")
             self._worker = None
         
+        log.info("Continuing chat after tools - calling chat(None)")
         # Now continue the chat
         self.chat(None)  # Continue without adding a user message
+
+    def user_responded(self, tool_call_id: str, response: str):
+        """Called when a user answers a 'pending' question in the chat."""
+        if not self._waiting_for_user_response or self._pending_tool_call_id != tool_call_id:
+            log.warning(f"Unexpected user response for {tool_call_id}")
+            return
+            
+        log.info(f"User responded to {tool_call_id}: {response[:40]}...")
+        self._waiting_for_user_response = False
+        self._pending_tool_call_id = None
+        
+        # Check if this was a permission request or a general question
+        is_permission_request = False
+        target_tool_res = None
+        for res in self._pending_tool_results:
+            if res["tool_call_id"] == tool_call_id:
+                target_tool_res = res
+                if res.get("content") == "PENDING_PERMISSION":
+                    is_permission_request = True
+                break
+        
+        if is_permission_request and target_tool_res:
+            # Handle permission response
+            tool_name = target_tool_res.get("metadata", {}).get("tool_name")
+            params = target_tool_res.get("metadata", {}).get("params", {})
+            
+            from src.ai.permission_system import get_permission_manager
+            perm_manager = get_permission_manager()
+            
+            if response in ["allow", "always"]:
+                log.info(f"User GRANTED permission for {tool_name}. Executing now...")
+                
+                # CRITICAL: Inform permission manager about this approval before re-executing
+                if response == "always":
+                    perm_manager.remember_decision(tool_name, True)
+                else:
+                    perm_manager.add_session_approval(tool_name)
+                
+                # Synchronize always_allowed flag with tool registry for this call
+                old_reg_allowed = getattr(self._tool_registry, '_always_allowed', False)
+                self._tool_registry._always_allowed = True 
+                
+                try:
+                    # Now execute_tool will actually proceed because check_permission will return True
+                    real_result = self._tool_registry.execute_tool(tool_name, params)
+                    
+                    # Update the tool result in history with actual content
+                    target_tool_res["content"] = str(real_result.result) if real_result.success else f"Error: {real_result.error}"
+                    target_tool_res["success"] = real_result.success
+                finally:
+                    self._tool_registry._always_allowed = old_reg_allowed
+            else:
+                log.info(f"User DENIED permission for {tool_name}")
+                if response == "never": # Just in case we add this
+                     perm_manager.remember_decision(tool_name, False)
+                target_tool_res["content"] = "Error: User denied permission for this operation."
+                target_tool_res["success"] = False
+            
+            target_tool_res["status"] = "completed"
+        else:
+            # Update the pending tool result with the user's answer (standard QuestionTool)
+            if target_tool_res:
+                target_tool_res["content"] = response
+                target_tool_res["status"] = "completed"
+                target_tool_res["success"] = True
+        
+        # Resume the batch processing (Turn 2 starts)
+        results = self._pending_tool_results
+        calls = self._pending_original_tool_calls
+        content = self._pending_assistant_content
+        
+        # Clear stores
+        self._pending_tool_results = []
+        self._pending_original_tool_calls = []
+        self._pending_assistant_content = ""
+        
+        # Re-trigger Turn 2 completion logic
+        self._on_all_tools_completed(results, calls, content)
 
     def _execute_pending_tools(self):
         """Resume execution of tools that were awaiting confirmation."""
@@ -1828,6 +2482,9 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
     def set_always_allowed(self, allowed: bool):
         """Set whether to always allow tool execution without confirmation"""
         self._always_allowed = allowed
+        # Sync with tool registry
+        if hasattr(self, '_tool_registry'):
+            self._tool_registry._always_allowed = allowed
         log.info(f"AI Agent 'Always Allow' set to: {allowed}")
         if allowed:
             self.response_chunk.emit("\n🔓 **Auto-approval enabled** for this chat session. I'll execute file changes without asking.")
@@ -1880,6 +2537,68 @@ Fixes > Documentation. Action > Analysis. Surgical precision > Rewrites."""
     def update_settings(self, provider: str, model: str):
         self._settings.set("ai", "provider", provider)
         self._settings.set("ai", "model", model)
+    
+    def enable_autogen(self, enabled: bool = True):
+        """Enable or disable AutoGen multi-agent system."""
+        self._autogen_enabled = enabled
+        
+        if enabled and self._project_root and self._autogen_system is None:
+            # Initialize immediately if project is already set
+            self.set_project_root(self._project_root)
+        
+        log.info(f"AutoGen {'enabled' if enabled else 'disabled'}")
+    
+    def run_multi_agent_task(self, task: str, mode: str = "collaborative") -> str:
+        """
+        Run a task using the multi-agent system.
+        
+        Args:
+            task: The task to complete
+            mode: "collaborative" (group discussion) or "sequential" (assembly line)
+        
+        Returns:
+            Result summary from the agents
+        """
+        if not self._autogen_system:
+            return "Error: AutoGen system not initialized"
+        
+        try:
+            if mode == "collaborative":
+                # Set up group chat with all agents
+                agent_names = list(self._autogen_system.agents.keys())
+                self._autogen_system.setup_group_chat(agent_names)
+                
+                # Start collaborative discussion
+                result = self._autogen_system.run_collaborative_task(
+                    task=task,
+                    initiator_name=agent_names[0]  # First agent initiates
+                )
+            elif mode == "sequential":
+                # Define workflow: PM → Architect → Developer → QA → Reviewer
+                workflow = ["PM", "Architect", "Developer", "QA", "Reviewer"]
+                result = self._autogen_system.run_sequential_workflow(
+                    task=task,
+                    workflow=workflow
+                )
+            else:
+                result = "Error: Unknown mode. Use 'collaborative' or 'sequential'"
+            
+            return result
+            
+        except Exception as e:
+            log.error(f"Multi-agent task error: {e}")
+            return f"Error during multi-agent execution: {str(e)}"
+    
+    def get_autogen_status(self) -> Dict[str, Any]:
+        """Get AutoGen system status."""
+        if not self._autogen_system:
+            return {"enabled": False, "agents": []}
+        
+        return {
+            "enabled": self._autogen_enabled,
+            "agents": self._autogen_system.list_agents(),
+            "active": bool(self._autogen_system.group_chat)
+        }
 
     def is_busy(self) -> bool:
         return bool(self._worker and self._worker.isRunning())

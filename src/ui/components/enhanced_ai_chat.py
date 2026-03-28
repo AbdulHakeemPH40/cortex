@@ -211,8 +211,18 @@ class EnhancedAIChatWidget(QWidget):
     
     def on_chunk(self, chunk: str):
         """Handle AI streaming chunk"""
+        import re
+        # Strip thinking blocks first
+        cleaned_chunk = re.sub(r'<\|thinking\|>.*?</\|thinking\|>', '', chunk, flags=re.DOTALL)
+        # Strip tool call markers
+        cleaned_chunk = re.sub(r'<\|tool_calls_section_begin\|>.*?<\|tool_calls_section_end\|>', '', cleaned_chunk, flags=re.DOTALL)
+        cleaned_chunk = re.sub(r'<\|tool_call_begin\|>', '', cleaned_chunk)
+        cleaned_chunk = re.sub(r'<\|tool_call_argument_begin\|>', '', cleaned_chunk)
+        cleaned_chunk = re.sub(r'<\|tool_call_end\|>', '', cleaned_chunk)
+        cleaned_chunk = re.sub(r'<\|tool_calls_section_end\|>', '', cleaned_chunk)
+        cleaned_chunk = re.sub(r'<\|tool_calls_section_begin\|>', '', cleaned_chunk)
         # Escape for JS
-        safe_chunk = chunk.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
+        safe_chunk = cleaned_chunk.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
         self._view.page().runJavaScript(
             f"if(window.onChunk) window.onChunk('{safe_chunk}');"
         )

@@ -10,9 +10,10 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSplitter,
     QTabWidget, QLabel, QPushButton, QStatusBar, QFileDialog,
     QToolBar, QMenuBar, QMessageBox, QInputDialog, QTabBar,
-    QFrame, QSizePolicy
+    QFrame, QSizePolicy, QApplication
 )
-from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtSlot, QTimer, QRect, QProcessEnvironment, QSignalBlocker
+from PyQt6.QtWebEngineCore import QWebEnginePage
+from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtSlot, QTimer, QRect, QProcessEnvironment, QSignalBlocker, QEventLoop
 from PyQt6.QtGui import (QAction, QKeySequence, QIcon, QFont, QPainter, QColor, 
                          QMouseEvent, QCloseEvent, QPixmap)
 
@@ -308,7 +309,7 @@ class EditorTabWidget(QTabWidget):
                     if current_content != content:
                         # Content changed, reload it
                         with QSignalBlocker(editor.document()):
-                            editor.set_content(content, language)
+                            editor.set_content(content, language, filepath)
                         print(f"[EditorTabs] Updated content for already-open file: {filepath}")
                     else:
                         print(f"[EditorTabs] File already open with same content: {filepath}")
@@ -324,7 +325,7 @@ class EditorTabWidget(QTabWidget):
         # Disconnect the internal document→editor connection temporarily
         # Use blockSignals instead of disconnect to avoid errors
         with QSignalBlocker(editor.document()):
-            editor.set_content(content, language)
+            editor.set_content(content, language, filepath)
         
         # NOW connect OUR handler - anything after this is a user edit
         editor.content_modified.connect(lambda: self._mark_modified(filepath))
@@ -518,7 +519,12 @@ class CortexMainWindow(QMainWindow):
         self._project_manager = ProjectManager()
         self._file_manager = FileManager()
         self._session_manager = SessionManager()
-        self._ai_agent = AIAgent()
+        self._ai_agent = AIAgent(file_manager=self._file_manager)
+        
+        # Set DeepSeek as default for reliable agentic workflows
+        self._ai_agent.update_settings(provider="deepseek", model="deepseek-chat")
+        log.info("🤖 AI Agent initialized with DeepSeek")
+        log.info("   Using DeepSeek V3 for reliable agentic work")
         self._file_tracker = FileEditTracker(self)
         self._diff_window = DiffWindow(self)
         self._codebase_index = None
@@ -568,6 +574,11 @@ class CortexMainWindow(QMainWindow):
         else:
             self.show()
 
+        # Set Window Icon (Title Bar) - Using focused logo-only version
+        logo_path = os.path.join(os.getcwd(), "src", "assets", "logo", "taskbar.ico")
+        if os.path.exists(logo_path):
+            self.setWindowIcon(QIcon(logo_path))
+
     # ------------------------------------------------------------------
     # UI Construction
     # ------------------------------------------------------------------
@@ -584,15 +595,15 @@ class CortexMainWindow(QMainWindow):
         self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # --- Left Sidebar ---
-        self._sidebar = SidebarWidget()
+        self._sidebar = SidebarWidget(self._file_manager)
         self._sidebar.setMinimumWidth(44)
-        self._sidebar.setMaximumWidth(320)
+        self._sidebar.setMaximumWidth(700)
         self._main_splitter.addWidget(self._sidebar)
 
         # --- Center: Editor + Terminal stacked vertically ---
         center_widget = QWidget()
         center_layout = QVBoxLayout(center_widget)
-        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.setContentsMargins(0, 0, 0, 2)  # 2px bottom gap above status bar
         center_layout.setSpacing(0)
 
         self._center_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -613,8 +624,8 @@ class CortexMainWindow(QMainWindow):
         self._terminal_tabs.setMinimumHeight(150)
         self._terminal_tabs.tabCloseRequested.connect(self._close_terminal_tab)
         
-        # Add a placeholder/first terminal
-        self._new_terminal()
+        # Add a single placeholder/first terminal (HIDDEN initially)
+        self._new_terminal(show_panel=False)
         
         self._center_splitter.addWidget(self._terminal_tabs)
 
@@ -637,6 +648,8 @@ class CortexMainWindow(QMainWindow):
         self._ai_chat.reject_file_edit_requested.connect(self._on_reject_file_edit)
         self._ai_chat.open_terminal_requested.connect(self._show_terminal_panel)
         self._ai_chat.set_code_context_callback(self._get_code_context)
+        # load_full_chat_requested is handled internally by AIChatWidget now
+        self._ai_chat.toggle_autogen_requested.connect(self._on_toggle_autogen)
         right_layout.addWidget(self._ai_chat)
         self._main_splitter.addWidget(self._right_panel)
         
@@ -647,15 +660,16 @@ class CortexMainWindow(QMainWindow):
         self._find_replace_dialog.replace_all_requested.connect(self._on_replace_all_requested)
 
         # Splitter sizes for 3 panels: sidebar | editor | AI chat
-        sidebar_w = self._settings.get("window", "sidebar_width") or 220
-        right_w = self._settings.get("window", "right_panel_width") or 350
+        # Always start with compact defaults as per user request
+        sidebar_w = 200 
+        right_w = 300 
         total_w = (self._settings.get("window", "width") or 1400)
         center_w = max(400, total_w - sidebar_w - right_w)
         self._main_splitter.setSizes([sidebar_w, center_w, right_w])
         self._main_splitter.setHandleWidth(1)
         
-        # Limit AI chat panel max width to prevent it from getting too wide
-        self._right_panel.setMaximumWidth(480)
+        # Limit AI chat panel max width — much more flexible now
+        self._right_panel.setMaximumWidth(1200)
 
         root_layout.addWidget(self._main_splitter, 1)
 
@@ -829,8 +843,8 @@ class CortexMainWindow(QMainWindow):
 
         # Edit
         edit_menu = mb.addMenu("Edit")
-        self._add_action(edit_menu, "Undo", lambda: self._current_editor_action("undo"), "Ctrl+Z")
-        self._add_action(edit_menu, "Redo", lambda: self._current_editor_action("redo"), "Ctrl+Y")
+        self._add_action(edit_menu, "Undo", self._undo, "Ctrl+Z")
+        self._add_action(edit_menu, "Redo", self._redo, "Ctrl+Y")
         edit_menu.addSeparator()
         self._add_action(edit_menu, "Cut", lambda: self._current_editor_action("cut"), "Ctrl+X")
         self._add_action(edit_menu, "Copy", lambda: self._current_editor_action("copy"), "Ctrl+C")
@@ -896,7 +910,7 @@ class CortexMainWindow(QMainWindow):
 
         # Terminal
         term_menu = mb.addMenu("Terminal")
-        self._add_action(term_menu, "New Terminal", self._new_terminal, "Ctrl+Shift+`")
+        self._add_action(term_menu, "New Terminal", lambda: self._new_terminal(show_panel=True), "Ctrl+Shift+`")
         self._add_action(term_menu, "Kill Terminal", self._kill_current_terminal, "")
         term_menu.addSeparator()
         self._add_action(term_menu, "Toggle Terminal Panel", self._toggle_terminal, "Ctrl+`")
@@ -936,27 +950,48 @@ class CortexMainWindow(QMainWindow):
 
         self._toolbar_btns = []
 
+        # 1. File / Build Controls
         actions = [
             ("📂", "Open Folder\nCtrl+O",   self._open_folder_dialog),
             ("💾", "Save File\nCtrl+S",     self._save_current),
             ("▶️", "Run Current File",      self._run_file),
-            ("➕", "New Terminal",          self._new_terminal),
-            ("⚡", "Show/Hide Terminal\nCtrl+`", self._toggle_terminal),
+            ("➕", "New Terminal",          lambda: self._new_terminal(show_panel=True)),
         ]
         for icon, tip, slot in actions:
             btn = QPushButton(icon)
             btn.setToolTip(tip)
-            btn.setFixedSize(44, 40)
+            btn.setFixedSize(40, 40)
             btn.clicked.connect(slot)
             self._toolbar_btns.append(btn)
             tb.addWidget(btn)
 
         tb.addWidget(self._make_spacer())
 
-        # Theme toggle button
+        # 2. Layout Toggle Controls (VS Code Style) - On the right side
+        layout_actions = [
+            ("◧", "Toggle Left Sidebar\nCtrl+B", self._toggle_sidebar),
+            ("⬒", "Toggle Bottom Panel\nCtrl+`", self._toggle_terminal),
+            ("◨", "Toggle AI Chat", self._toggle_ai_chat),
+        ]
+        for icon, tip, slot in layout_actions:
+            btn = QPushButton(icon)
+            btn.setToolTip(tip)
+            btn.setFixedSize(40, 40)
+            btn.clicked.connect(slot)
+            # Custom font size for layout icons to make them clear
+            btn.setObjectName("layout_btn")
+            self._toolbar_btns.append(btn)
+            tb.addWidget(btn)
+
+        self._toolbar_sep2 = QFrame()
+        self._toolbar_sep2.setFrameShape(QFrame.Shape.VLine)
+        self._toolbar_sep2.setFixedHeight(30)
+        tb.addWidget(self._toolbar_sep2)
+
+        # 3. Theme toggle button
         self._theme_btn = QPushButton("🌙")
         self._theme_btn.setToolTip("Toggle Theme\nCtrl+Shift+T")
-        self._theme_btn.setFixedSize(44, 40)
+        self._theme_btn.setFixedSize(40, 40)
         self._theme_btn.clicked.connect(self._toggle_theme)
         self._toolbar_btns.append(self._theme_btn)
         tb.addWidget(self._theme_btn)
@@ -977,10 +1012,14 @@ class CortexMainWindow(QMainWindow):
             }}
         """)
         self._toolbar_sep.setStyleSheet(f"color:{border_color};")
+        self._toolbar_sep2.setStyleSheet(f"color:{border_color};")
+        
+        fg_color = "#dcdcdc" if is_dark else "#1a1a1a"
         
         btn_style = f"""
             QPushButton {{
                 font-size: 22px;
+                color: {fg_color};
                 border-radius: 6px;
                 background: transparent;
                 border: none;
@@ -994,7 +1033,10 @@ class CortexMainWindow(QMainWindow):
             }}
         """
         for btn in self._toolbar_btns:
-            btn.setStyleSheet(btn_style)
+            style = btn_style
+            if btn.objectName() == "layout_btn":
+                style += f" QPushButton {{ font-size: 24px; color: {fg_color}; }}"
+            btn.setStyleSheet(style)
 
 
     def _make_spacer(self) -> QWidget:
@@ -1054,6 +1096,7 @@ class CortexMainWindow(QMainWindow):
         self._sidebar.file_search_opened.connect(self._open_file_at_line)
         self._sidebar.ai_action_requested.connect(self._ai_action)
         self._sidebar.file_renamed.connect(self._on_sidebar_file_renamed)
+        self._sidebar.file_deleted.connect(self._on_sidebar_file_deleted)
         
         # Changed files panel signals
         self._sidebar.file_accepted.connect(self._on_accept_file_edit)
@@ -1068,6 +1111,11 @@ class CortexMainWindow(QMainWindow):
 
         # Editor tab changes
         self._editor_tabs.currentChanged.connect(self._on_tab_changed)
+        
+        # File manager undo/redo signals
+        if hasattr(self, '_file_manager'):
+            self._file_manager.file_deleted.connect(self._on_file_deleted_for_undo)
+            self._file_manager.file_restored.connect(self._on_file_restored_for_redo)
 
         # AI chat - ONLY connect signals here to avoid duplicates
         self._ai_chat.message_sent.connect(self._on_ai_chat_message)
@@ -1092,10 +1140,19 @@ class CortexMainWindow(QMainWindow):
         self._ai_chat.open_file_requested.connect(self._open_file)
         self._ai_chat.open_file_at_line_requested.connect(self._open_file_at_line)
         self._ai_chat.show_diff_requested.connect(self._on_show_diff)
+        self._ai_chat.answer_question_requested.connect(self._ai_agent.user_responded)
         self._ai_chat.smart_paste_check_requested.connect(self._on_smart_paste_check)
+        
+        # Connect AI Agent back to UI for interactive questions
+        self._ai_agent.user_question_requested.connect(self._on_ai_question_requested)
 
         # Terminal tab changes
         self._terminal_tabs.currentChanged.connect(self._on_terminal_tab_changed)
+        
+        # ========== PERMISSION SYSTEM CONNECTION (NEW) ==========
+        # Connect AI agent to UI for permission dialogs
+        self._ai_agent.set_ui_parent(self)
+        log.info("Permission system initialized and connected to main window")
 
     # ------------------------------------------------------------------
     # Actions
@@ -1369,6 +1426,20 @@ class CortexMainWindow(QMainWindow):
         except Exception as e:
             log.debug(f"Sidebar update skipped: {e}")
 
+    def _on_ai_question_requested(self, tool_call_id: str, question: str, metadata: dict):
+        """Handle AI asking a question that requires user response in chat."""
+        log.info(f"AI requested user input: {question[:50]}...")
+        # Structuring the question info for the JS UI
+        info = {
+            "id": tool_call_id,
+            "text": question,
+            "type": metadata.get("type", "text"),
+            "choices": metadata.get("choices", []),
+            "default": metadata.get("default", ""),
+            "details": metadata.get("details", "")
+        }
+        self._ai_chat.show_question(info)
+
     def _open_file_at_line(self, file_path: str, line_number: int):
         """Open file and navigate to specific line."""
         # First open the file
@@ -1428,6 +1499,32 @@ class CortexMainWindow(QMainWindow):
         self.statusBar().showMessage(f"✗ Rejected changes to {Path(file_path).name} - review file", 5000)
         # Remove from sidebar panel
         self._sidebar.remove_changed_file(file_path)
+    
+    def _on_load_full_chat_requested(self, conversation_id: str):
+        """Load full chat messages from SQLite database."""
+        log.info(f"Loading full chat: {conversation_id}")
+        
+        try:
+            # Load from SQLite via bridge
+            full_chat_json_str = self._ai_chat.load_full_chat_from_sqlite(conversation_id)
+            
+            if full_chat_json_str and full_chat_json_str != "[]":
+                log.info(f"Loaded {len(full_chat_json_str)} chars of chat data")
+                # Send back to JavaScript
+                self._ai_chat._view.page().runJavaScript(
+                    f"window.handleFullChatLoad('{conversation_id}', {full_chat_json_str});"
+                )
+                self.statusBar().showMessage(f"✓ Loaded chat history", 2000)
+            else:
+                log.warning(f"No chat data found for: {conversation_id}")
+                self._ai_chat._view.page().runJavaScript(
+                    f"window.handleFullChatLoad('{conversation_id}', null);"
+                )
+        except Exception as e:
+            log.error(f"Failed to load full chat: {e}")
+            self._ai_chat._view.page().runJavaScript(
+                f"window.handleFullChatLoad('{conversation_id}, null);"
+            )
 
     def _on_accept_all_files(self):
         """Handle user accepting all pending file edits."""
@@ -1623,7 +1720,11 @@ class CortexMainWindow(QMainWindow):
             return f'{mkdir_cmd}; {compile_cmd}; if ($LASTEXITCODE -eq 0) {{ {run_cmd} }}' if is_windows else f'{mkdir_cmd} && {compile_cmd} && {run_cmd}'
         return None
 
-    def _new_terminal(self) -> XTermWidget:
+    def _new_terminal(self, show_panel: bool = True) -> XTermWidget:
+        # If call comes from a signal (like clicked), show_panel might be the 'checked' state (False usually)
+        # So we force it to True if it's not explicitly False from our internal calls
+        if not isinstance(show_panel, bool): show_panel = True
+        
         term = XTermWidget()
         term.set_theme(self._theme_manager.is_dark)
         
@@ -1633,6 +1734,13 @@ class CortexMainWindow(QMainWindow):
             
         idx = self._terminal_tabs.addTab(term, f"Terminal {self._terminal_tabs.count() + 1}")
         self._terminal_tabs.setCurrentIndex(idx)
+        
+        if show_panel:
+            self._terminal_tabs.setVisible(True)
+            term.setFocus()
+            
+        # Hook up "New Terminal" button from within the terminal
+        term.new_terminal_requested.connect(lambda: self._new_terminal(show_panel=True))
         
         # Link to AI Agent immediately
         self._ai_agent.set_terminal(term)
@@ -1727,17 +1835,57 @@ class CortexMainWindow(QMainWindow):
             term.setFocus()
 
     def _toggle_terminal(self):
-        self._terminal_tabs.setVisible(not self._terminal_tabs.isVisible())
+        visible = self._terminal_tabs.isVisible()
+        sizes = self._center_splitter.sizes()
+        # If already visible but dragged to be hidden (tiny size), just restore the size
+        if visible and len(sizes) > 1 and sizes[1] < 40:
+            self._center_splitter.setSizes([sizes[0], 200])
+            self._terminal_tabs.setFocus()
+            return
+            
+        self._terminal_tabs.setVisible(not visible)
         if self._terminal_tabs.isVisible():
             if self._terminal_tabs.count() == 0:
                 self._new_terminal()
+            
+            # Ensure it has a non-zero height if it was collapsed
+            new_sizes = self._center_splitter.sizes()
+            if len(new_sizes) > 1 and new_sizes[1] < 40:
+                self._center_splitter.setSizes([max(100, new_sizes[0]), 200])
+                
             term = self._current_terminal()
             if term:
                 term.setFocus()
 
     def _toggle_sidebar(self):
         visible = self._sidebar.isVisible()
+        sizes = self._main_splitter.sizes()
+        # If visible but tiny (dragged hidden), restore size instead of toggling 
+        if visible and sizes[0] < 40:
+            self._main_splitter.setSizes([260, sizes[1], sizes[2]])
+            self._sidebar.setFocus()
+            return
+            
         self._sidebar.setVisible(not visible)
+        if self._sidebar.isVisible():
+            new_sizes = self._main_splitter.sizes()
+            if new_sizes[0] < 40:
+                 self._main_splitter.setSizes([200, new_sizes[1], new_sizes[2]])
+            self._sidebar.setFocus()
+
+    def _toggle_ai_chat(self):
+        visible = self._right_panel.isVisible()
+        sizes = self._main_splitter.sizes()
+        # If visible but tiny (dragged hidden), restore size
+        if visible and len(sizes) > 2 and sizes[2] < 40:
+            self._main_splitter.setSizes([sizes[0], sizes[1], 300])
+            return
+            
+        self._right_panel.setVisible(not visible)
+        if self._right_panel.isVisible():
+            new_sizes = self._main_splitter.sizes()
+            if len(new_sizes) > 2 and new_sizes[2] < 40:
+                 self._main_splitter.setSizes([new_sizes[0], new_sizes[1], 300])
 
     def _zoom_in(self):
         """Zoom in (Ctrl+=)."""
@@ -1792,9 +1940,80 @@ class CortexMainWindow(QMainWindow):
             # TODO: Implement full command palette
 
     def _current_editor_action(self, action: str):
+        """Focus-aware edit action handler (supports Editor, AI Chat, and Terminal)."""
+        focused = QApplication.focusWidget()
+        log.debug(f"Action {action} requested. Current focus: {focused}")
+
+        # Map generic action strings to QWebEnginePage.WebAction enums
+        web_action_map = {
+            "copy": QWebEnginePage.WebAction.Copy,
+            "paste": QWebEnginePage.WebAction.Paste,
+            "cut": QWebEnginePage.WebAction.Cut,
+            "selectAll": QWebEnginePage.WebAction.SelectAll,
+            "undo": QWebEnginePage.WebAction.Undo,
+            "redo": QWebEnginePage.WebAction.Redo
+        }
+
+        # Determine which "logical" component has focus
+        logical_focused = None
+        widget = focused
+        max_depth = 10
+        while widget and max_depth > 0:
+            if hasattr(self, '_ai_chat') and (widget == self._ai_chat or widget == self._ai_chat._view):
+                logical_focused = "ai_chat"
+                break
+            
+            # Check if this widget belongs to a terminal tab
+            term = self._current_terminal()
+            if term and (widget == term or widget == term._webview):
+                logical_focused = "terminal"
+                break
+            
+            widget = widget.parentWidget()
+            max_depth -= 1
+
+        # 1. Route to AI Chat
+        if logical_focused == "ai_chat":
+            if action in web_action_map:
+                log.debug(f"Routing {action} to AI Chat WebEngineView")
+                self._ai_chat._view.page().triggerAction(web_action_map[action])
+                return
+
+        # 2. Route to Terminal
+        if logical_focused == "terminal":
+            term = self._current_terminal()
+            if action == "copy":
+                term.copy()
+                return
+            elif action == "paste":
+                term.paste()
+                return
+            elif action == "selectAll":
+                term.select_all()
+                return
+            elif action == "cut":
+                term.cut()
+                return
+            
+            if action in web_action_map:
+                term._webview.page().triggerAction(web_action_map[action])
+                return
+
+        # 3. Route to Sidebar explicitly (if focused)
+        if hasattr(self, '_sidebar') and self._sidebar.is_explorer_focused():
+            log.debug(f"Action {action} ignored globally: Sidebar handles it locally")
+            return
+
+        # 4. Fallback to Editor (current tab)
         editor = self._editor_tabs.current_editor()
-        if editor and hasattr(editor, action):
-            getattr(editor, action)()
+        if editor:
+            log.debug(f"Routing {action} to Code Editor")
+            if action == "selectAll":
+                if hasattr(editor, "selectAll"): editor.selectAll()
+                elif hasattr(editor, "select_all"): editor.select_all()
+                return
+            if hasattr(editor, action):
+                getattr(editor, action)()
 
     # ------------------------------------------------------------------
     # VS Code Style Keyboard Shortcuts
@@ -1893,6 +2112,69 @@ class CortexMainWindow(QMainWindow):
 
         if updated:
             log.info(f"Updated open tabs for rename: {old_norm} -> {new_norm}")
+    
+    def _on_sidebar_file_deleted(self, path: str):
+        """Handle file/folder deletion from sidebar."""
+        import os
+        from pathlib import Path
+        
+        norm_path = os.path.normpath(path)
+        
+        # Close tab if file is open
+        for idx, fp in list(self._editor_tabs._files.items()):
+            if os.path.normcase(fp) == os.path.normcase(norm_path):
+                self._editor_tabs._close_tab(idx)
+                break
+        
+        # Refresh sidebar to reflect deletion
+        self._sidebar.refresh()
+        
+        # Refresh project context for AI agent
+        if hasattr(self, '_ai_agent') and self._ai_agent:
+            project_root = str(self._project_manager.root) if self._project_manager.root else None
+            if project_root:
+                self._ai_agent.set_project_root(project_root)
+        
+        log.info(f"File deleted: {path}")
+    
+    def _on_file_deleted_for_undo(self, original_path: str):
+        """Track file deletion for undo functionality."""
+        log.debug(f"Undo tracking: File moved to trash: {original_path}")
+    
+    def _on_file_restored_for_redo(self, restored_path: str):
+        """Track file restoration for redo functionality."""
+        log.debug(f"Redo tracking: File restored: {restored_path}")
+        # Refresh sidebar to show restored file
+        QTimer.singleShot(100, self._sidebar.refresh)
+    
+    def _undo(self):
+        """Handle undo - prioritize editor undo, then file restore."""
+        # Try editor undo first
+        editor = self._editor_tabs.current_editor()
+        if editor and editor.document().isUndoAvailable():
+            editor.undo()
+            return
+        
+        # If no editor or no undo available, try file restore
+        if hasattr(self, '_file_manager') and self._file_manager.can_undo():
+            restored_path = self._file_manager.undo_operation()
+            if restored_path:
+                log.info(f"Restored file: {restored_path}")
+                self.statusBar().showMessage(f"Restored: {Path(restored_path).name}", 3000)
+    
+    def _redo(self):
+        """Handle redo - prioritize editor redo, then file re-delete."""
+        # Try editor redo first
+        editor = self._editor_tabs.current_editor()
+        if editor and editor.document().isRedoAvailable():
+            editor.redo()
+            return
+        
+        if hasattr(self, '_file_manager') and self._file_manager.can_redo():
+            deleted_path = self._file_manager.redo_operation()
+            if deleted_path:
+                log.info(f"Re-deleted file: {deleted_path}")
+                self.statusBar().showMessage(f"Deleted: {Path(deleted_path).name}", 3000)
 
     def _find_in_files(self):
         """Find in files (Ctrl+Shift+F)."""
@@ -2405,12 +2687,15 @@ class CortexMainWindow(QMainWindow):
     def _on_model_changed(self, model_id: str, perf: str, cost: str):
         """Handle model selection change from AI chat."""
         # Determine provider from model_id
-        if model_id.startswith("openai/") or model_id.startswith("llama-") or model_id.startswith("mixtral-") or model_id.startswith("gemma"):
-            provider = "groq"
-        elif model_id.startswith("deepseek-"):
+        # Together AI models contain "/" or are in the explicit list
+        if model_id.startswith("deepseek-") and "/" not in model_id:
+            # Native DeepSeek models (without /)
             provider = "deepseek"
+        elif "/" in model_id or model_id in ["moonshotai/Kimi-K2.5", "deepseek-ai/DeepSeek-R1", "deepseek-ai/DeepSeek-V3"]:
+            # Together AI models (always have / in name)
+            provider = "together"
         else:
-            provider = "groq"  # Default
+            provider = "deepseek"  # Default to DeepSeek
         
         log.info(f"[MainWindow] Model changed to: {model_id} (provider: {provider})")
         self._ai_agent.update_settings(provider, model_id)
@@ -2418,6 +2703,18 @@ class CortexMainWindow(QMainWindow):
     def _on_ai_stop_requested(self):
         """Handle stop request from AI (via web bridge)."""
         self._ai_agent.stop()
+    
+    def _on_toggle_autogen(self):
+        """Toggle AutoGen multi-agent mode."""
+        # Get current status
+        status = self._ai_agent.get_autogen_status()
+        current_enabled = status.get('enabled', False)
+        
+        # Toggle
+        new_state = not current_enabled
+        self._ai_agent.enable_autogen(new_state)
+        
+        log.info(f"AutoGen {'enabled' if new_state else 'disabled'} via UI toggle")
 
     def _on_generate_plan(self):
         log.info("MainWindow: Automated plan generation triggered")
@@ -2828,26 +3125,97 @@ class CortexMainWindow(QMainWindow):
         dialog.exec()
 
     def closeEvent(self, event: QCloseEvent):
-        """Save session on close and kill terminal process cleanly."""
+        """Save session on close, prompt for unsaved files, and kill terminals."""
+        # 1. Check for unsaved files
+        modified_files = self._editor_tabs._modified
+        if modified_files:
+            from PyQt6.QtWidgets import QMessageBox
+            file_names = [os.path.basename(f) for f in modified_files]
+            files_str = ", ".join(file_names[:3]) + ("..." if len(file_names) > 3 else "")
+            
+            reply = QMessageBox.question(
+                self,
+                "Unsaved Changes",
+                f"You have unsaved changes in: {files_str}\n\nDo you want to save them before closing?",
+                QMessageBox.StandardButton.SaveAll | 
+                QMessageBox.StandardButton.Discard | 
+                QMessageBox.StandardButton.Cancel
+            )
+            
+            if reply == QMessageBox.StandardButton.Cancel:
+                event.ignore()
+                return
+            elif reply == QMessageBox.StandardButton.SaveAll:
+                # Save all modified files
+                for filepath in list(modified_files):
+                    idx = -1
+                    for i, fp in self._editor_tabs._files.items():
+                        if fp == filepath:
+                            idx = i
+                            break
+                    
+                    if idx >= 0:
+                        editor = self._editor_tabs.widget(idx)
+                        if isinstance(editor, CodeEditor):
+                            content = editor.toPlainText()
+                            try:
+                                with open(filepath, 'w', encoding='utf-8') as f:
+                                    f.write(content)
+                                self._editor_tabs._mark_saved(filepath)
+                            except Exception as e:
+                                log.error(f"Failed to auto-save {filepath}: {e}")
+        
+        # 2. Force AI Chat persistence
+        if hasattr(self, '_ai_chat') and self._ai_chat:
+            log.info("Persisting AI chat history before close...")
+            # Create a localized event loop to wait for the chat persistence to finish
+            loop = QEventLoop()
+            save_success = [False]
+            
+            def on_save_done(status):
+                log.info(f"AI chat persistence finished with status: {status}")
+                save_success[0] = (status == "OK")
+                loop.quit()
+                
+            # Connect the bridge response signal
+            self._ai_chat.save_finished.connect(on_save_done)
+            
+            # Start timer for timeout (3s max)
+            QTimer.singleShot(3000, loop.quit)
+            
+            # Trigger JS to save its logic to SQLite
+            self._ai_chat.run_javascript("if(window.saveProjectChats) saveProjectChats(window.chats);")
+            
+            # Wait for save or timeout
+            loop.exec()
+            
+            if not save_success[0]:
+                log.warning("AI chat persistence timed out or failed before close.")
+            else:
+                log.info("AI chat persistence confirmed.")
+        
+        # 3. Save IDE UI state
         fps = self._editor_tabs.get_open_files()
         active = self._editor_tabs.current_filepath()
-        # Collect expanded folder paths from the file tree
         expanded = self._sidebar.get_expanded_paths()
         self._session_manager.save(fps, active, {"expanded_paths": expanded})
         self._settings.set("window", "maximized", self.isMaximized())
         if not self.isMaximized():
             self._settings.set("window", "width", self.width())
             self._settings.set("window", "height", self.height())
-        # Save splitter panel widths so they restore correctly on next open
+        
+        # Save splitter panel widths
         sizes = self._main_splitter.sizes()
         if len(sizes) == 3:
             self._settings.set("window", "sidebar_width", sizes[0])
             self._settings.set("window", "right_panel_width", sizes[2])
-        # Kill all terminal shells before Qt destroys the widgets
+            
+        # 4. Clean up terminals
         for i in range(self._terminal_tabs.count()):
             term = self._terminal_tabs.widget(i)
             if isinstance(term, XTermWidget):
                 term._kill_process()
+                
         event.accept()
 
     def resizeEvent(self, event):
