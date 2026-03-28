@@ -135,7 +135,7 @@ class DeepSeekProvider:
                                                 'function': {
                                                     'name': tc.get('function', {}).get('name', ''),
                                                     'arguments': tc.get('function', {}).get('arguments', '')
-                                                }
+                                               }
                                             }
                                             tool_call_data.append(tc_info)
                                         yield f"__TOOL_CALL_DELTA__:{json.dumps(tool_call_data)}"

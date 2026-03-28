@@ -2,13 +2,12 @@ import os
 import sys
 import platform
 import shutil
-from datetime import datetime
 from typing import Optional, List
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, 
     QPushButton, QLabel, QComboBox
 )
-from PyQt6.QtCore import Qt, QProcess, QProcessEnvironment, pyqtSignal, QTimer, QObject, pyqtSlot, QUrl, QSize
+from PyQt6.QtCore import Qt, QProcess, QProcessEnvironment, pyqtSignal, QTimer, QObject, pyqtSlot, QUrl
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PyQt6.QtWebChannel import QWebChannel
@@ -73,12 +72,6 @@ class TerminalBridge(QObject):
         """Receive console logs from JavaScript"""
         log.info(f"[JS] {message}")
 
-    @pyqtSlot(str)
-    def open_external_url(self, url):
-        """Open a URL in the system browser."""
-        import webbrowser
-        webbrowser.open(url)
-
 
 class XTermWidget(QWidget):
     """
@@ -90,8 +83,7 @@ class XTermWidget(QWidget):
     terminal_output_received = pyqtSignal(str) # For AI to listen to
     terminal_line_for_chat = pyqtSignal(str)   # clean line for chat card streaming display
     file_operation_detected = pyqtSignal(str, str, str)  # operation_type, file_path, status
-    new_terminal_requested = pyqtSignal()      # Signal to open a new terminal tab
-
+    new_terminal_requested = pyqtSignal()      # Request to open new terminal tab
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -106,17 +98,12 @@ class XTermWidget(QWidget):
         self._output_buffer = ""
         self._is_ready = False
         
-        # PERFORMANCE: Ultra-aggressive output batching + rate limiting
+        # OPTIMIZATION: Output emit throttle — accumulate for 16ms before sending to JS
         self._emit_buffer = ""
         self._emit_timer = QTimer(self)
         self._emit_timer.setSingleShot(True)
         self._emit_timer.timeout.connect(self._flush_emit_buffer)
-        self._emit_debounce_ms = 8   # Faster: 8ms (~120fps) for snappier feel
-        
-        # PERFORMANCE: Rate limiting for terminal output (aggressive)
-        self._last_emit_time = 0.0
-        self._min_emit_interval = 25  # ms - minimum between emits (was 50, now 25 for faster response)
-        self._max_batch_lines = 50    # Emit up to 50 lines at once (was 10, now 5x more efficient)
+        self._emit_debounce_ms = 16   # ~60fps
         
         self._build_ui()
         self._update_header_style()
@@ -137,37 +124,29 @@ class XTermWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         
-        # Header with shell selector (Borrowed from WindowsTerminalWidget)
+        # Header - PowerShell only
         self._header = QWidget()
         self._header.setFixedHeight(35)
         hlay = QHBoxLayout(self._header)
         hlay.setContentsMargins(10, 0, 8, 0)
         
-        self._shell_combo = QComboBox()
-        self._shell_combo.addItems(["PowerShell", "Command Prompt", "Git Bash"])
-        if not WINPTY_AVAILABLE:
-            self._shell_combo.setToolTip("Install 'pywinpty' for better interacting shell support.")
-        self._shell_combo.currentTextChanged.connect(self._on_shell_changed)
-        self._shell_combo.setFixedWidth(120)
-        
-        self._shell_label = QLabel("Shell:")
+        # PowerShell label only (no dropdown)
+        self._shell_label = QLabel("PowerShell")
+        self._shell_label.setStyleSheet("color: #0078d4; font-weight: 600;")
         hlay.addWidget(self._shell_label)
-        hlay.addWidget(self._shell_combo)
         
         self._title_label = QLabel("⚡ Terminal")
+        self._title_label.setStyleSheet("font-size:12px; font-weight:bold; margin-left: 20px;")
         hlay.addWidget(self._title_label)
         hlay.addStretch()
         
-        # New Terminal Button (Added to the inner toolbar as requested)
-        self._plus_btn = QPushButton()
-        self._plus_btn.setObjectName("plusBtn")
-        self._plus_btn.setFixedSize(28, 22)
-        self._plus_btn.setFlat(True)
-        self._plus_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        # New Terminal Button
+        self._plus_btn = QPushButton("+ New")
+        self._plus_btn.setFixedHeight(22)
+        self._plus_btn.setMinimumWidth(65)
         self._plus_btn.setToolTip("New Terminal (Ctrl+Shift+`)")
         self._plus_btn.clicked.connect(self.new_terminal_requested.emit)
         hlay.addWidget(self._plus_btn)
-
         
         self._kill_btn = QPushButton("✕")
         self._kill_btn.setFixedSize(30, 22)
@@ -196,7 +175,6 @@ class XTermWidget(QWidget):
         settings = self._webview.settings()
         settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
-        # CRITICAL FIX: DISABLE QWebEngineView's native scrollbars (we use xterm's internal scrollbar)
         settings.setAttribute(QWebEngineSettings.WebAttribute.ShowScrollBars, False)
         
         self._webview.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
@@ -320,25 +298,10 @@ class XTermWidget(QWidget):
                 
     def _write_to_terminal(self, text: str):
         """
-        ULTRA-FAST terminal output with aggressive batching.
-        Optimized for high-throughput command output (git log, pip install, etc.)
+        Buffer output and flush in batches instead of emitting each chunk separately.
+        Prevents QWebChannel from being flooded with hundreds of small messages.
+        Also emits clean lines for chat card streaming display.
         """
-        # Ultra-aggressive rate limiting: 25ms minimum (was 50ms)
-        current_time = datetime.now().timestamp() * 1000
-        time_since_last_emit = current_time - self._last_emit_time if self._last_emit_time > 0 else self._min_emit_interval
-        
-        # If emitting too fast, queue with minimal delay
-        if time_since_last_emit < self._min_emit_interval:
-            delay = max(1, int(self._min_emit_interval - time_since_last_emit))  # Min 1ms
-            QTimer.singleShot(delay, lambda: self._process_terminal_write(text))
-        else:
-            # Can emit immediately
-            self._process_terminal_write(text)
-    
-    def _process_terminal_write(self, text: str):
-        """Process actual terminal write with ULTRA-FAST batching."""
-        self._last_emit_time = datetime.now().timestamp() * 1000
-        
         # Store in buffer for AI feedback (clean ANSI codes first)
         clean_text = self._clean_ansi(text)
         if clean_text:
@@ -347,18 +310,12 @@ class XTermWidget(QWidget):
                 self._terminal_buffer = self._terminal_buffer[-self._max_buffer:]
             self.terminal_output_received.emit(clean_text)
             
-            # Emit lines for chat card streaming display (OPTIMIZED)
-            # Only emit non-empty, significant lines (>1 char to skip cursors)
-            lines_to_emit = [line.strip() for line in clean_text.splitlines() if line.strip() and len(line) > 1]
-            
-            # OPTIMIZATION: Larger batches, fewer emissions
-            if lines_to_emit:
-                # Emit ALL lines at once up to max_batch_lines (was 10, now 50)
-                for i in range(0, len(lines_to_emit), self._max_batch_lines):
-                    batch = lines_to_emit[i:i+self._max_batch_lines]
-                    combined = '\n'.join(batch)
-                    self.terminal_line_for_chat.emit(combined)
-                    # No delay needed - larger batches mean fewer emits overall
+            # Emit lines for chat card streaming display
+            # Only emit non-empty, non-whitespace lines
+            for line in clean_text.splitlines():
+                line = line.strip()
+                if line and len(line) > 1:
+                    self.terminal_line_for_chat.emit(line)
 
         if self._is_ready:
             self._emit_buffer += text
@@ -400,38 +357,10 @@ class XTermWidget(QWidget):
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
         
-        shell = self._shell_combo.currentText()
-        
         if WINPTY_AVAILABLE:
             # --- START WINPTY (REAL TERMINAL) ---
             try:
                 cmd = "powershell.exe -NoLogo"
-                if shell == "Command Prompt":
-                    cmd = "cmd.exe"
-                elif shell == "Git Bash":
-                    # Locate git bash
-                    bash_path = shutil.which("bash.exe")
-                    git_bin = None
-                    if bash_path and "Git" in bash_path:
-                        git_bin = os.path.dirname(bash_path)
-                    else:
-                        potential_paths = [
-                            r"C:\Program Files\Git\bin", 
-                            r"C:\Program Files\Git\usr\bin",
-                            r"C:\Program Files (x86)\Git\bin",
-                            os.path.expandvars(r"%LocalAppData%\Programs\Git\bin"),
-                            os.path.expandvars(r"%LocalAppData%\Programs\Git\usr\bin")
-                        ]
-                        for p in potential_paths:
-                            if os.path.exists(os.path.join(p, "bash.exe")):
-                                git_bin = p
-                                break
-                    
-                    if git_bin:
-                        env["PATH"] = git_bin + os.pathsep + env.get("PATH", "")
-                        cmd = "bash.exe --login -i"
-                    else:
-                        cmd = "bash.exe --login -i" # Fallback and hope it is in PATH
                             
                 self._pty_process = winpty.PtyProcess.spawn(
                     cmd,
@@ -540,29 +469,8 @@ class XTermWidget(QWidget):
             self._process.readyReadStandardError.connect(self._on_stderr)
             self._process.finished.connect(self._on_process_finished)
             
-            if shell == "PowerShell":
-                self._process.start("powershell.exe", ["-NoLogo"])
-            elif shell == "Command Prompt":
-                self._process.start("cmd.exe", ["/K", "prompt", "$P$G"])
-            elif shell == "Git Bash":
-                 bash_path = shutil.which("bash.exe")
-                 if bash_path and "Git" in bash_path:
-                     self._process.start(bash_path, ["--login", "-i"])
-                 else:
-                     found = False
-                     paths = [
-                         r"C:\Program Files\Git\bin\bash.exe", 
-                         r"C:\Program Files\Git\usr\bin\bash.exe",
-                         r"C:\Program Files (x86)\Git\bin\bash.exe",
-                         os.path.expandvars(r"%LocalAppData%\Programs\Git\bin\bash.exe")
-                     ]
-                     for p in paths:
-                         if os.path.exists(p):
-                             self._process.start(p, ["--login", "-i"])
-                             found = True
-                             break
-                     if not found:
-                         self._process.start("bash.exe", ["--login", "-i"])
+            # Always use PowerShell
+            self._process.start("powershell.exe", ["-NoLogo"])
                          
             # OPTIMIZATION: Adaptive render timer — starts at 30ms, slows when idle
             self._render_interval = 30
@@ -576,18 +484,6 @@ class XTermWidget(QWidget):
         if not self._shell_started:
             self._shell_started = True
             QTimer.singleShot(200, self._start_shell)
-            
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        # Ensure webview gets proper size
-        if self._webview:
-            self._webview.resize(self.size())
-            
-    def sizeHint(self):
-        return QSize(800, 400)
-        
-    def minimumSizeHint(self):
-        return QSize(200, 150)
             
     def _on_stdout(self):
         if self._process:
@@ -705,16 +601,8 @@ class XTermWidget(QWidget):
             
     def set_cwd(self, path: str):
         self._cwd = path
-        # Try to change dir dynamically without restarting if possible
-        shell = self._shell_combo.currentText()
-        if shell == "PowerShell":
-             self.execute_command(f'Set-Location -Path "{path}"')
-        elif shell == "Command Prompt":
-             # In CMD, we need /D to change drive as well
-             self.execute_command(f'cd /D "{path}"')
-        else: # Git Bash or others
-             # Git Bash uses Unix-style paths essentially, but usually handles quoted Windows paths too
-             self.execute_command(f'cd "{path}"')
+        # PowerShell only - change directory
+        self.execute_command(f'Set-Location -Path "{path}"')
              
     def activate_virtual_env(self, venv_path: str):
         if sys.platform == "win32":
@@ -731,32 +619,8 @@ class XTermWidget(QWidget):
         self._update_header_style()
         if self._is_ready:
             self._bridge.update_theme.emit(is_dark)
-
-    def copy(self):
-        """Copy selection from xterm.js to clipboard."""
-        if self._is_ready:
-            self._webview.page().runJavaScript("if(window.term && term.hasSelection()) window.pyTerminal.copy_to_clipboard(term.getSelection());")
-
-    def paste(self):
-        """Paste from clipboard into xterm.js."""
-        if self._is_ready:
-            self._bridge.paste_from_clipboard()
-
-    def select_all(self):
-        """Select all text in xterm.js."""
-        if self._is_ready:
-            self._webview.page().runJavaScript("if(window.term) term.selectAll();")
-
-    def cut(self):
-        """Cut is not supported in terminal, but we can copy."""
-        self.copy()
             
     def _update_header_style(self):
-        from src.utils.icons import make_icon
-        icon_fg = "#cccccc" if self._is_dark else "#444444"
-        self._plus_btn.setIcon(make_icon("plus", icon_fg, 32))
-        self._plus_btn.setIconSize(QSize(14, 14))
-        
         if self._is_dark:
             self._header.setStyleSheet("""
                 QWidget {
@@ -766,14 +630,9 @@ class XTermWidget(QWidget):
                 QLabel { color: #cccccc; font-size: 12px; }
                 QPushButton {
                     background-color: #3c3c3c; color: #cccccc;
-                    border: 1px solid #3e3e42; border-radius: 3px; padding: 2px 2px;
-                }
-                QPushButton#plusBtn {
-                    background-color: #3c3c3c;
-                    border: 1px solid #3e3e42; border-radius: 3px;
+                    border: 1px solid #3e3e42; border-radius: 3px; padding: 2px 8px;
                 }
                 QPushButton:hover { background-color: #4c4c4c; }
-                QPushButton#plusBtn:hover { background-color: #4c4c4c; }
                 QComboBox {
                     background-color: #3c3c3c; color: #cccccc;
                     border: 1px solid #3e3e42; border-radius: 3px; padding: 2px 8px;
@@ -792,15 +651,10 @@ class XTermWidget(QWidget):
                 }
                 QLabel { color: #333333; font-size: 12px; }
                 QPushButton {
-                    background-color: #e1e1e1; color: #333333;
-                    border: 1px solid #cccccc; border-radius: 3px; padding: 2px 2px;
+                    background-color: #ffffff; color: #333333;
+                    border: 1px solid #d0d0d0; border-radius: 3px; padding: 2px 8px;
                 }
-                QPushButton#plusBtn {
-                    background-color: #e1e1e1;
-                    border: 1px solid #cccccc; border-radius: 3px;
-                }
-                QPushButton:hover { background-color: #d1d1d1; }
-                QPushButton#plusBtn:hover { background-color: #d1d1d1; }
+                QPushButton:hover { background-color: #e0e0e0; }
                 QComboBox {
                     background-color: #ffffff; color: #333333;
                     border: 1px solid #d0d0d0; border-radius: 3px; padding: 2px 8px;
