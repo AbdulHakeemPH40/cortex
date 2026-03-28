@@ -38,77 +38,50 @@
             box-sizing: border-box;
         }
         
-        /* CRITICAL: Show scrollbar in xterm viewport */
+        /* Allow xterm to fill container */
         .xterm {
             width: 100%;
             height: 100%;
-            display: block;
-        }
-        
-        /* Ensure terminal content can overflow and scrollbar shows */
-        .xterm .xterm-screen {
-            display: block;
-        }
-        
-        /* CRITICAL: Ensure xterm-viewport is visible and has proper overflow */
-        .xterm .xterm-viewport {
-            width: 100%;
-            height: 100%;
-            overflow-y: scroll;
-            overflow-x: hidden;
-            scrollbar-width: thin;
-            scrollbar-color: #79797966 transparent;
-        }
-        
-        body.light-mode .xterm .xterm-viewport {
-            scrollbar-color: #00000066 transparent;
         }
         
         /* ===== WEBKIT SCROLLBAR STYLING - VS CODE STYLE ===== */
-        
-        /* Main scrollbar width */
         .xterm .xterm-viewport::-webkit-scrollbar {
-            width: 12px !important;
+            width: 12px;
         }
         
-        /* Scrollbar track - completely invisible */
         .xterm .xterm-viewport::-webkit-scrollbar-track {
-            background: #0c0c0c !important;  /* Match terminal background */
+            background: #0c0c0c;  /* Match dark terminal background */
         }
         
         body.light-mode .xterm .xterm-viewport::-webkit-scrollbar-track {
-            background: #ffffff !important;  /* Match light terminal background */
+            background: #ffffff;  /* Match light terminal background */
         }
         
-        /* Scrollbar thumb - VS Code style metallic gray (dark mode) */
+        /* Scrollbar thumb - VS Code style metallic gray */
         .xterm .xterm-viewport::-webkit-scrollbar-thumb {
-            background: #79797966 !important;  /* Metallic gray with transparency */
-            border-radius: 6px !important;
-            min-height: 30px !important;
+            background: #79797966;  /* Metallic gray with transparency */
+            border-radius: 6px;
         }
         
-        /* Hover state - lighter gray */
         .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
-            background: #797979cc !important;  /* More opaque when hovered */
+            background: #797979cc;  /* More opaque when hovered */
         }
         
-        /* Active state - full opacity */
         .xterm .xterm-viewport::-webkit-scrollbar-thumb:active {
-            background: #797979ff !important;
+            background: #797979ff;
         }
         
-        /* ===== LIGHT MODE SCROLLBAR ===== */
-        /* When body has light-mode class (add this class on light mode switch) */
+        /* Light mode scrollbar */
         body.light-mode .xterm .xterm-viewport::-webkit-scrollbar-thumb {
-            background: #00000033 !important;  /* Dark black with transparency */
+            background: #00000033;  /* Dark black with transparency */
         }
         
         body.light-mode .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
-            background: #00000066 !important;  /* Darker on hover */
+            background: #00000066;  /* Darker on hover */
         }
         
         body.light-mode .xterm .xterm-viewport::-webkit-scrollbar-thumb:active {
-            background: #000000cc !important;  /* Nearly black on active */
+            background: #000000cc;
         }
     </style>
 </head>
@@ -343,79 +316,13 @@
             }
         }
         
-        let _scrollbarStyleInjected = false;
-        
         function _ensureScrollbarVisible() {
             const viewport = document.querySelector('.xterm-viewport');
             if (viewport) {
-                // Force scrollbar to always show with inline styles (for QWebEngineView)
-                viewport.style.overflowY = 'scroll';
-                viewport.style.overflowX = 'hidden';
-                viewport.style.width = '100%';
-                viewport.style.height = '100%';
-                viewport.style.scrollbarWidth = 'thin';
-                
-                // Apply VS Code style scrollbar colors based on current theme
-                const isDarkMode = !document.body.classList.contains('light-mode');
-                if (isDarkMode) {
-                    viewport.style.scrollbarColor = '#79797966 transparent';
-                } else {
-                    viewport.style.scrollbarColor = '#00000066 transparent';
-                }
-                
-                // Only inject styles ONCE (prevents duplicates)
-                if (!_scrollbarStyleInjected) {
-                    const style = document.createElement('style');
-                    style.textContent = `
-                        /* Hide any native scrollbars from parent containers */
-                        html::-webkit-scrollbar,
-                        body::-webkit-scrollbar {
-                            display: none !important;
-                            width: 0 !important;
-                        }
-                        
-                        .xterm .xterm-viewport {
-                            overflow-y: scroll !important;
-                            overflow-x: hidden !important;
-                            width: 100% !important;
-                            height: 100% !important;
-                        }
-                        
-                        .xterm .xterm-viewport::-webkit-scrollbar {
-                            width: 12px !important;
-                        }
-                        /* Match track color to terminal background */
-                        .xterm .xterm-viewport::-webkit-scrollbar-track {
-                            background: #0c0c0c !important;
-                        }
-                        body.light-mode .xterm .xterm-viewport::-webkit-scrollbar-track {
-                            background: #ffffff !important;
-                        }
-                        /* Scrollbar thumb - VS Code metallic style */
-                        .xterm .xterm-viewport::-webkit-scrollbar-thumb {
-                            background: #79797966 !important;
-                            border-radius: 6px !important;
-                            min-height: 30px !important;
-                        }
-                        .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
-                            background: #797979cc !important;
-                        }
-                        .xterm .xterm-viewport::-webkit-scrollbar-thumb:active {
-                            background: #797979ff !important;
-                        }
-                        body.light-mode .xterm .xterm-viewport::-webkit-scrollbar-thumb {
-                            background: #00000033 !important;
-                        }
-                        body.light-mode .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
-                            background: #00000066 !important;
-                        }
-                        body.light-mode .xterm .xterm-viewport::-webkit-scrollbar-thumb:active {
-                            background: #000000cc !important;
-                        }
-                    `;
-                    style.setAttribute('data-scrollbar-fix', 'true');
-                    document.head.appendChild(style);
-                    _scrollbarStyleInjected = true;
+                // Ensure scrollbar is visible - xterm.css may set overflow-y to auto
+                // so we make sure it's set to scroll to show scrollbar even when not needed
+                if (viewport.style.overflowY !== 'scroll') {
+                    viewport.style.overflowY = 'scroll';
                 }
             }
         }
