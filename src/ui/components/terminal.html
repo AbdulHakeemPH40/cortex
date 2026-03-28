@@ -23,18 +23,48 @@
             padding: 4px;
             box-sizing: border-box;
         }
+
+        
+        /* Enhanced Scrollbar - Smaller, liquid feel, always visible */
         .xterm-viewport::-webkit-scrollbar {
-            width: 10px;
+            width: 8px;
+            height: 8px;
         }
+        
         .xterm-viewport::-webkit-scrollbar-track {
-            background: transparent;
+            background: rgba(30, 30, 30, 0.5);
+            border-radius: 4px;
+            margin: 2px;
         }
+        
         .xterm-viewport::-webkit-scrollbar-thumb {
-            background: #424242;
-            border-radius: 5px;
+            background: linear-gradient(180deg, #5a5a5a 0%, #4a4a4a 100%);
+            border-radius: 4px;
+            border: 1px solid rgba(0, 0, 0, 0.2);
+            min-height: 40px;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
         }
+        
         .xterm-viewport::-webkit-scrollbar-thumb:hover {
-            background: #4f4f4f;
+            background: linear-gradient(180deg, #6a6a6a 0%, #5a5a5a 100%);
+            border-radius: 4px;
+            transform: scaleX(1.1);
+        }
+        
+        .xterm-viewport::-webkit-scrollbar-thumb:active {
+            background: linear-gradient(180deg, #7a7a7a 0%, #6a6a6a 100%);
+            border-radius: 4px;
+        }
+        
+        /* Firefox scrollbar */
+        .xterm-viewport {
+            scrollbar-width: thin;
+            scrollbar-color: #5a5a5a #1e1e1e;
+        }
+        
+        /* Ensure scrollbar is always visible */
+        .xterm-viewport::-webkit-scrollbar-corner {
+            background: transparent;
         }
         
         /* URL Link Styling - Underline and hover highlighting */
@@ -57,6 +87,28 @@
         .xterm .xterm-decoration:hover {
             text-decoration: underline;
             background-color: rgba(0, 120, 212, 0.3);
+        }
+        
+        /* Light mode scrollbar styles */
+        body.light-mode .xterm-viewport::-webkit-scrollbar-track {
+            background: rgba(240, 240, 240, 0.8);
+        }
+        
+        body.light-mode .xterm-viewport::-webkit-scrollbar-thumb {
+            background: linear-gradient(180deg, #c0c0c0 0%, #a0a0a0 100%);
+            border: 1px solid rgba(0, 0, 0, 0.1);
+        }
+        
+        body.light-mode .xterm-viewport::-webkit-scrollbar-thumb:hover {
+            background: linear-gradient(180deg, #b0b0b0 0%, #909090 100%);
+        }
+        
+        body.light-mode .xterm-viewport::-webkit-scrollbar-thumb:active {
+            background: linear-gradient(180deg, #a0a0a0 0%, #808080 100%);
+        }
+        
+        body.light-mode .xterm-viewport {
+            scrollbar-color: #a0a0a0 #f0f0f0;
         }
     </style>
 </head>
@@ -125,6 +177,8 @@
             // PERFORMANCE: Disable features we don't need
             allowTransparency: false,
             fastScrollModifier: 'alt',
+            // Padding on both sides (20px left + 8px scrollbar + 12px right = 20px effective right padding)
+            padding: { left: 20, right: 20 },
             theme: {
                 background: '#0c0c0c',
                 foreground: '#cccccc',
@@ -439,6 +493,7 @@
             window.pyTerminal.update_theme.connect(function(is_dark) {
                 if (is_dark) {
                     document.body.style.backgroundColor = '#0c0c0c';
+                    document.body.classList.remove('light-mode');
                     term.options.theme = {
                         background: '#0c0c0c',
                         foreground: '#cccccc',
@@ -446,6 +501,7 @@
                     };
                 } else {
                     document.body.style.backgroundColor = '#ffffff';
+                    document.body.classList.add('light-mode');
                     term.options.theme = {
                         background: '#ffffff',
                         foreground: '#0c0c0c',

@@ -931,6 +931,13 @@ body.light .numbered-card .card-content {
     #input-container {
         padding: 6px 10px;
     }
+    .input-toolbar {
+        gap: 2px;
+    }
+    .icon-btn.optional-btn:nth-child(3),
+    .icon-btn.optional-btn:nth-child(4) {
+        display: none;
+    }
 }
 
 #input-container:focus-within {
@@ -1029,6 +1036,7 @@ body.light .numbered-card .card-content {
     flex-wrap: nowrap;
     gap: 4px;
     min-width: 0;
+    position: relative;
 }
 
 .toolbar-left {
@@ -1120,7 +1128,7 @@ body.light .numbered-card .card-content {
 
 .dropdown-menu {
     position: absolute;
-    bottom: calc(100% + 12px);
+    bottom: calc(100% + 8px);
     left: 0;
     background: var(--bg-header);
     border: 1px solid var(--border);
@@ -1130,8 +1138,10 @@ body.light .numbered-card .card-content {
     flex-direction: column;
     padding: 8px;
     box-shadow: 0 10px 30px rgba(0,0,0,0.4);
-    z-index: 1000;
+    z-index: 9999;
     animation: slideUp 0.2s ease;
+    max-height: 400px;
+    overflow-y: auto;
 }
 
 @keyframes slideUp {
@@ -1287,6 +1297,42 @@ body.light .numbered-card .card-content {
     }
     #mode-selector .dropdown-trigger {
         padding: 5px 6px;
+    }
+    .primary-btn {
+        min-width: 32px;
+        width: 32px;
+        height: 28px;
+        padding: 4px 6px;
+    }
+    .primary-btn svg {
+        width: 12px;
+        height: 12px;
+    }
+}
+
+@media (max-width: 300px) {
+    .input-toolbar {
+        flex-wrap: wrap;
+        gap: 2px;
+        padding-top: 4px;
+    }
+    .toolbar-left {
+        flex: 1 1 100%;
+        justify-content: flex-start;
+    }
+    .toolbar-right {
+        flex: 1 1 100%;
+        justify-content: flex-end;
+        margin-left: 0;
+    }
+    .optional-btn {
+        display: none !important;
+    }
+    .primary-btn, .stop-btn {
+        min-width: 28px;
+        width: 28px;
+        height: 26px;
+        padding: 3px 5px;
     }
 }
 
