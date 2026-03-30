@@ -12,6 +12,9 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 from src.ai.tools.base_tool import BaseTool, ToolResult, ToolParameter, success_result, error_result
+from src.utils.logger import get_logger
+
+log = get_logger("bash_tool")
 
 
 class BashTool(BaseTool):
@@ -57,6 +60,7 @@ class BashTool(BaseTool):
         
         try:
             command = params.get("command")
+            log.info(f"BashTool.execute() called with command: {command}")
             if not command:
                 return error_result("Missing required parameter: command")
             
@@ -93,6 +97,10 @@ class BashTool(BaseTool):
                 if platform.system() == "Windows":
                     shell_exec = "powershell.exe"
                 
+                log.info(f"Executing command: {command}")
+                log.info(f"Working directory: {cwd}")
+                log.info(f"Shell executable: {shell_exec}")
+                
                 result = subprocess.run(
                     command,
                     shell=True,
@@ -103,10 +111,15 @@ class BashTool(BaseTool):
                     timeout=timeout
                 )
                 
+                log.info(f"Command completed with exit code: {result.returncode}")
+                log.debug(f"STDOUT: {result.stdout[:500] if result.stdout else 'empty'}")
+                log.debug(f"STDERR: {result.stderr[:500] if result.stderr else 'empty'}")
+                
                 duration_ms = (time.time() - start_time) * 1000
                 
                 # Check for errors
                 if result.returncode != 0:
+                    log.warning(f"Command failed with exit code {result.returncode}")
                     return error_result(
                         f"Command failed with exit code {result.returncode}\n\n"
                         f"STDOUT:\n{result.stdout}\n\n"
@@ -117,6 +130,8 @@ class BashTool(BaseTool):
                 output = result.stdout
                 if result.stderr:
                     output += f"\n\nSTDERR:\n{result.stderr}"
+                
+                log.info(f"Command succeeded with output length: {len(output)}")
                 
                 # 🔄 SYNC CACHE: Shell commands may create/modify files.
                 # Clear entire cache to ensure next tool sees changes.
@@ -136,13 +151,16 @@ class BashTool(BaseTool):
                 )
                 
             except subprocess.TimeoutExpired:
+                log.warning(f"Command timed out: {command}")
                 return error_result(
                     f"Command timed out after {timeout} seconds. "
                     f"Consider increasing timeout or optimizing the command."
                 )
-            except FileNotFoundError:
+            except FileNotFoundError as e:
+                log.error(f"Command not found: {command} - {e}")
                 return error_result(f"Command not found: {command.split()[0] if command else 'unknown'}")
             except Exception as e:
+                log.error(f"Command execution failed: {command} - {e}")
                 return error_result(f"Command execution failed: {str(e)}")
             
         except Exception as e:

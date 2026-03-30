@@ -41,6 +41,24 @@ from src.ai.providers import get_provider_registry, ProviderType, ChatMessage
 from src.ai.decision_framework import get_decision_framework, reset_decision_framework, ActionType
 from src.ai.autogen_wrapper import get_autogen_system, init_autogen_system
 
+# Phase 1, 2, 3 Integration Imports
+from src.ai.prompt_manager import get_prompt_manager
+from src.ai.title_generator import get_title_generator
+from src.ai.message_compactor import get_message_compactor, CompactionMessage
+from src.ai.session_schema import get_session_schema_manager
+from src.ai.acp import get_agent_control_plane, AgentType
+from src.ai.skills import get_skill_registry
+from src.ai.mcp import get_mcp_manager
+
+# Phase 4 Integration Imports
+from src.ai.todo import get_todo_manager
+from src.ai.permission import get_permission_evaluator
+from src.ai.github import get_github_agent
+
+# NEW: OpenCode Enhancement Integration
+from src.ai.intent import IntentClassification, AgentRoute
+from src.ai.tools.selection import ToolScore
+
 
 def _categorize_error_message(error_msg: str) -> str:
     msg = (error_msg or "").lower()
@@ -505,6 +523,7 @@ class AIAgent(QObject):
     thinking_started = pyqtSignal()
     thinking_stopped = pyqtSignal()
     todos_updated = pyqtSignal(list, str)  # todos_list, main_task
+    tool_summary_ready = pyqtSignal(dict)  # structured tool summary data
     
     # Performance: File prefetch signal
     files_prefetch = pyqtSignal(list)  # list of file paths to prefetch
@@ -633,6 +652,21 @@ REMEMBER: Every response should contain a TOOL CALL unless the task is truly com
             "retries_total": 0
         }
         
+        # Phase 1, 2, 3 Integration: Initialize new components
+        self._prompt_manager = get_prompt_manager()
+        self._title_generator = get_title_generator(self)
+        self._message_compactor = get_message_compactor()
+        self._acp = get_agent_control_plane()
+        self._skill_registry = get_skill_registry()
+        self._mcp_manager = get_mcp_manager()
+        self._current_mode = "build"  # build, explore, debug, plan
+        
+        # Phase 4 Integration: Initialize new components
+        self._todo_manager = get_todo_manager()
+        self._permission_evaluator = get_permission_evaluator()
+        self._github_agent = get_github_agent()
+        log.info("AIAgent initialized with Phase 1, 2, 3, 4 components")
+        
         # Connect internal signal for thread-safe cross-turn handover
         self._tool_batch_finished.connect(self._on_all_tools_completed)
         
@@ -704,6 +738,172 @@ REMEMBER: Every response should contain a TOOL CALL unless the task is truly com
         """Reset the help offered flag to allow future suggestions."""
         self._offered_help_recently = False
 
+    # Phase 1, 2, 3 Integration Methods
+    def set_mode(self, mode: str):
+        """
+        Set agent mode (build, explore, debug, plan).
+        
+        Args:
+            mode: One of 'build', 'explore', 'debug', 'plan'
+        """
+        valid_modes = ['build', 'explore', 'debug', 'plan']
+        if mode in valid_modes:
+            self._current_mode = mode
+            log.info(f"Agent mode set to: {mode}")
+        else:
+            log.warning(f"Invalid mode: {mode}. Valid modes: {valid_modes}")
+    
+    def get_mode(self) -> str:
+        """Get current agent mode."""
+        return self._current_mode
+    
+    def _get_system_prompt_for_mode(self) -> str:
+        """
+        Get system prompt based on current mode using Prompt Manager.
+        
+        Returns:
+            System prompt string
+        """
+        context = {
+            'project_root': self._project_root or '',
+            'current_file': self._active_file_path or '',
+            'selected_code': ''
+        }
+        return self._prompt_manager.get_agent_mode_prompt(self._current_mode, context)
+    
+    def generate_chat_title(self, user_message: str, conversation_id: str) -> str:
+        """
+        Generate AI title for chat (Phase 1).
+        
+        Args:
+            user_message: First user message
+            conversation_id: Conversation ID
+            
+        Returns:
+            Generated title
+        """
+        return self._title_generator.generate_title(user_message, conversation_id)
+    
+    def use_acp_for_task(self, task_description: str, agent_type: AgentType = None) -> str:
+        """
+        Route task through Agent Control Plane (Phase 3).
+        
+        Args:
+            task_description: Task description
+            agent_type: Type of agent to use
+            
+        Returns:
+            Task ID
+        """
+        task_id = self._acp.create_task(task_description, agent_type)
+        log.info(f"Task routed via ACP: {task_id}")
+        return task_id
+    
+    def execute_skill(self, skill_id: str, capability: str, params: dict) -> any:
+        """
+        Execute a skill capability (Phase 3).
+        
+        Args:
+            skill_id: Skill ID (e.g., 'builtin.code_analysis')
+            capability: Capability name
+            params: Parameters for capability
+            
+        Returns:
+            Skill execution result
+        """
+        try:
+            result = self._skill_registry.execute_capability(skill_id, capability, params)
+            log.info(f"Skill executed: {skill_id}.{capability}")
+            return result
+        except Exception as e:
+            log.error(f"Skill execution failed: {e}")
+            return None
+    
+    def connect_mcp_server(self, name: str, server_url: str) -> bool:
+        """
+        Connect to MCP server (Phase 3).
+        
+        Args:
+            name: Server name
+            server_url: Server URL
+            
+        Returns:
+            True if connected
+        """
+        success = self._mcp_manager.connect_server(name, server_url)
+        if success:
+            log.info(f"Connected to MCP server: {name}")
+        return success
+    
+    def get_available_skills(self) -> list:
+        """Get list of available skills."""
+        return self._skill_registry.list_skills()
+    
+    def get_acp_agents(self) -> list:
+        """Get list of ACP agents."""
+        return self._acp.list_agents()
+    
+    # Phase 4 Methods
+    def add_todo_task(self, session_id: str, description: str, 
+                     priority: int = 2) -> str:
+        """
+        Add a todo task (Phase 4).
+        
+        Args:
+            session_id: Session ID
+            description: Task description
+            priority: 1=high, 2=medium, 3=low
+            
+        Returns:
+            Task ID
+        """
+        return self._todo_manager.add_task(session_id, description, priority)
+    
+    def get_session_todos(self, session_id: str) -> list:
+        """Get all todo tasks for a session."""
+        tasks = self._todo_manager.get_session_tasks(session_id)
+        return [task.to_dict() for task in tasks]
+    
+    def complete_todo_task(self, task_id: str) -> bool:
+        """Mark a todo task as completed."""
+        return self._todo_manager.complete_task(task_id)
+    
+    def check_permission(self, tool_name: str, params: dict = None) -> tuple:
+        """
+        Check permission for a tool operation (Phase 4).
+        
+        Args:
+            tool_name: Name of the tool
+            params: Tool parameters
+            
+        Returns:
+            (should_proceed, reason)
+        """
+        return self._permission_evaluator.evaluate(tool_name, params)
+    
+    def set_github_repository(self, owner: str, repo: str):
+        """Set GitHub repository for automation (Phase 4)."""
+        self._github_agent.set_repository(owner, repo)
+    
+    def analyze_github_pr(self, pr_number: int) -> dict:
+        """
+        Analyze a GitHub PR (Phase 4).
+        
+        Args:
+            pr_number: PR number
+            
+        Returns:
+            Analysis results
+        """
+        return self._github_agent.analyze_pr(pr_number)
+    
+    def get_github_metrics(self) -> dict:
+        """Get Phase 4 component metrics."""
+        return {
+            "pending_todos": len(self._todo_manager.get_pending_tasks()),
+            "permission_cache_size": len(self._permission_evaluator._permission_cache),
+        }
+    
     def get_metrics(self) -> dict:
         """Return a copy of current metrics."""
         return dict(self._metrics)
@@ -1996,10 +2196,10 @@ REMEMBER: Every response should contain a TOOL CALL unless the task is truly com
             # We are pausing the agentic loop.
             return
         
-        # Generate summary report for file operations
-        summary = self._generate_tool_summary(results)
-        if summary:
-            self.response_chunk.emit(summary)
+        # Generate structured summary for UI display
+        summary_data = self._generate_tool_summary_structured(results)
+        if summary_data:
+            self.tool_summary_ready.emit(summary_data)
         
         # Add assistant message and tool responses to history
         assistant_msg = {
@@ -2014,11 +2214,17 @@ REMEMBER: Every response should contain a TOOL CALL unless the task is truly com
             # Use raw content instead of JSON wrapper to match OpenAI-style expectations
             # (especially for models like DeepSeek which can be picky about tool content)
             content = str(res["content"])
+            tool_name = res["name"]
+            tool_success = res.get("success", False)
+            
+            # Debug logging for command results
+            if tool_name == "run_command":
+                log.info(f"[DEBUG] run_command result - success={tool_success}, content_preview={content[:100] if content else 'empty'}")
             
             self._history.append({
                 "role": "tool",
                 "tool_call_id": res["tool_call_id"],
-                "name": res["name"],
+                "name": tool_name,
                 "content": content
             })
             
@@ -2155,6 +2361,124 @@ REMEMBER: Every response should contain a TOOL CALL unless the task is truly com
         lines.append("")
         
         return "\n".join(lines)
+    
+    def _generate_tool_summary_structured(self, results: list) -> dict:
+        """Generate structured tool summary data for professional UI display."""
+        if not results:
+            return None
+        
+        summary = {
+            "total": len(results),
+            "file_writes": [],
+            "file_reads": [],
+            "commands": [],
+            "errors": [],
+            "other": []
+        }
+        
+        for res in results:
+            name = res.get("name", "")
+            content = str(res.get("content", ""))
+            success = res.get("success", False)
+            
+            if not success:
+                summary["errors"].append({
+                    "name": name,
+                    "error": content[:200]
+                })
+                continue
+            
+            if name in ("write_file", "edit_file", "create_directory"):
+                # Try to extract file path and details
+                file_path = "Unknown"
+                line_count = 0
+                size_str = ""
+                
+                # Parse content for file info
+                if content:
+                    lines = content.split('\n')
+                    first_line = lines[0] if lines else ""
+                    
+                    # Try to extract path from "Created: path" or "Written: path" format
+                    if "Created:" in first_line or "Written:" in first_line or "Edited:" in first_line:
+                        parts = first_line.split(":", 1)
+                        if len(parts) > 1:
+                            file_path = parts[1].strip()
+                    
+                    # Try to get line count from content
+                    if len(lines) > 1:
+                        for line in lines[1:10]:  # Check first few lines
+                            if "lines" in line.lower() or "line" in line.lower():
+                                import re
+                                match = re.search(r'(\d+)\s*lines?', line, re.IGNORECASE)
+                                if match:
+                                    line_count = int(match.group(1))
+                                    break
+                
+                # Try to get actual file info if path is valid
+                if file_path and file_path != "Unknown" and not file_path.startswith("Error"):
+                    try:
+                        import os
+                        if os.path.exists(file_path):
+                            size = os.path.getsize(file_path)
+                            size_str = self._format_size(size)
+                            if line_count == 0:
+                                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                    file_content = f.read()
+                                line_count = len(file_content.split('\n'))
+                    except:
+                        pass
+                
+                summary["file_writes"].append({
+                    "name": name,
+                    "path": file_path,
+                    "line_count": line_count,
+                    "size": size_str,
+                    "type": "edit" if name == "edit_file" else "create"
+                })
+                
+            elif name in ("read_file", "read_multiple_files"):
+                # Try to extract file path from content preview
+                file_path = "Unknown"
+                content_preview = content[:150]
+                lines = content.split('\n')
+                if lines:
+                    first_line = lines[0]
+                    if first_line and not first_line.startswith('#'):
+                        file_path = first_line[:50]
+                
+                summary["file_reads"].append({
+                    "name": name,
+                    "path": file_path,
+                    "preview": content_preview
+                })
+                
+            elif name in ("run_command", "execute_command"):
+                # Extract command and output
+                cmd = "Unknown"
+                output = content[:200]
+                
+                # Try to parse command from content
+                if content:
+                    lines = content.split('\n')
+                    for line in lines[:5]:
+                        if line.startswith('$') or line.startswith('>'):
+                            cmd = line[1:].strip()
+                            break
+                
+                summary["commands"].append({
+                    "name": name,
+                    "command": cmd,
+                    "output": output
+                })
+                
+            else:
+                summary["other"].append({
+                    "name": name,
+                    "result": content[:100]
+                })
+        
+        return summary
     
     def _format_size(self, size_bytes: int) -> str:
         """Format file size in human readable format."""
@@ -2736,3 +3060,213 @@ REMEMBER: Every response should contain a TOOL CALL unless the task is truly com
                     self.file_generated.emit(str(file_path))
                 except Exception as e:
                     log.error(f"Failed to process/save workflow {key}: {e}")
+
+    # ============================================================================
+    # NEW: OpenCode Enhancement Integration
+    # ============================================================================
+    
+    def chat_with_enhancement(self, 
+                              user_message: Optional[str], 
+                              intent: IntentClassification,
+                              route: AgentRoute,
+                              tools: List[ToolScore],
+                              code_context: str = ""):
+        """
+        Process a message with intent classification, agent routing, and tool selection.
+        This method extends the standard chat() with enhancement data.
+        
+        Args:
+            user_message: The user's input message
+            intent: Classified intent from IntentClassifier
+            route: Selected agent route from AgentRouter
+            tools: Selected tools from ToolSelector
+            code_context: Optional code context
+        """
+        log.info("=" * 70)
+        log.info("[AI Agent] Processing with OpenCode Enhancement")
+        log.info(f"[AI Agent] Intent: {intent.primary_intent.value} (confidence: {intent.confidence:.2f})")
+        log.info(f"[AI Agent] Agent: {route.agent_type.value} (confidence: {route.confidence:.2f})")
+        log.info(f"[AI Agent] Tools: {[t.tool.name for t in tools]}")
+        log.info("=" * 70)
+        
+        # Build enhanced system prompt with intent and agent info
+        enhanced_context = self._build_enhanced_context(intent, route, tools)
+        
+        # Add enhancement info to code context
+        if code_context:
+            code_context = f"{enhanced_context}\n\n{code_context}"
+        else:
+            code_context = enhanced_context
+        
+        # Store last enhancement data for tool execution
+        self._last_intent = intent
+        self._last_route = route
+        self._last_tools = tools
+        
+        # Call standard chat with enhanced context
+        self.chat(user_message, code_context)
+    
+    def _build_enhanced_context(self, 
+                               intent: IntentClassification,
+                               route: AgentRoute,
+                               tools: List[ToolScore]) -> str:
+        """Build enhanced context string with intent, agent, and tool information."""
+        context_parts = []
+        
+        # Add intent information
+        context_parts.append(f"## DETECTED INTENT")
+        context_parts.append(f"Primary Intent: {intent.primary_intent.value}")
+        context_parts.append(f"Confidence: {intent.confidence:.0%}")
+        if intent.sub_intents:
+            context_parts.append(f"Sub-intents: {', '.join(s.value for s in intent.sub_intents)}")
+        context_parts.append(f"Complexity: {intent.complexity}")
+        context_parts.append(f"Requires Terminal: {intent.requires_terminal}")
+        context_parts.append(f"Requires Code Tools: {intent.requires_code_tools}")
+        
+        # Add agent information
+        context_parts.append(f"\n## SELECTED AGENT")
+        context_parts.append(f"Agent Type: {route.agent_type.value}")
+        context_parts.append(f"Confidence: {route.confidence:.0%}")
+        context_parts.append(f"Routing Reason: {route.routing_reason}")
+        if route.supporting_agents:
+            context_parts.append(f"Supporting Agents: {', '.join(a.value for a in route.supporting_agents)}")
+        
+        # Add tool information
+        context_parts.append(f"\n## SELECTED TOOLS")
+        for tool_score in tools:
+            tool = tool_score.tool
+            context_parts.append(f"- {tool.name} (score: {tool_score.score:.2f})")
+            context_parts.append(f"  Description: {tool.description}")
+            context_parts.append(f"  Category: {tool.category.value}")
+            context_parts.append(f"  Complexity: {tool_score.estimated_complexity}")
+            context_parts.append(f"  Reasoning: {tool_score.reasoning}")
+        
+        # Add guidance based on intent
+        context_parts.append(f"\n## CONTEXTUAL GUIDANCE")
+        
+        if intent.primary_intent.value == "terminal_command":
+            context_parts.append("The user is requesting a terminal/command operation. "
+                               "Use bash tool to execute commands. "
+                               "Explain what each command does before executing.")
+        
+        elif intent.primary_intent.value == "code_generation":
+            context_parts.append("The user wants code to be written or generated. "
+                               "Use read tool to check existing code, "
+                               "then use write or edit tools to create/modify files. "
+                               "Follow best practices and add comments.")
+        
+        elif intent.primary_intent.value == "debugging":
+            context_parts.append("The user needs help debugging an issue. "
+                               "Use grep to search for errors, "
+                               "read to examine relevant code, "
+                               "and explain the root cause before suggesting fixes.")
+        
+        elif intent.primary_intent.value == "research":
+            context_parts.append("The user is conducting research. "
+                               "Use websearch or webfetch to find information, "
+                               "then summarize findings with sources.")
+        
+        context_parts.append("\n## INSTRUCTIONS")
+        context_parts.append("Based on the detected intent and selected tools, "
+                           "proceed with the most appropriate action. "
+                           "Use the selected tools in the order that makes most sense for the task.")
+        
+        return "\n".join(context_parts)
+    
+    def get_last_enhancement_data(self) -> Dict[str, Any]:
+        """Get the last enhancement data for external access."""
+        return {
+            "intent": getattr(self, '_last_intent', None),
+            "route": getattr(self, '_last_route', None),
+            "tools": getattr(self, '_last_tools', [])
+        }
+    
+    def chat_with_testing(self, 
+                         user_message: Optional[str], 
+                         code_changes: List[Dict] = None,
+                         code_context: str = ""):
+        """
+        Process a message with AI-driven testing workflow.
+        
+        This method extends chat_with_enhancement to include:
+        1. Testing need detection
+        2. Test tool selection
+        3. Test plan creation
+        4. Test execution
+        
+        Args:
+            user_message: The user's input message
+            code_changes: List of code changes for testing analysis
+            code_context: Optional code context
+        """
+        from src.ai.testing import get_testing_decision_engine
+        from src.ai.integration import get_ai_integration_layer
+        
+        log.info("=" * 70)
+        log.info("[AI Agent] Processing with Testing Workflow")
+        log.info("=" * 70)
+        
+        # Get enhancement data if available
+        intent = getattr(self, '_last_intent', None)
+        route = getattr(self, '_last_route', None)
+        tools = getattr(self, '_last_tools', [])
+        
+        # Step 1: Analyze testing need
+        testing_engine = get_testing_decision_engine()
+        code_changes = code_changes or []
+        
+        testing_decision = testing_engine.should_write_tests(code_changes, user_message or "")
+        
+        log.info(f"[AI Agent] Testing decision: {testing_decision.decision}")
+        log.info(f"[AI Agent] Priority: {testing_decision.priority}")
+        log.info(f"[AI Agent] Trigger: {testing_decision.trigger}")
+        
+        # Step 2: Build enhanced context with testing info
+        enhanced_parts = []
+        
+        # Add existing enhancement context
+        if intent and route:
+            enhanced_parts.append(self._build_enhanced_context(intent, route, tools))
+        
+        # Add testing context
+        enhanced_parts.append("\n## TESTING WORKFLOW")
+        enhanced_parts.append(f"Testing Decision: {testing_decision.decision}")
+        enhanced_parts.append(f"Testing Priority: {testing_decision.priority}")
+        enhanced_parts.append(f"Testing Trigger: {testing_decision.trigger}")
+        enhanced_parts.append(f"Testing Scope: {testing_decision.scope}")
+        
+        if testing_decision.decision == 'write_tests':
+            enhanced_parts.append("\n### Testing Instructions")
+            enhanced_parts.append("The user has made code changes that require testing.")
+            enhanced_parts.append("Please:")
+            enhanced_parts.append("1. Review the code changes")
+            enhanced_parts.append("2. Identify what needs to be tested")
+            enhanced_parts.append("3. Suggest or create appropriate tests")
+            enhanced_parts.append("4. Run tests to verify the changes work correctly")
+            
+            # Add test tool info
+            integration = get_ai_integration_layer()
+            if hasattr(integration, '_workspace_path'):
+                test_tools = integration.get_test_tools_for_workspace()
+                if test_tools.get('primary'):
+                    enhanced_parts.append(f"\nPrimary Test Tool: {test_tools['primary'].name}")
+                    enhanced_parts.append(f"Test Command: {test_tools['primary'].command}")
+        
+        # Combine context
+        testing_context = "\n".join(enhanced_parts)
+        
+        # Add to code context
+        if code_context:
+            code_context = f"{testing_context}\n\n{code_context}"
+        else:
+            code_context = testing_context
+        
+        # Store testing decision
+        self._last_testing_decision = testing_decision
+        
+        # Call standard chat with enhanced context
+        self.chat(user_message, code_context)
+    
+    def get_last_testing_decision(self) -> Optional[Any]:
+        """Get the last testing decision for external access."""
+        return getattr(self, '_last_testing_decision', None)

@@ -1052,6 +1052,42 @@ document.addEventListener('DOMContentLoaded', function () {
     } else {
         console.error('[AutoGen] Banner or switch element not found!');
     }
+    
+    // Always Allow Toggle Handler
+    var alwaysAllowBtn = document.getElementById('always-allow-toggle');
+    if (alwaysAllowBtn) {
+        // Check saved state
+        var alwaysAllowEnabled = localStorage.getItem('cortex_always_allow') === 'true';
+        if (alwaysAllowEnabled) {
+            alwaysAllowBtn.classList.add('active');
+        }
+        
+        alwaysAllowBtn.onclick = function() {
+            var isActive = !alwaysAllowBtn.classList.contains('active');
+            alwaysAllowBtn.classList.toggle('active');
+            localStorage.setItem('cortex_always_allow', isActive);
+            
+            // Notify Python bridge
+            if (bridge && bridge.on_always_allow_changed) {
+                bridge.on_always_allow_changed(isActive);
+            }
+            
+            // Show toast
+            try {
+                if (typeof showToast === 'function') {
+                    showToast(
+                        isActive ? '✅ Auto-approval ENABLED' : '⚪ Auto-approval DISABLED',
+                        isActive ? 'success' : 'info',
+                        3000
+                    );
+                }
+            } catch (err) {
+                console.log('[AlwaysAllow] Toast error:', err);
+            }
+            
+            console.log('[AlwaysAllow] Mode toggled:', isActive ? 'ON' : 'OFF');
+        };
+    }
 
     var send = document.getElementById('sendBtn');
     if (send) send.onclick = sendMessage;
@@ -2329,6 +2365,140 @@ function showToolActivity(type, info, status) {
         }
     }
     
+    smartScroll(container);
+}
+
+// Professional Tool Execution Summary Display
+function showToolSummary(summaryData) {
+    console.log('[JS] showToolSummary called:', summaryData);
+    var container = document.getElementById('chatMessages');
+    if (!container || !summaryData) return;
+    
+    // Create or get the current assistant message
+    if (!currentAssistantMessage) {
+        currentAssistantMessage = document.createElement('div');
+        currentAssistantMessage.className = 'message-bubble assistant';
+        var ce = document.createElement('div');
+        ce.className = 'message-content';
+        currentAssistantMessage.appendChild(ce);
+        currentContent = "";
+        container.appendChild(currentAssistantMessage);
+        var es = document.getElementById('empty-state');
+        if (es) es.remove();
+    }
+    
+    // Create summary card container
+    var summaryCard = document.createElement('div');
+    summaryCard.className = 'tool-summary-card';
+    
+    // Calculate totals
+    var totalWrites = summaryData.file_writes ? summaryData.file_writes.length : 0;
+    var totalReads = summaryData.file_reads ? summaryData.file_reads.length : 0;
+    var totalCommands = summaryData.commands ? summaryData.commands.length : 0;
+    var totalErrors = summaryData.errors ? summaryData.errors.length : 0;
+    var totalOther = summaryData.other ? summaryData.other.length : 0;
+    var grandTotal = totalWrites + totalReads + totalCommands + totalErrors + totalOther;
+    
+    if (grandTotal === 0) return;
+    
+    // Build header
+    var headerHtml = '<div class="summary-header" onclick="this.parentElement.classList.toggle(\'collapsed\')">';
+    headerHtml += '<span class="summary-icon">📋</span>';
+    headerHtml += '<span class="summary-title">Tool Execution Summary</span>';
+    headerHtml += '<span class="summary-count">' + grandTotal + ' action' + (grandTotal > 1 ? 's' : '') + '</span>';
+    headerHtml += '<span class="summary-toggle">▾</span>';
+    headerHtml += '</div>';
+    
+    // Build content
+    var contentHtml = '<div class="summary-content">';
+    
+    // File writes section
+    if (totalWrites > 0) {
+        contentHtml += '<div class="summary-section">';
+        contentHtml += '<div class="section-header"><span class="section-icon">📁</span>Files Modified (' + totalWrites + ')</div>';
+        contentHtml += '<div class="section-items">';
+        summaryData.file_writes.forEach(function(item) {
+            var icon = item.type === 'edit' ? '✏️' : '✅';
+            var fileName = item.path.split('/').pop().split('\\').pop();
+            contentHtml += '<div class="summary-item">';
+            contentHtml += '<span class="item-icon">' + icon + '</span>';
+            contentHtml += '<span class="item-name" title="' + escapeHtml(item.path) + '">' + escapeHtml(fileName) + '</span>';
+            if (item.line_count > 0) {
+                contentHtml += '<span class="item-meta">' + item.line_count + ' lines</span>';
+            }
+            if (item.size) {
+                contentHtml += '<span class="item-meta">' + item.size + '</span>';
+            }
+            contentHtml += '</div>';
+        });
+        contentHtml += '</div></div>';
+    }
+    
+    // File reads section
+    if (totalReads > 0) {
+        contentHtml += '<div class="summary-section">';
+        contentHtml += '<div class="section-header"><span class="section-icon">📖</span>Files Read (' + totalReads + ')</div>';
+        contentHtml += '<div class="section-items">';
+        summaryData.file_reads.forEach(function(item) {
+            var fileName = item.path.split('/').pop().split('\\').pop();
+            contentHtml += '<div class="summary-item">';
+            contentHtml += '<span class="item-icon">👁</span>';
+            contentHtml += '<span class="item-name">' + escapeHtml(fileName) + '</span>';
+            contentHtml += '</div>';
+        });
+        contentHtml += '</div></div>';
+    }
+    
+    // Commands section
+    if (totalCommands > 0) {
+        contentHtml += '<div class="summary-section">';
+        contentHtml += '<div class="section-header"><span class="section-icon">⚙️</span>Commands (' + totalCommands + ')</div>';
+        contentHtml += '<div class="section-items">';
+        summaryData.commands.forEach(function(item) {
+            contentHtml += '<div class="summary-item">';
+            contentHtml += '<span class="item-icon">▶️</span>';
+            contentHtml += '<span class="item-name">' + escapeHtml(item.command || item.name) + '</span>';
+            contentHtml += '</div>';
+        });
+        contentHtml += '</div></div>';
+    }
+    
+    // Errors section
+    if (totalErrors > 0) {
+        contentHtml += '<div class="summary-section error">';
+        contentHtml += '<div class="section-header"><span class="section-icon">❌</span>Errors (' + totalErrors + ')</div>';
+        contentHtml += '<div class="section-items">';
+        summaryData.errors.forEach(function(item) {
+            contentHtml += '<div class="summary-item error">';
+            contentHtml += '<span class="item-icon">⚠️</span>';
+            contentHtml += '<span class="item-name">' + escapeHtml(item.name) + '</span>';
+            contentHtml += '<span class="item-error">' + escapeHtml(item.error.substring(0, 100)) + '</span>';
+            contentHtml += '</div>';
+        });
+        contentHtml += '</div></div>';
+    }
+    
+    // Other operations
+    if (totalOther > 0) {
+        contentHtml += '<div class="summary-section">';
+        contentHtml += '<div class="section-header"><span class="section-icon">🔧</span>Other (' + totalOther + ')</div>';
+        contentHtml += '<div class="section-items">';
+        summaryData.other.forEach(function(item) {
+            contentHtml += '<div class="summary-item">';
+            contentHtml += '<span class="item-icon">⚡</span>';
+            contentHtml += '<span class="item-name">' + escapeHtml(item.name) + '</span>';
+            contentHtml += '</div>';
+        });
+        contentHtml += '</div></div>';
+    }
+    
+    contentHtml += '</div>';
+    
+    // Assemble card
+    summaryCard.innerHTML = headerHtml + contentHtml;
+    
+    // Add to message
+    currentAssistantMessage.appendChild(summaryCard);
     smartScroll(container);
 }
 
@@ -4047,30 +4217,83 @@ document.addEventListener('DOMContentLoaded', function() {
 
         trigger.onclick = function(e) {
             e.stopPropagation();
-            menu.style.display = ''; // clear any inline override first
-            menu.classList.toggle('show');
+            e.preventDefault();
+            
+            // Close other dropdowns first
+            document.querySelectorAll('.dropdown-menu').forEach(function(m) {
+                if (m !== menu) {
+                    m.classList.remove('show');
+                    m.style.display = 'none';
+                }
+            });
+            
+            // Toggle show class
+            var isShowing = menu.classList.contains('show');
+            
+            // Hide menu if currently showing
+            if (isShowing) {
+                menu.classList.remove('show');
+                menu.style.display = 'none';
+                return;
+            }
+            
+            // Show menu if currently hidden - calculate position
+            var rect = trigger.getBoundingClientRect();
+            var menuWidth = 220; // min-width from CSS
+            var menuHeight = 300;
+            var margin = 10; // minimum margin from viewport edges
+            
+            // ALWAYS position ABOVE the trigger (UPWARD)
+            var bottomPosition = window.innerHeight - rect.top + 8;
+            
+            // Align LEFT edge of dropdown with LEFT edge of button
+            var left = rect.left;
+            
+            // Calculate boundaries to prevent overflow
+            var minLeft = margin;
+            var maxLeft = window.innerWidth - menuWidth - margin;
+            
+            // Clamp left position within viewport bounds
+            var clampedLeft = Math.max(minLeft, Math.min(left, maxLeft));
+            
+            // Set fixed position ABOVE (always upward)
+            menu.style.position = 'fixed';
+            menu.style.bottom = bottomPosition + 'px';
+            menu.style.top = 'auto';
+            menu.classList.add('position-top');
+            
+            menu.style.left = clampedLeft + 'px';
+            menu.style.transform = 'none'; // No centering transform needed
+            menu.style.zIndex = '100000';
+            menu.style.display = 'block';
+            menu.classList.add('show');
         };
 
-        items.forEach(function(item) {
-            item.onclick = function(e) {
-                e.stopPropagation();
-                var val = this.dataset.value;
-                items.forEach(function(i) { i.classList.remove('active'); });
-                this.classList.add('active');
-                
-                if (modeText) modeText.innerText = val;
-                
-                // Update trigger icon (SVG swap)
-                var svgWrap = trigger.querySelector('svg.mode-icon');
-                if (svgWrap) {
-                    if (val === 'Agent') svgWrap.innerHTML = '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 4c1.93 0 3.5 1.57 3.5 3.5S13.93 13 12 13s-3.5-1.57-3.5-3.5S10.07 6 12 6zm0 14c-2.03 0-4.43-.82-6.14-2.88C7.55 15.8 9.68 15 12 15s4.45.8 6.14 2.12C16.43 19.18 14.03 20 12 20z"/>';
-                    else if (val === 'Ask') svgWrap.innerHTML = '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>';
-                    else if (val === 'Plan') svgWrap.innerHTML = '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>';
-                }
+        // Use event delegation on menu instead of individual item listeners
+        menu.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var item = e.target.closest('.dropdown-item');
+            if (!item) return;
+            
+            var val = item.dataset.value;
+            items.forEach(function(i) { i.classList.remove('active'); });
+            item.classList.add('active');
+            
+            if (modeText) modeText.innerText = val;
+            
+            // Update trigger icon (SVG swap)
+            var svgWrap = trigger.querySelector('svg.mode-icon');
+            if (svgWrap) {
+                if (val === 'Agent') svgWrap.innerHTML = '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 4c1.93 0 3.5 1.57 3.5 3.5S13.93 13 12 13s-3.5-1.57-3.5-3.5S10.07 6 12 6zm0 14c-2.03 0-4.43-.82-6.14-2.88C7.55 15.8 9.68 15 12 15s4.45.8 6.14 2.12C16.43 19.18 14.03 20 12 20z"/>';
+                else if (val === 'Ask') svgWrap.innerHTML = '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>';
+                else if (val === 'Plan') svgWrap.innerHTML = '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>';
+            }
 
-                if (bridge) bridge.on_mode_changed(val);
-                menu.classList.remove('show'); // class only, no inline style
-            };
+            if (bridge) bridge.on_mode_changed(val);
+            
+            // IMMEDIATELY hide dropdown
+            menu.classList.remove('show');
+            menu.style.display = 'none';
         });
     }
 
@@ -4106,35 +4329,34 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             
             // Show menu if currently hidden
-            // Calculate position - place above the trigger button
+            // ALWAYS position ABOVE the trigger (UPWARD)
             var rect = modelTrigger.getBoundingClientRect();
             var menuWidth = 280; // min-width from CSS
             var menuHeight = 350;
             var margin = 10; // minimum margin from viewport edges
             
-            // Position above the trigger with some spacing
+            // Position ABOVE the trigger (always upward)
             var bottomPosition = window.innerHeight - rect.top + 8;
-            var left = rect.left + (rect.width / 2);
+            
+            // Align LEFT edge of dropdown with LEFT edge of button
+            var left = rect.left;
             
             // Calculate boundaries to prevent overflow
-            var halfMenuWidth = menuWidth / 2;
-            var minLeft = margin + halfMenuWidth;
-            var maxLeft = window.innerWidth - margin - halfMenuWidth;
+            var minLeft = margin;
+            var maxLeft = window.innerWidth - menuWidth - margin;
             
             // Clamp left position within viewport bounds
             var clampedLeft = Math.max(minLeft, Math.min(left, maxLeft));
             
-            // Adjust transform based on how much we had to shift
-            var transformOffset = -(left - clampedLeft);
-            var transform = 'translateX(calc(-50% + ' + transformOffset + 'px))';
-            
-            // Set fixed position anchored to bottom
+            // Set fixed position ABOVE (always upward)
             modelMenu.style.position = 'fixed';
             modelMenu.style.bottom = bottomPosition + 'px';
-            modelMenu.style.left = clampedLeft + 'px';
-            modelMenu.style.transform = transform;
-            modelMenu.style.zIndex = '9999';
             modelMenu.style.top = 'auto';
+            modelMenu.classList.add('position-top');
+            
+            modelMenu.style.left = clampedLeft + 'px';
+            modelMenu.style.transform = 'none'; // No centering transform
+            modelMenu.style.zIndex = '100000';
             modelMenu.style.display = 'block';
             modelMenu.classList.add('show');
         };
@@ -4228,6 +4450,7 @@ document.addEventListener('DOMContentLoaded', function() {
     window.showToolActivity = showToolActivity;
     window.updateToolActivity = updateToolActivity;
     window.clearToolActivity = clearToolActivity;
+    window.showToolSummary = showToolSummary;
     window.showThinking = showThinking;
     window.hideThinking = hideThinking;
     window.updateActivityHeader = updateActivityHeader;
@@ -4236,6 +4459,20 @@ document.addEventListener('DOMContentLoaded', function() {
     window.updateTodos = updateTodos;
     window.toggleTodoSection = toggleTodoSection;
     window.clearTodos = clearTodos;
+    
+    // Chat Title Update Function (Phase 4)
+    window.updateChatTitle = function(conversationId, title) {
+        // Update the chat title in the chat list/history
+        var chat = chats.find(function(c) { return c.id === conversationId; });
+        if (chat) {
+            chat.title = title;
+            // Update the history list UI
+            renderHistoryList();
+            // Also update the page title
+            document.title = title ? 'Cortex - ' + title : 'Cortex AI Chat';
+            console.log('[CHAT] Title updated:', title);
+        }
+    };
     
     window.setTheme = function (isDark) {
         // Preserve the 'loaded' class when changing theme
@@ -6116,33 +6353,95 @@ window.showQuestionCard = function(info) {
     var container = document.getElementById('chatMessages');
     if (!container) return;
 
-    // Use Template for permissions if available (Planned UI support)
+    // Use Template for permissions if available (Cursor IDE Style)
     if (info.type === 'permission') {
         var template = document.getElementById('permission-card-template');
         if (template) {
             var card = template.content.cloneNode(true).querySelector('.permission-card');
             card.id = 'interaction-' + info.id;
             
-            var titleEl = card.querySelector('.permission-tool-name');
-            if (titleEl) titleEl.textContent = info.tool_name || 'Action Request';
+            // Set tool name with icon
+            var titleEl = card.querySelector('.tool-badge-name');
+            if (titleEl) {
+                var toolName = info.tool_name || 'Action Request';
+                var toolIcon = '🔧';
+                if (toolName.includes('write') || toolName.includes('edit')) toolIcon = '📝';
+                else if (toolName.includes('read')) toolIcon = '📖';
+                else if (toolName.includes('bash') || toolName.includes('command')) toolIcon = '⌨️';
+                else if (toolName.includes('delete')) toolIcon = '🗑️';
+                
+                var iconEl = card.querySelector('.tool-badge-icon');
+                if (iconEl) iconEl.textContent = toolIcon;
+                titleEl.textContent = toolName;
+            }
             
-            var detailsEl = card.querySelector('.permission-card-details');
-            if (detailsEl) detailsEl.innerHTML = info.details || '';
+            // Set details content
+            var detailsEl = card.querySelector('.details-content');
+            if (detailsEl) detailsEl.innerHTML = info.details || '<span style="color: #6b7280;">No additional details</span>';
             
-            var approveBtn = card.querySelector('.permission-btn-approve');
-            if (approveBtn) approveBtn.onclick = function() { 
-                var checkbox = card.querySelector('.permission-remember-checkbox');
-                var answer = (checkbox && checkbox.checked) ? 'always' : 'allow';
-                submitInteractionAnswer(info.id, answer); 
-            };
+            // Handle Allow button
+            var allowBtn = card.querySelector('.permission-btn-allow');
+            if (allowBtn) {
+                allowBtn.onclick = function() { 
+                    console.log('[PERMISSION] Allow clicked for', info.id);
+                    var scope = card._selectedScope || 'session';
+                    submitInteractionAnswer(info.id, 'allow', scope); 
+                };
+            }
             
+            // Handle Deny button
             var denyBtn = card.querySelector('.permission-btn-deny');
-            if (denyBtn) denyBtn.onclick = function() { submitInteractionAnswer(info.id, 'deny'); };
+            if (denyBtn) {
+                denyBtn.onclick = function() { 
+                    console.log('[PERMISSION] Deny clicked for', info.id);
+                    submitInteractionAnswer(info.id, 'deny'); 
+                };
+            }
+            
+            // Handle Always button
+            var alwaysBtn = card.querySelector('.permission-btn-always');
+            if (alwaysBtn) {
+                alwaysBtn.onclick = function() { 
+                    console.log('[PERMISSION] Always clicked for', info.id);
+                    // Check the remember checkbox automatically when clicking Always
+                    var checkbox = card.querySelector('.permission-remember-checkbox');
+                    if (checkbox) checkbox.checked = true;
+                    submitInteractionAnswer(info.id, 'always', 'global'); 
+                };
+            }
+            
+            // Handle scope buttons
+            var scopeButtons = card.querySelectorAll('.scope-btn');
+            scopeButtons.forEach(function(btn) {
+                btn.onclick = function() {
+                    var scope = this.dataset.scope;
+                    console.log('[PERMISSION] Scope selected:', scope);
+                    card._selectedScope = scope;
+                    // Update UI
+                    scopeButtons.forEach(function(b) { b.classList.remove('active'); });
+                    this.classList.add('active');
+                };
+            });
+            // Set default scope
+            card._selectedScope = 'session';
+            
+            // Handle Remember toggle - sync with localStorage
+            var rememberCheckbox = card.querySelector('.permission-remember-checkbox');
+            if (rememberCheckbox) {
+                // Check if we should remember by default for this session
+                var rememberEnabled = localStorage.getItem('cortex_permission_remember') === 'true';
+                rememberCheckbox.checked = rememberEnabled;
+                
+                rememberCheckbox.onchange = function() {
+                    localStorage.setItem('cortex_permission_remember', this.checked);
+                    console.log('[CHAT] Permission remember setting:', this.checked);
+                };
+            }
             
             container.appendChild(card);
             setTimeout(function() {
                 container.scrollTop = container.scrollHeight;
-                console.log('[CHAT] Template permission card appended and scrolled');
+                console.log('[CHAT] Professional permission card appended');
             }, 50);
             return;
         }
@@ -6213,35 +6512,60 @@ window.showQuestionCard = function(info) {
 
 /**
  * Submits the answer back to the Python AIAgent.
+ * @param {string} id - The interaction/permission ID
+ * @param {string} answer - The answer (allow, deny, always, yes, no)
+ * @param {string} scope - Optional scope (session, workspace, global)
  */
-window.submitInteractionAnswer = function(id, answer) {
-    console.log('[CHAT] Submitting interaction answer:', id, answer);
+window.submitInteractionAnswer = function(id, answer, scope) {
+    scope = scope || 'session';
+    console.log('[CHAT] Submitting interaction answer:', id, answer, 'scope:', scope);
     var card = document.getElementById('interaction-' + id);
     if (card) {
         card.classList.add('answered');
-        var answeredContainer = card.querySelector('.interaction-answered') || card.querySelector('.permission-card-body') || card;
         
         if (card.classList.contains('permission-card')) {
-            // Special handling for template card
+            // Professional card handling
             var actions = card.querySelector('.permission-card-actions');
             var remember = card.querySelector('.permission-card-remember');
+            var details = card.querySelector('.permission-card-details');
+            
             if (actions) actions.style.display = 'none';
             if (remember) remember.style.display = 'none';
             
+            // Create compact status indicator
+            var isApproved = answer === 'allow' || answer === 'always' || answer === 'yes';
+            var statusText = isApproved ? (answer === 'always' ? '✓ Always' : '✓ Allowed') : '✗ Denied';
+            var statusColor = isApproved ? '#22c55e' : '#ef4444';
+            
             var statusDiv = document.createElement('div');
-            statusDiv.className = 'interaction-answered';
-            statusDiv.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>' +
-                                 ' Decision: ' + answer.toUpperCase();
-            answeredContainer.appendChild(statusDiv);
+            statusDiv.className = 'permission-status';
+            statusDiv.style.cssText = 'text-align: center; padding: 8px; color: ' + statusColor + '; font-size: 12px; font-weight: 500;';
+            statusDiv.textContent = statusText;
+            
+            var body = card.querySelector('.permission-card-body');
+            if (body) body.appendChild(statusDiv);
+            
+            // Store approval in localStorage if "always"
+            if (answer === 'always') {
+                localStorage.setItem('cortex_permission_always_' + id, 'true');
+                console.log('[CHAT] Permission set to always for:', id);
+            }
         } else {
+            // Standard card handling
+            var answeredContainer = card.querySelector('.interaction-answered') || card;
             card.innerHTML = '<div class="interaction-answered">' +
                              '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>' +
                              ' Answered: ' + answer + '</div>';
         }
     }
-
+    
     if (window.bridge && typeof window.bridge.on_answer_question === 'function') {
-        window.bridge.on_answer_question(id, answer);
+        // Include scope in the answer for permission requests
+        var answerWithScope = answer;
+        if (scope && scope !== 'session') {
+            answerWithScope = answer + ':' + scope;
+        }
+        window.bridge.on_answer_question(id, answerWithScope);
     } else {
         console.error('[CHAT] Bridge not ready to send interaction answer');
     }
@@ -6260,3 +6584,1172 @@ window.submitInteractionByInput = function(id) {
     if (!answer) answer = ""; // Ensure not null
     window.submitInteractionAnswer(id, answer);
 };
+
+// ============================================================================
+// OpenCode Enhancement - Permission Card Support
+// ============================================================================
+
+/**
+ * Global storage for permission scopes
+ */
+window.permissionScopes = {};
+
+/**
+ * Display a permission card in the chat
+ * @param {string} requestId - The permission request ID
+ * @param {string} html - The HTML content of the permission card
+ */
+window.showPermissionCard = function(requestId, html) {
+    console.log('[Permission] Showing permission card:', requestId);
+    
+    // Create message container
+    var messageDiv = document.createElement('div');
+    messageDiv.className = 'message permission-message';
+    messageDiv.id = 'perm-message-' + requestId;
+    
+    // Create bubble
+    var bubble = document.createElement('div');
+    bubble.className = 'message-bubble permission';
+    bubble.innerHTML = html;
+    
+    messageDiv.appendChild(bubble);
+    
+    // Add to chat
+    var chatContainer = document.getElementById('chatMessages');
+    if (chatContainer) {
+        chatContainer.appendChild(messageDiv);
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
+    
+    // Initialize scope storage
+    window.permissionScopes[requestId] = 'session';
+    
+    // Setup scope button handlers
+    // Setup permission card immediately - no delay
+    var card = document.getElementById('perm-card-' + requestId) || messageDiv.querySelector('.permission-card');
+    if (card) {
+        card.id = 'perm-card-' + requestId;
+        
+        // Use event delegation for better performance
+        card.addEventListener('click', function(e) {
+            // Find closest button element (handles clicks on child elements)
+            var target = e.target.closest('.scope-btn');
+            if (target) {
+                var selectedScope = target.dataset.scope;
+                window.selectScope(requestId, selectedScope);
+                return;
+            }
+            
+            // Handle action button clicks - check allow FIRST before deny/always
+            target = e.target.closest('.permission-btn-allow');
+            if (target) {
+                console.log('ALLOW BUTTON CLICKED!');
+                var scope = window.permissionScopes[requestId] || 'session';
+                window.grantPermission(requestId);
+                return;
+            }
+            
+            target = e.target.closest('.permission-btn-deny');
+            if (target) {
+                window.denyPermission(requestId);
+                return;
+            }
+            
+            target = e.target.closest('.permission-btn-always');
+            if (target) {
+                window.permissionScopes[requestId] = 'global';
+                var rememberCheck = card.querySelector('.permission-remember-checkbox');
+                if (rememberCheck) rememberCheck.checked = true;
+                window.grantPermission(requestId);
+                return;
+            }
+            
+            // Handle remember toggle click
+            target = e.target.closest('.remember-toggle') || e.target.closest('.remember-label');
+            if (target) {
+                var rememberCheck = card.querySelector('.permission-remember-checkbox');
+                if (rememberCheck) {
+                    rememberCheck.checked = !rememberCheck.checked;
+                }
+                return;
+            }
+        });
+    }
+};
+
+/**
+ * Select permission scope (Session/Workspace/Global)
+ * @param {string} requestId - The permission request ID
+ * @param {string} scope - The selected scope
+ */
+window.selectScope = function(requestId, scope) {
+    console.log('[Permission] Selected scope:', scope, 'for request:', requestId);
+    
+    // Store selection
+    window.permissionScopes[requestId] = scope;
+    
+    // Update UI
+    var card = document.getElementById('perm-card-' + requestId);
+    if (card) {
+        var buttons = card.querySelectorAll('.scope-btn');
+        buttons.forEach(function(btn) {
+            btn.classList.remove('active');
+            if (btn.dataset.scope === scope) {
+                btn.classList.add('active');
+            }
+        });
+    }
+};
+
+/**
+ * Grant permission
+ * @param {string} requestId - The permission request ID
+ */
+window.grantPermission = function(requestId) {
+    console.log('[Permission] Granting permission:', requestId);
+    
+    var scope = window.permissionScopes[requestId] || 'session';
+    
+    // Send to Python
+    if (window.bridge && typeof window.bridge.on_permission_card_response === 'function') {
+        window.bridge.on_permission_card_response(requestId, true, scope);
+    }
+    
+    // Update UI
+    window.disablePermissionCard(requestId, 'Granted ✓');
+};
+
+/**
+ * Grant limited permission (read-only)
+ * @param {string} requestId - The permission request ID
+ */
+window.grantLimited = function(requestId) {
+    console.log('[Permission] Granting limited permission:', requestId);
+    
+    // Send to Python with limited scope
+    if (window.bridge && typeof window.bridge.on_permission_card_response === 'function') {
+        window.bridge.on_permission_card_response(requestId, true, 'limited');
+    }
+    
+    // Update UI
+    window.disablePermissionCard(requestId, 'Limited Access ✓');
+};
+
+/**
+ * Deny permission
+ * @param {string} requestId - The permission request ID
+ */
+window.denyPermission = function(requestId) {
+    console.log('[Permission] Denying permission:', requestId);
+    
+    // Send to Python
+    if (window.bridge && typeof window.bridge.on_permission_card_response === 'function') {
+        window.bridge.on_permission_card_response(requestId, false, 'denied');
+    }
+    
+    // Update UI
+    window.disablePermissionCard(requestId, 'Denied ✗');
+};
+
+/**
+ * Disable permission card after response
+ * @param {string} requestId - The permission request ID
+ * @param {string} statusText - Status text to display
+ */
+window.disablePermissionCard = function(requestId, statusText) {
+    var card = document.getElementById('perm-card-' + requestId);
+    if (card) {
+        // Disable all buttons
+        var buttons = card.querySelectorAll('button');
+        buttons.forEach(function(btn) {
+            btn.disabled = true;
+            btn.style.opacity = '0.5';
+        });
+        
+        // Add status indicator
+        var statusDiv = document.createElement('div');
+        statusDiv.className = 'permission-status';
+        statusDiv.textContent = statusText;
+        statusDiv.style.cssText = 'text-align: center; padding: 8px; margin-top: 8px; font-weight: bold;';
+        
+        if (statusText.includes('Granted')) {
+            statusDiv.style.color = '#10b981';
+        } else if (statusText.includes('Denied')) {
+            statusDiv.style.color = '#ef4444';
+        }
+        
+        card.appendChild(statusDiv);
+        
+        // Fade the card
+        card.style.opacity = '0.7';
+    }
+};
+
+/**
+ * Create a tool execution card
+ * @param {string} toolName - Name of the tool
+ * @param {Object} params - Tool parameters
+ * @param {string} status - Tool status (pending, executing, completed, failed)
+ */
+window.createToolCard = function(toolName, params, status) {
+    var cardId = 'tool-' + Date.now();
+    
+    var card = document.createElement('div');
+    card.className = 'tool-card';
+    card.id = cardId;
+    
+    var statusClass = status || 'pending';
+    var statusText = status ? status.charAt(0).toUpperCase() + status.slice(1) : 'Pending';
+    
+    card.innerHTML = `
+        <div class="tool-header">
+            <span class="tool-icon">🔧</span>
+            <span class="tool-name">${toolName}</span>
+            <span class="tool-status ${statusClass}">${statusText}</span>
+        </div>
+        <div class="tool-progress">
+            <div class="tool-progress-bar" style="width: ${status === 'completed' ? '100%' : '0%'}"></div>
+        </div>
+        <div class="tool-params">${JSON.stringify(params, null, 2)}</div>
+    `;
+    
+    return { card: card, id: cardId };
+};
+
+/**
+ * Update tool card status
+ * @param {string} cardId - The tool card ID
+ * @param {string} status - New status
+ * @param {string} result - Optional result text
+ */
+window.updateToolCard = function(cardId, status, result) {
+    var card = document.getElementById(cardId);
+    if (!card) return;
+    
+    var statusEl = card.querySelector('.tool-status');
+    var progressBar = card.querySelector('.tool-progress-bar');
+    
+    if (statusEl) {
+        statusEl.className = 'tool-status ' + status;
+        statusEl.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+    }
+    
+    if (progressBar) {
+        progressBar.style.width = status === 'completed' ? '100%' : 
+                                  status === 'failed' ? '0%' : '50%';
+    }
+    
+    if (result) {
+        var resultDiv = document.createElement('div');
+        resultDiv.className = 'tool-result ' + (status === 'failed' ? 'error' : 'success');
+        resultDiv.textContent = result;
+        card.appendChild(resultDiv);
+    }
+};
+
+// ============================================================================
+// OpenCode Enhancement - Quick Actions
+// ============================================================================
+
+/**
+ * Initialize quick action buttons
+ */
+window.initQuickActions = function() {
+    var container = document.getElementById('quickActions');
+    if (!container) return;
+    
+    var actions = [
+        { id: 'explain', icon: '📖', label: 'Explain Code' },
+        { id: 'fix', icon: '🔧', label: 'Fix Issues' },
+        { id: 'optimize', icon: '⚡', label: 'Optimize' },
+        { id: 'test', icon: '🧪', label: 'Generate Tests' },
+        { id: 'document', icon: '📝', label: 'Add Docs' }
+    ];
+    
+    actions.forEach(function(action) {
+        var btn = document.createElement('button');
+        btn.className = 'quick-action-btn';
+        btn.innerHTML = `<span>${action.icon}</span> ${action.label}`;
+        btn.onclick = function() {
+            window.handleQuickAction(action.id);
+        };
+        container.appendChild(btn);
+    });
+};
+
+/**
+ * Handle quick action button click
+ * @param {string} actionId - The action ID
+ */
+window.handleQuickAction = function(actionId) {
+    var prompts = {
+        'explain': 'Explain this code to me:',
+        'fix': 'Fix any issues in this code:',
+        'optimize': 'Optimize this code for better performance:',
+        'test': 'Generate unit tests for this code:',
+        'document': 'Add documentation to this code:'
+    };
+    
+    var input = document.getElementById('messageInput');
+    if (input) {
+        input.value = prompts[actionId] || '';
+        input.focus();
+    }
+};
+
+// Initialize quick actions when DOM is ready
+document.addEventListener('DOMContentLoaded', function() {
+    window.initQuickActions();
+});
+
+// ── TESTING WORKFLOW UI SUPPORT ─────────────────────────────────────
+
+/**
+ * Shows a testing status card in the chat.
+ * @param {Object} info - {decision, priority, trigger, scope, tools}
+ */
+function showTestingCard(info) {
+    console.log('[TESTING] Showing card:', info);
+    
+    var chatMessages = document.getElementById('chatMessages');
+    if (!chatMessages) {
+        console.error('[TESTING] Chat messages container not found!');
+        return;
+    }
+    
+    // Create testing card
+    var card = document.createElement('div');
+    card.className = 'testing-card';
+    card.id = 'testing-card-' + Date.now();
+    
+    var priorityColor = {
+        'high': '#ef4444',
+        'medium': '#f59e0b',
+        'low': '#10b981'
+    }[info.priority] || '#6b7280';
+    
+    card.innerHTML = `
+        <div class="testing-card-header">
+            <span class="testing-icon">🧪</span>
+            <span class="testing-title">Testing Mode</span>
+            <span class="testing-priority" style="background: ${priorityColor}20; color: ${priorityColor};">
+                ${info.priority?.toUpperCase() || 'MEDIUM'}
+            </span>
+        </div>
+        <div class="testing-card-body">
+            <div class="testing-info">
+                <div><strong>Decision:</strong> ${info.decision === 'write_tests' ? 'Write Tests' : info.decision}</div>
+                <div><strong>Trigger:</strong> ${info.trigger || 'Unknown'}</div>
+                <div><strong>Scope:</strong> ${info.scope || 'Basic'}</div>
+            </div>
+            ${info.tools ? `
+            <div class="testing-tools">
+                <strong>Test Tools:</strong>
+                <div class="tool-tags">
+                    ${info.tools.map(tool => `<span class="tool-tag">${tool}</span>`).join('')}
+                </div>
+            </div>
+            ` : ''}
+        </div>
+    `;
+    
+    chatMessages.appendChild(card);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+/**
+ * Shows test results in the chat.
+ * @param {Object} results - {all_passed, passed_count, failed_count, failures}
+ */
+function showTestResults(results) {
+    console.log('[TESTING] Showing results:', results);
+    
+    var chatMessages = document.getElementById('chatMessages');
+    if (!chatMessages) {
+        console.error('[TESTING] Chat messages container not found!');
+        return;
+    }
+    
+    var statusIcon = results.all_passed ? '✅' : '⚠️';
+    var statusColor = results.all_passed ? '#10b981' : '#f59e0b';
+    var statusText = results.all_passed ? 'All Tests Passed!' : 'Tests Completed';
+    
+    var card = document.createElement('div');
+    card.className = 'test-results-card';
+    card.style.cssText = `
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid ${statusColor}40;
+        border-radius: 8px;
+        padding: 12px;
+        margin: 8px 0;
+    `;
+    
+    card.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+            <span style="font-size: 20px;">${statusIcon}</span>
+            <span style="font-weight: 600; color: ${statusColor};">${statusText}</span>
+        </div>
+        <div style="display: flex; gap: 16px; font-size: 13px;">
+            <span style="color: #10b981;">✓ ${results.passed_count || 0} passed</span>
+            ${results.failed_count > 0 ? `<span style="color: #ef4444;">✗ ${results.failed_count} failed</span>` : ''}
+        </div>
+        ${results.failures && results.failures.length > 0 ? `
+        <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.1);">
+            <div style="font-size: 12px; color: #888; margin-bottom: 4px;">Failures:</div>
+            ${results.failures.slice(0, 3).map(f => `
+                <div style="font-size: 12px; color: #ef4444; margin: 2px 0;">
+                    • ${f.name}${f.error ? `: ${f.error.substring(0, 50)}...` : ''}
+                </div>
+            `).join('')}
+            ${results.failures.length > 3 ? `<div style="font-size: 11px; color: #666;">... and ${results.failures.length - 3} more</div>` : ''}
+        </div>
+        ` : ''}
+    `;
+    
+    chatMessages.appendChild(card);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+// Expose to Python bridge
+window.showTestingCard = showTestingCard;
+window.showTestResults = showTestResults;
+
+// ============================================================================
+// CODE COMPLETION SYSTEM - OpenCode Style Integration
+// ============================================================================
+
+/**
+ * Code Completion State
+ */
+window.codeCompletionState = {
+    isVisible: false,
+    completions: [],
+    selectedIndex: 0,
+    currentRequestId: null,
+    debounceTimer: null
+};
+
+/**
+ * Show code completion popup with suggestions
+ * @param {Array} completions - Array of completion objects
+ * @param {string} requestId - Unique request ID
+ */
+window.showCodeCompletionPopup = function(completions, requestId) {
+    console.log('[CodeCompletion] Showing popup with', completions.length, 'suggestions');
+    
+    var popup = document.getElementById('code-completion-popup');
+    var list = document.getElementById('completion-list');
+    var counter = document.getElementById('completion-counter');
+    var preview = document.getElementById('completion-preview');
+    var actions = document.getElementById('completion-actions');
+    
+    if (!popup || !list) {
+        console.error('[CodeCompletion] Popup elements not found');
+        return;
+    }
+    
+    // Store state
+    window.codeCompletionState.completions = completions;
+    window.codeCompletionState.selectedIndex = 0;
+    window.codeCompletionState.currentRequestId = requestId;
+    window.codeCompletionState.isVisible = true;
+    
+    // Update counter
+    counter.textContent = completions.length + ' suggestion' + (completions.length !== 1 ? 's' : '');
+    
+    // Render completion items
+    list.innerHTML = '';
+    completions.forEach(function(completion, index) {
+        var item = createCompletionItem(completion, index);
+        list.appendChild(item);
+    });
+    
+    // Show first preview
+    if (completions.length > 0) {
+        showCompletionPreview(completions[0]);
+        preview.style.display = 'block';
+        actions.style.display = 'flex';
+    }
+    
+    // Position popup
+    positionCompletionPopup();
+    
+    // Show popup
+    popup.classList.add('visible');
+    
+    // Select first item
+    updateCompletionSelection(0);
+};
+
+/**
+ * Create a completion item element
+ */
+function createCompletionItem(completion, index) {
+    var item = document.createElement('div');
+    item.className = 'completion-item';
+    item.dataset.index = index;
+    
+    // Determine icon based on strategy
+    var icon = '💡';
+    var typeClass = '';
+    if (completion.strategy === 'pattern') {
+        icon = '🔧';
+        typeClass = 'pattern';
+    } else if (completion.strategy === 'ai') {
+        icon = '🤖';
+        typeClass = 'ai';
+    } else if (completion.strategy === 'syntax') {
+        icon = '⚡';
+        typeClass = 'syntax';
+    } else if (completion.strategy === 'template') {
+        icon = '📋';
+        typeClass = 'template';
+    }
+    
+    item.classList.add(typeClass);
+    
+    // Confidence color
+    var confidenceClass = completion.confidence >= 0.8 ? '' : 'low';
+    
+    item.innerHTML = `
+        <div class="completion-icon">${icon}</div>
+        <div class="completion-content">
+            <div class="completion-label">${escapeHtml(completion.label || 'Completion')}</div>
+            <div class="completion-description">${escapeHtml(completion.description || '')}</div>
+        </div>
+        <div class="completion-confidence ${confidenceClass}">
+            ${Math.round((completion.confidence || 0) * 100)}%
+        </div>
+    `;
+    
+    // Click handler
+    item.addEventListener('click', function() {
+        selectCompletion(index);
+    });
+    
+    return item;
+}
+
+/**
+ * Show completion preview
+ */
+function showCompletionPreview(completion) {
+    var preview = document.getElementById('completion-preview');
+    if (!preview || !completion.preview) return;
+    
+    preview.textContent = completion.preview;
+}
+
+/**
+ * Update selected completion
+ */
+function updateCompletionSelection(index) {
+    var items = document.querySelectorAll('.completion-item');
+    
+    items.forEach(function(item, i) {
+        item.classList.toggle('selected', i === index);
+    });
+    
+    window.codeCompletionState.selectedIndex = index;
+    
+    // Update preview
+    if (window.codeCompletionState.completions[index]) {
+        showCompletionPreview(window.codeCompletionState.completions[index]);
+    }
+    
+    // Scroll into view
+    var selectedItem = items[index];
+    if (selectedItem) {
+        selectedItem.scrollIntoView({ block: 'nearest' });
+    }
+}
+
+/**
+ * Select a completion by index
+ */
+function selectCompletion(index) {
+    updateCompletionSelection(index);
+    
+    var completion = window.codeCompletionState.completions[index];
+    if (completion && window.bridge) {
+        window.bridge.on_code_completion_selected({
+            requestId: window.codeCompletionState.currentRequestId,
+            index: index,
+            completion: completion
+        });
+    }
+}
+
+/**
+ * Accept the currently selected completion
+ */
+window.acceptCodeCompletion = function() {
+    if (!window.codeCompletionState.isVisible) return;
+    
+    var index = window.codeCompletionState.selectedIndex;
+    selectCompletion(index);
+    hideCodeCompletionPopup();
+};
+
+/**
+ * Dismiss the completion popup
+ */
+window.dismissCodeCompletion = function() {
+    hideCodeCompletionPopup();
+    
+    if (window.bridge && window.codeCompletionState.currentRequestId) {
+        window.bridge.on_code_completion_dismissed({
+            requestId: window.codeCompletionState.currentRequestId
+        });
+    }
+};
+
+/**
+ * Hide completion popup
+ */
+function hideCodeCompletionPopup() {
+    var popup = document.getElementById('code-completion-popup');
+    if (popup) {
+        popup.classList.remove('visible');
+    }
+    
+    window.codeCompletionState.isVisible = false;
+    window.codeCompletionState.completions = [];
+}
+
+/**
+ * Position completion popup near cursor
+ */
+function positionCompletionPopup() {
+    var popup = document.getElementById('code-completion-popup');
+    var input = document.getElementById('chatInput');
+    
+    if (!popup || !input) return;
+    
+    // Get input position
+    var rect = input.getBoundingClientRect();
+    
+    // Position above input
+    popup.style.left = rect.left + 'px';
+    popup.style.top = (rect.top - popup.offsetHeight - 10) + 'px';
+    popup.style.width = Math.min(500, rect.width) + 'px';
+}
+
+/**
+ * Show code completion card in chat
+ */
+window.showCodeCompletionCard = function(completionData) {
+    console.log('[CodeCompletion] Showing card:', completionData);
+    
+    var template = document.getElementById('code-completion-card-template');
+    var container = document.getElementById('chatMessages');
+    
+    if (!template || !container) {
+        console.error('[CodeCompletion] Template or container not found');
+        return;
+    }
+    
+    var card = template.content.cloneNode(true).querySelector('.code-completion-card');
+    card.id = 'completion-card-' + completionData.requestId;
+    
+    // Set confidence badge
+    var badge = card.querySelector('#completion-confidence-badge');
+    if (badge) {
+        badge.textContent = Math.round((completionData.confidence || 0.9) * 100) + '% confidence';
+    }
+    
+    // Set explanation
+    var explanation = card.querySelector('#completion-explanation');
+    if (explanation) {
+        explanation.textContent = completionData.explanation || 'Code completion available';
+    }
+    
+    // Set diff content
+    var diffContent = card.querySelector('#completion-diff-content');
+    if (diffContent && completionData.diff) {
+        diffContent.innerHTML = renderCompletionDiff(completionData.diff);
+    }
+    
+    // Setup buttons
+    var acceptBtn = card.querySelector('#card-accept-completion');
+    var dismissBtn = card.querySelector('#card-dismiss-completion');
+    
+    if (acceptBtn) {
+        acceptBtn.onclick = function() {
+            if (window.bridge) {
+                window.bridge.on_code_completion_accepted({
+                    requestId: completionData.requestId,
+                    completedCode: completionData.completedCode
+                });
+            }
+            card.remove();
+        };
+    }
+    
+    if (dismissBtn) {
+        dismissBtn.onclick = function() {
+            card.remove();
+        };
+    }
+    
+    container.appendChild(card);
+    container.scrollTop = container.scrollHeight;
+};
+
+/**
+ * Render completion diff
+ */
+function renderCompletionDiff(diff) {
+    if (!diff || !diff.lines) return '';
+    
+    return diff.lines.map(function(line) {
+        var className = '';
+        var prefix = ' ';
+        
+        if (line.type === 'added') {
+            className = 'added';
+            prefix = '+';
+        } else if (line.type === 'removed') {
+            className = 'removed';
+            prefix = '-';
+        }
+        
+        return `
+            <div class="diff-line ${className}">
+                <span class="diff-line-num">${prefix}</span>
+                <span>${escapeHtml(line.content)}</span>
+            </div>
+        `;
+    }).join('');
+}
+
+/**
+ * Show completion indicator (loading state)
+ */
+window.showCompletionIndicator = function() {
+    var indicator = document.getElementById('completion-indicator');
+    if (indicator) {
+        indicator.classList.add('visible');
+    }
+};
+
+/**
+ * Hide completion indicator
+ */
+window.hideCompletionIndicator = function() {
+    var indicator = document.getElementById('completion-indicator');
+    if (indicator) {
+        indicator.classList.remove('visible');
+    }
+};
+
+/**
+ * Request code completion from Python
+ */
+window.requestCodeCompletion = function(code, language) {
+    console.log('[CodeCompletion] Requesting completion for', language);
+    
+    if (window.bridge && typeof window.bridge.on_request_code_completion === 'function') {
+        window.showCompletionIndicator();
+        
+        window.bridge.on_request_code_completion({
+            code: code,
+            language: language || 'python',
+            cursorPosition: getInputCursorPosition(),
+            timestamp: Date.now()
+        });
+    }
+};
+
+/**
+ * Get cursor position in input
+ */
+function getInputCursorPosition() {
+    var input = document.getElementById('chatInput');
+    return input ? input.selectionStart : 0;
+}
+
+/**
+ * Escape HTML special characters
+ */
+function escapeHtml(text) {
+    if (!text) return '';
+    var div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+/**
+ * Setup keyboard shortcuts for code completion
+ */
+function setupCompletionKeyboardShortcuts() {
+    document.addEventListener('keydown', function(e) {
+        // Ctrl+Space or Cmd+Space to trigger completion
+        if ((e.ctrlKey || e.metaKey) && e.code === 'Space') {
+            e.preventDefault();
+            var input = document.getElementById('chatInput');
+            if (input) {
+                window.requestCodeCompletion(input.value, 'python');
+            }
+            return;
+        }
+        
+        // Handle completion popup navigation
+        if (window.codeCompletionState.isVisible) {
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                var nextIndex = (window.codeCompletionState.selectedIndex + 1) % window.codeCompletionState.completions.length;
+                updateCompletionSelection(nextIndex);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                var prevIndex = window.codeCompletionState.selectedIndex - 1;
+                if (prevIndex < 0) prevIndex = window.codeCompletionState.completions.length - 1;
+                updateCompletionSelection(prevIndex);
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                window.acceptCodeCompletion();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                window.dismissCodeCompletion();
+            }
+        }
+    });
+}
+
+/**
+ * Setup real-time completion
+ */
+function setupRealTimeCompletion() {
+    var input = document.getElementById('chatInput');
+    if (!input) return;
+    
+    input.addEventListener('input', function(e) {
+        // Clear existing timer
+        if (window.codeCompletionState.debounceTimer) {
+            clearTimeout(window.codeCompletionState.debounceTimer);
+        }
+        
+        // Debounce completion requests
+        window.codeCompletionState.debounceTimer = setTimeout(function() {
+            var code = input.value;
+            
+            // Only request completion if code looks incomplete
+            if (shouldRequestCompletion(code)) {
+                window.requestCodeCompletion(code, 'python');
+            }
+        }, 1000); // 1 second debounce
+    });
+}
+
+/**
+ * Check if we should request completion
+ */
+function shouldRequestCompletion(code) {
+    if (!code || code.length < 10) return false;
+    
+    // Check for incomplete patterns
+    var incompletePatterns = [
+        /:\s*$/,  // Ends with colon (incomplete block)
+        /def\s+\w+\s*\([^)]*\)\s*$/,  // Incomplete function
+        /class\s+\w+\s*(:\s*)?$/,  // Incomplete class
+        /try\s*:\s*$/,  // Incomplete try
+        /if\s+.+:\s*$/,  // Incomplete if
+        /for\s+.+:\s*$/,  // Incomplete for
+        /while\s+.+:\s*$/,  // Incomplete while
+        /#\s*TODO/i,  // Has TODO
+        /pass\s*$/,  // Ends with pass
+    ];
+    
+    var lines = code.split('\n');
+    var lastLine = lines[lines.length - 1].trim();
+    
+    return incompletePatterns.some(function(pattern) {
+        return pattern.test(lastLine);
+    });
+}
+
+// Initialize code completion system
+document.addEventListener('DOMContentLoaded', function() {
+    setupCompletionKeyboardShortcuts();
+    setupRealTimeCompletion();
+    console.log('[CodeCompletion] System initialized');
+});
+
+// Expose functions to Python bridge
+window.showCodeCompletionPopup = window.showCodeCompletionPopup;
+window.acceptCodeCompletion = window.acceptCodeCompletion;
+window.dismissCodeCompletion = window.dismissCodeCompletion;
+window.showCodeCompletionCard = window.showCodeCompletionCard;
+window.showCompletionIndicator = window.showCompletionIndicator;
+window.hideCompletionIndicator = window.hideCompletionIndicator;
+window.requestCodeCompletion = window.requestCodeCompletion;
+
+// ============================================================================
+// INLINE DIFF VIEWER - OpenCode Style Integration
+// ============================================================================
+
+/**
+ * Show inline diff in chat
+ * @param {Object} diffData - Diff data with original, modified, filePath, etc.
+ */
+window.showInlineDiff = function(diffData) {
+    console.log('[DiffViewer] Showing inline diff for:', diffData.filePath);
+    
+    var container = document.createElement('div');
+    container.className = 'inline-diff-container';
+    container.id = 'diff-' + diffData.filePath.replace(/[^a-zA-Z0-9]/g, '_');
+    
+    // Header
+    var header = document.createElement('div');
+    header.className = 'inline-diff-header';
+    header.innerHTML = `
+        <div class="inline-diff-title">
+            <div class="file-icon">📄</div>
+            <span>${escapeHtml(diffData.filePath)}</span>
+        </div>
+        <div class="inline-diff-stats">
+            <div class="inline-diff-stat added">
+                <span>+${diffData.additions || 0}</span>
+            </div>
+            <div class="inline-diff-stat removed">
+                <span>-${diffData.deletions || 0}</span>
+            </div>
+        </div>
+    `;
+    container.appendChild(header);
+    
+    // Semantic badges
+    if (diffData.semanticChanges && diffData.semanticChanges.length > 0) {
+        var badgesContainer = document.createElement('div');
+        badgesContainer.className = 'semantic-badges';
+        
+        diffData.semanticChanges.forEach(function(change) {
+            var badge = document.createElement('div');
+            badge.className = 'semantic-badge ' + change.type;
+            badge.innerHTML = `
+                <span>${getSemanticIcon(change.type)}</span>
+                <span>${escapeHtml(change.description)}</span>
+            `;
+            badgesContainer.appendChild(badge);
+        });
+        
+        container.appendChild(badgesContainer);
+    }
+    
+    // Diff content
+    var content = document.createElement('div');
+    content.className = 'inline-diff-content';
+    
+    if (diffData.lines && diffData.lines.length > 0) {
+        var currentHunk = null;
+        
+        diffData.lines.forEach(function(line) {
+            if (line.type === 'hunk_header') {
+                // Hunk header
+                var hunkHeader = document.createElement('div');
+                hunkHeader.className = 'diff-hunk-header';
+                hunkHeader.innerHTML = escapeHtml(line.content);
+                hunkHeader.onclick = function() {
+                    this.classList.toggle('collapsed');
+                    var next = this.nextElementSibling;
+                    while (next && !next.classList.contains('diff-hunk-header')) {
+                        next.style.display = next.style.display === 'none' ? '' : 'none';
+                        next = next.nextElementSibling;
+                    }
+                };
+                content.appendChild(hunkHeader);
+                return;
+            }
+            
+            // Diff row
+            var row = document.createElement('div');
+            row.className = 'diff-row ' + line.type;
+            
+            var lineNums = document.createElement('div');
+            lineNums.className = 'diff-line-numbers';
+            lineNums.innerHTML = `
+                <div class="diff-line-num old">${line.lineNumber.original || ''}</div>
+                <div class="diff-line-num new">${line.lineNumber.new || ''}</div>
+            `;
+            
+            var lineContent = document.createElement('div');
+            lineContent.className = 'diff-line-content';
+            
+            var prefix = ' ';
+            if (line.type === 'added') prefix = '+';
+            if (line.type === 'removed') prefix = '-';
+            
+            lineContent.innerHTML = `
+                <span class="diff-line-prefix">${prefix}</span>
+                <code>${escapeHtml(line.content)}</code>
+            `;
+            
+            var actions = document.createElement('div');
+            actions.className = 'diff-line-actions';
+            actions.innerHTML = `
+                <button class="diff-line-btn accept" title="Accept line" onclick="acceptDiffLine('${diffData.filePath}', ${line.lineNumber.new || line.lineNumber.original || 0})">✓</button>
+                <button class="diff-line-btn reject" title="Reject line" onclick="rejectDiffLine('${diffData.filePath}', ${line.lineNumber.new || line.lineNumber.original || 0})">✗</button>
+                <button class="diff-line-btn comment" title="Add comment" onclick="commentDiffLine('${diffData.filePath}', ${line.lineNumber.new || line.lineNumber.original || 0})">💬</button>
+            `;
+            
+            row.appendChild(lineNums);
+            row.appendChild(lineContent);
+            row.appendChild(actions);
+            content.appendChild(row);
+        });
+    }
+    
+    container.appendChild(content);
+    
+    // Footer
+    var footer = document.createElement('div');
+    footer.className = 'inline-diff-footer';
+    
+    var confidencePercent = Math.round((diffData.confidence || 0.9) * 100);
+    var confidenceClass = confidencePercent >= 80 ? 'high' : (confidencePercent >= 60 ? 'medium' : 'low');
+    
+    footer.innerHTML = `
+        <div class="inline-diff-actions">
+            <button class="inline-diff-btn accept-all" onclick="acceptAllDiffLines('${diffData.filePath}')">
+                <span>✓</span>
+                <span>Accept All</span>
+            </button>
+            <button class="inline-diff-btn reject-all" onclick="rejectAllDiffLines('${diffData.filePath}')">
+                <span>✗</span>
+                <span>Reject All</span>
+            </button>
+            <button class="inline-diff-btn view-full" onclick="showFullDiff('${diffData.filePath}')">
+                <span>🔍</span>
+                <span>View Full Diff</span>
+            </button>
+        </div>
+        <div class="inline-diff-confidence">
+            <span>Confidence:</span>
+            <div class="confidence-bar">
+                <div class="confidence-fill ${confidenceClass}" style="width: ${confidencePercent}%"></div>
+            </div>
+            <span>${confidencePercent}%</span>
+        </div>
+    `;
+    
+    container.appendChild(footer);
+    
+    // Add to chat
+    var chatMessages = document.getElementById('chatMessages');
+    if (chatMessages) {
+        chatMessages.appendChild(container);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+};
+
+/**
+ * Get icon for semantic change type
+ */
+function getSemanticIcon(type) {
+    var icons = {
+        'bug_fix': '🐛',
+        'feature_add': '✨',
+        'refactor': '♻️',
+        'optimization': '⚡',
+        'security': '🔒',
+        'test': '🧪',
+        'documentation': '📚',
+        'style': '🎨',
+        'other': '📝'
+    };
+    return icons[type] || '📝';
+}
+
+/**
+ * Accept a single diff line
+ */
+window.acceptDiffLine = function(filePath, lineNumber) {
+    console.log('[DiffViewer] Accepting line', lineNumber, 'in', filePath);
+    if (window.bridge && window.bridge.on_diff_line_accepted) {
+        window.bridge.on_diff_line_accepted({
+            filePath: filePath,
+            lineNumber: lineNumber
+        });
+    }
+};
+
+/**
+ * Reject a single diff line
+ */
+window.rejectDiffLine = function(filePath, lineNumber) {
+    console.log('[DiffViewer] Rejecting line', lineNumber, 'in', filePath);
+    if (window.bridge && window.bridge.on_diff_line_rejected) {
+        window.bridge.on_diff_line_rejected({
+            filePath: filePath,
+            lineNumber: lineNumber
+        });
+    }
+};
+
+/**
+ * Add comment to a diff line
+ */
+window.commentDiffLine = function(filePath, lineNumber) {
+    console.log('[DiffViewer] Adding comment to line', lineNumber, 'in', filePath);
+    var comment = prompt('Enter your comment:');
+    if (comment && window.bridge && window.bridge.on_diff_line_commented) {
+        window.bridge.on_diff_line_commented({
+            filePath: filePath,
+            lineNumber: lineNumber,
+            comment: comment
+        });
+    }
+};
+
+/**
+ * Accept all diff lines for a file
+ */
+window.acceptAllDiffLines = function(filePath) {
+    console.log('[DiffViewer] Accepting all changes in', filePath);
+    if (window.bridge && window.bridge.on_accept_file_edit) {
+        window.bridge.on_accept_file_edit(filePath);
+    }
+    
+    // Update UI
+    var container = document.getElementById('diff-' + filePath.replace(/[^a-zA-Z0-9]/g, '_'));
+    if (container) {
+        container.style.opacity = '0.5';
+        container.querySelector('.inline-diff-footer').innerHTML = '<div style="padding: 12px; text-align: center; color: #22c55e;">✓ All changes accepted</div>';
+    }
+};
+
+/**
+ * Reject all diff lines for a file
+ */
+window.rejectAllDiffLines = function(filePath) {
+    console.log('[DiffViewer] Rejecting all changes in', filePath);
+    if (window.bridge && window.bridge.on_reject_file_edit) {
+        window.bridge.on_reject_file_edit(filePath);
+    }
+    
+    // Update UI
+    var container = document.getElementById('diff-' + filePath.replace(/[^a-zA-Z0-9]/g, '_'));
+    if (container) {
+        container.style.opacity = '0.5';
+        container.querySelector('.inline-diff-footer').innerHTML = '<div style="padding: 12px; text-align: center; color: #ef4444;">✗ All changes rejected</div>';
+    }
+};
+
+/**
+ * Show full diff in editor
+ */
+window.showFullDiff = function(filePath) {
+    console.log('[DiffViewer] Opening full diff for', filePath);
+    if (window.bridge && window.bridge.on_show_diff) {
+        window.bridge.on_show_diff(filePath);
+    }
+};
+
+// Expose diff viewer functions
+window.showInlineDiff = window.showInlineDiff;
+window.acceptDiffLine = window.acceptDiffLine;
+window.rejectDiffLine = window.rejectDiffLine;
+window.commentDiffLine = window.commentDiffLine;
+window.acceptAllDiffLines = window.acceptAllDiffLines;
+window.rejectAllDiffLines = window.rejectAllDiffLines;
+window.showFullDiff = window.showFullDiff;

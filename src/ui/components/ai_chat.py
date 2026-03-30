@@ -88,6 +88,20 @@ class ChatBridge(QObject):
     on_permission_response = pyqtSignal(bool, bool)  # approved, remember
     answer_question_requested = pyqtSignal(str, str) # tool_call_id, answer
     
+    # NEW: Permission response from chat UI (OpenCode enhancement)
+    permission_response = pyqtSignal(str, bool, str)  # request_id, approved, scope
+    
+    # Code Completion signals (OpenCode-style)
+    code_completion_requested = pyqtSignal(dict)  # {code, language, cursorPosition}
+    code_completion_selected = pyqtSignal(dict)   # {requestId, index, completion}
+    code_completion_accepted = pyqtSignal(dict)   # {requestId, completedCode}
+    code_completion_dismissed = pyqtSignal(dict)  # {requestId}
+    
+    # Inline Diff Viewer signals (OpenCode-style)
+    diff_line_accepted = pyqtSignal(dict)   # {filePath, lineNumber}
+    diff_line_rejected = pyqtSignal(dict)   # {filePath, lineNumber}
+    diff_line_commented = pyqtSignal(dict)  # {filePath, lineNumber, comment}
+    
     @pyqtSlot(str, str, str)
     def on_model_changed(self, model_id, perf, cost):
         self.model_changed.emit(model_id, perf, cost)
@@ -190,6 +204,58 @@ class ChatBridge(QObject):
             self.proceed_requested.emit()
         else:
             log.info("User denied tool execution permission")
+
+    @pyqtSlot(str, bool, str)
+    def on_permission_card_response(self, request_id: str, approved: bool, scope: str):
+        """Handle permission card response from JS (OpenCode enhancement)."""
+        log.info(f"Permission card response: {request_id} - approved={approved}, scope={scope}")
+        self.permission_response.emit(request_id, approved, scope)
+
+    # ── CODE COMPLETION SLOTS (OpenCode-style) ───────────────────────
+    
+    @pyqtSlot(dict)
+    def on_request_code_completion(self, data: dict):
+        """Handle code completion request from JS."""
+        log.info(f"Code completion requested for {data.get('language', 'python')}")
+        self.code_completion_requested.emit(data)
+    
+    @pyqtSlot(dict)
+    def on_code_completion_selected(self, data: dict):
+        """Handle code completion selection from JS."""
+        log.info(f"Code completion selected: {data.get('index', 0)}")
+        self.code_completion_selected.emit(data)
+    
+    @pyqtSlot(dict)
+    def on_code_completion_accepted(self, data: dict):
+        """Handle code completion acceptance from JS."""
+        log.info(f"Code completion accepted: {data.get('requestId', 'unknown')}")
+        self.code_completion_accepted.emit(data)
+    
+    @pyqtSlot(dict)
+    def on_code_completion_dismissed(self, data: dict):
+        """Handle code completion dismissal from JS."""
+        log.info(f"Code completion dismissed: {data.get('requestId', 'unknown')}")
+        self.code_completion_dismissed.emit(data)
+    
+    # ── INLINE DIFF VIEWER SLOTS (OpenCode-style) ────────────────────
+    
+    @pyqtSlot(dict)
+    def on_diff_line_accepted(self, data: dict):
+        """Handle diff line acceptance from JS."""
+        log.info(f"Diff line accepted: {data.get('filePath')}:{data.get('lineNumber')}")
+        self.diff_line_accepted.emit(data)
+    
+    @pyqtSlot(dict)
+    def on_diff_line_rejected(self, data: dict):
+        """Handle diff line rejection from JS."""
+        log.info(f"Diff line rejected: {data.get('filePath')}:{data.get('lineNumber')}")
+        self.diff_line_rejected.emit(data)
+    
+    @pyqtSlot(dict)
+    def on_diff_line_commented(self, data: dict):
+        """Handle diff line comment from JS."""
+        log.info(f"Diff line commented: {data.get('filePath')}:{data.get('lineNumber')}")
+        self.diff_line_commented.emit(data)
 
     # ── ENHANCEMENT GUIDE: Missing Bridge Slots ──────────────────────
 
@@ -587,6 +653,9 @@ class AIChatWidget(QWidget):
     open_file_at_line_requested = pyqtSignal(str, int)  # file_path, line_number
     answer_question_requested = pyqtSignal(str, str)   # tool_call_id, answer
     show_diff_requested = pyqtSignal(str)
+    
+    # Permission response signal (forwarded from bridge)
+    permission_response = pyqtSignal(str, bool, str)  # request_id, approved, scope
 
     # File edit accept/reject signals
     accept_file_edit_requested = pyqtSignal(str)  # file_path
@@ -658,6 +727,9 @@ class AIChatWidget(QWidget):
         self._terminal_emit_interval = 0.05
         self._current_project_path = ""
         
+        # NEW: Store last user message for permission retry (OpenCode enhancement)
+        self._last_user_message = ""
+        
         self._build_ui()
         # Terminal backend starts lazily when first requested
         
@@ -727,7 +799,20 @@ class AIChatWidget(QWidget):
         self._bridge.search_files_requested.connect(self._on_search_files)
         self._bridge.answer_question_requested.connect(self.answer_question_requested.emit)
         
-        # Persistence Handshake: JS -> Bridge -> Widget
+        # Connect permission response signal from bridge
+        self._bridge.permission_response.connect(self.permission_response.emit)
+        
+        # Connect code completion signals from bridge
+        self._bridge.code_completion_requested.connect(self._on_code_completion_requested)
+        self._bridge.code_completion_selected.connect(self._on_code_completion_selected)
+        self._bridge.code_completion_accepted.connect(self._on_code_completion_accepted)
+        self._bridge.code_completion_dismissed.connect(self._on_code_completion_dismissed)
+        
+        # Connect inline diff viewer signals from bridge
+        self._bridge.diff_line_accepted.connect(self._on_diff_line_accepted)
+        self._bridge.diff_line_rejected.connect(self._on_diff_line_rejected)
+        self._bridge.diff_line_commented.connect(self._on_diff_line_commented)
+        
         self._bridge.save_finished.connect(self.save_finished.emit)
         
         # NEW: Lazy load full chat when JS requests it
@@ -774,6 +859,9 @@ class AIChatWidget(QWidget):
 
     def _on_js_message(self, text):
         """Handle message from JS."""
+        # NEW: Store last user message for permission retry
+        self._last_user_message = text
+        
         context = ""
         if self._get_code_context:
             context = self._get_code_context()
@@ -1023,8 +1111,19 @@ class AIChatWidget(QWidget):
         safe_todos = json.dumps(todos)
         self._view.page().runJavaScript(f"if(window.updateTodos) window.updateTodos({safe_todos});")
 
-    def show_tool_activity(self, activity: dict):
-        """Show tool execution progress."""
+    def show_tool_activity(self, tool_type: str, info: str, status: str):
+        """Show tool execution progress.
+        
+        Args:
+            tool_type: Type of tool (e.g., 'read_file', 'write_file')
+            info: Tool execution info/details
+            status: Status of execution ('running', 'complete', 'error')
+        """
+        activity = {
+            'tool_type': tool_type,
+            'info': info,
+            'status': status
+        }
         safe_activity = json.dumps(activity)
         self._view.page().runJavaScript(f"if(window.showToolActivity) window.showToolActivity({safe_activity});")
 
@@ -1033,9 +1132,43 @@ class AIChatWidget(QWidget):
         safe_data = json.dumps(data)
         self._view.page().runJavaScript(f"if(window.showDirectoryContents) window.showDirectoryContents({safe_data});")
 
+    def show_tool_summary(self, summary_data: dict):
+        """Show professional tool execution summary.
+        
+        Args:
+            summary_data: Structured dict with file_writes, file_reads, commands, errors, other
+        """
+        safe_data = json.dumps(summary_data)
+        self._view.page().runJavaScript(f"if(window.showToolSummary) window.showToolSummary({safe_data});")
+
     def add_system_message(self, message: str):
         """Append a system notification message to the chat view."""
         self._view.page().runJavaScript(f"if(window.appendMessage) window.appendMessage({json.dumps(message)}, 'system');")
+
+    def show_permission_card(self, request_id: str, html_card: str):
+        """Display a permission card in the chat (OpenCode enhancement)."""
+        import json
+        safe_request_id = json.dumps(request_id)
+        safe_html = json.dumps(html_card)
+        self._view.page().runJavaScript(
+            f"if(window.showPermissionCard) window.showPermissionCard({safe_request_id}, {safe_html});"
+        )
+
+    def show_testing_card(self, test_info: dict):
+        """Display a testing status card in the chat."""
+        import json
+        safe_info = json.dumps(test_info)
+        self._view.page().runJavaScript(
+            f"if(window.showTestingCard) window.showTestingCard({safe_info});"
+        )
+
+    def show_test_results(self, results: dict):
+        """Display test results in the chat."""
+        import json
+        safe_results = json.dumps(results)
+        self._view.page().runJavaScript(
+            f"if(window.showTestResults) window.showTestResults({safe_results});"
+        )
 
     def clear_chat(self):
         """Clear the chat window."""
@@ -1165,6 +1298,91 @@ class AIChatWidget(QWidget):
         if self._terminal_process:
             data = self._terminal_process.readAllStandardOutput().data().decode(errors="replace")
             if data: self._bridge.terminal_output.emit(data)
+
+    # ── CODE COMPLETION HANDLERS (OpenCode-style) ────────────────────
+    
+    def _on_code_completion_requested(self, data: dict):
+        """Handle code completion request from bridge."""
+        log.info(f"Code completion requested for {data.get('language', 'python')}")
+        # Forward to main window for processing
+        self._view.page().runJavaScript(f"window.showCompletionIndicator && window.showCompletionIndicator();")
+    
+    def _on_code_completion_selected(self, data: dict):
+        """Handle code completion selection from bridge."""
+        log.info(f"Code completion selected: index {data.get('index', 0)}")
+        # Forward to main window
+    
+    def _on_code_completion_accepted(self, data: dict):
+        """Handle code completion acceptance from bridge."""
+        log.info(f"Code completion accepted: {data.get('requestId', 'unknown')}")
+        # Hide indicator
+        self._view.page().runJavaScript(f"window.hideCompletionIndicator && window.hideCompletionIndicator();")
+    
+    def _on_code_completion_dismissed(self, data: dict):
+        """Handle code completion dismissal from bridge."""
+        log.info(f"Code completion dismissed: {data.get('requestId', 'unknown')}")
+        # Hide indicator and popup
+        self._view.page().runJavaScript(f"window.hideCompletionIndicator && window.hideCompletionIndicator();")
+        self._view.page().runJavaScript(f"window.dismissCodeCompletion && window.dismissCodeCompletion();")
+    
+    def show_code_completion_popup(self, completions: list, request_id: str):
+        """Show code completion popup in chat UI."""
+        import json
+        completions_json = json.dumps(completions)
+        js_code = f"""
+            if (window.showCodeCompletionPopup) {{
+                window.showCodeCompletionPopup({completions_json}, '{request_id}');
+            }}
+        """
+        self._view.page().runJavaScript(js_code)
+    
+    def show_code_completion_card(self, completion_data: dict):
+        """Show code completion card in chat."""
+        import json
+        data_json = json.dumps(completion_data)
+        js_code = f"""
+            if (window.showCodeCompletionCard) {{
+                window.showCodeCompletionCard({data_json});
+            }}
+        """
+        self._view.page().runJavaScript(js_code)
+    
+    def hide_code_completion(self):
+        """Hide code completion popup."""
+        self._view.page().runJavaScript("window.dismissCodeCompletion && window.dismissCodeCompletion();")
+    
+    # ── INLINE DIFF VIEWER HANDLERS (OpenCode-style) ─────────────────
+    
+    def _on_diff_line_accepted(self, data: dict):
+        """Handle diff line acceptance from bridge."""
+        log.info(f"Diff line accepted: {data.get('filePath')}:{data.get('lineNumber')}")
+        # Forward to main window for processing
+        # This allows per-line acceptance in the future
+        self.accept_file_edit_requested.emit(data.get('filePath'))
+    
+    def _on_diff_line_rejected(self, data: dict):
+        """Handle diff line rejection from bridge."""
+        log.info(f"Diff line rejected: {data.get('filePath')}:{data.get('lineNumber')}")
+        # Forward to main window for processing
+        # This allows per-line rejection in the future
+        self.reject_file_edit_requested.emit(data.get('filePath'))
+    
+    def _on_diff_line_commented(self, data: dict):
+        """Handle diff line comment from bridge."""
+        log.info(f"Diff line commented: {data.get('filePath')}:{data.get('lineNumber')}")
+        # Store comment for future use
+        # TODO: Implement comment storage and display
+    
+    def show_inline_diff(self, diff_data: dict):
+        """Show inline diff in chat UI."""
+        import json
+        data_json = json.dumps(diff_data)
+        js_code = f"""
+            if (window.showInlineDiff) {{
+                window.showInlineDiff({data_json});
+            }}
+        """
+        self._view.page().runJavaScript(js_code)
 
     def closeEvent(self, event):
         """Cleanup on close."""

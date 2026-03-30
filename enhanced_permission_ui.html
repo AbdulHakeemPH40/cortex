@@ -1,0 +1,328 @@
+<!-- ENHANCED PERMISSION UI - Industry Standard (Cursor/OpenCode Style) -->
+<!-- Replace the existing permission-card-template in aichat.html with this -->
+
+<template id="permission-card-template">
+    <div class="permission-card-container">
+        <div class="permission-backdrop"></div>
+        <div class="permission-card">
+            <div class="permission-card-header">
+                <div class="permission-icon-wrapper">
+                    <svg class="permission-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                        <path d="M12 8v4"/>
+                        <path d="M12 16h.01"/>
+                    </svg>
+                </div>
+                <div class="permission-header-text">
+                    <span class="permission-card-title">Permission Required</span>
+                    <span class="permission-card-subtitle">AI wants to perform an action</span>
+                </div>
+            </div>
+            
+            <div class="permission-card-body">
+                <div class="permission-tool-section">
+                    <span class="permission-tool-label">Tool:</span>
+                    <span class="permission-tool-name"></span>
+                </div>
+                
+                <div class="permission-details-section">
+                    <div class="permission-details-label">Details:</div>
+                    <div class="permission-card-details"></div>
+                </div>
+                
+                <div class="permission-risk-indicator">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                        <line x1="12" y1="9" x2="12" y2="13"/>
+                        <line x1="12" y1="17" x2="12.01" y2="17"/>
+                    </svg>
+                    <span>This action may modify files or execute commands</span>
+                </div>
+            </div>
+            
+            <div class="permission-card-actions">
+                <button class="permission-btn permission-btn-deny">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                    Deny
+                </button>
+                <button class="permission-btn permission-btn-approve">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                    Approve
+                </button>
+            </div>
+            
+            <div class="permission-card-remember">
+                <label class="permission-remember-label">
+                    <input type="checkbox" class="permission-remember-checkbox">
+                    <span class="permission-checkmark"></span>
+                    <span class="permission-remember-text">Remember my choice for similar actions</span>
+                </label>
+            </div>
+        </div>
+    </div>
+</template>
+
+<style>
+/* Enhanced Permission Card Styles - Industry Standard */
+.permission-card-container {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    pointer-events: none;
+}
+
+.permission-backdrop {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(4px);
+    pointer-events: auto;
+}
+
+.permission-card {
+    position: relative;
+    width: 90%;
+    max-width: 520px;
+    background: var(--bg-primary, #1e1e1e);
+    border: 1px solid var(--border-color, #333);
+    border-radius: 12px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
+    overflow: hidden;
+    pointer-events: auto;
+    animation: permissionSlideIn 0.3s ease-out;
+}
+
+@keyframes permissionSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-20px) scale(0.95);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+.permission-card-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 20px 24px;
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(147, 51, 234, 0.1));
+    border-bottom: 1px solid var(--border-color, #333);
+}
+
+.permission-icon-wrapper {
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+    border-radius: 10px;
+    color: white;
+}
+
+.permission-icon {
+    width: 24px;
+    height: 24px;
+}
+
+.permission-header-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.permission-card-title {
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--text-primary, #fff);
+}
+
+.permission-card-subtitle {
+    font-size: 13px;
+    color: var(--text-secondary, #9ca3af);
+}
+
+.permission-card-body {
+    padding: 20px 24px;
+}
+
+.permission-tool-section {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+    padding: 12px;
+    background: rgba(59, 130, 246, 0.1);
+    border-radius: 8px;
+    border: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+.permission-tool-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary, #9ca3af);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.permission-tool-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: #3b82f6;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.permission-details-section {
+    margin-bottom: 16px;
+}
+
+.permission-details-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary, #9ca3af);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.permission-card-details {
+    padding: 12px;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: var(--text-primary, #e5e5e5);
+    max-height: 200px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.permission-risk-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.2);
+    border-radius: 8px;
+    color: #f59e0b;
+    font-size: 13px;
+}
+
+.permission-risk-indicator svg {
+    flex-shrink: 0;
+}
+
+.permission-card-actions {
+    display: flex;
+    gap: 12px;
+    padding: 0 24px 20px;
+}
+
+.permission-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px 20px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.permission-btn-deny {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.permission-btn-deny:hover {
+    background: rgba(239, 68, 68, 0.2);
+    transform: translateY(-1px);
+}
+
+.permission-btn-approve {
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: white;
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+}
+
+.permission-btn-approve:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(16, 185, 129, 0.4);
+}
+
+.permission-card-remember {
+    padding: 16px 24px;
+    background: rgba(0, 0, 0, 0.2);
+    border-top: 1px solid var(--border-color, #333);
+}
+
+.permission-remember-label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text-secondary, #9ca3af);
+}
+
+.permission-remember-checkbox {
+    display: none;
+}
+
+.permission-checkmark {
+    width: 18px;
+    height: 18px;
+    border: 2px solid var(--border-color, #555);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.permission-checkmark::after {
+    content: '';
+    width: 10px;
+    height: 10px;
+    background: #3b82f6;
+    border-radius: 2px;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.permission-remember-checkbox:checked + .permission-checkmark {
+    border-color: #3b82f6;
+}
+
+.permission-remember-checkbox:checked + .permission-checkmark::after {
+    opacity: 1;
+}
+
+.permission-remember-text {
+    user-select: none;
+}
+</style>

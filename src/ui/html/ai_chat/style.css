@@ -915,6 +915,10 @@ body.light .numbered-card .card-content {
     }
 }
 
+/* CRITICAL RESPONSIVE FIX - All screen sizes */
+/* ================================================ */
+
+/* Base input container - ensure it never overflows */
 #input-container {
     background: var(--bg-item, rgba(45, 45, 48, 0.4));
     border: 1px solid var(--border);
@@ -925,20 +929,244 @@ body.light .numbered-card .card-content {
     transition: all 0.2s ease;
     box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
     min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
+    overflow: hidden;
+    max-width: 100%; /* Prevent overflow */
 }
 
-@media (max-width: 400px) {
+/* Laptop/Desktop responsive fix (>600px) */
+@media (min-width: 601px) and (max-width: 1024px) {
     #input-container {
-        padding: 6px 10px;
+        padding: 7px 11px;
     }
-    .input-toolbar {
-        gap: 2px;
+    
+    .toolbar-btn span {
+        display: inline; /* Keep text visible */
     }
+    
+    #mode-selector .dropdown-trigger {
+        max-width: 120px;
+    }
+    
+    #model-selector .dropdown-trigger {
+        max-width: 140px;
+    }
+}
+
+/* Tablet responsive fix (400px - 600px) */
+@media (max-width: 600px) {
+    #input-container {
+        padding: 7px 10px;
+        border-radius: 10px;
+    }
+    
+    /* Hide optional buttons to save space */
     .icon-btn.optional-btn:nth-child(3),
     .icon-btn.optional-btn:nth-child(4) {
         display: none;
     }
+    
+    /* Reduce mode selector width */
+    #mode-selector .dropdown-trigger {
+        max-width: 100px;
+    }
+    
+    #mode-selector .dropdown-trigger #current-mode {
+        display: none; /* Show icon only */
+    }
+    
+    /* Reduce model selector width */
+    #model-selector .dropdown-trigger {
+        max-width: 130px;
+    }
+    
+    /* Smaller toolbar buttons */
+    .toolbar-btn {
+        padding: 4px 6px;
+        font-size: 11px;
+    }
+    
+    .toolbar-btn span {
+        display: none; /* Hide text, show icons only */
+    }
+    
+    /* Send button stays visible */
+    .primary-btn {
+        min-width: 32px;
+        width: 32px;
+        height: 30px;
+        padding: 4px 8px;
+    }
+    
+    .primary-btn svg {
+        width: 13px;
+        height: 13px;
+    }
 }
+
+/* Mobile responsive fix (<400px) */
+@media (max-width: 400px) {
+    #input-container {
+        padding: 6px 8px;
+        border-radius: 8px;
+    }
+    
+    .input-toolbar {
+        gap: 2px;
+        flex-wrap: wrap;
+    }
+    
+    /* Hide more buttons */
+    .icon-btn.optional-btn,
+    #always-allow-toggle span,
+    .toolbar-btn span {
+        display: none;
+    }
+    
+    /* Minimal mode selector */
+    #mode-selector .dropdown-trigger {
+        max-width: 40px;
+        padding: 5px 6px;
+    }
+    
+    #mode-selector .dropdown-trigger #current-mode {
+        display: none;
+    }
+    
+    /* Compact model selector */
+    #model-selector .dropdown-trigger {
+        max-width: 110px;
+        font-size: 11px;
+    }
+    
+    /* Tiny toolbar buttons */
+    .toolbar-btn {
+        padding: 4px 5px;
+        font-size: 10px;
+    }
+    
+    .icon-btn {
+        width: 24px;
+        height: 24px;
+        min-width: 24px;
+    }
+    
+    .icon-btn svg {
+        width: 12px;
+        height: 12px;
+    }
+    
+    /* Send button compact but visible */
+    .primary-btn {
+        min-width: 28px;
+        width: 28px;
+        height: 28px;
+        padding: 3px 6px;
+        margin-left: 2px;
+    }
+    
+    .primary-btn svg {
+        width: 12px;
+        height: 12px;
+    }
+}
+
+/* Extra small mobile (<350px) */
+@media (max-width: 350px) {
+    #input-container {
+        padding: 5px 6px;
+    }
+    
+    /* Ultra minimal toolbar */
+    .toolbar-left {
+        gap: 1px;
+    }
+    
+    .toolbar-right {
+        gap: 1px;
+    }
+    
+    /* Hide auto-allow toggle completely */
+    #always-allow-toggle {
+        display: none;
+    }
+    
+    /* Minimal mode selector */
+    #mode-selector .dropdown-trigger {
+        max-width: 36px;
+        padding: 4px 5px;
+    }
+    
+    /* Very compact model selector */
+    #model-selector .dropdown-trigger {
+        max-width: 100px;
+        font-size: 10px;
+    }
+    
+    /* Icon buttons tiny */
+    .icon-btn {
+        width: 22px;
+        height: 22px;
+        min-width: 22px;
+    }
+    
+    .icon-btn svg {
+        width: 11px;
+        height: 11px;
+    }
+    
+    /* Send button smallest but still visible */
+    .primary-btn {
+        min-width: 26px;
+        width: 26px;
+        height: 26px;
+        padding: 3px 5px;
+        margin-left: 1px;
+    }
+    
+    .primary-btn svg {
+        width: 11px;
+        height: 11px;
+    }
+}
+
+/* Critical: Ensure send button is ALWAYS visible on any screen */
+.primary-btn {
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    flex-shrink: 0;
+    min-width: 36px;
+    width: 36px;
+    height: 32px;
+    align-self: center;
+    margin-left: 4px;
+    position: relative;
+    top: 0;
+    visibility: visible !important; /* Force visibility */
+    opacity: 1 !important; /* Force opacity */
+}
+
+.primary-btn svg {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+}
+
+.primary-btn:hover {
+    background: #0088e5;
+    filter: brightness(1.1);
+}
+
+/* Old responsive rules removed - consolidated into comprehensive responsive section above */
 
 #input-container:focus-within {
     border-color: var(--accent);
@@ -1037,6 +1265,7 @@ body.light .numbered-card .card-content {
     gap: 4px;
     min-width: 0;
     position: relative;
+    width: 100%; /* Ensure full width */
 }
 
 .toolbar-left {
@@ -1052,6 +1281,7 @@ body.light .numbered-card .card-content {
     gap: 2px;
     flex-shrink: 0;
     margin-left: auto;
+    align-items: center; /* Ensure vertical alignment */
 }
 
 /* Toolbar Buttons & Toggles */
@@ -1084,6 +1314,7 @@ body.light .numbered-card .card-content {
 /* Custom Dropdown & Mode Selector */
 .custom-dropdown {
     position: relative;
+    flex-shrink: 0;
 }
 
 .dropdown-trigger {
@@ -1126,31 +1357,70 @@ body.light .numbered-card .card-content {
     font-size: 14px;
 }
 
+/* CRITICAL FIX: Dropdown Menu Overflow Solution */
 .dropdown-menu {
     position: absolute;
-    bottom: calc(100% + 8px);
+    top: calc(100% + 4px); /* Position BELOW the button */
     left: 0;
     background: var(--bg-header);
     border: 1px solid var(--border);
     border-radius: 12px;
-    min-width: 200px;
+    min-width: 220px;
     display: none;
     flex-direction: column;
     padding: 8px;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.4);
-    z-index: 9999;
-    animation: slideUp 0.2s ease;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+    z-index: 10000; /* Very high z-index to appear above everything */
+    animation: slideDown 0.2s ease;
     max-height: 400px;
     overflow-y: auto;
+    overflow-x: hidden;
+    backdrop-filter: blur(20px);
+}
+
+/* Alternative positioning: If dropdown is at bottom of screen, show above */
+.dropdown-menu.position-top {
+    top: auto;
+    bottom: calc(100% + 4px);
+    animation: slideUp 0.2s ease;
+}
+
+@keyframes slideDown {
+    from { 
+        opacity: 0; 
+        transform: translateY(-10px);
+    }
+    to { 
+        opacity: 1; 
+        transform: translateY(0);
+    }
 }
 
 @keyframes slideUp {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
+    from { 
+        opacity: 0; 
+        transform: translateY(10px);
+    }
+    to { 
+        opacity: 1; 
+        transform: translateY(0);
+    }
 }
 
 .dropdown-menu.show {
     display: flex;
+}
+
+/* Ensure dropdown doesn't go off-screen */
+@media (max-width: 600px) {
+    .dropdown-menu {
+        min-width: 200px;
+        max-width: calc(100vw - 40px); /* Never exceed viewport */
+    }
+    
+    .dropdown-menu.position-top {
+        bottom: calc(100% + 8px);
+    }
 }
 
 .dropdown-item {
@@ -1287,54 +1557,9 @@ body.light .numbered-card .card-content {
     }
 }
 
-@media (max-width: 350px) {
-    .icon-btn svg {
-        width: 14px;
-        height: 14px;
-    }
-    .toolbar-left, .toolbar-right {
-        gap: 2px;
-    }
-    #mode-selector .dropdown-trigger {
-        padding: 5px 6px;
-    }
-    .primary-btn {
-        min-width: 32px;
-        width: 32px;
-        height: 28px;
-        padding: 4px 6px;
-    }
-    .primary-btn svg {
-        width: 12px;
-        height: 12px;
-    }
-}
+/* Old responsive rules removed - consolidated into comprehensive responsive section above */
 
-@media (max-width: 300px) {
-    .input-toolbar {
-        flex-wrap: wrap;
-        gap: 2px;
-        padding-top: 4px;
-    }
-    .toolbar-left {
-        flex: 1 1 100%;
-        justify-content: flex-start;
-    }
-    .toolbar-right {
-        flex: 1 1 100%;
-        justify-content: flex-end;
-        margin-left: 0;
-    }
-    .optional-btn {
-        display: none !important;
-    }
-    .primary-btn, .stop-btn {
-        min-width: 28px;
-        width: 28px;
-        height: 26px;
-        padding: 3px 5px;
-    }
-}
+/* Old responsive rules removed - consolidated into comprehensive responsive section above */
 
 .icon-btn:hover {
     background: rgba(255, 255, 255, 0.05);
@@ -1356,6 +1581,10 @@ body.light .numbered-card .card-content {
     min-width: 36px;
     width: 36px;
     height: 32px;
+    align-self: center; /* Keep button aligned within container */
+    margin-left: 4px; /* Small spacing from other buttons */
+    position: relative; /* Ensure it stays in flow */
+    top: 0; /* Prevent any offset */
 }
 
 .primary-btn svg {
@@ -8094,3 +8323,591 @@ body.light .permission-tool-name {
     color: #3b82f6;
     background: rgba(59, 130, 246, 0.1);
 }
+
+/* ================================================
+   OPENCODE ENHANCEMENT STYLES
+   Additional features without breaking existing UI
+   ================================================ */
+
+/* ==========================================================================
+   Tool Execution Cards (New Component)
+   ========================================================================== */
+.tool-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    margin: var(--space-md) 0;
+    overflow: hidden;
+    max-width: 600px;
+}
+
+.tool-card-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border);
+}
+
+.tool-card-icon {
+    font-size: 16px;
+}
+
+.tool-card-name {
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text);
+    flex: 1;
+}
+
+.tool-card-status {
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.tool-card-status.pending {
+    background: var(--bg-elevated);
+    color: var(--text-muted);
+}
+
+.tool-card-status.executing {
+    background: rgba(59, 130, 246, 0.15);
+    color: var(--accent-primary);
+    animation: toolPulse 1.5s ease-in-out infinite;
+}
+
+.tool-card-status.completed {
+    background: rgba(34, 197, 94, 0.15);
+    color: var(--success);
+}
+
+.tool-card-status.failed {
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--error);
+}
+
+@keyframes toolPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.tool-card-progress {
+    height: 2px;
+    background: var(--border);
+    overflow: hidden;
+}
+
+.tool-card-progress-bar {
+    height: 100%;
+    background: var(--accent-primary);
+    transition: width 0.3s ease;
+}
+
+.tool-card-params {
+    padding: var(--space-sm) var(--space-md);
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: 'JetBrains Mono', monospace;
+    background: var(--bg-main);
+    border-bottom: 1px solid var(--border);
+    max-height: 100px;
+    overflow: auto;
+}
+
+.tool-card-result {
+    padding: var(--space-sm) var(--space-md);
+    font-size: 12px;
+    max-height: 200px;
+    overflow: auto;
+}
+
+.tool-card-result.success {
+    background: rgba(34, 197, 94, 0.05);
+    color: var(--success);
+}
+
+.tool-card-result.error {
+    background: rgba(239, 68, 68, 0.05);
+    color: var(--error);
+}
+
+/* ==========================================================================
+   Enhanced Message Bubbles (Additional styles, doesn't override existing)
+   ========================================================================== */
+.message-bubble.tool {
+    align-self: flex-start;
+    max-width: 90%;
+}
+
+.message-bubble.error {
+    align-self: flex-start;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: var(--radius-md);
+    padding: var(--space-md);
+    max-width: 90%;
+}
+
+.message-bubble.permission {
+    align-self: flex-start;
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, rgba(245, 158, 11, 0.05) 100%);
+    border: 2px solid rgba(245, 158, 11, 0.5);
+    border-radius: var(--radius-lg);
+    padding: var(--space-md);
+    max-width: 100%;
+    box-shadow: 0 4px 12px rgba(245, 158, 11, 0.1);
+}
+
+/* Message entry animation */
+@keyframes messageEntry {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.message-bubble {
+    animation: messageEntry 0.3s ease-out;
+}
+
+/* ==========================================================================
+   Enhanced Permission Cards (Additional features)
+   ========================================================================== */
+.permission-scope-selection {
+    margin: var(--space-md) 0;
+}
+
+.permission-scope-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: var(--space-sm);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.permission-scope-options {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+
+.permission-scope-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    padding: var(--space-sm);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: left;
+    width: 100%;
+}
+
+.permission-scope-btn:hover {
+    border-color: var(--accent-primary);
+    background: var(--bg-elevated);
+}
+
+.permission-scope-btn.active {
+    border-color: var(--accent-primary);
+    background: rgba(59, 130, 246, 0.1);
+}
+
+.permission-scope-label {
+    font-weight: 600;
+    font-size: 12px;
+    color: var(--text);
+}
+
+.permission-scope-desc {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.permission-risks-safeguards {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-md);
+    margin: var(--space-md) 0;
+}
+
+.permission-risks,
+.permission-safeguards {
+    padding: var(--space-sm);
+    border-radius: var(--radius-sm);
+    font-size: 11px;
+}
+
+.permission-risks {
+    background: rgba(239, 68, 68, 0.05);
+    border-left: 2px solid var(--error);
+}
+
+.permission-risks h4 {
+    color: var(--error);
+    font-size: 11px;
+    margin-bottom: var(--space-xs);
+}
+
+.permission-safeguards {
+    background: rgba(34, 197, 94, 0.05);
+    border-left: 2px solid var(--success);
+}
+
+.permission-safeguards h4 {
+    color: var(--success);
+    font-size: 11px;
+    margin-bottom: var(--space-xs);
+}
+
+.permission-risks ul,
+.permission-safeguards ul {
+    margin: 0;
+    padding-left: 14px;
+    color: var(--text-secondary);
+}
+
+.permission-risks li,
+.permission-safeguards li {
+    margin-bottom: 2px;
+}
+
+.permission-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+    margin: var(--space-sm) 0;
+}
+
+.permission-tag {
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 10px;
+    color: var(--warning);
+}
+
+/* ==========================================================================
+   Enhanced Quick Actions (Additional styles)
+   ========================================================================== */
+.quick-actions-bar {
+    display: flex;
+    gap: var(--space-sm);
+    padding: var(--space-sm) 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.quick-actions-bar::-webkit-scrollbar {
+    display: none;
+}
+
+.quick-action-chip {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.quick-action-chip:hover {
+    background: var(--bg-elevated);
+    border-color: var(--border-light);
+    color: var(--text);
+}
+
+/* ==========================================================================
+   Agent Selector (New Component)
+   ========================================================================== */
+.agent-selector-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-xs) var(--space-sm);
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border);
+}
+
+.agent-selector-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.agent-selector-dropdown {
+    position: relative;
+    flex: 1;
+}
+
+.agent-selector-select {
+    appearance: none;
+    width: 100%;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 4px 24px 4px 10px;
+    color: var(--text);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.agent-selector-select:hover {
+    border-color: var(--border-light);
+}
+
+.agent-selector-select:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+}
+
+.agent-selector-dropdown::after {
+    content: '▼';
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 8px;
+    color: var(--text-muted);
+    pointer-events: none;
+}
+
+/* ==========================================================================
+   Thinking Indicator (Enhanced)
+   ========================================================================== */
+.thinking-indicator-openc {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    background: rgba(59, 130, 246, 0.1);
+    border-radius: var(--radius-md);
+    margin: var(--space-sm) 0;
+    width: fit-content;
+}
+
+.thinking-dots {
+    display: flex;
+    gap: 3px;
+}
+
+.thinking-dot {
+    width: 6px;
+    height: 6px;
+    background: var(--accent-primary);
+    border-radius: 50%;
+    animation: thinkingBounce 1.4s ease-in-out infinite;
+}
+
+.thinking-dot:nth-child(1) { animation-delay: 0s; }
+.thinking-dot:nth-child(2) { animation-delay: 0.2s; }
+.thinking-dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes thinkingBounce {
+    0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
+    40% { transform: scale(1); opacity: 1; }
+}
+
+.thinking-text {
+    font-size: 12px;
+    color: var(--accent-primary);
+}
+
+/* ==========================================================================
+   Responsive Adjustments
+   ========================================================================== */
+@media (max-width: 768px) {
+    .permission-risks-safeguards {
+        grid-template-columns: 1fr;
+    }
+    
+    .tool-card {
+        max-width: 100%;
+    }
+    
+    .message-bubble.tool,
+    .message-bubble.error,
+    .message-bubble.permission {
+        max-width: 95%;
+    }
+}
+
+/* Light mode adjustments for new components */
+body.light .tool-card {
+    background: #ffffff;
+    border-color: #e0e0e0;
+}
+
+body.light .tool-card-header {
+    background: #f6f8fa;
+    border-color: #e0e0e0;
+}
+
+body.light .tool-card-params {
+    background: #f6f8fa;
+    color: #525252;
+}
+
+body.light .permission-risks {
+    background: rgba(239, 68, 68, 0.05);
+}
+
+body.light .permission-safeguards {
+    background: rgba(34, 197, 94, 0.05);
+}
+
+body.light .quick-action-chip {
+    background: #f0f0f0;
+    border-color: #e0e0e0;
+    color: #525252;
+}
+
+body.light .quick-action-chip:hover {
+    background: #e5e5e5;
+    color: #1a1a1a;
+}
+
+body.light .agent-selector-bar {
+    background: #f0f0f0;
+    border-color: #e0e0e0;
+}
+
+body.light .agent-selector-select {
+    background: #ffffff;
+    border-color: #e0e0e0;
+    color: #1a1a1a;
+}
+
+/* ==========================================================================
+   Testing Workflow Cards
+   ========================================================================== */
+.testing-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    margin: var(--space-md) 0;
+    max-width: 600px;
+    overflow: hidden;
+}
+
+.testing-card-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    background: rgba(59, 130, 246, 0.1);
+    border-bottom: 1px solid var(--border);
+}
+
+.testing-icon {
+    font-size: 20px;
+}
+
+.testing-title {
+    font-weight: 600;
+    color: var(--text-primary);
+    flex: 1;
+}
+
+.testing-priority {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 12px;
+    text-transform: uppercase;
+}
+
+.testing-card-body {
+    padding: var(--space-md);
+}
+
+.testing-info {
+    margin-bottom: var(--space-md);
+}
+
+.testing-info div {
+    margin: 4px 0;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.testing-tools {
+    margin-top: var(--space-sm);
+    padding-top: var(--space-sm);
+    border-top: 1px solid var(--border);
+}
+
+.testing-tools strong {
+    font-size: 12px;
+    color: var(--text-primary);
+    display: block;
+    margin-bottom: var(--space-xs);
+}
+
+.testing-tools .tool-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.testing-tools .tool-tag {
+    background: rgba(16, 185, 129, 0.15);
+    color: #10b981;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.test-results-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    margin: var(--space-md) 0;
+    max-width: 600px;
+    overflow: hidden;
+}
+
+/* Light mode support for testing cards */
+body.light .testing-card {
+    background: #f9fafb;
+    border-color: #e5e7eb;
+}
+
+body.light .testing-card-header {
+    background: rgba(59, 130, 246, 0.08);
+    border-color: #e5e7eb;
+}
+
+body.light .testing-tools .tool-tag {
+    background: rgba(16, 185, 129, 0.1);
+    border-color: rgba(16, 185, 129, 0.2);
+}
+
+body.light .test-results-card {
+    background: #f9fafb;
+    border-color: #e5e7eb;
+}
+
+/* End of OpenCode Enhancement Styles */

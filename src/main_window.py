@@ -36,6 +36,19 @@ from src.utils.icons import make_icon
 from src.utils.helpers import detect_language, shorten_path
 from src.utils.logger import get_logger
 
+# Phase 1, 2, 3 Integration Imports
+from src.ai.title_generator import get_title_generator
+from src.ai.session_schema import get_session_schema_manager
+from src.ai.acp import AgentType
+
+# Phase 4 Integration Imports
+from src.ai.todo import get_todo_manager, TaskStatus
+from src.ai.permission import get_permission_evaluator
+from src.ai.github import get_github_agent
+
+# NEW: OpenCode Enhancement Integration
+from src.ai.integration import get_ai_integration_layer
+
 log = get_logger("main_window")
 
 
@@ -525,6 +538,25 @@ class CortexMainWindow(QMainWindow):
         self._ai_agent.update_settings(provider="deepseek", model="deepseek-chat")
         log.info("🤖 AI Agent initialized with DeepSeek")
         log.info("   Using DeepSeek V3 for reliable agentic work")
+        
+        # Phase 1, 2, 3 Integration: Initialize components
+        log.info("🔧 Initializing Phase 1, 2, 3 components...")
+        self._title_generator = get_title_generator(self._ai_agent)
+        self._session_db = get_session_schema_manager()
+        log.info("✅ Phase 1, 2, 3 components initialized")
+        
+        # Phase 4 Integration: Initialize TODO, Permission, and GitHub components
+        log.info("🔧 Initializing Phase 4 components...")
+        self._todo_manager = get_todo_manager()
+        self._permission_evaluator = get_permission_evaluator()
+        self._github_agent = get_github_agent()
+        log.info("✅ Phase 4 components initialized")
+        
+        # NEW: Initialize OpenCode Enhancement Integration Layer
+        log.info("🔌 Initializing OpenCode Enhancement Integration...")
+        self._ai_integration = get_ai_integration_layer()
+        log.info("✅ OpenCode Enhancement Integration initialized")
+        
         self._file_tracker = FileEditTracker(self)
         self._diff_window = DiffWindow(self)
         self._codebase_index = None
@@ -901,6 +933,31 @@ class CortexMainWindow(QMainWindow):
         self._add_action(ai_menu, "Write Tests", lambda: self._ai_action("tests"), "Ctrl+Shift+U")
         self._add_action(ai_menu, "Debug Help", lambda: self._ai_action("debug"), "Ctrl+Shift+D")
         ai_menu.addSeparator()
+        
+        # Phase 1, 2, 3 Integration: Agent Mode submenu
+        mode_menu = ai_menu.addMenu("Agent Mode")
+        self._add_action(mode_menu, "Build Mode", lambda: self._set_agent_mode("build"), "")
+        self._add_action(mode_menu, "Explore Mode", lambda: self._set_agent_mode("explore"), "")
+        self._add_action(mode_menu, "Debug Mode", lambda: self._set_agent_mode("debug"), "")
+        self._add_action(mode_menu, "Plan Mode", lambda: self._set_agent_mode("plan"), "")
+        ai_menu.addSeparator()
+        
+        # Phase 3 Integration: Skills and MCP
+        self._add_action(ai_menu, "Browse Skills...", self._show_skills_browser, "")
+        self._add_action(ai_menu, "MCP Connections...", self._show_mcp_connections, "")
+        ai_menu.addSeparator()
+        
+        # Phase 4 Integration: TODO, Permission, and GitHub
+        todo_menu = ai_menu.addMenu("Tasks & TODOs")
+        self._add_action(todo_menu, "View Tasks...", self._show_todo_manager, "")
+        self._add_action(todo_menu, "Add Task...", self._add_todo_task, "")
+        todo_menu.addSeparator()
+        self._add_action(todo_menu, "Complete Task", self._complete_todo_task, "")
+        
+        self._add_action(ai_menu, "Permission Settings...", self._show_permission_settings, "")
+        self._add_action(ai_menu, "GitHub Integration...", self._show_github_integration, "")
+        ai_menu.addSeparator()
+        
         self._add_action(ai_menu, "AI Chat Focus", self._focus_ai_chat, "Ctrl+Shift+A")
         
         # Command Palette
@@ -1133,6 +1190,15 @@ class CortexMainWindow(QMainWindow):
         self._ai_agent.thinking_started.connect(self._ai_chat.show_thinking)
         self._ai_agent.thinking_stopped.connect(self._ai_chat.hide_thinking)
         self._ai_agent.todos_updated.connect(self._ai_chat.update_todos)
+        self._ai_agent.tool_summary_ready.connect(self._ai_chat.show_tool_summary)
+        
+        # Phase 4: Connect Todo Manager signals to update Chat UI in real-time
+        self._todo_manager.task_added.connect(self._on_todo_task_added)
+        self._todo_manager.task_completed.connect(self._on_todo_task_completed)
+        self._todo_manager.task_updated.connect(self._on_todo_task_updated)
+        
+        # Phase 4: Connect Title Generator to update chat tab
+        self._title_generator.title_generated.connect(self._on_title_generated)
         
         # New interaction signals
         self._ai_chat.generate_plan_requested.connect(self._on_generate_plan)
@@ -1142,6 +1208,25 @@ class CortexMainWindow(QMainWindow):
         self._ai_chat.show_diff_requested.connect(self._on_show_diff)
         self._ai_chat.answer_question_requested.connect(self._ai_agent.user_responded)
         self._ai_chat.smart_paste_check_requested.connect(self._on_smart_paste_check)
+        self._ai_chat.always_allow_changed.connect(self._ai_agent.set_always_allowed)
+        
+        # NEW: Connect AI Integration Layer signals for OpenCode enhancements
+        self._ai_integration.intent_classified.connect(self._on_intent_classified)
+        self._ai_integration.agent_selected.connect(self._on_agent_selected)
+        self._ai_integration.tools_selected.connect(self._on_tools_selected)
+        self._ai_integration.permission_requested.connect(self._on_permission_requested)
+        self._ai_integration.permission_granted.connect(self._on_permission_granted)
+        self._ai_integration.permission_denied.connect(self._on_permission_denied)
+        
+        # NEW: Connect Testing Workflow signals
+        self._ai_integration.testing_decision.connect(self._on_testing_decision)
+        self._ai_integration.test_tools_selected.connect(self._on_test_tools_selected)
+        self._ai_integration.test_execution_started.connect(self._on_test_execution_started)
+        self._ai_integration.test_execution_completed.connect(self._on_test_execution_completed)
+        self._ai_integration.test_analysis_ready.connect(self._on_test_analysis_ready)
+        
+        # NEW: Connect AI Chat permission response signals
+        self._ai_chat.permission_response.connect(self._on_chat_permission_response)
         
         # Connect AI Agent back to UI for interactive questions
         self._ai_agent.user_question_requested.connect(self._on_ai_question_requested)
@@ -1230,6 +1315,26 @@ class CortexMainWindow(QMainWindow):
             else:
                 log.warning(f"File skip (not found or dir): {filepath}")
                 return
+        
+        # Check file extension for images and documents
+        file_ext = path.suffix.lower()
+        
+        # Handle image files
+        image_extensions = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp', '.ico', '.tiff', '.tif'}
+        if file_ext in image_extensions:
+            self._open_image_file(filepath)
+            return
+        
+        # Handle PDF files
+        if file_ext == '.pdf':
+            self._open_pdf_file(filepath)
+            return
+        
+        # Handle Office documents
+        office_extensions = {'.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx'}
+        if file_ext in office_extensions:
+            self._open_office_file(filepath)
+            return
             
         if self._file_manager.is_binary(filepath):
             log.info(f"File skip (binary): {filepath}")
@@ -1269,6 +1374,303 @@ class CortexMainWindow(QMainWindow):
             log.info(f"File opened successfully: {filepath}")
         except Exception as e:
             log.error(f"Error opening file {filepath}: {e}", exc_info=True)
+
+    def _open_image_file(self, filepath: str):
+        """Open an image file in a viewer tab, scaled to fit window."""
+        from PyQt6.QtWidgets import QLabel, QScrollArea
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtGui import QPixmap
+        
+        try:
+            log.info(f"Opening image file: {filepath}")
+            path = Path(filepath)
+            
+            # Load image
+            pixmap = QPixmap(filepath)
+            
+            if pixmap.isNull():
+                log.error(f"Failed to load image: {filepath}")
+                QMessageBox.warning(self, "Error", f"Could not load image: {path.name}")
+                return
+            
+            # Get available size (tab widget size minus some padding)
+            tab_size = self._editor_tabs.size()
+            max_width = max(tab_size.width() - 40, 400)  # Min 400px width
+            max_height = max(tab_size.height() - 80, 300)  # Min 300px height
+            
+            # Scale image to fit while maintaining aspect ratio
+            scaled_pixmap = pixmap.scaled(
+                max_width, 
+                max_height,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            
+            # Create label with scaled image
+            image_label = QLabel()
+            image_label.setPixmap(scaled_pixmap)
+            image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            
+            # Create scroll area
+            scroll_area = QScrollArea()
+            scroll_area.setWidgetResizable(True)
+            scroll_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            scroll_area.setWidget(image_label)
+            
+            # Add to tabs
+            idx = self._editor_tabs.addTab(scroll_area, path.name)
+            self._editor_tabs.setTabToolTip(idx, filepath)
+            self._editor_tabs.setCurrentIndex(idx)
+            
+            self._update_status_file(filepath)
+            log.info(f"Image file opened successfully: {filepath} (scaled to {scaled_pixmap.width()}x{scaled_pixmap.height()})")
+            
+        except Exception as e:
+            log.error(f"Error opening image file {filepath}: {e}", exc_info=True)
+            QMessageBox.warning(self, "Error", f"Could not open image: {e}")
+
+    def _open_pdf_file(self, filepath: str):
+        """Open a PDF file by rendering pages as images."""
+        from PyQt6.QtWidgets import QLabel, QScrollArea, QVBoxLayout, QWidget
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtGui import QPixmap, QImage
+        import fitz  # PyMuPDF
+        
+        try:
+            log.info(f"Opening PDF file: {filepath}")
+            path = Path(filepath)
+            
+            # Open PDF with PyMuPDF
+            doc = fitz.open(filepath)
+            
+            # Store page count immediately
+            total_pages = doc.page_count
+            
+            if total_pages == 0:
+                QMessageBox.warning(self, "Error", "PDF has no pages")
+                return
+            
+            # Create scrollable container for all pages
+            container = QWidget()
+            layout = QVBoxLayout(container)
+            layout.setSpacing(10)
+            layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            
+            # Get available width
+            tab_width = self._editor_tabs.width() - 60
+            
+            # Render each page as an image
+            for page_num in range(min(total_pages, 50)):  # Limit to 50 pages
+                page = doc[page_num]
+                
+                # Calculate zoom to fit width
+                zoom = tab_width / page.rect.width
+                mat = fitz.Matrix(zoom, zoom)
+                
+                # Render page to pixmap
+                pix = page.get_pixmap(matrix=mat)
+                
+                # Convert to QImage
+                img = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888)
+                pixmap = QPixmap.fromImage(img)
+                
+                # Create label for page
+                label = QLabel()
+                label.setPixmap(pixmap)
+                label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                label.setStyleSheet("background-color: white; border: 1px solid #ccc;")
+                
+                layout.addWidget(label)
+            
+            doc.close()
+            
+            # Create scroll area
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setWidget(container)
+            scroll.setStyleSheet("background-color: #f0f0f0;")
+            
+            # Add to tabs
+            idx = self._editor_tabs.addTab(scroll, path.name)
+            self._editor_tabs.setTabToolTip(idx, f"{filepath} ({total_pages} pages)")
+            self._editor_tabs.setCurrentIndex(idx)
+            
+            self._update_status_file(filepath)
+            log.info(f"PDF file opened successfully: {filepath} ({total_pages} pages)")
+            
+        except ImportError:
+            log.error("PyMuPDF (fitz) not installed")
+            QMessageBox.warning(self, "Error", "PyMuPDF not installed. Run: pip install PyMuPDF")
+        except Exception as e:
+            log.error(f"Error opening PDF file {filepath}: {e}", exc_info=True)
+            QMessageBox.warning(self, "Error", f"Could not open PDF: {e}")
+
+    def _open_office_file(self, filepath: str):
+        """Open Office documents (Word, Excel, PowerPoint) inside the IDE as formatted text."""
+        from PyQt6.QtWidgets import QTextEdit
+        from PyQt6.QtCore import Qt
+        
+        try:
+            log.info(f"Opening Office file: {filepath}")
+            path = Path(filepath)
+            file_ext = path.suffix.lower()
+            
+            # Create text viewer
+            text_viewer = QTextEdit()
+            text_viewer.setReadOnly(True)
+            text_viewer.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+            
+            content_html = ""
+            
+            if file_ext in ['.docx']:
+                # Read Word document
+                try:
+                    from docx import Document
+                    doc = Document(filepath)
+                    
+                    content_html = f"<h2>{path.name}</h2><hr>"
+                    
+                    for para in doc.paragraphs:
+                        if para.text.strip():
+                            # Check if it's a heading based on style
+                            if para.style.name.startswith('Heading'):
+                                content_html += f"<h3>{para.text}</h3>"
+                            else:
+                                content_html += f"<p>{para.text}</p>"
+                    
+                    # Add tables
+                    for table in doc.tables:
+                        content_html += "<table border='1' cellpadding='5'>"
+                        for row in table.rows:
+                            content_html += "<tr>"
+                            for cell in row.cells:
+                                content_html += f"<td>{cell.text}</td>"
+                            content_html += "</tr>"
+                        content_html += "</table><br>"
+                    
+                except ImportError:
+                    content_html = f"<p style='color:red'>Error: python-docx library not installed.<br>Install with: pip install python-docx</p>"
+                    log.error("python-docx library not installed")
+                except Exception as e:
+                    content_html = f"<p style='color:red'>Error reading document: {e}</p>"
+                    log.error(f"Error reading docx: {e}")
+            
+            elif file_ext in ['.xlsx', '.xls']:
+                # Read Excel document
+                try:
+                    if file_ext == '.xlsx':
+                        import openpyxl
+                        wb = openpyxl.load_workbook(filepath, data_only=True)
+                        sheetnames = wb.sheetnames
+                        
+                        content_html = f"<h2>{path.name}</h2><hr>"
+                        
+                        for sheet_name in sheetnames:
+                            sheet = wb[sheet_name]
+                            content_html += f"<h3>Sheet: {sheet_name}</h3>"
+                            content_html += "<table border='1' cellpadding='5' style='border-collapse:collapse'>"
+                            
+                            # Read first 100 rows max
+                            row_count = 0
+                            for row in sheet.iter_rows(max_row=100):
+                                content_html += "<tr>"
+                                for cell in row:
+                                    value = cell.value if cell.value is not None else ""
+                                    content_html += f"<td>{value}</td>"
+                                content_html += "</tr>"
+                                row_count += 1
+                                if row_count >= 100:
+                                    content_html += "<tr><td colspan='100'>... (showing first 100 rows)</td></tr>"
+                                    break
+                            
+                            content_html += "</table><br>"
+                    
+                    elif file_ext == '.xls':
+                        import xlrd
+                        wb = xlrd.open_workbook(filepath)
+                        
+                        content_html = f"<h2>{path.name}</h2><hr>"
+                        
+                        for sheet_idx in range(wb.nsheets):
+                            sheet = wb.sheet_by_index(sheet_idx)
+                            content_html += f"<h3>Sheet: {sheet.name}</h3>"
+                            content_html += "<table border='1' cellpadding='5' style='border-collapse:collapse'>"
+                            
+                            # Read first 100 rows max
+                            for row_idx in range(min(sheet.nrows, 100)):
+                                content_html += "<tr>"
+                                for col_idx in range(sheet.ncols):
+                                    value = sheet.cell_value(row_idx, col_idx)
+                                    content_html += f"<td>{value}</td>"
+                                content_html += "</tr>"
+                            
+                            if sheet.nrows > 100:
+                                content_html += "<tr><td colspan='100'>... (showing first 100 rows)</td></tr>"
+                            
+                            content_html += "</table><br>"
+                    
+                except ImportError as e:
+                    content_html = f"<p style='color:red'>Error: Required library not installed.<br>Install with: pip install openpyxl xlrd</p>"
+                    log.error(f"Library not installed: {e}")
+                except Exception as e:
+                    content_html = f"<p style='color:red'>Error reading spreadsheet: {e}</p>"
+                    log.error(f"Error reading xlsx/xls: {e}")
+            
+            elif file_ext == '.doc':
+                # Old Word format - try to extract text
+                try:
+                    # Try using textract if available
+                    import textract
+                    text = textract.process(filepath).decode('utf-8', errors='ignore')
+                    content_html = f"<h2>{path.name}</h2><hr>"
+                    content_html += f"<pre style='white-space:pre-wrap;font-family:Arial,sans-serif'>{text}</pre>"
+                except ImportError:
+                    content_html = f"""<p style='color:orange'>
+                        <b>Old Word Format (.doc)</b><br><br>
+                        This file uses the older .doc format which requires additional libraries.<br><br>
+                        <b>Options:</b><br>
+                        1. Convert to .docx format (open in Word and Save As .docx)<br>
+                        2. Install textract: <code>pip install textract</code><br>
+                        3. Open externally with Microsoft Word
+                    </p>"""
+                    log.warning(f"Old .doc format not supported without textract: {filepath}")
+                except Exception as e:
+                    content_html = f"<p style='color:red'>Error reading .doc file: {e}</p>"
+                    log.error(f"Error reading doc: {e}")
+            
+            else:
+                content_html = f"<p>File type '{file_ext}' is not supported for internal viewing.</p>"
+            
+            # Set content with styling
+            text_viewer.setHtml(f"""
+            <html>
+            <head>
+                <style>
+                    body {{ font-family: Arial, sans-serif; padding: 20px; line-height: 1.6; }}
+                    h2 {{ color: #333; border-bottom: 2px solid #0078d4; padding-bottom: 10px; }}
+                    h3 {{ color: #555; margin-top: 20px; }}
+                    table {{ margin: 10px 0; border: 1px solid #ddd; }}
+                    td {{ padding: 8px; border: 1px solid #ddd; }}
+                    p {{ margin: 10px 0; }}
+                </style>
+            </head>
+            <body>
+                {content_html}
+            </body>
+            </html>
+            """)
+            
+            # Add to tabs
+            idx = self._editor_tabs.addTab(text_viewer, path.name)
+            self._editor_tabs.setTabToolTip(idx, filepath)
+            self._editor_tabs.setCurrentIndex(idx)
+            
+            self._update_status_file(filepath)
+            log.info(f"Office file opened internally: {filepath}")
+            
+        except Exception as e:
+            log.error(f"Error opening Office file {filepath}: {e}", exc_info=True)
+            QMessageBox.warning(self, "Error", f"Could not open document: {e}")
 
     def _on_show_diff(self, file_path: str):
         """Show diff in Qt dialog window — triggered by Diff button click in chat."""
@@ -1608,6 +2010,143 @@ class CortexMainWindow(QMainWindow):
             # On error, paste normally
             self._ai_chat._view.page().runJavaScript(
                 f"handleSmartPasteResult({{isMatch: false}});"
+            )
+
+    # ============================================================================
+    # NEW: OpenCode Enhancement Integration Handlers
+    # ============================================================================
+    
+    def _on_intent_classified(self, message: str, intent: str, confidence: float):
+        """Handle intent classification from AI Integration Layer."""
+        log.info(f"[Intent] {intent} (confidence: {confidence:.2f}): {message[:50]}...")
+        # Could update UI to show detected intent
+        
+    def _on_agent_selected(self, agent_type: str, reason: str, confidence: float):
+        """Handle agent selection from AI Integration Layer."""
+        log.info(f"[Agent] Selected {agent_type} (confidence: {confidence:.2f}): {reason}")
+        # Could show agent indicator in UI
+        
+    def _on_tools_selected(self, tool_names: list):
+        """Handle tool selection from AI Integration Layer."""
+        log.info(f"[Tools] Selected: {', '.join(tool_names)}")
+        # Could show tool indicators in UI
+        
+    def _on_permission_requested(self, request_id: str, html_card: str):
+        """Handle permission request - show permission card in chat."""
+        log.info(f"[Permission] Request {request_id} - showing permission card")
+        
+        # Show permission card in AI chat
+        if hasattr(self._ai_chat, 'show_permission_card'):
+            self._ai_chat.show_permission_card(request_id, html_card)
+        else:
+            # Fallback: add as system message
+            self._ai_chat.add_system_message("🔒 Permission required. Please check the chat interface.")
+            
+    def _on_permission_granted(self, request_id: str, scope: str):
+        """Handle permission grant."""
+        log.info(f"[Permission] Granted {request_id} with scope {scope}")
+        
+        # Retry the AI processing now that permission is granted
+        # Get the last user message and retry
+        if hasattr(self._ai_chat, '_last_user_message'):
+            message = self._ai_chat._last_user_message
+            context = []
+            
+            if self._project_manager.root:
+                context.append(f"Project path: {self._project_manager.root}")
+            
+            editor = self._editor_tabs.current_editor()
+            if editor:
+                fp = self._editor_tabs.current_filepath()
+                if fp:
+                    name = Path(fp).name
+                    content = editor.get_all_text()
+                    if len(content) > 5000:
+                        content = content[:5000] + "... (truncated)"
+                    context.append(f"Current file ({name}):\n```\n{content}\n```")
+            
+            full_context = "\n\n".join(context)
+            
+            # NEW: Check if we have enhancement data stored
+            enhancement_data = self._ai_agent.get_last_enhancement_data()
+            if enhancement_data.get("intent"):
+                log.info("Retrying with chat_with_enhancement after permission grant")
+                self._ai_agent.chat_with_enhancement(
+                    message,
+                    intent=enhancement_data["intent"],
+                    route=enhancement_data["route"],
+                    tools=enhancement_data["tools"],
+                    code_context=full_context
+                )
+            else:
+                self._ai_agent.chat(message, full_context)
+            
+    def _on_permission_denied(self, request_id: str, reason: str):
+        """Handle permission denial."""
+        log.info(f"[Permission] Denied {request_id}: {reason}")
+        self._ai_chat.add_system_message(f"❌ Permission denied: {reason}")
+        
+    def _on_chat_permission_response(self, request_id: str, approved: bool, scope: str = "session"):
+        """Handle permission response from chat UI."""
+        if approved:
+            self._ai_integration.grant_permission(request_id, scope)
+        else:
+            self._ai_integration.deny_permission(request_id, "User denied via UI")
+    
+    # ========== TESTING WORKFLOW HANDLERS (NEW) ==========
+    
+    def _on_testing_decision(self, decision: str, priority: str, trigger: str):
+        """Handle testing decision signal."""
+        log.info(f"[Testing] Decision: {decision} (priority: {priority}, trigger: {trigger})")
+        
+        # Show UI notification based on decision
+        if decision == 'write_tests':
+            self._ai_chat.add_system_message(
+                f"🧪 **Testing Mode Activated**\n"
+                f"Priority: {priority.upper()} | Trigger: {trigger}\n"
+                f"The AI will analyze your code and suggest appropriate tests."
+            )
+        elif decision == 'skip_tests':
+            log.debug("Testing skipped - no triggers detected")
+    
+    def _on_test_tools_selected(self, tools: list):
+        """Handle test tools selection signal."""
+        log.info(f"[Testing] Tools selected: {tools}")
+        
+        if tools:
+            self._ai_chat.add_system_message(
+                f"🔧 **Test Framework:** {', '.join(tools)}"
+            )
+    
+    def _on_test_execution_started(self, test_type: str):
+        """Handle test execution start signal."""
+        log.info(f"[Testing] Execution started: {test_type}")
+        self._ai_chat.add_system_message(f"▶️ Running {test_type} tests...")
+    
+    def _on_test_execution_completed(self, all_passed: bool, passed_count: int, failed_count: int):
+        """Handle test execution completion signal."""
+        log.info(f"[Testing] Execution completed: {passed_count} passed, {failed_count} failed")
+        
+        if all_passed:
+            self._ai_chat.add_system_message(
+                f"✅ **All Tests Passed!** ({passed_count} tests)"
+            )
+        else:
+            self._ai_chat.add_system_message(
+                f"⚠️ **Tests Completed:** {passed_count} passed, {failed_count} failed"
+            )
+    
+    def _on_test_analysis_ready(self, analysis: dict):
+        """Handle test analysis results signal."""
+        log.info(f"[Testing] Analysis ready: {analysis.get('all_passed', False)}")
+        
+        # Display failure patterns if any
+        patterns = analysis.get('patterns', [])
+        if patterns:
+            pattern_text = '\n'.join([f"- {p.get('type', 'unknown')}: {p.get('description', '')}" 
+                                     for p in patterns[:3]])
+            self._ai_chat.add_system_message(
+                f"📊 **Failure Analysis:**\n{pattern_text}"
             )
 
     def _open_file_at_line_duplicate(self, filepath: str, line: int):
@@ -2682,7 +3221,148 @@ class CortexMainWindow(QMainWindow):
                 context.append(f"Current file ({name}):\n```\n{content}\n```")
 
         full_context = "\n\n".join(context)
-        self._ai_agent.chat(message, full_context)
+        
+        # NEW: Set session for AI Integration Layer
+        session_id = getattr(self._ai_chat, '_current_conversation_id', 'default-session')
+        self._ai_integration.set_session(
+            session_id=session_id,
+            workspace_path=self._project_manager.root
+        )
+        
+        # NEW: Process message through OpenCode Enhancement Layer
+        import asyncio
+        enhancement_result = None
+        
+        async def process_with_enhancements():
+            """Process message with intent classification, agent routing, and permission checks."""
+            nonlocal enhancement_result
+            result = await self._ai_integration.process_message(message)
+            enhancement_result = result
+            
+            if result.get("requires_permission_ui"):
+                # Permission card will be shown by the signal handler
+                # Don't proceed with AI agent yet
+                log.info("Permission required, waiting for user response")
+                return False
+            
+            # Check if command safety analysis flagged anything
+            if result.get("tools"):
+                for tool_score in result["tools"]:
+                    if tool_score.tool.name == "bash":
+                        # Check command safety
+                        # Extract command from message (simplified)
+                        import re
+                        cmd_match = re.search(r'(?:run|execute)\s+(.+)', message, re.IGNORECASE)
+                        if cmd_match:
+                            command = cmd_match.group(1)
+                            safety = self._ai_integration.analyze_command_safety(command)
+                            if safety["safety"] == "dangerous":
+                                self._ai_chat.add_system_message(
+                                    f"⚠️ **Dangerous command detected:** {safety['explanation']}"
+                                )
+            
+            # Testing Workflow: Check if tests should be triggered
+            if result.get("intent") and self._ai_integration.should_trigger_tests(result["intent"]):
+                log.info("Testing workflow triggered by intent classification")
+                
+                # Analyze testing need
+                code_changes = []  # TODO: Get actual code changes from editor
+                testing_decision = self._ai_integration.analyze_testing_need(
+                    code_changes=code_changes,
+                    user_message=message
+                )
+                
+                # Store testing decision in enhancement result
+                result["testing_decision"] = testing_decision
+                
+                # If tests are needed, get test tools
+                if testing_decision.decision == 'write_tests':
+                    test_tools = self._ai_integration.get_test_tools_for_workspace()
+                    log.info(f"Test tools selected: {test_tools.get('primary', {}).name if test_tools.get('primary') else 'none'}")
+                    
+                    # Store test tools info
+                    result["test_tools"] = test_tools
+            
+            # Proceed with normal AI processing
+            return True
+        
+        # Run the async processing
+        try:
+            should_proceed = asyncio.run(process_with_enhancements())
+            if not should_proceed:
+                return  # Stop here, wait for permission
+        except Exception as e:
+            log.error(f"Error in enhancement processing: {e}")
+            # Continue with normal processing if enhancement fails
+        
+        # Phase 1 Integration: Generate title for first message
+        # Check if this is a new conversation (first user message)
+        if hasattr(self._ai_chat, '_current_conversation_id'):
+            conv_id = self._ai_chat._current_conversation_id
+            # Check if we need to generate a title
+            if conv_id and not self._title_generator.get_cached_title(conv_id):
+                title = self._ai_agent.generate_chat_title(message, conv_id)
+                if title:
+                    log.info(f"Generated chat title: {title}")
+                    # Update UI with new title
+                    if hasattr(self._ai_chat, 'update_conversation_title'):
+                        self._ai_chat.update_conversation_title(conv_id, title)
+        
+        # Phase 2 Integration: Store message in database
+        if hasattr(self._ai_chat, '_current_conversation_id'):
+            conv_id = self._ai_chat._current_conversation_id
+            if conv_id:
+                try:
+                    # Ensure session exists
+                    sessions = self._session_db.list_sessions(self._project_manager.root, limit=1)
+                    if not sessions:
+                        # Create new session
+                        title = self._title_generator.get_cached_title(conv_id) or "New Chat"
+                        self._session_db.create_session(
+                            conv_id, 
+                            title, 
+                            self._project_manager.root or "", 
+                            self._ai_agent._settings.get("ai", "model", default="deepseek-chat")
+                        )
+                    # Add user message
+                    import uuid
+                    from datetime import datetime
+                    self._session_db.add_message(
+                        conv_id,
+                        str(uuid.uuid4()),
+                        "user",
+                        message,
+                        len(message) // 4  # Rough token count
+                    )
+                except Exception as e:
+                    log.debug(f"Could not store message in database: {e}")
+        
+        # Phase 3 Integration: Use ACP for complex tasks if needed
+        # (Optional: Route certain tasks through multi-agent system)
+        
+        # NEW: Use chat_with_enhancement if we have enhancement data
+        if enhancement_result and enhancement_result.get("intent"):
+            # Check if testing workflow should be used
+            if enhancement_result.get("testing_decision") and \
+               enhancement_result["testing_decision"].decision == 'write_tests':
+                log.info("Using chat_with_testing with testing workflow")
+                self._ai_agent.chat_with_testing(
+                    message,
+                    code_changes=[],  # TODO: Get actual code changes
+                    code_context=full_context
+                )
+            else:
+                log.info("Using chat_with_enhancement with intent classification data")
+                self._ai_agent.chat_with_enhancement(
+                    message, 
+                    intent=enhancement_result["intent"],
+                    route=enhancement_result["route"],
+                    tools=enhancement_result["tools"],
+                    code_context=full_context
+                )
+        else:
+            # Fallback to regular chat
+            self._ai_agent.chat(message, full_context)
 
     def _on_model_changed(self, model_id: str, perf: str, cost: str):
         """Handle model selection change from AI chat."""
@@ -3223,6 +3903,347 @@ class CortexMainWindow(QMainWindow):
         super().resizeEvent(event)
         if hasattr(self, '_welcome_widget') and self._welcome_widget is not None:
             self._apply_welcome_theme(self._theme_manager.is_dark)
+
+    # Phase 1, 2, 3 Integration Methods
+    def _set_agent_mode(self, mode: str):
+        """
+        Set AI agent mode (Phase 1 Integration).
+        
+        Args:
+            mode: One of 'build', 'explore', 'debug', 'plan'
+        """
+        self._ai_agent.set_mode(mode)
+        mode_names = {
+            'build': '🏗️ Build',
+            'explore': '🔍 Explore', 
+            'debug': '🐛 Debug',
+            'plan': '📋 Plan'
+        }
+        self._statusbar.showMessage(f"Agent mode: {mode_names.get(mode, mode)}", 3000)
+        log.info(f"Agent mode switched to: {mode}")
+    
+    def _show_skills_browser(self):
+        """Show skills browser dialog (Phase 3 Integration)."""
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QListWidget, QLabel, QPushButton, QTextEdit
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Skills Browser")
+        dialog.setMinimumSize(600, 400)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Title
+        title = QLabel("<h2>🛠️ Available Skills</h2>")
+        layout.addWidget(title)
+        
+        # Skills list
+        skills_list = QListWidget()
+        skills = self._ai_agent.get_available_skills()
+        
+        for skill in skills:
+            item_text = f"{skill['name']} ({skill['id']})"
+            skills_list.addItem(item_text)
+        
+        layout.addWidget(skills_list)
+        
+        # Description
+        desc_label = QLabel("Select a skill to view capabilities")
+        layout.addWidget(desc_label)
+        
+        # Capability display
+        capability_text = QTextEdit()
+        capability_text.setReadOnly(True)
+        capability_text.setPlaceholderText("Skill capabilities will appear here...")
+        layout.addWidget(capability_text)
+        
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.close)
+        layout.addWidget(close_btn)
+        
+        dialog.exec()
+        log.info("Skills browser opened")
+    
+    def _show_mcp_connections(self):
+        """Show MCP connections dialog (Phase 3 Integration)."""
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QLineEdit, QListWidget
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("MCP Connections")
+        dialog.setMinimumSize(500, 300)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Title
+        title = QLabel("<h2>🔗 MCP Server Connections</h2>")
+        layout.addWidget(title)
+        
+        # Connected servers
+        servers_label = QLabel("Connected Servers:")
+        layout.addWidget(servers_label)
+        
+        servers_list = QListWidget()
+        servers = self._ai_agent._mcp_manager.list_servers()
+        if servers:
+            for server in servers:
+                servers_list.addItem(server)
+        else:
+            servers_list.addItem("No servers connected")
+        
+        layout.addWidget(servers_list)
+        
+        # Connect new server section
+        layout.addWidget(QLabel("Connect New Server:"))
+        
+        name_input = QLineEdit()
+        name_input.setPlaceholderText("Server name (e.g., github)")
+        layout.addWidget(name_input)
+        
+        url_input = QLineEdit()
+        url_input.setPlaceholderText("Server URL (e.g., https://mcp.github.com)")
+        layout.addWidget(url_input)
+        
+        def connect_server():
+            name = name_input.text().strip()
+            url = url_input.text().strip()
+            if name and url:
+                success = self._ai_agent.connect_mcp_server(name, url)
+                if success:
+                    servers_list.addItem(name)
+                    name_input.clear()
+                    url_input.clear()
+        
+        connect_btn = QPushButton("Connect")
+        connect_btn.clicked.connect(connect_server)
+        layout.addWidget(connect_btn)
+        
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.close)
+        layout.addWidget(close_btn)
+        
+        dialog.exec()
+        log.info("MCP connections dialog opened")
+
+    # Phase 4 Integration Methods
+    def _show_todo_manager(self):
+        """Show TODO manager dialog (Phase 4 Integration)."""
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QListWidget, QInputDialog
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Tasks & TODOs")
+        dialog.setMinimumSize(600, 400)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Title
+        title = QLabel("<h2>✅ Task Manager</h2>")
+        layout.addWidget(title)
+        
+        # Get current session ID
+        session_id = getattr(self._ai_chat, '_current_conversation_id', 'default')
+        
+        # Tasks list
+        tasks_label = QLabel("Current Tasks:")
+        layout.addWidget(tasks_label)
+        
+        tasks_list = QListWidget()
+        tasks = self._todo_manager.get_session_tasks(session_id)
+        
+        if tasks:
+            for task in tasks:
+                status_icon = "✓" if task.status.value == "completed" else "○"
+                priority_icon = "🔴" if task.priority == 1 else "🟡" if task.priority == 2 else "🟢"
+                item_text = f"{status_icon} {priority_icon} {task.description[:50]}"
+                tasks_list.addItem(item_text)
+        else:
+            tasks_list.addItem("No tasks yet")
+        
+        layout.addWidget(tasks_list)
+        
+        # Stats
+        stats = self._todo_manager.get_task_stats(session_id)
+        stats_text = f"Pending: {stats.get('pending', 0)} | In Progress: {stats.get('in_progress', 0)} | Completed: {stats.get('completed', 0)}"
+        stats_label = QLabel(stats_text)
+        layout.addWidget(stats_label)
+        
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.close)
+        layout.addWidget(close_btn)
+        
+        dialog.exec()
+        log.info("TODO manager dialog opened")
+    
+    def _add_todo_task(self):
+        """Add a new TODO task."""
+        from PyQt6.QtWidgets import QInputDialog
+        
+        text, ok = QInputDialog.getText(self, "Add Task", "Task description:")
+        if ok and text:
+            session_id = getattr(self._ai_chat, '_current_conversation_id', 'default')
+            task_id = self._todo_manager.add_task(session_id, text)
+            self._statusbar.showMessage(f"Task added: {text[:30]}...", 3000)
+            log.info(f"Added todo task: {text}")
+    
+    def _complete_todo_task(self):
+        """Complete a TODO task."""
+        from PyQt6.QtWidgets import QInputDialog
+        
+        session_id = getattr(self._ai_chat, '_current_conversation_id', 'default')
+        tasks = self._todo_manager.get_pending_tasks(session_id)
+        
+        if not tasks:
+            self._statusbar.showMessage("No pending tasks", 3000)
+            return
+        
+        task_descriptions = [f"{i+1}. {t.description[:40]}" for i, t in enumerate(tasks)]
+        text, ok = QInputDialog.getItem(self, "Complete Task", "Select task:", task_descriptions, 0, False)
+        
+        if ok and text:
+            idx = int(text.split(".")[0]) - 1
+            if 0 <= idx < len(tasks):
+                task_id = tasks[idx].id
+                self._todo_manager.complete_task(task_id)
+                self._statusbar.showMessage("Task completed!", 3000)
+    
+    def _show_permission_settings(self):
+        """Show permission settings dialog (Phase 4 Integration)."""
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Permission Settings")
+        dialog.setMinimumSize(500, 300)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Title
+        title = QLabel("<h2>🔒 Permission System</h2>")
+        layout.addWidget(title)
+        
+        # Info
+        info = QLabel("Permission system is active and monitoring tool usage.")
+        layout.addWidget(info)
+        
+        # Cache info
+        cache_size = len(self._permission_evaluator._permission_cache)
+        cache_label = QLabel(f"Cached decisions: {cache_size}")
+        layout.addWidget(cache_label)
+        
+        # Clear cache button
+        def clear_cache():
+            self._permission_evaluator.clear_cache()
+            cache_label.setText("Cached decisions: 0")
+        
+        clear_btn = QPushButton("Clear Permission Cache")
+        clear_btn.clicked.connect(clear_cache)
+        layout.addWidget(clear_btn)
+        
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.close)
+        layout.addWidget(close_btn)
+        
+        dialog.exec()
+        log.info("Permission settings dialog opened")
+    
+    def _show_github_integration(self):
+        """Show GitHub integration dialog (Phase 4 Integration)."""
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QLineEdit, QInputDialog
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("GitHub Integration")
+        dialog.setMinimumSize(500, 300)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Title
+        title = QLabel("<h2>🐙 GitHub Automation</h2>")
+        layout.addWidget(title)
+        
+        # Repository info
+        if self._github_agent.repo_owner and self._github_agent.repo_name:
+            repo_text = f"Repository: {self._github_agent.repo_owner}/{self._github_agent.repo_name}"
+        else:
+            repo_text = "No repository configured"
+        repo_label = QLabel(repo_text)
+        layout.addWidget(repo_label)
+        
+        # Set repository button
+        def set_repo():
+            owner, ok1 = QInputDialog.getText(self, "GitHub Repository", "Repository owner:")
+            if ok1 and owner:
+                repo, ok2 = QInputDialog.getText(self, "GitHub Repository", "Repository name:")
+                if ok2 and repo:
+                    self._github_agent.set_repository(owner, repo)
+                    repo_label.setText(f"Repository: {owner}/{repo}")
+        
+        set_repo_btn = QPushButton("Set Repository")
+        set_repo_btn.clicked.connect(set_repo)
+        layout.addWidget(set_repo_btn)
+        
+        # Analyze PR button
+        def analyze_pr():
+            pr_number, ok = QInputDialog.getInt(self, "Analyze PR", "PR number:")
+            if ok:
+                result = self._github_agent.analyze_pr(pr_number)
+                if result:
+                    msg = f"PR Analysis: {result.get('summary', {}).get('files_changed', 0)} files changed"
+                    self._statusbar.showMessage(msg, 5000)
+        
+        analyze_btn = QPushButton("Analyze PR...")
+        analyze_btn.clicked.connect(analyze_pr)
+        layout.addWidget(analyze_btn)
+        
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.close)
+        layout.addWidget(close_btn)
+        
+        dialog.exec()
+        log.info("GitHub integration dialog opened")
+
+    # Phase 4: Real-time UI Update Handlers
+    def _on_todo_task_added(self, task_id: str):
+        """Handle new todo task - update chat UI in real-time."""
+        task = self._todo_manager.get_task(task_id)
+        if task and hasattr(self, '_ai_chat'):
+            # Convert to dict and update chat UI
+            task_dict = task.to_dict()
+            self._ai_chat.update_todos([task_dict])
+            log.info(f"Todo task added to UI: {task.description[:30]}")
+
+    def _on_todo_task_completed(self, task_id: str):
+        """Handle completed todo - update chat UI."""
+        task = self._todo_manager.get_task(task_id)
+        if task and hasattr(self, '_ai_chat'):
+            # Update the todo status in chat UI
+            task_dict = task.to_dict()
+            self._ai_chat.update_todos([task_dict])
+            log.info(f"Todo task completed in UI: {task.description[:30]}")
+
+    def _on_todo_task_updated(self, task_id: str):
+        """Handle updated todo - refresh chat UI."""
+        session_id = getattr(self._ai_chat, '_current_conversation_id', 'default')
+        tasks = self._todo_manager.get_session_tasks(session_id)
+        if hasattr(self, '_ai_chat'):
+            # Refresh all todos in chat UI
+            tasks_list = [t.to_dict() for t in tasks]
+            self._ai_chat.update_todos(tasks_list)
+
+    def _on_title_generated(self, conversation_id: str, title: str):
+        """Handle auto-generated title - update chat tab and UI."""
+        # Update the chat tab title via JavaScript bridge
+        if hasattr(self, '_ai_chat') and hasattr(self._ai_chat, '_view'):
+            safe_title = title.replace('"', '\\"').replace("'", "\\'")
+            js_code = f"if(window.updateChatTitle) window.updateChatTitle('{conversation_id}', '{safe_title}');"
+            self._ai_chat._view.page().runJavaScript(js_code)
+            log.info(f"Chat title updated in UI: {title}")
+        
+        # Also update window title if this is current chat
+        current_id = getattr(self._ai_chat, '_current_conversation_id', None)
+        if current_id == conversation_id and title:
+            self.setWindowTitle(f"Cortex - {title}")
 
 
 def QApplication_instance():

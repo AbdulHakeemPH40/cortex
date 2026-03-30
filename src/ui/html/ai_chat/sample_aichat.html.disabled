@@ -6022,6 +6022,11 @@ pre[data-lang]{background:#282a36}
 
                 // Fixed: Split by single newline to ensure immediate processing of ANY data line
                 // waiting for \n\n caused the "batching" lag.
+                // Defensive: Ensure buffer is a string before splitting
+                if (typeof buffer !== 'string') {
+                    console.error('[CHAT] Buffer is not a string:', buffer);
+                    buffer = String(buffer || '');
+                }
                 const lines = buffer.split('\n');
                 buffer = lines.pop() || "";
 
