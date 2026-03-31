@@ -1684,18 +1684,21 @@ class CortexMainWindow(QMainWindow):
         original, modified = '', ''
 
         # 1. Try the Python diff data store (most reliable)
-        if hasattr(self, '_diff_data_store') and file_path in self._diff_data_store:
-            original, modified = self._diff_data_store[file_path]
-            log.info(f"[Diff] Found in _diff_data_store: {file_path}")
-        else:
-            log.debug(f"[Diff] Not in _diff_data_store directly. Checking normalized paths...")
-            # 2. Normalize path and try again (Windows backslash vs forward slash)
-            norm = file_path.replace('\\', '/')
-            if hasattr(self, '_diff_data_store'):
+        import os
+        normalized_requested = os.path.normcase(os.path.normpath(file_path))
+        
+        if hasattr(self, '_diff_data_store'):
+            # Direct check
+            if file_path in self._diff_data_store:
+                original, modified = self._diff_data_store[file_path]
+                log.info(f"[Diff] Found in _diff_data_store (direct): {file_path}")
+            else:
+                # Iterative normalized check
+                log.debug(f"[Diff] Checking normalized path for: {normalized_requested}")
                 for k, v in self._diff_data_store.items():
-                    if k.replace('\\', '/') == norm:
+                    if os.path.normcase(os.path.normpath(k)) == normalized_requested:
                         original, modified = v
-                        log.info(f"[Diff] Found with normalized path: {k} -> {norm}")
+                        log.info(f"[Diff] Found in _diff_data_store (normalized): {k}")
                         break
 
         # 3. Fallback to file_tracker
@@ -1709,6 +1712,10 @@ class CortexMainWindow(QMainWindow):
         if not modified:
             log.warning(f"[Diff] No diff data found for {file_path}")
             log.debug(f"[Diff] _diff_data_store keys: {list(getattr(self, '_diff_data_store', {}).keys())}")
+            if hasattr(self, '_ai_chat'):
+                import os
+                filename = os.path.basename(file_path)
+                self._ai_chat.add_system_message(f"⚠️ No diff data available for {filename}. It was not edited in this session.")
             return
 
         log.info(f"[Diff] Opening diff tab for {file_path} (+{len(modified)} chars)")
@@ -1846,8 +1853,11 @@ class CortexMainWindow(QMainWindow):
         """Handle AI asking a question that requires user response in chat."""
         log.info(f"AI requested user input: {question[:50]}...")
         # Structuring the question info for the JS UI
+        # CRITICAL: Use permission_request_id if available (for permission cards),
+        # otherwise fall back to tool_call_id (for general questions)
+        request_id = metadata.get("permission_request_id", tool_call_id)
         info = {
-            "id": tool_call_id,
+            "id": request_id,
             "text": question,
             "type": metadata.get("type", "text"),
             "choices": metadata.get("choices", []),
@@ -2102,10 +2112,39 @@ class CortexMainWindow(QMainWindow):
         
     def _on_chat_permission_response(self, request_id: str, approved: bool, scope: str = "session", remember: bool = False):
         """Handle permission response from chat UI."""
+        log.info(f"Chat permission response: {request_id}, approved={approved}, scope={scope}, remember={remember}")
+        
+        # Convert permission_request_id to tool_call_id format for agent.user_responded
+        # The request_id from permission card is actually the permission_request_id (UUID)
+        # But agent.user_responded expects tool_call_id
+        # We need to find which pending tool this belongs to by searching _pending_tool_results
+        tool_call_id_match = None
+        if hasattr(self._ai_agent, '_pending_tool_results'):
+            for res in self._ai_agent._pending_tool_results:
+                # Check if this result's metadata has the matching permission_request_id
+                metadata = res.get("metadata", {})
+                if metadata.get("permission_request_id") == request_id:
+                    tool_call_id_match = res.get("tool_call_id")
+                    log.info(f"Matched permission {request_id} to tool_call_id {tool_call_id_match}")
+                    break
+        
         if approved:
             self._ai_integration.grant_permission(request_id, scope, remember)
+            
+            # If we found the matching tool_call_id, trigger user_responded with "allow"
+            if tool_call_id_match:
+                response_str = f"allow:{scope}" if scope else "allow"
+                if remember:
+                    response_str = f"always:{scope}" if scope else "always"
+                log.info(f"Auto-responding to pending tool: {tool_call_id_match} with {response_str}")
+                self._ai_agent.user_responded(tool_call_id_match, response_str)
         else:
             self._ai_integration.deny_permission(request_id, "User denied via UI")
+            
+            # If we found the matching tool_call_id, trigger user_responded with "deny"
+            if tool_call_id_match:
+                log.info(f"Auto-responding to pending tool: {tool_call_id_match} with deny")
+                self._ai_agent.user_responded(tool_call_id_match, "deny")
     
     def _on_user_denied_workflow(self, tool_name: str):
         """Handle user denying workflow twice - stop AI agent."""
@@ -3366,30 +3405,12 @@ class CortexMainWindow(QMainWindow):
     def _on_model_changed(self, model_id: str, perf: str, cost: str):
         """Handle model selection change from AI chat."""
         # Determine provider from model_id
-        
-        # Groq models - check first (some have / but are Groq, not Together)
-        groq_patterns = [
-            "groq/",
-            "llama-3.1-8b-instant",
-            "llama-3.3-70b-versatile",
-            "llama3-8b-8192",
-            "llama3-70b-8192",
-            "gemma-7b-it",
-            "mixtral-8x7b-32768",
-        ]
-        groq_vendors = ["meta-llama/", "moonshotai/", "openai/", "qwen/"]
-        
-        if any(pattern in model_id for pattern in groq_patterns):
-            provider = "groq"
-        elif any(model_id.startswith(vendor) for vendor in groq_vendors):
-            # These vendors on Groq (not Together)
-            provider = "groq"
-        elif model_id.startswith("deepseek-") and "/" not in model_id:
+        if model_id.startswith("deepseek-") and "/" not in model_id:
             # Native DeepSeek models (without /)
             provider = "deepseek"
-        elif "/" in model_id or model_id in ["moonshotai/Kimi-K2.5", "deepseek-ai/DeepSeek-R1", "deepseek-ai/DeepSeek-V3"]:
-            # Together AI models (always have / in name)
-            provider = "together"
+        elif "/" in model_id:
+            # Vendor models via SiliconFlow
+            provider = "siliconflow"
         else:
             provider = "deepseek"  # Default to DeepSeek
         

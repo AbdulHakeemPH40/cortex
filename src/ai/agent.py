@@ -59,6 +59,11 @@ from src.ai.github import get_github_agent
 from src.ai.intent import IntentClassification, AgentRoute
 from src.ai.tools.selection import ToolScore
 
+# PERFORMANCE OPTIMIZATION: Industry Standard Modules
+from src.ai.tool_selector import TaskType
+from src.ai.terminal_optimizer import TerminalOutputBatcher
+from src.ai.context_optimizer import MessageDeduplicator, ContextOptimizer
+
 
 def _categorize_error_message(error_msg: str) -> str:
     msg = (error_msg or "").lower()
@@ -72,7 +77,58 @@ def _categorize_error_message(error_msg: str) -> str:
         return "network"
     if "tool" in msg and "timeout" in msg:
         return "tool_timeout"
-    return "unknown"
+
+
+def _try_repair_json(json_str: str) -> Optional[dict]:
+    """Attempt to repair incomplete/malformed JSON strings from AI."""
+    if not json_str or not isinstance(json_str, str):
+        return None
+    
+    original = json_str.strip()
+    if not original:
+        return None
+    
+    try:
+        return json.loads(original)
+    except json.JSONDecodeError as e:
+        pass
+    
+    repair_attempted = False
+    
+    if e.msg == "Unterminated string starting at":
+        repair_attempted = True
+        test_str = original
+        if test_str.endswith('"') or '" ' in test_str:
+            last_quote = test_str.rfind('"')
+            if last_quote > 0:
+                test_str = test_str[:last_quote] + '"'
+                if test_str.count('"') % 2 == 0:
+                    try:
+                        return json.loads(test_str)
+                    except:
+                        pass
+    
+    open_braces = original.count('{') - original.count('}')
+    if open_braces > 0:
+        repair_attempted = True
+        test_str = original + '}' * open_braces
+        try:
+            return json.loads(test_str)
+        except:
+            pass
+    
+    open_brackets = original.count('[') - original.count(']')
+    if open_brackets > 0:
+        repair_attempted = True
+        test_str = original + ']' * open_brackets
+        try:
+            return json.loads(test_str)
+        except:
+            pass
+    
+    if repair_attempted:
+        log.debug(f"[JSON REPAIR] Repair attempted but failed: {original[:100]}...")
+    return None
 
 # PERFORMANCE: API response cache to avoid repeating identical requests
 _api_response_cache: Dict[str, Any] = {}
@@ -345,8 +401,6 @@ class AIWorker(QThread):
         # Map provider string to ProviderType
         provider_map = {
             "deepseek": ProviderType.DEEPSEEK,
-            "together": ProviderType.TOGETHER,  # Qwen, Kimi, MiniMax, DeepSeek-R1
-            "groq": ProviderType.GROQ,  # Groq ultra-fast inference
         }
         
         # Use selected provider directly (no auto-switching)
@@ -530,6 +584,26 @@ class AIAgent(QObject):
     # Performance: File prefetch signal
     files_prefetch = pyqtSignal(list)  # list of file paths to prefetch
 
+    def _normalize_path(self, path: str) -> str:
+        """Helper to create a canonical, absolute, and case-normalized path for tracking."""
+        if not path:
+            return ""
+        try:
+            import os
+            # 1. Expand user and normalize slashes
+            p = os.path.expanduser(path)
+            # 2. If relative, resolve against project root or CWD
+            if not os.path.isabs(p):
+                if hasattr(self, '_project_root') and self._project_root:
+                    p = os.path.join(str(self._project_root), p)
+                else:
+                    p = os.path.abspath(p)
+            # 3. Final canonicalization (absolute, normalized, and lowered case for Windows)
+            return os.path.normcase(os.path.normpath(os.path.abspath(p)))
+        except Exception as e:
+            log.warning(f"Path normalization failed for {path}: {e}")
+            return os.path.normcase(os.path.normpath(path))
+
     SYSTEM_PROMPT = """🚨 ATTENTION: CRITICAL EFFICIENCY RULES 🚨
 YOU MUST FOLLOW THESE RULES OR YOU WILL FAIL:
 1. NEVER call list_directory, dir, ls - just CREATE files
@@ -585,6 +659,32 @@ Action: run_command(python helloworld.py; python for_loop.py; python while_loop.
 - WRONG: Three separate run_command calls
 
 ### Target: 4 tool calls MAX for creating and testing 3 files
+
+## ⏸️  PERMISSION & TOOL STATE HANDLING (CRITICAL)
+
+### When tool returns status="pending":
+- WAIT indefinitely for user permission via permission card
+- Do NOT attempt alternative tools
+- Do NOT continue execution
+- Always check tool response status BEFORE proceeding
+
+### Tool Execution Sequence:
+1. Call tool (e.g., edit_file)
+2. Check response status:
+   - If status="pending": WAIT (permission card shown to user)
+   - If status="completed": Proceed with next tool
+   - If status="error": Debug and retry
+
+### WRONG: Treating PENDING as failure
+❌ Tool returns status="pending"
+❌ You interpret as "edit_file failed, try smart_edit instead"
+❌ Result: Permission loop (trying multiple tools while waiting)
+
+### RIGHT: Respecting PENDING state
+✅ Tool returns status="pending"
+✅ You WAIT for user permission response
+✅ Tool re-executes after permission granted
+✅ Task completes
 
 ## AGENTIC WORKFLOW (Plan → Validate → Execute)
 
@@ -778,6 +878,15 @@ REMEMBER:
         self._acp = get_agent_control_plane()
         self._skill_registry = get_skill_registry()
         self._mcp_manager = get_mcp_manager()
+        
+        # PERFORMANCE OPTIMIZATION: Initialize optimization components
+        self._terminal_batcher = TerminalOutputBatcher(
+            flush_callback=self._flush_terminal_output,
+            batch_size=50,
+            flush_interval_ms=100
+        )
+        self._message_deduplicator = MessageDeduplicator()
+        self._context_optimizer = ContextOptimizer()
         self._current_mode = "build"  # build, explore, debug, plan
         
         # Phase 4 Integration: Initialize new components
@@ -1068,7 +1177,6 @@ REMEMBER:
         
         When enabled:
         - AI must get user confirmation before executing file modifications
-        - Prevents Groq from making rapid destructive changes
         - Slows down the system to safe human speed
         
         Args:
@@ -1081,12 +1189,12 @@ REMEMBER:
             log.info("⚡ Human-in-the-loop DISABLED - AI has full autonomy")
     
     def enable_autogen(self, enabled: bool = True, provider: str = "deepseek", model: str = None):
-        """Enable or disable AutoGen multi-agent mode with DeepSeek or Groq.
+        """Enable or disable AutoGen multi-agent mode with DeepSeek.
         
         Args:
             enabled: Whether to enable AutoGen
-            provider: "deepseek" or "groq" (for ultra-fast multi-agent collaboration)
-            model: Model ID (defaults to "deepseek-chat" or "llama-3.3-70b-versatile" for Groq)
+            provider: "deepseek"
+            model: Model ID (defaults to "deepseek-chat")
         """
         if not enabled:
             self._use_autogen = False
@@ -1098,16 +1206,10 @@ REMEMBER:
             key_manager = get_key_manager()
             
             # Get API key based on provider
-            if provider == "groq":
-                api_key = key_manager.get_key("groq")
-                model = model or "llama-3.3-70b-versatile"
-                provider_name = "Groq"
-                speed_info = "Ultra-fast 300 TPS"
-            else:
-                api_key = key_manager.get_key("deepseek")
-                model = model or "deepseek-chat"
-                provider_name = "DeepSeek"
-                speed_info = "Reliable reasoning"
+            api_key = key_manager.get_key("deepseek")
+            model = model or "deepseek-chat"
+            provider_name = "DeepSeek"
+            speed_info = "Reliable reasoning"
             
             if not api_key:
                 log.warning(f"❌ {provider_name} API key not found. Add to .env file first.")
@@ -1469,12 +1571,15 @@ REMEMBER:
 
     def _on_terminal_line_for_chat(self, line: str):
         """
-        Forward terminal output to aichat.html so the terminal card
-        updates in real time instead of showing 'running...' forever.
+        Forward terminal output to aichat.html with intelligent batching.
+        Batches up to 50 lines before sending to prevent UI freeze.
         """
-        # Always emit terminal output for display in chat card
-        # (The terminal widget handles the actual command execution)
-        self.response_chunk.emit(f"<terminal_output>{line}</terminal_output>")
+        self._terminal_batcher.add_line(line)
+    
+    def _flush_terminal_output(self, output: str):
+        """Flush batched terminal output to UI."""
+        if output:
+            self.response_chunk.emit(f"<terminal_output>{output}</terminal_output>")
 
     def chat(self, user_message: Optional[str], code_context: str = ""):
         """Send a message and get a streamed response with intelligent model switching."""
@@ -1488,9 +1593,10 @@ REMEMBER:
             if is_creation_task:
                 self._creation_mode = True
                 log.info(f"[CREATION_MODE] Enabled for creation task")
-            else:
-                self._creation_mode = False
-                log.debug("[CREATION_MODE] Reset for new user message")
+            
+            # Reset snapshots for new user message
+            self._pre_edit_snapshots = {}
+            log.debug("[CREATION_MODE] Reset for new user message")
         
         # 🧠 DYNAMIC MODEL SWITCHING
         if user_message and self._settings:
@@ -1501,18 +1607,8 @@ REMEMBER:
             
             current_provider = self._settings.get("ai", "provider")
             
-            # Groq: Switch between 8B (fast) and 70B (smart)
-            if current_provider == "groq":
-                if is_very_short and not is_complex:
-                    target_model = "llama-3.1-8b-instant"
-                else:
-                    target_model = "llama-3.3-70b-versatile"
-                
-                self._settings.set("ai", "model", target_model)
-                log.info(f"🔄 Task-based switch (Groq): {target_model}")
-                
             # DeepSeek: Switch between Chat (fast) and Reasoner (R1)
-            elif current_provider == "deepseek":
+            if current_provider == "deepseek":
                 target_model = "deepseek-reasoner" if is_complex else "deepseek-chat"
                 self._settings.set("ai", "model", target_model)
                 log.info(f"🔄 Task-based switch (DeepSeek): {target_model}")
@@ -1775,8 +1871,6 @@ REMEMBER:
                 i += 1
 
         # Configure tools based on provider
-        # Groq: Enable tools for balanced 100-200 TPS performance
-        # Together: Full tool support with multi-model flexibility
         # DeepSeek: Full tool support with reliable execution
         tools_for_worker = tools_list if provider != "mock" else None
         
@@ -1878,9 +1972,8 @@ REMEMBER:
         
         # Map provider name to ProviderType
         provider_type_map = {
-            "together": ProviderType.TOGETHER,
-            "groq": ProviderType.GROQ,
             "deepseek": ProviderType.DEEPSEEK,
+            "siliconflow": ProviderType.SILICONFLOW,
         }
         provider_type = provider_type_map.get(provider_name, ProviderType.DEEPSEEK)
         provider = get_provider_registry().get_provider(provider_type)
@@ -2115,7 +2208,6 @@ REMEMBER:
             return
         
         # AGENTIC VALIDATION: Validate and fix tool calls before execution
-        # Based on Groq AutoGen patterns - bounded tasks with validation
         validated_tool_calls = []
         validation_errors = []
         
@@ -2126,9 +2218,18 @@ REMEMBER:
             arguments_str = tc.get("function", {}).get("arguments", "{}")
             
             try:
-                # Parse arguments
+                # Parse arguments with repair attempt
                 if isinstance(arguments_str, str):
-                    arguments = json.loads(arguments_str) if arguments_str else {}
+                    try:
+                        arguments = json.loads(arguments_str) if arguments_str else {}
+                    except json.JSONDecodeError as je:
+                        log.warning(f"[AGENTIC] JSON parse failed, attempting repair: {je}")
+                        repaired = _try_repair_json(arguments_str)
+                        if repaired:
+                            log.info("[AGENTIC] JSON repair successful")
+                            arguments = repaired
+                        else:
+                            raise je
                 else:
                     arguments = arguments_str
                 
@@ -2323,19 +2424,16 @@ REMEMBER:
         # Capture pre-edit snapshot for diff support
         if name in ["write_file", "edit_file", "inject_after", "add_import"]:
             path = str(args.get("path", ""))
-            # Resolve relative path against project root
-            snap_path = path
-            if path and self._project_root and not os.path.isabs(path):
-                snap_path = os.path.join(str(self._project_root), path)
-            if snap_path and os.path.exists(snap_path):
-                try:
-                    from pathlib import Path as _SnapPath
-                    self._pre_edit_snapshots[snap_path] = _SnapPath(snap_path).read_text(encoding="utf-8", errors="replace")
-                    # Also store under relative key as fallback
-                    self._pre_edit_snapshots[path] = self._pre_edit_snapshots[snap_path]
-                except Exception:
-                    self._pre_edit_snapshots[snap_path] = ""
-                    self._pre_edit_snapshots[path] = ""
+            if path:
+                canonical_path = self._normalize_path(path)
+                if os.path.exists(canonical_path):
+                    try:
+                        from pathlib import Path as _SnapPath
+                        content = _SnapPath(canonical_path).read_text(encoding="utf-8", errors="replace")
+                        self._pre_edit_snapshots[canonical_path] = content
+                        log.info(f"[Diff-Debug] Captured snapshot: {canonical_path} (len={len(content)})")
+                    except Exception as e:
+                        log.warning(f"Failed to capture snapshot for {canonical_path}: {e}")
             
         if name == "run_command":
             self.tool_activity.emit("run_command", args.get("command", "")[:60], "running")
@@ -2415,20 +2513,21 @@ REMEMBER:
                 except:
                     added, removed = 0, 0
 
-                # ── Resolve absolute path (tool args often give relative paths) ──
+                # ── Robust canonical path resolution for editing tools ──
                 from pathlib import Path as _Path
-                resolved_path = path
-                if self._project_root and not os.path.isabs(path):
-                    resolved_path = os.path.join(str(self._project_root), path)
-
-                # ── Get original content (try both relative & absolute key) ─────
-                original_content = (self._pre_edit_snapshots.get(resolved_path, '') or
-                                    self._pre_edit_snapshots.get(path, ''))
+                canonical_path = self._normalize_path(path)
+                
+                # ── Get original content using canonical key ──
+                original_content = self._pre_edit_snapshots.get(canonical_path, '')
                 edit_type = 'C' if not original_content else 'M'
-
+                
                 # ── Get new file content (from args first, then disk) ─────────
                 new_file_content = str(args.get("content", "") or "")
-                if not new_file_content and os.path.exists(resolved_path):
+                if not new_file_content and os.path.exists(canonical_path):
+                    try:
+                        new_file_content = _Path(canonical_path).read_text(encoding="utf-8", errors="replace")
+                    except Exception:
+                        pass
                     try:
                         new_file_content = _Path(resolved_path).read_text(encoding="utf-8", errors="replace")
                     except Exception:
@@ -2461,19 +2560,17 @@ REMEMBER:
 
                 self.tool_activity.emit(name, info, "complete")
 
-                # Emit <file_edited> tag using RESOLVED (absolute) path so JS
-                # storeDiffData key matches renderCustomTagsInto lookup key
+                # Emit <file_edited> tag using canonical (absolute) path
                 self.response_chunk.emit(
-                    f"\n<file_edited>\n{resolved_path}\n+{added} -{removed}\n{edit_type}\n</file_edited>\n"
+                    f"\n<file_edited>\n{canonical_path}\n+{added} -{removed}\n{edit_type}\n</file_edited>\n"
                 )
 
-                # Emit file_edited_diff signal for diff viewer overlay
+                # Emit file_edited_diff signal using canonical path
                 try:
                     if new_file_content and hasattr(self, 'file_edited_diff'):
-                        original_snap = (self._pre_edit_snapshots.pop(resolved_path, '') or
-                                         self._pre_edit_snapshots.pop(path, ''))
-                        self.file_edited_diff.emit(resolved_path, original_snap, new_file_content)
-                        log.debug(f"Emitted file_edited_diff for {resolved_path}")
+                        original_snap = self._pre_edit_snapshots.pop(canonical_path, '')
+                        self.file_edited_diff.emit(canonical_path, original_snap, new_file_content)
+                        log.info(f"[Diff-Debug] Emitted signal for canonical path: {canonical_path}")
                 except Exception as _e:
                     log.warning(f"Could not emit file_edited_diff: {_e}")
             else:

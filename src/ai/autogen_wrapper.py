@@ -183,34 +183,19 @@ class CortexAgent:
         
         try:
             # Configure based on provider
-            if self.provider == "groq":
-                # Groq configuration with LPU speed
-                model_client = OpenAIChatCompletionClient(
-                    model=self.model,
-                    api_key=self.api_key,
-                    base_url="https://api.groq.com/openai/v1",
-                    model_info={
-                        "vision": False,
-                        "function_calling": True,
-                        "json_output": False,
-                        "family": "unknown"
-                    }
-                )
-                provider_name = "Groq"
-            else:
-                # Default DeepSeek configuration
-                model_client = OpenAIChatCompletionClient(
-                    model=self.model,
-                    api_key=self.api_key,
-                    base_url="https://api.deepseek.com/v1",
-                    model_info={
-                        "vision": False,
-                        "function_calling": True,
-                        "json_output": False,
-                        "family": "unknown"
-                    }
-                )
-                provider_name = "DeepSeek"
+            # Default DeepSeek configuration
+            model_client = OpenAIChatCompletionClient(
+                model=self.model,
+                api_key=self.api_key,
+                base_url="https://api.deepseek.com/v1",
+                model_info={
+                    "vision": False,
+                    "function_calling": True,
+                    "json_output": False,
+                    "family": "unknown"
+                }
+            )
+            provider_name = "DeepSeek"
             
             self.agent = AssistantAgent(
                 name=self.name,
@@ -256,8 +241,7 @@ class CortexMultiAgentSystem:
         self.agents: Dict[str, CortexAgent] = {}
         self.team = None
         
-        provider_name = "Groq" if provider == "groq" else "DeepSeek"
-        log.info(f"🤖 Initializing Multi-Agent System with {provider_name} {model} (AutoGen 0.7+)")
+        log.info(f"🤖 Initializing Multi-Agent System with DeepSeek {model} (AutoGen 0.7+)")
     
     def add_agent(self, name: str, role: str, 
                   system_message: Optional[str] = None,
@@ -361,12 +345,6 @@ def create_standard_team(api_key: str, include_specialists: bool = True,
                          provider: str = "deepseek", model: str = "deepseek-chat") -> CortexMultiAgentSystem:
     """
     Create a comprehensive multi-agent team with specialized domain experts.
-    
-    Args:
-        api_key: API key (DeepSeek or Groq)
-        include_specialists: If True, include Security, DevOps, Performance, Testing, and Documentation agents
-        provider: "deepseek" or "groq"
-        model: Model ID (e.g., "deepseek-chat", "llama-3.3-70b-versatile", "llama3-70b-8192")
     """
     system = CortexMultiAgentSystem(api_key, provider=provider, model=model)
     
@@ -425,16 +403,15 @@ def init_autogen_system(api_key: str, provider: str = "deepseek", model: str = "
     """Initialize and return the global AutoGen system instance.
     
     Args:
-        api_key: API key (DeepSeek or Groq)
-        provider: "deepseek" or "groq"
-        model: Model ID (e.g., "deepseek-chat", "llama-3.3-70b-versatile", "llama3-70b-8192")
+        api_key: API key
+        provider: "deepseek" or "siliconflow"
+        model: Model ID
     """
     global _autogen_system_instance
     
     if _autogen_system_instance is None:
         _autogen_system_instance = create_standard_team(api_key, provider=provider, model=model)
-        provider_name = "Groq" if provider == "groq" else "DeepSeek"
-        log.info(f"✅ Global AutoGen system initialized with {provider_name} {model}")
+        log.info(f"✅ Global AutoGen system initialized with DeepSeek {model}")
     
     return _autogen_system_instance
 

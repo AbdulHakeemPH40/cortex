@@ -4,6 +4,14 @@ var fitAddon = null;
 var currentChatId = null;
 var currentProjectPath = ''; // Current project path for isolated chat history
 var bridgeReady = false; // Flag to track if bridge is initialized
+var _terminalBatchBuffer = '';
+var _terminalFlushTimeout = null;
+
+// Initialize batch buffer when DOM is ready
+document.addEventListener('DOMContentLoaded', function() {
+    _terminalBatchBuffer = '';
+    _terminalFlushTimeout = null;
+});
 
 // Get storage key based on current project
 function getStorageKey() {
@@ -790,6 +798,7 @@ function initBridge() {
             var _terminalLastWrite = 0;
             var _terminalMaxBufferSize = 8192; // Max buffer before forced flush
             var _terminalPendingData = []; // Queue for burst handling
+            // Batching for AI chat terminal output (uses global vars above)
             
             function _flushTerminalOutput() {
                 _terminalOutputFrameId = null;
@@ -2087,7 +2096,25 @@ function removeThinkingIndicator() {
 }
 
 function stopGeneration() {
-    if (bridge) bridge.on_stop();
+    console.log('[STOP] Stopping generation...');
+    if (window.bridge && window.bridge.on_stop) {
+        window.bridge.on_stop();
+    } else if (bridge && bridge.on_stop) {
+        bridge.on_stop();
+    } else {
+        console.error('[STOP] Bridge or on_stop not available');
+    }
+    
+    // Hide the stop button and update terminal status
+    var terminalOutput = document.getElementById('inline-terminal-output');
+    if (terminalOutput) {
+        terminalOutput.classList.remove('running');
+        var cancelBtn = terminalOutput.querySelector('.terminal-action-btn.cancel');
+        if (cancelBtn) {
+            cancelBtn.style.display = 'none';
+        }
+    }
+    
     onComplete(); // Reset UI state
 }
 
@@ -3158,6 +3185,14 @@ function updateTodos(todos, mainTask) {
     // Add new todos
     currentTodoList = currentTodoList.concat(newTodos);
     section.style.display = 'flex';
+    
+    // CRITICAL: Show the todo-body so todos are visible
+    var todoBody = document.getElementById('todo-body');
+    if (todoBody) {
+        todoBody.style.display = 'block';
+        section.classList.add('expanded');
+        _todoExpanded = true;
+    }
 
     // Calculate stats from currentTodoList (merged list)
     var total     = currentTodoList.length;
@@ -3343,11 +3378,24 @@ function onChunk(chunk) {
         return;
     }
 
-    // ── Terminal output streaming: route to terminal card ────────────────
+    // ── Terminal output streaming: route to terminal card (BATCHED) ───────
     if (chunk.includes('<terminal_output>')) {
         var termMatch = chunk.match(/<terminal_output>(.*?)<\/terminal_output>/);
         if (termMatch) {
-            _updateCurrentTerminalCard(termMatch[1]);
+            // Batch terminal output updates to reduce DOM manipulations
+            if (!_terminalBatchBuffer) _terminalBatchBuffer = '';
+            _terminalBatchBuffer += termMatch[1] + '\n';
+            
+            // Flush every 10 lines or 100ms
+            if (!_terminalFlushTimeout) {
+                _terminalFlushTimeout = setTimeout(function() {
+                    if (_terminalBatchBuffer) {
+                        _updateCurrentTerminalCard(_terminalBatchBuffer);
+                        _terminalBatchBuffer = '';
+                    }
+                    _terminalFlushTimeout = null;
+                }, 100);
+            }
         }
         return;  // Don't add terminal output to AI text bubble
     }
@@ -3372,13 +3420,13 @@ function onChunk(chunk) {
     // Accumulate raw content (INCLUDING custom tags — stripped at render time)
     currentContent += chunk;
 
-    // Throttled Rendering (100ms debounce to prevent massive O(N^2) UI freezing)
+    // Throttled Rendering (200ms debounce - increased to reduce UI freezing during terminal streaming)
     if (!renderPending) {
         renderPending = true;
         window._streamRenderTimeout = setTimeout(function() {
             renderPending = false;
             updateStreamingUI();
-        }, 100);
+        }, 200);
     }
 }
 
@@ -3849,7 +3897,7 @@ function renderFileEditedBlock(data, isStreaming) {
           (changeStats ? '<span class="fec-stats">' + escapeHtml(changeStats) + '</span>' : '') +
         '</div>' +
         '<div class="fec-actions">' +
-          '<button class="fec-btn fec-diff" onclick="requestDiff(\'' + escapedPath + '\')" title="View diff">Diff</button>' +
+          '<button class="fec-btn fec-diff" data-path="' + escapeHtml(filePath) + '" onclick="event.stopPropagation(); requestFecDiff(this)" title="View diff">Diff</button>' +
           '<button class="fec-btn fec-accept" onclick="acceptFileEdit(\'' + escapedPath + '\', this)" title="Accept changes">✓</button>' +
           '<button class="fec-btn fec-reject" onclick="rejectFileEdit(\'' + escapedPath + '\', this)" title="Reject changes">✗</button>' +
         '</div>' +
@@ -3994,6 +4042,38 @@ function showTerminalOutputInChat(command, output, isRunning) {
     }
     
     smartScroll(container);
+}
+
+/**
+ * Mark terminal output as complete and hide the stop button
+ * Called from Python when terminal command finishes
+ */
+function completeTerminalOutput() {
+    var terminalOutput = document.getElementById('inline-terminal-output');
+    if (terminalOutput) {
+        // Remove running class
+        terminalOutput.classList.remove('running');
+        
+        // Hide the Cancel button
+        var cancelBtn = terminalOutput.querySelector('.terminal-action-btn.cancel');
+        if (cancelBtn) {
+            cancelBtn.style.display = 'none';
+        }
+        
+        // Show the View in terminal button instead
+        var actionSpan = terminalOutput.querySelector('.terminal-actions');
+        if (actionSpan) {
+            actionSpan.innerHTML = '<button class="terminal-action-btn" onclick="window.showTerminal()"><i class="fas fa-external-link-alt"></i> View in terminal</button>';
+        }
+        
+        // Update status text
+        var statusSpan = terminalOutput.querySelector('.terminal-status');
+        if (statusSpan) {
+            statusSpan.textContent = '✓ Terminal Output Completed';
+        }
+        
+        console.log('[Terminal] Output marked as complete');
+    }
 }
 
 // --- File Reference Display ---
@@ -4606,6 +4686,10 @@ document.addEventListener('DOMContentLoaded', function() {
         showTerminalOutputInChat(command, output, isRunning);
     };
 
+    window.completeTerminalOutput = function() {
+        completeTerminalOutput();
+    };
+
     window.showFileRef = function(filePath, lineNumber, content) {
         showFileReference(filePath, lineNumber, content);
     };
@@ -5213,7 +5297,7 @@ function buildFileEditCard(filePath, added, removed, editType, status, original,
         if (editType === 'M') {
             rightHtml =
                 '<div class="fec-pending-actions">' +
-                    '<button class="fec-btn-diff" onclick="event.stopPropagation(); if(window.bridge) window.bridge.on_show_diff(this.closest(\'.fec\').dataset.path || \'\');">Diff</button>' +
+                    '<button class="fec-btn-diff" data-path="' + escapeHtml(filePath) + '" onclick="event.stopPropagation(); requestFecDiff(this);">Diff</button>' +
                 '</div>';
         }
     } else if (isApplied) {
@@ -5497,7 +5581,24 @@ function openFileInEditor(filePath) {
 }
 
 function requestDiff(filePath) {
-    if (window.bridge) bridge.on_show_diff(filePath);
+    console.log('[Diff] requestDiff called with:', filePath);
+    if (window.bridge && window.bridge.on_show_diff) {
+        window.bridge.on_show_diff(filePath);
+        console.log('[Diff] requestDiff: Bridge method called');
+    } else {
+        console.error('[Diff] requestDiff: Bridge or on_show_diff not available');
+    }
+}
+
+function requestFecDiff(btn) {
+    var filePath = btn.dataset.path;
+    console.log('[Diff] requestFecDiff called with:', filePath);
+    if (window.bridge && window.bridge.on_show_diff) {
+        window.bridge.on_show_diff(filePath);
+        console.log('[Diff] requestFecDiff: Bridge method called');
+    } else {
+        console.error('[Diff] requestFecDiff: Bridge or on_show_diff not available');
+    }
 }
 
 function acceptFileEdit(filePath, triggerEl) {
@@ -6443,8 +6544,18 @@ window.showQuestionCard = function(info) {
             if (allowBtn) {
                 allowBtn.onclick = function() { 
                     console.log('[PERMISSION] Allow clicked for', info.id);
-                    var scope = card._selectedScope || 'session';
-                    submitInteractionAnswer(info.id, 'allow', scope); 
+                    var rememberCheckbox = card.querySelector('.permission-remember-checkbox');
+                    var remember = rememberCheckbox ? rememberCheckbox.checked : false;
+                    console.log('[PERMISSION] Remember flag:', remember);
+                    
+                    // Store the remember choice
+                    if (remember) {
+                        window.permissionRemember[info.id] = true;
+                    }
+                    
+                    // Set the scope and grant permission
+                    window.permissionScopes[info.id] = card._selectedScope || 'session';
+                    window.grantPermission(info.id, remember);
                 };
             }
             
@@ -6453,7 +6564,15 @@ window.showQuestionCard = function(info) {
             if (denyBtn) {
                 denyBtn.onclick = function() { 
                     console.log('[PERMISSION] Deny clicked for', info.id);
-                    submitInteractionAnswer(info.id, 'deny'); 
+                    var rememberCheckbox = card.querySelector('.permission-remember-checkbox');
+                    var remember = rememberCheckbox ? rememberCheckbox.checked : false;
+                    
+                    // Store the deny choice if remember is checked
+                    if (remember) {
+                        window.permissionRemember[info.id] = false;
+                    }
+                    
+                    window.denyPermission(info.id);
                 };
             }
             
@@ -6465,7 +6584,11 @@ window.showQuestionCard = function(info) {
                     // Check the remember checkbox automatically when clicking Always
                     var checkbox = card.querySelector('.permission-remember-checkbox');
                     if (checkbox) checkbox.checked = true;
-                    submitInteractionAnswer(info.id, 'always', 'global'); 
+                    
+                    // Store the "always" choice with remember=true
+                    window.permissionRemember[info.id] = true;
+                    window.permissionScopes[info.id] = 'global';
+                    window.grantPermission(info.id, true);
                 };
             }
             
@@ -6799,7 +6922,7 @@ window.grantLimited = function(requestId) {
     
     // Send to Python with limited scope
     if (window.bridge && typeof window.bridge.on_permission_card_response === 'function') {
-        window.bridge.on_permission_card_response(requestId, true, 'limited');
+        window.bridge.on_permission_card_response(requestId, true, 'limited', false);
     }
     
     // Update UI
@@ -6815,7 +6938,7 @@ window.denyPermission = function(requestId) {
     
     // Send to Python
     if (window.bridge && typeof window.bridge.on_permission_card_response === 'function') {
-        window.bridge.on_permission_card_response(requestId, false, 'denied');
+        window.bridge.on_permission_card_response(requestId, false, 'denied', false);
     }
     
     // Update UI

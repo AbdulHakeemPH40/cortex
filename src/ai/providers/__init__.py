@@ -17,11 +17,8 @@ log = get_logger("provider_registry")
 class ProviderType(Enum):
     """Supported LLM providers."""
     DEEPSEEK = "deepseek"   # Primary provider for agentic work
-    TOGETHER = "together"   # Qwen, Kimi, MiniMax, DeepSeek-R1
     SILICONFLOW = "siliconflow"  # Vision models
     OPENAI = "openai"       # For OpenAI or SiliconFlow if used as OpenAI
-    GROQ = "groq"           # Ultra-fast inference with speed guardrails
-
 
 @dataclass
 class ModelInfo:
@@ -331,13 +328,6 @@ class ProviderRegistry:
         
         # Lazily register other providers if their modules are available
         try:
-            from src.ai.providers.together_provider import TogetherProvider
-            self._register_provider(ProviderType.TOGETHER, TogetherProvider())
-            log.info("TogetherProvider registered")
-        except (ImportError, Exception) as e:
-            log.warning(f"Could not register TogetherProvider: {e}")
-            
-        try:
             from src.ai.providers.siliconflow_provider import SiliconFlowProvider
             self._register_provider(ProviderType.SILICONFLOW, SiliconFlowProvider())
             # Maintain backward compatibility if it used OPENAI type
@@ -345,22 +335,6 @@ class ProviderRegistry:
             log.info("SiliconFlowProvider registered")
         except (ImportError, Exception) as e:
             log.warning(f"Could not register SiliconFlowProvider: {e}")
-        
-        # Register Groq provider with speed guardrails
-        try:
-            from src.ai.providers.groq_provider import GroqProvider, SpeedGuardrails
-            # Use safe guardrails by default to prevent crashes
-            guardrails = SpeedGuardrails(
-                max_requests_per_second=10.0,
-                max_concurrent_requests=3,
-                throttle_tokens_per_second=200,  # Throttle to prevent UI overwhelm
-                enable_context_compaction=True,
-                max_stream_duration_seconds=180
-            )
-            self._register_provider(ProviderType.GROQ, GroqProvider(guardrails))
-            log.info("GroqProvider registered with speed guardrails")
-        except (ImportError, Exception) as e:
-            log.warning(f"Could not register GroqProvider: {e}")
             
     def _register_provider(self, provider_type: ProviderType, provider: BaseProvider):
         self._providers[provider_type] = provider

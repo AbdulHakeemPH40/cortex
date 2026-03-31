@@ -1,5 +1,5 @@
 """
-AI Tool Orchestrator for Groq and DeepSeek
+AI Tool Orchestrator for DeepSeek and SiliconFlow
 Manages tool calling across multiple providers with intelligent routing
 """
 
@@ -73,8 +73,8 @@ class OrchestratorState:
     average_tool_time_ms: float = 0.0
     
     # Provider selection
-    primary_provider: str = "deepseek"  # Can be 'groq', 'deepseek', 'together'
-    tool_provider: str = "auto"  # 'auto', 'groq', 'deepseek', 'together'
+    primary_provider: str = "deepseek"  # Can be 'deepseek', 'siliconflow'
+    tool_provider: str = "auto"  # 'auto', 'deepseek', 'siliconflow'
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -94,7 +94,7 @@ class ToolOrchestrator:
     Intelligent tool orchestrator for AI agents
     
     Features:
-    - Multi-provider support (Groq, DeepSeek, Together)
+    - Multi-provider support (DeepSeek, SiliconFlow)
     - Intelligent tool selection based on context
     - Parallel execution with dependency management
     - Automatic retry with exponential backoff
@@ -111,13 +111,6 @@ class ToolOrchestrator:
     
     # Provider characteristics for tool selection
     PROVIDER_CHARACTERISTICS = {
-        "groq": {
-            "speed": "ultra",  # 300-800 tokens/sec
-            "latency": "low",   # 50-200ms
-            "best_for": ["fast", "parallel_execution"],
-            "context_window": 128000,
-            "cost_efficiency": "high"
-        },
         "deepseek": {
             "speed": "medium",  # 100-200 tokens/sec
             "latency": "medium", # 200-500ms
@@ -125,9 +118,9 @@ class ToolOrchestrator:
             "context_window": 64000,
             "cost_efficiency": "very_high"
         },
-        "together": {
-            "speed": "medium",  # 150-300 tokens/sec
-            "latency": "medium", # 200-400ms
+        "siliconflow": {
+            "speed": "high",
+            "latency": "medium",
             "best_for": ["multi_model", "fallback"],
             "context_window": 128000,
             "cost_efficiency": "medium"
@@ -229,9 +222,8 @@ class ToolOrchestrator:
         Select the best provider for a tool based on characteristics
         
         Strategy:
-        1. Fast tools -> Groq (speed priority)
-        2. Complex tools -> DeepSeek (reasoning priority)
-        3. Fallback -> Together (reliability)
+        1. Base tools -> deepseek
+        2. Fallback -> siliconflow
         """
         context = context or {}
         
@@ -240,31 +232,13 @@ class ToolOrchestrator:
         if requested and requested in self.PROVIDER_CHARACTERISTICS:
             return requested
         
-        # Categorize tool
-        category = "complex"  # default
-        for cat, tools in self.TOOL_CATEGORIES.items():
-            if tool_name.lower() in tools or any(t in tool_name.lower() for t in tools):
-                category = cat
-                break
-        
-        # Select provider based on category
-        if category == "fast":
-            return "groq"  # Ultra-fast for simple operations
-        elif category == "io":
-            return "deepseek"  # Reliable for I/O
-        elif category == "complex":
-            return "deepseek"  # Better reasoning
-        elif category == "interactive":
-            return "groq"  # Fast response
-        
         return self.state.primary_provider
     
     def get_provider_for_model(self, provider_name: str):
         """Get provider instance by name"""
         provider_map = {
-            "groq": ProviderType.GROQ,
             "deepseek": ProviderType.DEEPSEEK,
-            "together": ProviderType.TOGETHER
+            "siliconflow": ProviderType.SILICONFLOW
         }
         
         provider_type = provider_map.get(provider_name.lower(), ProviderType.DEEPSEEK)
@@ -428,7 +402,7 @@ class ToolOrchestrator:
         2. Format results
         3. Continue conversation with AI
         
-        Works with Groq, DeepSeek, or Together
+        Works with DeepSeek or SiliconFlow
         """
         if provider == "auto":
             provider = self.select_best_provider("complex")
@@ -477,9 +451,8 @@ class ToolOrchestrator:
     def _get_model_for_provider(self, provider: str) -> str:
         """Get default model for provider"""
         models = {
-            "groq": "llama3-70b-8192",
             "deepseek": "deepseek-chat",
-            "together": "deepseek-ai/DeepSeek-V3"
+            "siliconflow": "pro/deepseek-ai/DeepSeek-V3"
         }
         return models.get(provider, "deepseek-chat")
     
@@ -513,7 +486,7 @@ def execute_tool_with_orchestrator(tool_name: str, parameters: Dict,
     Args:
         tool_name: Tool to execute
         parameters: Tool parameters
-        provider: Provider to use ('auto', 'groq', 'deepseek', 'together')
+        provider: Provider to use ('auto', 'deepseek', 'siliconflow')
         
     Returns:
         Tool execution result

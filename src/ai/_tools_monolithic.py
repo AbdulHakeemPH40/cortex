@@ -1275,6 +1275,11 @@ class ToolRegistry:
             # Build permission details for the UI card
             details = self._build_permission_details(tool_name, params)
             
+            # Generate a unique permission request ID (we'll use tool_call_id from agent later)
+            import uuid
+            permission_request_id = f"perm_{str(uuid.uuid4())[:12]}"
+            log.info(f"Created permission request {permission_request_id} for tool {tool_name}")
+            
             # We return a 'pending' result. This will be caught by ToolWorker and AIAgent,
             # which will then show an interaction card in the chat UI.
             # Once user responds, AIAgent.user_responded will call execute_tool again
@@ -1287,7 +1292,8 @@ class ToolRegistry:
                     "type": "permission",
                     "tool_name": tool_name,
                     "details": details,
-                    "params": params
+                    "params": params,
+                    "permission_request_id": permission_request_id
                 }
             )
         # ===============================================================

@@ -169,30 +169,8 @@
     color: white;
 }
 
-.together-icon {
-    background: #f59e0b;
-    color: white;
-}
-
-.groq-icon {
-    background: #10b981;
-    color: white;
-}
-
 .item-icon svg {
     stroke: currentColor;
-}
-
-/* Speed Tags for Groq Models */
-.model-tag.speed-tag {
-    font-size: 8px;
-    font-weight: 600;
-    padding: 1px 4px;
-    border-radius: 2px;
-    margin-left: 6px;
-    background: rgba(16, 185, 129, 0.15);
-    color: #10b981;
-    border: 1px solid rgba(16, 185, 129, 0.3);
 }
 
 /* Simple Model Tags */
