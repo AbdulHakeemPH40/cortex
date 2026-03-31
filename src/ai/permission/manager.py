@@ -95,6 +95,16 @@ class PermissionManager:
         # Get grants for this session
         grants = self._grants.get(session_id, [])
         
+        # Also check for global scope grants from any session (for "Always remember" functionality)
+        if not grants:
+            for sid, session_grants in self._grants.items():
+                for grant in session_grants:
+                    if (grant.scope == PermissionScope.GLOBAL and 
+                        grant.tool == tool and 
+                        grant.permission_type == permission_type and
+                        grant.is_valid()):
+                        grants.append(grant)
+        
         # Find matching grant
         for grant in grants:
             if (grant.tool == tool and 

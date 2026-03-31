@@ -90,6 +90,13 @@ class DeepSeekProvider:
             **kwargs
         }
         
+        # DEBUG: Log if tools are present
+        if 'tools' in kwargs and kwargs['tools']:
+            log.info(f"[DEEPSEEK DEBUG] Sending {len(kwargs['tools'])} tools to API")
+            log.info(f"[DEEPSEEK DEBUG] First tool: {kwargs['tools'][0].get('function', {}).get('name', 'unknown')}")
+        else:
+            log.warning("[DEEPSEEK DEBUG] NO TOOLS in request!")
+        
         url = f"{self.base_url}/chat/completions"
         
         try:

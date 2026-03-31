@@ -1207,6 +1207,7 @@ class CortexMainWindow(QMainWindow):
         self._ai_chat.mode_changed.connect(self._ai_agent.set_interaction_mode)
         self._ai_chat.open_file_requested.connect(self._open_file)
         self._ai_chat.open_file_at_line_requested.connect(self._open_file_at_line)
+        log.info(f"[Diff-Debug] Connecting show_diff_requested to _on_show_diff. Signal exists: {hasattr(self._ai_chat, 'show_diff_requested')}")
         self._ai_chat.show_diff_requested.connect(self._on_show_diff)
         self._ai_chat.answer_question_requested.connect(self._ai_agent.user_responded)
         self._ai_chat.smart_paste_check_requested.connect(self._on_smart_paste_check)

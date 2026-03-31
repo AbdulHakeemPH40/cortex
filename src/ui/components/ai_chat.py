@@ -89,15 +89,7 @@ class ChatBridge(QObject):
     
     open_file_requested = pyqtSignal(str)
     open_file_at_line_requested = pyqtSignal(str, int)  # file_path, line number
-    show_diff_requested = pyqtSignal(object)  # list of file changes
-    accept_file_edit_requested = pyqtSignal(object)
-    reject_file_edit_requested = pyqtSignal(object)
-    open_terminal_requested = pyqtSignal()
-    search_files_requested = pyqtSignal(str)
-    load_full_chat_requested = pyqtSignal(str)  # conversation_id - NEW!
     show_diff_requested = pyqtSignal(str)
-    
-    # File edit accept/reject signals
     accept_file_edit_requested = pyqtSignal(str)  # file_path
     reject_file_edit_requested = pyqtSignal(str)  # file_path
     
@@ -120,6 +112,7 @@ class ChatBridge(QObject):
     # Chat persistence signals
     save_chats_requested = pyqtSignal(str, str)  # storage_key, json_data
     load_chats_requested = pyqtSignal(str)       # storage_key
+    load_full_chat_requested = pyqtSignal(str)   # conversation_id (lazy load full chat)
     save_finished = pyqtSignal(str)              # status
     
     # Permission system signal (NEW!)
@@ -212,7 +205,10 @@ class ChatBridge(QObject):
 
     @pyqtSlot(str)
     def on_show_diff(self, file_path):
+        log.info(f"[Diff-Debug] on_show_diff called with: {file_path}")
+        log.info(f"[Diff-Debug] show_diff_requested signal exists: {hasattr(self, 'show_diff_requested')}")
         self.show_diff_requested.emit(file_path)
+        log.info(f"[Diff-Debug] show_diff_requested.emit() called")
 
     @pyqtSlot(str)
     def on_request_diff_data(self, file_path):
@@ -713,9 +709,6 @@ class AIChatWidget(QWidget):
 
     # Terminal panel signal
     open_terminal_requested = pyqtSignal()  # Request main window to open terminal panel
-    
-    # Vision response signal (internal)
-    _vision_response_received = pyqtSignal(str)
 
     # Smart paste signal - emitted when user pastes code, to check if it matches editor selection
     smart_paste_check_requested = pyqtSignal(str)  # pasted_text
@@ -1151,7 +1144,24 @@ class AIChatWidget(QWidget):
         import logging
         log = logging.getLogger('cortex.chat')
         log.info(f"[TODO] update_todos called with {len(todos)} todos, main_task: '{main_task}'")
-        safe_todos = json.dumps(todos)
+        
+        status_mapping = {
+            'pending': 'PENDING',
+            'in_progress': 'IN_PROGRESS',
+            'completed': 'COMPLETE',
+            'cancelled': 'CANCELLED'
+        }
+        
+        formatted_todos = []
+        for todo in todos:
+            formatted_todo = {
+                'id': todo.get('id', todo.get('description', '')),
+                'content': todo.get('content', todo.get('description', '')),
+                'status': status_mapping.get(todo.get('status', 'PENDING').lower(), todo.get('status', 'PENDING'))
+            }
+            formatted_todos.append(formatted_todo)
+        
+        safe_todos = json.dumps(formatted_todos)
         safe_task = json.dumps(main_task)
         self._view.page().runJavaScript(f"if(window.updateTodos) window.updateTodos({safe_todos}, {safe_task});")
 

@@ -769,13 +769,14 @@ function initBridge() {
 
     try {
         new QWebChannel(transport, function (channel) {
-            bridge = channel.objects.bridge;
-            if (!bridge) {
+            window.bridge = channel.objects.bridge;
+            if (!window.bridge) {
                 console.error("Cortex: Bridge object 'bridge' not found on channel.");
                 return;
             }
 
-            bridgeReady = true;
+            window.bridgeReady = true;
+            bridge = window.bridge;
             console.log('[CHAT] Bridge initialized successfully');
             
             // Re-fetch project info if it was set before bridge was ready
@@ -3083,8 +3084,12 @@ function showCreatedFilesCard(summaryData) {
             } else {
                 diffBtn.onclick = (function(p) {
                     return function() {
+                        console.log('[Diff-Handler] Button clicked for path:', p);
+                        console.log('[Diff-Handler] window.bridge:', !!window.bridge);
+                        console.log('[Diff-Handler] window.bridge.on_show_diff:', !!(window.bridge && window.bridge.on_show_diff));
                         if (window.bridge && window.bridge.on_show_diff) window.bridge.on_show_diff(p);
                         else if (bridge && bridge.on_show_diff) bridge.on_show_diff(p);
+                        else console.error('[Diff-Handler] Neither window.bridge nor bridge has on_show_diff');
                     };
                 })(path);
             }
@@ -4662,6 +4667,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
     window.showDiff = function(filePath) {
         console.log('[Diff] showDiff called with:', filePath);
+        console.log('[Diff] window.bridge exists:', !!window.bridge);
+        console.log('[Diff] window.bridge.on_show_diff exists:', !!(window.bridge && window.bridge.on_show_diff));
+        console.log('[Diff] bridge exists:', !!bridge);
+        console.log('[Diff] bridge.on_show_diff exists:', !!(bridge && bridge.on_show_diff));
         if (window.bridge && window.bridge.on_show_diff) {
             window.bridge.on_show_diff(filePath);
             console.log('[Diff] Bridge method called successfully');

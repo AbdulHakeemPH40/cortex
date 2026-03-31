@@ -80,7 +80,13 @@ def _categorize_error_message(error_msg: str) -> str:
 
 
 def _try_repair_json(json_str: str) -> Optional[dict]:
-    """Attempt to repair incomplete/malformed JSON strings from AI."""
+    """Attempt to repair incomplete/malformed JSON strings from AI.
+    
+    Handles common issues:
+    - Unterminated strings (missing closing quotes)
+    - Missing closing braces/brackets
+    - Truncated content in multi-line strings
+    """
     if not json_str or not isinstance(json_str, str):
         return None
     
@@ -95,19 +101,24 @@ def _try_repair_json(json_str: str) -> Optional[dict]:
     
     repair_attempted = False
     
-    if e.msg == "Unterminated string starting at":
+    # Strategy 1: Fix unterminated strings (common with large file content)
+    if 'e' in locals() and e.msg == "Unterminated string starting at":
         repair_attempted = True
         test_str = original
+        # Find the last quote and properly close the string
         if test_str.endswith('"') or '" ' in test_str:
             last_quote = test_str.rfind('"')
             if last_quote > 0:
                 test_str = test_str[:last_quote] + '"'
-                if test_str.count('"') % 2 == 0:
-                    try:
-                        return json.loads(test_str)
-                    except:
-                        pass
+                # Balance quotes
+                while test_str.count('"') % 2 != 0:
+                    test_str += '"'
+                try:
+                    return json.loads(test_str)
+                except:
+                    pass
     
+    # Strategy 2: Add missing closing braces
     open_braces = original.count('{') - original.count('}')
     if open_braces > 0:
         repair_attempted = True
@@ -117,6 +128,7 @@ def _try_repair_json(json_str: str) -> Optional[dict]:
         except:
             pass
     
+    # Strategy 3: Add missing closing brackets
     open_brackets = original.count('[') - original.count(']')
     if open_brackets > 0:
         repair_attempted = True
@@ -126,8 +138,90 @@ def _try_repair_json(json_str: str) -> Optional[dict]:
         except:
             pass
     
+    # Strategy 4: Handle truncated content fields (especially for write_file)
+    # Look for patterns like: {"path": "file.html", "content": "<html>...
+    if '{' in original and '"content"' in original:
+        # Try to find and close the content string
+        content_start = original.find('"content"')
+        if content_start > 0:
+            # Find where content value starts
+            colon_pos = original.find(':', content_start)
+            if colon_pos > 0:
+                # Look for opening quote of content
+                quote_start = original.find('"', colon_pos)
+                if quote_start > 0:
+                    # Count quotes after this point
+                    remaining = original[quote_start+1:]
+                    quote_count = remaining.count('"')
+                    # If odd number of quotes, we need to close the string
+                    if quote_count % 2 != 0:
+                        # Find last quote and add closing
+                        last_quote_pos = original.rfind('"')
+                        if last_quote_pos > quote_start:
+                            # Check if there's unclosed content before end
+                            test_str = original.rstrip()
+                            if not test_str.endswith('",') and not test_str.endswith('"}'):
+                                test_str += '"'
+                            # Now balance braces
+                            open_b = test_str.count('{') - test_str.count('}')
+                            if open_b > 0:
+                                test_str += '}' * open_b
+                            try:
+                                return json.loads(test_str)
+                            except:
+                                pass
+                    # CRITICAL FIX: Even if quote count is even, content might be truncated
+                    # Just close and balance everything aggressively
+                    else:
+                        test_str = original.rstrip()
+                        # Ensure content string is closed
+                        if not test_str.endswith('",') and not test_str.endswith('"}'):
+                            test_str += '"'
+                        # Balance braces
+                        open_b = test_str.count('{') - test_str.count('}')
+                        if open_b > 0:
+                            test_str += '}' * open_b
+                        try:
+                            return json.loads(test_str)
+                        except:
+                            pass
+    
+    # Strategy 5: ULTRA AGGRESSIVE - For write_file specifically
+    # If we see "path" with .html/.css/.js but broken JSON, force-close it
+    if '"path"' in original and ('.html' in original or '.css' in original or '.js' in original):
+        # This is likely a file creation that got truncated
+        test_str = original
+        # Add closing quote if missing
+        if test_str.count('"') % 2 != 0:
+            test_str += '"'
+        # Close all braces
+        while test_str.count('{') > test_str.count('}'):
+            test_str += '}'
+        while test_str.count('[') > test_str.count(']'):
+            test_str += ']'
+        try:
+            return json.loads(test_str)
+        except:
+            pass
+    
+    # Strategy 6: Nuclear option - just keep adding closing braces until it parses
+    if '{' in original:
+        test_str = original
+        for i in range(20):  # Try up to 20 closing braces
+            try:
+                return json.loads(test_str)
+            except:
+                test_str += '}'
+        # Also try with quotes + braces
+        test_str = original + '"'
+        for i in range(20):
+            try:
+                return json.loads(test_str)
+            except:
+                test_str += '}'
     if repair_attempted:
         log.debug(f"[JSON REPAIR] Repair attempted but failed: {original[:100]}...")
+    
     return None
 
 # PERFORMANCE: API response cache to avoid repeating identical requests
@@ -457,6 +551,37 @@ class AIWorker(QThread):
         try:
             chunk_count = 0
             tool_call_buffer = {}
+            estimated_tokens = 0
+            
+            # DYNAMIC TOKEN BUDGETING (Claude Desktop Hybrid Strategy)
+            # Adjust based on model capabilities and task complexity
+            model_token_limits = {
+                'deepseek': 4096,      # DeepSeek typical limit
+                'groq': 8192,          # Groq Llama models
+                'kimi': 8192,          # Kimi K2.5
+                'together': 4096,      # Together AI varies
+                'default': 4096
+            }
+            
+            # Get base limit for current model/provider
+            base_limit = model_token_limits.get(self.provider.lower(), model_token_limits['default'])
+            
+            # Check if model name suggests higher capacity (e.g., "8k", "32k", "128k")
+            import re
+            capacity_match = re.search(r'(\d+)(k|kb)?', self.model.lower())
+            if capacity_match:
+                capacity_value = int(capacity_match.group(1))
+                if 'k' in capacity_match.group(0):
+                    # Model explicitly states capacity (e.g., "32k")
+                    base_limit = min(capacity_value * 1000, 128000)  # Cap at 128K
+            
+            # Set safe threshold (leave room for JSON structure and tool call overhead)
+            MAX_SAFE_TOKENS = int(base_limit * 0.85)  # Use 85% of limit as buffer
+            MIN_SAFE_TOKENS = 3500  # Absolute minimum for safety
+            MAX_SAFE_TOKENS = max(MAX_SAFE_TOKENS, MIN_SAFE_TOKENS)  # Ensure reasonable minimum
+            
+            log.info(f"[TOKEN BUDGET] Model: {self.model}, Provider: {self.provider}")
+            log.info(f"[TOKEN BUDGET] Base limit: {base_limit}, Safe threshold: {MAX_SAFE_TOKENS}")
             
             log.info(f"Starting streaming with OpenAI SDK (SSL disabled)...")
             
@@ -465,6 +590,9 @@ class AIWorker(QThread):
                 self.chunk_received.emit("Thinking...\n")
             
             # Simple streaming via OpenAI SDK
+            log.info(f"[DEBUG] Calling provider.chat_stream with tools={len(self.tools) if self.tools else 0}")
+            if self.tools:
+                log.info(f"[DEBUG] First 3 tools: {[t.get('function', {}).get('name', 'unknown') for t in self.tools[:3]]}")
             stream = provider.chat_stream(
                 messages=chat_messages,
                 model=self.model,
@@ -473,16 +601,53 @@ class AIWorker(QThread):
                 tools=self.tools
             )
             
+            log.info(f"[DEBUG] Stream established, type={type(stream)}")
+            
             # Process chunks
             try:
+                # STATEFUL STREAM CLEANING (Fixes stagnation and junk output)
+                state = {
+                    "in_thinking": False,
+                    "in_tool_section": False,
+                    "in_tool_call": False,
+                    "buffer": ""
+                }
+                
                 for chunk in stream:
-                    if not chunk or chunk.isspace():
+                    if not chunk:
                         continue
                     
                     chunk_count += 1
                     
-                    # Handle tool call deltas
+                    # Detect special markers (handle cross-chunk markers with a small buffer if needed)
+                    # For now, we handle full markers within a chunk or simple prefix
+                    # 1. Handle Thinking Blocks (Stateful)
+                    if "<|thinking|>" in chunk or chunk.startswith("[THINK]"):
+                        state["in_thinking"] = True
+                        # Clean prefix if it's the start
+                        display_chunk = chunk.replace("<|thinking|>", "").replace("[THINK]", "Thinking... ")
+                        if display_chunk.strip():
+                            self.chunk_received.emit(display_chunk)
+                        continue
+                    
+                    if "</|thinking|>" in chunk:
+                        state["in_thinking"] = False
+                        parts = chunk.split("</|thinking|>")
+                        if len(parts) > 1 and parts[1]:
+                            self._full_response += parts[1]
+                            self.chunk_received.emit(parts[1])
+                        continue
+                        
+                    if state["in_thinking"]:
+                        # For DeepSeek R1/Reasoner, reasoning is often valuable to show
+                        # If the chunk is just reasoning, emit as hint but don't add to full_response (metadata)
+                        self.chunk_received.emit(chunk)
+                        continue
+
+                    # 2. Handle Tool Call Metadata (Internal protocol)
+                    # Handle tool call deltas directly - NO MORE swallowed chunks!
                     if chunk.startswith("__TOOL_CALL_DELTA__:"):
+                        state["in_tool_call"] = True
                         try:
                             deltas = json.loads(chunk[len("__TOOL_CALL_DELTA__:"):])
                             log.debug(f"[AIWorker] Received {len(deltas)} tool call deltas")
@@ -500,18 +665,24 @@ class AIWorker(QThread):
                         except json.JSONDecodeError as e:
                             log.error(f"Error parsing tool delta JSON: {e}")
                             log.debug(f"Raw delta: {chunk[:200]}")
-                    else:
-                        # Regular content - strip any stray tool call markers and thinking blocks as safety
-                        import re
-                        # Strip thinking blocks first
-                        cleaned_chunk = re.sub(r'<\|thinking\|>.*?</\|thinking\|>', '', chunk, flags=re.DOTALL)
-                        # Strip tool call markers
-                        cleaned_chunk = re.sub(r'<\|tool_calls_section_begin\|>.*?<\|tool_calls_section_end\|>', '', cleaned_chunk, flags=re.DOTALL)
-                        cleaned_chunk = re.sub(r'<\|tool_call_begin\|>', '', cleaned_chunk)
-                        cleaned_chunk = re.sub(r'<\|tool_call_argument_begin\|>', '', cleaned_chunk)
-                        cleaned_chunk = re.sub(r'<\|tool_call_end\|>', '', cleaned_chunk)
-                        cleaned_chunk = re.sub(r'<\|tool_calls_section_end\|>', '', cleaned_chunk)
-                        cleaned_chunk = re.sub(r'<\|tool_calls_section_begin\|>', '', cleaned_chunk)
+                        
+                        # Reset tool call state for next chunk logic
+                        state["in_tool_call"] = False
+                        continue
+
+                    # PROACTIVE TOKEN MONITORING (Claude-style strategy)
+                    estimated_tokens += len(chunk) // 4
+                    if estimated_tokens > MAX_SAFE_TOKENS:
+                        log.warning(f"[HYBRID STRATEGY] Approaching token limit ({estimated_tokens}/{MAX_SAFE_TOKENS})")
+                    
+                    # Regular content
+                    cleaned_chunk = chunk
+                    for tag in ["<|tool_call_begin|>", "<|tool_call_end|>", 
+                               "<|tool_calls_section_begin|>", "<|tool_calls_section_end|>",
+                               "<|tool_call_argument_begin|>"]:
+                        cleaned_chunk = cleaned_chunk.replace(tag, "")
+                        
+                    if cleaned_chunk:
                         self._full_response += cleaned_chunk
                         self.chunk_received.emit(cleaned_chunk)
             except Exception as e:
@@ -520,13 +691,120 @@ class AIWorker(QThread):
             
             log.info(f"Stream completed: {chunk_count} chunks, full_response={len(self._full_response)} chars, tool_calls={len(tool_call_buffer)}")
             
+            # HEURISTIC PARSING FOR DEEPSEEK (doesn't support native tool calling)
+            # If no tool calls were extracted but response mentions file creation, try to parse from text
+            if len(tool_call_buffer) == 0 and self._full_response:
+                log.info(f"[HEURISTIC] No native tool calls found, attempting robust sequence parsing...")
+                import re
+                
+                # HEURISTIC 1: Look for JSON blocks in markdown (common for DeepSeek V3)
+                # ```json { "name": "...", "arguments": {...} } ```
+                markdown_json_pattern = r'```(?:json)?\s*(\{\s*"name"\s*:\s*"(?:write_file|edit_file|read_file|run_command|list_directory)"\s*,\s*"arguments"\s*:\s*\{.*?\}\s*\})\s*```'
+                md_matches = re.findall(markdown_json_pattern, self._full_response, re.DOTALL)
+                
+                if md_matches:
+                    log.info(f"[HEURISTIC] Found {len(md_matches)} JSON blocks in markdown")
+                    for idx, json_str in enumerate(md_matches):
+                        try:
+                            tool_data = json.loads(json_str)
+                            tool_call_buffer[idx] = {
+                                'id': f'heuristic_md_{idx}',
+                                'name': tool_data.get('name'),
+                                'arguments': json.dumps(tool_data.get('arguments', {}))
+                            }
+                        except Exception as e:
+                            log.warning(f"[HEURISTIC] Failed to parse MD JSON: {e}")
+
+                # HEURISTIC 2: Look for raw JSON patterns (existing logic)
+                if not tool_call_buffer:
+                    raw_json_pattern = r'(\{\s*"name"\s*:\s*"(?:write_file|edit_file|read_file|run_command|list_directory)"\s*,\s*"arguments"\s*:\s*\{.*?\}\s*\})'
+                    raw_matches = re.findall(raw_json_pattern, self._full_response, re.DOTALL)
+                    for idx, json_str in enumerate(raw_matches):
+                        if idx in tool_call_buffer: continue # Skip if already found in MD
+                        try:
+                            tool_data = json.loads(json_str)
+                            tool_call_buffer[idx] = {
+                                'id': f'heuristic_raw_{idx}',
+                                'name': tool_data.get('name'),
+                                'arguments': json.dumps(tool_data.get('arguments', {}))
+                            }
+                        except: continue
+
+                # HEURISTIC 3: DeepSeek-specific <|tool_call_begin|> style parsing if we have raw text
+                if not tool_call_buffer:
+                    tag_pattern = r'<\|tool_call_begin\|>(.*?)(?:<\|tool_call_end\|>|$)'
+                    tag_matches = re.findall(tag_pattern, self._full_response, re.DOTALL)
+                    for idx, content in enumerate(tag_matches):
+                        try:
+                            # Content inside tags might be partial or raw JSON
+                            tool_data = _try_repair_json(content)
+                            if tool_data and tool_data.get('name'):
+                                tool_call_buffer[idx] = {
+                                    'id': f'heuristic_tag_{idx}',
+                                    'name': tool_data.get('name'),
+                                    'arguments': json.dumps(tool_data.get('arguments', {}))
+                                }
+                        except: continue
+
+                if tool_call_buffer:
+                    log.info(f"[HEURISTIC] SUCCESS: Extracted {len(tool_call_buffer)} tool calls from text response!")
+                else:
+                    log.warning(f"[HEURISTIC] FAILED to extract any tool calls from response.")
+            
+            # CLAUDE-STYLE HYBRID STRATEGY: Detect large file creation attempts
+            if tool_call_buffer:
+                for idx, tc in tool_call_buffer.items():
+                    if tc["name"] == "write_file":
+                        args_str = tc["arguments"]
+                        try:
+                            args = json.loads(args_str) if args_str else {}
+                            # Check if content is very large (>250 lines or >15KB)
+                            content = args.get("content", "")
+                            path = args.get("path", "")
+                            if content:
+                                lines = content.count('\n') + 1
+                                size_kb = len(content) / 1024
+                                
+                                # INTELLIGENT THRESHOLD: Adjust based on model capacity
+                                LINE_THRESHOLD = int((MAX_SAFE_TOKENS / 4) * 0.7)  # ~70% of token budget
+                                SIZE_THRESHOLD_KB = 20  # Conservative file size limit
+                                
+                                if lines > LINE_THRESHOLD or size_kb > SIZE_THRESHOLD_KB:
+                                    log.warning(f"[HYBRID STRATEGY] Large file detected: {path} ({lines} lines, {size_kb:.1f}KB)")
+                                    log.warning(f"[HYBRID STRATEGY] Token budget: {MAX_SAFE_TOKENS}, Estimated need: ~{lines//4} tokens")
+                                    log.warning(f"[HYBRID STRATEGY] Consider: skeleton-first + edit_file OR split into multiple files")
+                                    # Don't block - our JSON repair will handle truncation if it occurs
+                                    # But log for user awareness and AI learning
+                        except:
+                            pass  # Ignore parsing errors here
+            
             # Process tool calls
             if tool_call_buffer:
                 final_tool_calls = []
                 for idx in sorted(tool_call_buffer.keys()):
                     tc = tool_call_buffer[idx]
-                    if tc["id"] and tc["name"]:
+                    # Robustness: Allow tool calls that have at least a name
+                    if tc["name"]:
+                        # Generate ID if missing
+                        if not tc["id"]:
+                            tc["id"] = f"call_{int(time.time())}_{idx}"
+                            
                         args = tc["arguments"].strip() if tc["arguments"] else "{}"
+                        
+                        # AGENTIC FIX: Attempt to repair truncated JSON arguments
+                        # This handles cases where streaming cuts off mid-JSON
+                        if args and args != "{}":
+                            try:
+                                json.loads(args)  # Validate first
+                            except json.JSONDecodeError:
+                                log.warning(f"Tool {tc['name']} has malformed arguments, attempting repair...")
+                                repaired_args = _try_repair_json(args)
+                                if repaired_args:
+                                    log.info(f"✅ Repaired tool {tc['name']} arguments")
+                                    args = json.dumps(repaired_args)
+                                else:
+                                    log.error(f"❌ Failed to repair tool {tc['name']} arguments: {args[:100]}...")
+                        
                         final_tool_calls.append({
                             "id": tc["id"],
                             "type": "function",
@@ -686,106 +964,34 @@ Action: run_command(python helloworld.py; python for_loop.py; python while_loop.
 ✅ Tool re-executes after permission granted
 ✅ Task completes
 
-## AGENTIC WORKFLOW (Plan → Validate → Execute)
+## CRITICAL: TOOL USAGE POLICY (MOST IMPORTANT)
 
-Before calling any tool:
-1. **PLAN**: Think about what you need to do
-2. **VALIDATE**: Ensure you have ALL required parameters
-3. **EXECUTE**: Call the tool with complete, valid parameters
+**FOR ANY CREATE/BUILD/MAKE/WRITE/ADD/MODIFY TASK:**
+- **FIRST 50 TOKENS MUST BE A TOOL CALL** - No explanations, no thinking out loud
+- **ZERO DISCUSSION BEFORE FIRST TOOL** - Don't say "I'll help you create...", just DO IT
+- **DIRECT TOOL SYNTAX IN THOUGHTS** - Think: `write_file(path="file.html", content="...")` NOT "Maybe I should create..."
 
-## ALL 38 AVAILABLE TOOLS
+**EXAMPLES:**
+✅ USER: "Create button" → YOU: [Immediately calls write_file()]
+❌ USER: "Create button" → YOU: "I'd be happy to help! Let me think..." [NO TOOL]
 
-You have access to 38 tools across 8 categories:
+**YOU MUST USE TOOLS FOR:**
+- Creating files → write_file()
+- Modifying files → edit_file()
+- Reading files → read_file()
+- Running commands → run_in_terminal()
 
-**File Operations (11):** read_file(path), write_file(path, content), edit_file(path, old_string, new_string), inject_after(path, anchor, new_code), add_import(path, import_statement), insert_at_line(path, line, content), get_file_outline(path), delete_lines(path, start_line, end_line), replace_lines(path, start_line, end_line, new_code), find_usages(symbol), analyze_file(path)
+**NEVER:**
+- ❌ Talk about creating without actually calling write_file()
+- ❌ Explain your plan before taking action
+- ❌ Say "I'll create" without the actual tool call
 
-**Path Operations (3):** delete_path(path), list_directory(path), undo_last_action()
+**ALWAYS:**
+- ✅ ACT FIRST, explain later (if needed)
+- ✅ Tool calls within first 2 sentences MAXIMUM
 
-**Terminal (3):** run_command(command), read_terminal(), bash(command)
 
-**Git (4):** git_status(), git_diff(), git_commit(message)
-
-**Search (8):** search_code(query), search_codebase(query), semantic_search(query), find_function(name), find_class(name), find_symbol(name), grep(pattern), glob(pattern)
-
-**Code Quality (4):** debug_error(error_text), check_syntax(file_path), get_problems(), verify_fix()
-
-**LSP (2):** lsp_find_references(symbol, file_path, line, character), lsp_go_to_definition(symbol, file_path, line, character)
-
-**Other (3):** search_memory(query), task(operation), question(question)
-
-## CRITICAL: TOOL PARAMETER VALIDATION - MANDATORY
-
-⚠️ **WARNING**: Tool calls WITHOUT all required parameters will FAIL and be REJECTED.
-
-### BEFORE calling any tool, CHECK:
-1. Do I have ALL required parameters?
-2. Are all parameters valid (not empty, not null)?
-3. Have I double-checked the parameter names?
-
-### Parameter Requirements:
-
-- `read_file` — **REQUIRED: path** (string)
-  ✅ CORRECT: {"path": "src/main.py"}
-  ❌ WRONG: {} → **WILL FAIL**
-  ❌ WRONG: {"file": "src/main.py"} → Use 'path', not 'file'
-
-- `write_file` — **REQUIRED: path, content** (both strings)
-  ✅ CORRECT: {"path": "src/main.py", "content": "print('hello')"}
-  ❌ WRONG: {"content": "..."} → Missing 'path'
-  ❌ WRONG: {"file": "...", "text": "..."} → Wrong parameter names
-
-- `edit_file` — **REQUIRED: path, old_string, new_string** (all strings)
-  ✅ CORRECT: {"path": "src/main.py", "old_string": "x = 1", "new_string": "x = 2"}
-  ❌ WRONG: {"old_string": "...", "new_string": "..."} → Missing 'path'
-
-- `run_command` — **REQUIRED: command** (string)
-  ✅ CORRECT: {"command": "python manage.py runserver"}
-  ❌ WRONG: {"cmd": "..."} → Use 'command', not 'cmd'
-
-- `bash` — **REQUIRED: command** (string)
-  ✅ CORRECT: {"command": "ls -la"}
-  ❌ WRONG: {} → Missing 'command'
-
-### IF Parameters Are Missing:
-DO NOT call the tool. Instead, ask the user for the missing information or use reasonable defaults if you can determine them from context.
-
-### Common Mistakes to AVOID:
-- ❌ Using wrong parameter names (e.g., 'file' instead of 'path')
-- ❌ Omitting required parameters
-- ❌ Providing empty strings for required parameters
-- ❌ Calling tools without checking parameters first
-
-## AGENTIC WORKFLOW (Plan → Decide → Execute)
-
-1. **PLAN**: Understand what the user wants
-2. **DECIDE**: Choose which tools to call based on the task
-3. **VALIDATE**: Ensure ALL required parameters are present
-4. **EXECUTE**: Call the tool with complete parameters
-5. **REVIEW**: Check results and decide next steps
-
-## WHAT TO SAY
-
-✅ "Reading PROJECT_SPEC.md..." [calls read_file with path]
-✅ "Creating src/main.py..." [calls write_file with path and content]
-✅ "Updating src/main.py..." [calls edit_file with path, old_string, new_string]
-
-## WHAT NOT TO SAY
-
-❌ "I'll start by creating the main file" (no tool call)
-❌ Calling tools without required parameters (will fail validation)
-
-## RESPONSE STYLE
-
-1. Brief intro (1 sentence)
-2. Plan what tools you need
-3. Call tools with ALL required parameters
-4. Brief confirmation
-5. Continue until task complete
-
-REMEMBER: 
-- ALWAYS include ALL required parameters in tool calls
-- NEVER call a tool without validating parameters first
-- If unsure about a parameter, ask the user"""
+"""
     # Internal signal to bridge background tool processing back to main thread safely
     _tool_batch_finished = pyqtSignal(list, list, str) # results, tool_calls, assistant_content
     
@@ -1598,20 +1804,21 @@ REMEMBER:
             self._pre_edit_snapshots = {}
             log.debug("[CREATION_MODE] Reset for new user message")
         
-        # 🧠 DYNAMIC MODEL SWITCHING
-        if user_message and self._settings:
-            words = user_message.lower().split()
-            # Detect complexity
-            is_complex = any(cmd in words for cmd in ["fix", "build", "create", "implement", "debug", "refactor", "error", "how", "why"])
-            is_very_short = len(words) < 4
-            
-            current_provider = self._settings.get("ai", "provider")
-            
-            # DeepSeek: Switch between Chat (fast) and Reasoner (R1)
-            if current_provider == "deepseek":
-                target_model = "deepseek-reasoner" if is_complex else "deepseek-chat"
-                self._settings.set("ai", "model", target_model)
-                log.info(f"🔄 Task-based switch (DeepSeek): {target_model}")
+        # 🧠 DYNAMIC MODEL SWITCHING (DISABLED - User selection takes priority)
+        # This was causing unwanted switches to deepseek-reasoner for build tasks
+        # if user_message and self._settings:
+        #     words = user_message.lower().split()
+        #     # Detect complexity
+        #     is_complex = any(cmd in words for cmd in ["fix", "build", "create", "implement", "debug", "refactor", "error", "how", "why"])
+        #     is_very_short = len(words) < 4
+        #     
+        #     current_provider = self._settings.get("ai", "provider")
+        #     
+        #     # DeepSeek: Switch between Chat (fast) and Reasoner (R1)
+        #     if current_provider == "deepseek":
+        #         target_model = "deepseek-reasoner" if is_complex else "deepseek-chat"
+        #         self._settings.set("ai", "model", target_model)
+        #         log.info(f"🔄 Task-based switch (DeepSeek): {target_model}")
             
         # 🤖 AUTOGEN MULTI-AGENT MODE CHECK
         if self._use_autogen and self._autogen_system and user_message:
@@ -1832,6 +2039,9 @@ REMEMBER:
                 others = [t for t in tools_list if t["function"]["name"] not in essential_tools]
                 tools_list = essential + others[:10 - len(essential)]
                 log.info(f"[CREATION_MODE] Limited tools to {len(tools_list)} (essential first)")
+                
+                # DEBUG: Log tool names being sent
+                log.info(f"[DEBUG] Tools being sent to worker: {[t['function']['name'] for t in tools_list[:5]]}")
 
         # Inject a trigger if it's an automated plan request
         if user_message == "__GENERATE_PLAN__":
@@ -2154,6 +2364,13 @@ REMEMBER:
         tool_calls = getattr(worker, "tool_calls", None)
         log.info(f"Tool calls from worker: {tool_calls is not None}")
         
+        # DEBUG: Log worker attributes to see what was extracted
+        if hasattr(worker, 'tool_call_buffer'):
+            log.info(f"[DEBUG] Worker tool_call_buffer: {worker.tool_call_buffer}")
+        if hasattr(worker, '_full_response'):
+            log.info(f"[DEBUG] Worker full_response length: {len(worker._full_response)}")
+            log.info(f"[DEBUG] Worker full_response preview: {worker._full_response[:300]}")
+        
         if tool_calls:
             # Handle tool calls - DON'T add to history yet, wait for tool responses
             # This prevents the mismatch where assistant has tool_calls but no tool responses yet
@@ -2224,11 +2441,13 @@ REMEMBER:
                         arguments = json.loads(arguments_str) if arguments_str else {}
                     except json.JSONDecodeError as je:
                         log.warning(f"[AGENTIC] JSON parse failed, attempting repair: {je}")
+                        log.debug(f"[AGENTIC] Problematic JSON (first 200 chars): {arguments_str[:200]}...")
                         repaired = _try_repair_json(arguments_str)
                         if repaired:
                             log.info("[AGENTIC] JSON repair successful")
                             arguments = repaired
                         else:
+                            log.error(f"[AGENTIC] JSON repair FAILED for: {arguments_str[:100]}...")
                             raise je
                 else:
                     arguments = arguments_str
@@ -2272,10 +2491,10 @@ REMEMBER:
             # Build error feedback for the AI
             error_feedback = "\n⚠️ **TOOL VALIDATION ERRORS** ⚠️\n\n"
             error_feedback += "The following tool calls were INVALID and rejected:\n\n"
-            for e in validation_errors:
-                error_feedback += f"❌ `{e['tool']}`: {e['error']}\n"
-                if 'missing' in e:
-                    error_feedback += f"   Missing: {', '.join(e['missing'])}\n"
+            for err in validation_errors:
+                error_feedback += f"❌ `{err['tool']}`: {err['error']}\n"
+                if 'missing' in err:
+                    error_feedback += f"   Missing: {', '.join(err['missing'])}\n"
             
             error_feedback += "\n**HOW TO FIX:**\n"
             error_feedback += "1. Review the tool parameters required\n"
@@ -2526,10 +2745,6 @@ REMEMBER:
                 if not new_file_content and os.path.exists(canonical_path):
                     try:
                         new_file_content = _Path(canonical_path).read_text(encoding="utf-8", errors="replace")
-                    except Exception:
-                        pass
-                    try:
-                        new_file_content = _Path(resolved_path).read_text(encoding="utf-8", errors="replace")
                     except Exception:
                         pass
 
