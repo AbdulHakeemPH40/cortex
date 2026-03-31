@@ -16,10 +16,11 @@ log = get_logger("provider_registry")
 
 class ProviderType(Enum):
     """Supported LLM providers."""
-    DEEPSEEK = "deepseek"  # Primary provider for agentic work
-    TOGETHER = "together"  # Qwen, Kimi, MiniMax, DeepSeek-R1
-    SILICONFLOW = "siliconflow" # Vision models
+    DEEPSEEK = "deepseek"   # Primary provider for agentic work
+    TOGETHER = "together"   # Qwen, Kimi, MiniMax, DeepSeek-R1
+    SILICONFLOW = "siliconflow"  # Vision models
     OPENAI = "openai"       # For OpenAI or SiliconFlow if used as OpenAI
+    GROQ = "groq"           # Ultra-fast inference with speed guardrails
 
 
 @dataclass
@@ -136,12 +137,18 @@ class DeepSeekProvider(BaseProvider):
 
     def __init__(self):
         super().__init__(ProviderType.DEEPSEEK)
+        # Load API key from environment
+        import os
+        self._api_key = os.getenv("DEEPSEEK_API_KEY", "")
+        if not self._api_key:
+            log.warning("DEEPSEEK_API_KEY not configured")
 
     @property
     def available_models(self) -> List[ModelInfo]:
         return [
-            ModelInfo("deepseek-chat", "DeepSeek Chat", "deepseek", 64000, 4096, True, False, 0.0005, 0.0015),
+            ModelInfo("deepseek-chat", "DeepSeek Chat (V3)", "deepseek", 64000, 4096, True, False, 0.0005, 0.0015),
             ModelInfo("deepseek-coder", "DeepSeek Coder", "deepseek", 64000, 4096, True, False, 0.0005, 0.0015),
+            ModelInfo("deepseek-reasoner", "DeepSeek Reasoner (R1)", "deepseek", 64000, 8192, True, False, 0.002, 0.008),
         ]
 
     def chat_stream(self,
@@ -181,7 +188,17 @@ class DeepSeekProvider(BaseProvider):
             response = req.post(url, headers=headers, json=payload, stream=True, timeout=120)
             
             # Check for HTTP errors
-            if response.status_code == 402:
+            if response.status_code == 400:
+                error_data = response.json() if response.text else {}
+                error_msg = error_data.get('error', {}).get('message', '')
+                if "Model Not Exist" in error_msg:
+                    log.error(f"DeepSeek Model Not Exist: {model}. Fallback recommended.")
+                    yield f"[Error: Model '{model}' not available on your DeepSeek account. Please check your API tier or use 'deepseek-reasoner'.]"
+                else:
+                    log.error(f"DeepSeek Bad Request: {response.text}")
+                    yield f"[Error: HTTP 400 - {error_msg}]"
+                return
+            elif response.status_code == 402:
                 yield "[Error: Insufficient DeepSeek Balance. Please top up at https://platform.deepseek.com/]"
                 return
             elif response.status_code != 200:
@@ -235,8 +252,68 @@ class DeepSeekProvider(BaseProvider):
             yield f"[Error: {e}]"
     
     def chat(self, messages, model, temperature=0.7, max_tokens=2000, stream=False, tools=None, tool_choice=None):
-        # Support for non-streaming case if needed, but registry uses chat_stream for agent
-        return ChatResponse(content="Full chat not implemented in this minimal view", model=model, provider="deepseek")
+        """Non-streaming chat completion for DeepSeek"""
+        try:
+            import requests as req
+            import json
+            
+            if not self._api_key:
+                log.error("DeepSeek API key not set!")
+                return ChatResponse(content="[Error: API key not configured]", model=model, provider="deepseek")
+            
+            url = f"{self._base_url or self.DEFAULT_BASE_URL}/v1/chat/completions"
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self._api_key}"
+            }
+            formatted_messages = self._format_messages_for_provider(messages)
+            payload = {
+                "model": model,
+                "messages": formatted_messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": False
+            }
+            if tools:
+                payload["tools"] = tools
+            
+            log.info(f"POST {url} (non-streaming)")
+            
+            response = req.post(url, headers=headers, json=payload, timeout=120)
+            
+            # Check for errors
+            if response.status_code == 402:
+                return ChatResponse(content="[Error: Insufficient DeepSeek Balance]", model=model, provider="deepseek")
+            elif response.status_code != 200:
+                error_text = response.text
+                log.error(f"DeepSeek API error: {response.status_code} - {error_text[:500]}")
+                return ChatResponse(content=f"[Error: HTTP {response.status_code}]", model=model, provider="deepseek")
+            
+            result = response.json()
+            
+            # Extract content
+            if 'choices' in result and len(result['choices']) > 0:
+                message = result['choices'][0].get('message', {})
+                content = message.get('content', '')
+                
+                # Get usage stats
+                usage = result.get('usage', {})
+                input_tokens = usage.get('prompt_tokens', 0)
+                output_tokens = usage.get('completion_tokens', 0)
+                
+                return ChatResponse(
+                    content=content,
+                    model=model,
+                    provider="deepseek",
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens
+                )
+            else:
+                return ChatResponse(content="[Error: No response content]", model=model, provider="deepseek")
+                
+        except Exception as e:
+            log.error(f"Chat error: {e}")
+            return ChatResponse(content=f"[Error: {str(e)}]", model=model, provider="deepseek")
 
     def validate_api_key(self) -> bool:
         return bool(self._api_key)
@@ -268,6 +345,22 @@ class ProviderRegistry:
             log.info("SiliconFlowProvider registered")
         except (ImportError, Exception) as e:
             log.warning(f"Could not register SiliconFlowProvider: {e}")
+        
+        # Register Groq provider with speed guardrails
+        try:
+            from src.ai.providers.groq_provider import GroqProvider, SpeedGuardrails
+            # Use safe guardrails by default to prevent crashes
+            guardrails = SpeedGuardrails(
+                max_requests_per_second=10.0,
+                max_concurrent_requests=3,
+                throttle_tokens_per_second=200,  # Throttle to prevent UI overwhelm
+                enable_context_compaction=True,
+                max_stream_duration_seconds=180
+            )
+            self._register_provider(ProviderType.GROQ, GroqProvider(guardrails))
+            log.info("GroqProvider registered with speed guardrails")
+        except (ImportError, Exception) as e:
+            log.warning(f"Could not register GroqProvider: {e}")
             
     def _register_provider(self, provider_type: ProviderType, provider: BaseProvider):
         self._providers[provider_type] = provider

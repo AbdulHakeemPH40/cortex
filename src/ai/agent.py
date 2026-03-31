@@ -281,6 +281,7 @@ class ToolWorker(QThread):
                         + content[-half:]
                     )
 
+                tool_result_metadata = getattr(result, 'metadata', {}) or {}
                 self._results.append({
                     "tool_call_id": tool_call["id"],
                     "name": name,
@@ -288,7 +289,7 @@ class ToolWorker(QThread):
                     "success": result.success,
                     "duration_ms": result.duration_ms,
                     "status": getattr(result, 'status', 'completed'),
-                    "metadata": getattr(result, 'metadata', {}) or {}
+                    "metadata": tool_result_metadata
                 })
 
                 # Emit completed signal
@@ -345,6 +346,7 @@ class AIWorker(QThread):
         provider_map = {
             "deepseek": ProviderType.DEEPSEEK,
             "together": ProviderType.TOGETHER,  # Qwen, Kimi, MiniMax, DeepSeek-R1
+            "groq": ProviderType.GROQ,  # Groq ultra-fast inference
         }
         
         # Use selected provider directly (no auto-switching)
@@ -528,50 +530,162 @@ class AIAgent(QObject):
     # Performance: File prefetch signal
     files_prefetch = pyqtSignal(list)  # list of file paths to prefetch
 
-    SYSTEM_PROMPT = """# CORTEX AI — ACTION-ORIENTED BUILD AGENT
+    SYSTEM_PROMPT = """🚨 ATTENTION: CRITICAL EFFICIENCY RULES 🚨
+YOU MUST FOLLOW THESE RULES OR YOU WILL FAIL:
+1. NEVER call list_directory, dir, ls - just CREATE files
+2. NEVER read_file before creating - files don't exist yet
+3. NEVER check_syntax - write_file success is enough
+4. NEVER run dir to verify - trust the success message
+5. NEVER separate script runs - batch in ONE command
 
-You are a BUILD AGENT. Your PRIMARY job is to BUILD, not chat.
+❌ FORBIDDEN THOUGHTS:
+- "Let me check if files exist" → JUST CREATE THEM
+- "Let me verify with dir" → DON'T - trust success
+- "I need to read the file first" → WRONG - create it
 
-## CORE RULE: USE TOOLS
+✅ CORRECT PATH:
+write_file → write_file → write_file → run_command(all scripts)
+THAT'S IT. NO VERIFICATION NEEDED.
 
-When the user asks to build something:
-1. IMMEDIATELY use `read_file` tool to read any spec/documentation
-2. Use `write_file` tool to create files with COMPLETE code
-3. NEVER describe what you'll do — DO IT
+---
 
-## TOOL USAGE RULES
+# CORTEX AI — AGENTIC BUILD AGENT
 
-- `read_file` — Read any file to understand context
-- `write_file` — Create new files with COMPLETE implementation
-- `edit_file` — Make surgical edits to existing files
-- `list_directory` — Explore project structure
+You are an AI AGENT with tool-calling capabilities. Your job is to BUILD by using tools effectively.
+
+## ⚡ EFFICIENCY RULES (ABSOLUTE - NO EXCEPTIONS)
+
+### 🚫 STRICTLY PROHIBITED:
+1. **NO `list_directory` or `dir` commands** - Never check if files exist, just CREATE them
+2. **NO `check_syntax` calls** - Write success means the file is valid
+3. **NO reading files after creation** - write_file success is enough
+4. **NO running `dir` to verify** - Files are created, trust the tool result
+5. **NO separate commands for each script** - Use ONE command for all scripts
+
+### ❌ WRONG BEHAVIOR (will fail review):
+```
+Thought: Let me check if files exist first
+Action: list_directory  ← FORBIDDEN
+Action: dir  ← FORBIDDEN  
+Action: read_file(newfile.py)  ← FORBIDDEN
+```
+
+### ✅ CORRECT BEHAVIOR:
+```
+Thought: Create the files
+Action: write_file(helloworld.py)
+Action: write_file(for_loop.py)  
+Action: write_file(while_loop.py)
+Action: run_command(python helloworld.py; python for_loop.py; python while_loop.py)
+```
+
+### Running Scripts (Windows PowerShell):
+- CORRECT: `python file1.py; python file2.py; python file3.py`
+- CORRECT: `python file1.py`, then `python file2.py`, then `python file3.py` - ALL IN ONE run_command call
+- WRONG: Three separate run_command calls
+
+### Target: 4 tool calls MAX for creating and testing 3 files
+
+## AGENTIC WORKFLOW (Plan → Validate → Execute)
+
+Before calling any tool:
+1. **PLAN**: Think about what you need to do
+2. **VALIDATE**: Ensure you have ALL required parameters
+3. **EXECUTE**: Call the tool with complete, valid parameters
+
+## ALL 38 AVAILABLE TOOLS
+
+You have access to 38 tools across 8 categories:
+
+**File Operations (11):** read_file(path), write_file(path, content), edit_file(path, old_string, new_string), inject_after(path, anchor, new_code), add_import(path, import_statement), insert_at_line(path, line, content), get_file_outline(path), delete_lines(path, start_line, end_line), replace_lines(path, start_line, end_line, new_code), find_usages(symbol), analyze_file(path)
+
+**Path Operations (3):** delete_path(path), list_directory(path), undo_last_action()
+
+**Terminal (3):** run_command(command), read_terminal(), bash(command)
+
+**Git (4):** git_status(), git_diff(), git_commit(message)
+
+**Search (8):** search_code(query), search_codebase(query), semantic_search(query), find_function(name), find_class(name), find_symbol(name), grep(pattern), glob(pattern)
+
+**Code Quality (4):** debug_error(error_text), check_syntax(file_path), get_problems(), verify_fix()
+
+**LSP (2):** lsp_find_references(symbol, file_path, line, character), lsp_go_to_definition(symbol, file_path, line, character)
+
+**Other (3):** search_memory(query), task(operation), question(question)
+
+## CRITICAL: TOOL PARAMETER VALIDATION - MANDATORY
+
+⚠️ **WARNING**: Tool calls WITHOUT all required parameters will FAIL and be REJECTED.
+
+### BEFORE calling any tool, CHECK:
+1. Do I have ALL required parameters?
+2. Are all parameters valid (not empty, not null)?
+3. Have I double-checked the parameter names?
+
+### Parameter Requirements:
+
+- `read_file` — **REQUIRED: path** (string)
+  ✅ CORRECT: {"path": "src/main.py"}
+  ❌ WRONG: {} → **WILL FAIL**
+  ❌ WRONG: {"file": "src/main.py"} → Use 'path', not 'file'
+
+- `write_file` — **REQUIRED: path, content** (both strings)
+  ✅ CORRECT: {"path": "src/main.py", "content": "print('hello')"}
+  ❌ WRONG: {"content": "..."} → Missing 'path'
+  ❌ WRONG: {"file": "...", "text": "..."} → Wrong parameter names
+
+- `edit_file` — **REQUIRED: path, old_string, new_string** (all strings)
+  ✅ CORRECT: {"path": "src/main.py", "old_string": "x = 1", "new_string": "x = 2"}
+  ❌ WRONG: {"old_string": "...", "new_string": "..."} → Missing 'path'
+
+- `run_command` — **REQUIRED: command** (string)
+  ✅ CORRECT: {"command": "python manage.py runserver"}
+  ❌ WRONG: {"cmd": "..."} → Use 'command', not 'cmd'
+
+- `bash` — **REQUIRED: command** (string)
+  ✅ CORRECT: {"command": "ls -la"}
+  ❌ WRONG: {} → Missing 'command'
+
+### IF Parameters Are Missing:
+DO NOT call the tool. Instead, ask the user for the missing information or use reasonable defaults if you can determine them from context.
+
+### Common Mistakes to AVOID:
+- ❌ Using wrong parameter names (e.g., 'file' instead of 'path')
+- ❌ Omitting required parameters
+- ❌ Providing empty strings for required parameters
+- ❌ Calling tools without checking parameters first
+
+## AGENTIC WORKFLOW (Plan → Decide → Execute)
+
+1. **PLAN**: Understand what the user wants
+2. **DECIDE**: Choose which tools to call based on the task
+3. **VALIDATE**: Ensure ALL required parameters are present
+4. **EXECUTE**: Call the tool with complete parameters
+5. **REVIEW**: Check results and decide next steps
 
 ## WHAT TO SAY
 
-✅ "Reading PROJECT_SPEC.md..." [calls read_file]
-✅ "Creating src/main.py..." [calls write_file with complete code]
+✅ "Reading PROJECT_SPEC.md..." [calls read_file with path]
+✅ "Creating src/main.py..." [calls write_file with path and content]
+✅ "Updating src/main.py..." [calls edit_file with path, old_string, new_string]
 
 ## WHAT NOT TO SAY
 
-❌ "I'll start by creating the main file" (no tool = useless)
-❌ "First, let me understand the requirements" (stop talking, start building)
-
-## BUILDING WORKFLOW
-
-1. Read spec (read_file)
-2. Create directory structure (write_file calls)
-3. Implement each file completely
-4. Keep moving — don't stop to explain
+❌ "I'll start by creating the main file" (no tool call)
+❌ Calling tools without required parameters (will fail validation)
 
 ## RESPONSE STYLE
 
-- Short intro (1 sentence max)
-- Tool call
-- Brief confirmation
-- Next tool call
-- Repeat until done
+1. Brief intro (1 sentence)
+2. Plan what tools you need
+3. Call tools with ALL required parameters
+4. Brief confirmation
+5. Continue until task complete
 
-REMEMBER: Every response should contain a TOOL CALL unless the task is truly complete."""
+REMEMBER: 
+- ALWAYS include ALL required parameters in tool calls
+- NEVER call a tool without validating parameters first
+- If unsure about a parameter, ask the user"""
     # Internal signal to bridge background tool processing back to main thread safely
     _tool_batch_finished = pyqtSignal(list, list, str) # results, tool_calls, assistant_content
     
@@ -591,7 +705,8 @@ REMEMBER: Every response should contain a TOOL CALL unless the task is truly com
         self._tool_registry = ToolRegistry(
             file_manager=file_manager,
             terminal_widget=terminal_widget,
-            project_root=self._project_root
+            project_root=self._project_root,
+            parent_agent=self  # Pass agent reference for creation mode tracking
         )
         self._history: list[dict] = []
         self._history_summary: str = ""
@@ -616,6 +731,10 @@ REMEMBER: Every response should contain a TOOL CALL unless the task is truly com
         self._request_started_at: float | None = None
         self._request_in_flight = False
         self._auto_verify_enabled = bool(self._settings.get("ai", "auto_verify", default=True))
+        
+        # Creation Mode: Blocks unnecessary verification tools when AI is creating files
+        self._creation_mode = False
+        self._creation_mode_tool_blocklist = {"list_directory", "check_syntax"}
         
         # AutoGen Multi-Agent System
         self._autogen_system = None
@@ -961,8 +1080,14 @@ REMEMBER: Every response should contain a TOOL CALL unless the task is truly com
         else:
             log.info("⚡ Human-in-the-loop DISABLED - AI has full autonomy")
     
-    def enable_autogen(self, enabled: bool = True):
-        """Enable or disable AutoGen multi-agent mode (uses DeepSeek)."""
+    def enable_autogen(self, enabled: bool = True, provider: str = "deepseek", model: str = None):
+        """Enable or disable AutoGen multi-agent mode with DeepSeek or Groq.
+        
+        Args:
+            enabled: Whether to enable AutoGen
+            provider: "deepseek" or "groq" (for ultra-fast multi-agent collaboration)
+            model: Model ID (defaults to "deepseek-chat" or "llama-3.3-70b-versatile" for Groq)
+        """
         if not enabled:
             self._use_autogen = False
             log.info("⚪ AutoGen MULTI-AGENT MODE DISABLED")
@@ -971,18 +1096,29 @@ REMEMBER: Every response should contain a TOOL CALL unless the task is truly com
         try:
             from src.core.key_manager import get_key_manager
             key_manager = get_key_manager()
-            deepseek_key = key_manager.get_key("deepseek")
             
-            if not deepseek_key:
-                log.warning("❌ DeepSeek API key not found. Add to .env file first.")
+            # Get API key based on provider
+            if provider == "groq":
+                api_key = key_manager.get_key("groq")
+                model = model or "llama-3.3-70b-versatile"
+                provider_name = "Groq"
+                speed_info = "Ultra-fast 300 TPS"
+            else:
+                api_key = key_manager.get_key("deepseek")
+                model = model or "deepseek-chat"
+                provider_name = "DeepSeek"
+                speed_info = "Reliable reasoning"
+            
+            if not api_key:
+                log.warning(f"❌ {provider_name} API key not found. Add to .env file first.")
                 return False
             
-            self._autogen_system = init_autogen_system(deepseek_key)
+            self._autogen_system = init_autogen_system(api_key, provider=provider, model=model)
             self._use_autogen = True
-            log.info("✅ AutoGen MULTI-AGENT MODE ENABLED! 🤖")
-            log.info("   🚀 Powered by DeepSeek V3 for reliable tool execution")
-            log.info("   🤖 Agents: PM + Architect + Developer + QA + Reviewer")
-            log.info("   🔒 Safe code execution with multi-agent review")
+            log.info(f"✅ AutoGen MULTI-AGENT MODE ENABLED! 🤖")
+            log.info(f"   🚀 Powered by {provider_name} {model} ({speed_info})")
+            log.info(f"   🤖 Agents: PM + Architect + Developer + QA + Reviewer")
+            log.info(f"   🔒 Safe code execution with multi-agent review")
             return True
             
         except Exception as e:
@@ -1039,7 +1175,7 @@ REMEMBER: Every response should contain a TOOL CALL unless the task is truly com
             error_msg = f"❌ AutoGen Exception: {str(e)}"
             log.error(error_msg)
             self.request_error.emit(error_msg)
-        
+    
     def _is_greeting(self, message: str) -> bool:
         """Check if message is a simple greeting - DISABLED for context-aware responses."""
         # Always return False to ensure all messages go through the AI
@@ -1341,7 +1477,45 @@ REMEMBER: Every response should contain a TOOL CALL unless the task is truly com
         self.response_chunk.emit(f"<terminal_output>{line}</terminal_output>")
 
     def chat(self, user_message: Optional[str], code_context: str = ""):
-        """Send a message and get a streamed response."""
+        """Send a message and get a streamed response with intelligent model switching."""
+        
+        # Reset creation mode on new user message (start fresh for new task)
+        if user_message is not None:
+            # Check if this is a creation task - enable creation mode immediately
+            creation_keywords = ["create", "build", "make", "generate", "write", "add", "implement", "new file", "new project"]
+            is_creation_task = any(kw in user_message.lower() for kw in creation_keywords)
+            
+            if is_creation_task:
+                self._creation_mode = True
+                log.info(f"[CREATION_MODE] Enabled for creation task")
+            else:
+                self._creation_mode = False
+                log.debug("[CREATION_MODE] Reset for new user message")
+        
+        # 🧠 DYNAMIC MODEL SWITCHING
+        if user_message and self._settings:
+            words = user_message.lower().split()
+            # Detect complexity
+            is_complex = any(cmd in words for cmd in ["fix", "build", "create", "implement", "debug", "refactor", "error", "how", "why"])
+            is_very_short = len(words) < 4
+            
+            current_provider = self._settings.get("ai", "provider")
+            
+            # Groq: Switch between 8B (fast) and 70B (smart)
+            if current_provider == "groq":
+                if is_very_short and not is_complex:
+                    target_model = "llama-3.1-8b-instant"
+                else:
+                    target_model = "llama-3.3-70b-versatile"
+                
+                self._settings.set("ai", "model", target_model)
+                log.info(f"🔄 Task-based switch (Groq): {target_model}")
+                
+            # DeepSeek: Switch between Chat (fast) and Reasoner (R1)
+            elif current_provider == "deepseek":
+                target_model = "deepseek-reasoner" if is_complex else "deepseek-chat"
+                self._settings.set("ai", "model", target_model)
+                log.info(f"🔄 Task-based switch (DeepSeek): {target_model}")
             
         # 🤖 AUTOGEN MULTI-AGENT MODE CHECK
         if self._use_autogen and self._autogen_system and user_message:
@@ -1540,6 +1714,29 @@ REMEMBER: Every response should contain a TOOL CALL unless the task is truly com
                 }
             })
 
+        # EFFICIENCY: Filter out unnecessary tools when AI is in creation mode
+        if self._creation_mode:
+            original_count = len(tools_list)
+            tools_list = [
+                t for t in tools_list
+                if t["function"]["name"] not in self._creation_mode_tool_blocklist
+            ]
+            log.info(f"[CREATION_MODE] Filtered {original_count} → {len(tools_list)} tools (blocked: {self._creation_mode_tool_blocklist})")
+            
+            # EFFICIENCY: In creation mode, prioritize essential tools and limit to top 10
+            # This prevents AI from getting lost with too many tool options
+            essential_tools = {
+                "write_file", "edit_file", "smart_edit", "run_command", "bash",
+                "inject_after", "add_import", "delete_path",
+                "read_file", "get_file_outline", "list_directory"
+            }
+            if len(tools_list) > 10:
+                # Prioritize essential tools, then add others
+                essential = [t for t in tools_list if t["function"]["name"] in essential_tools]
+                others = [t for t in tools_list if t["function"]["name"] not in essential_tools]
+                tools_list = essential + others[:10 - len(essential)]
+                log.info(f"[CREATION_MODE] Limited tools to {len(tools_list)} (essential first)")
+
         # Inject a trigger if it's an automated plan request
         if user_message == "__GENERATE_PLAN__":
             messages.append({"role": "user", "content": "Analyze the project context and generate a detailed <plan>, <tasklist>, and initial steps for implementation."})
@@ -1577,8 +1774,14 @@ REMEMBER: Every response should contain a TOOL CALL unless the task is truly com
                     log.warning(f"Dropping orphaned tool message at index {i}")
                 i += 1
 
+        # Configure tools based on provider
+        # Groq: Enable tools for balanced 100-200 TPS performance
+        # Together: Full tool support with multi-model flexibility
+        # DeepSeek: Full tool support with reliable execution
+        tools_for_worker = tools_list if provider != "mock" else None
+        
         log.info(f"Creating AI worker with {len(sanitized_messages)} messages, model={model}, provider={provider}")
-        self._worker = AIWorker(sanitized_messages, model, temperature, max_tokens, provider, tools=tools_list if provider != "mock" else None)
+        self._worker = AIWorker(sanitized_messages, model, temperature, max_tokens, provider, tools=tools_for_worker)
         self._worker.chunk_received.connect(self.response_chunk)
         self._worker.finished.connect(self._on_done)
         self._worker.error_occurred.connect(self._on_error)
@@ -1672,9 +1875,15 @@ REMEMBER: Every response should contain a TOOL CALL unless the task is truly com
         
         # Use provider directly to avoid recursive chat turns
         provider_name = self._settings.get("ai", "provider") or "deepseek"
-        provider = get_provider_registry().get_provider(
-            ProviderType.TOGETHER if provider_name == "together" else ProviderType.DEEPSEEK
-        )
+        
+        # Map provider name to ProviderType
+        provider_type_map = {
+            "together": ProviderType.TOGETHER,
+            "groq": ProviderType.GROQ,
+            "deepseek": ProviderType.DEEPSEEK,
+        }
+        provider_type = provider_type_map.get(provider_name, ProviderType.DEEPSEEK)
+        provider = get_provider_registry().get_provider(provider_type)
         
         # Format messages for summarization
         # Include previous summary if it exists
@@ -1895,6 +2104,107 @@ REMEMBER: Every response should contain a TOOL CALL unless the task is truly com
 
     def _execute_tools(self, tool_calls, assistant_content=""):
         """Execute tool calls in background thread for MAXIMUM UI responsiveness."""
+        
+        # First, check if tool_calls is valid
+        if not tool_calls:
+            log.warning("[AGENTIC] No tool calls to execute")
+            return
+        
+        if not isinstance(tool_calls, list):
+            log.error(f"[AGENTIC] tool_calls is not a list: {type(tool_calls)}")
+            return
+        
+        # AGENTIC VALIDATION: Validate and fix tool calls before execution
+        # Based on Groq AutoGen patterns - bounded tasks with validation
+        validated_tool_calls = []
+        validation_errors = []
+        
+        log.info(f"[AGENTIC] Validating {len(tool_calls)} tool calls...")
+        
+        for tc in tool_calls:
+            tool_name = tc.get("function", {}).get("name", "")
+            arguments_str = tc.get("function", {}).get("arguments", "{}")
+            
+            try:
+                # Parse arguments
+                if isinstance(arguments_str, str):
+                    arguments = json.loads(arguments_str) if arguments_str else {}
+                else:
+                    arguments = arguments_str
+                
+                # Get tool schema from registry
+                tool = self._tool_registry.get_tool(tool_name)
+                if tool:
+                    # Validate required parameters
+                    required_params = [p.name for p in tool.parameters if p.required]
+                    missing_params = [p for p in required_params if p not in arguments or not arguments[p]]
+                    
+                    if missing_params:
+                        error_msg = f"Tool '{tool_name}' missing required parameters: {missing_params}"
+                        log.warning(f"[AGENTIC VALIDATION] {error_msg}")
+                        validation_errors.append({"tool": tool_name, "error": error_msg, "missing": missing_params})
+                        
+                        # Try to provide intelligent defaults for common tools
+                        if tool_name in ["read_file", "edit_file"] and "path" in missing_params:
+                            # Cannot proceed without path - skip this tool call
+                            continue
+                        elif tool_name == "write_file" and "path" in missing_params:
+                            continue
+                        elif tool_name == "search_code" and "pattern" in missing_params:
+                            continue
+                        else:
+                            # Skip invalid tool call
+                            continue
+                
+                # Tool call is valid
+                validated_tool_calls.append(tc)
+                
+            except json.JSONDecodeError as e:
+                log.error(f"[AGENTIC VALIDATION] Failed to parse arguments for {tool_name}: {e}")
+                validation_errors.append({"tool": tool_name, "error": f"Invalid JSON: {e}"})
+            except Exception as e:
+                log.error(f"[AGENTIC VALIDATION] Error validating {tool_name}: {e}")
+                validation_errors.append({"tool": tool_name, "error": str(e)})
+        
+        # If we have validation errors, we need to inform the AI and ask it to fix them
+        if validation_errors:
+            # Build error feedback for the AI
+            error_feedback = "\n⚠️ **TOOL VALIDATION ERRORS** ⚠️\n\n"
+            error_feedback += "The following tool calls were INVALID and rejected:\n\n"
+            for e in validation_errors:
+                error_feedback += f"❌ `{e['tool']}`: {e['error']}\n"
+                if 'missing' in e:
+                    error_feedback += f"   Missing: {', '.join(e['missing'])}\n"
+            
+            error_feedback += "\n**HOW TO FIX:**\n"
+            error_feedback += "1. Review the tool parameters required\n"
+            error_feedback += "2. Provide ALL required parameters\n"
+            error_feedback += "3. Use correct parameter names\n"
+            error_feedback += "\nPlease retry with complete parameters.\n"
+            
+            # Send error feedback to user and AI
+            log.error(f"[AGENTIC] Tool validation failed:\n{error_feedback}")
+            self.response_chunk.emit(error_feedback)
+            
+            # Add to history so AI can see the error
+            if assistant_content:
+                self._history.append({"role": "assistant", "content": assistant_content, "tool_calls": tool_calls})
+            self._history.append({"role": "system", "content": error_feedback})
+            
+            # Continue the conversation so AI can retry
+            self.response_complete.emit(error_feedback)
+            return
+        
+        # Log successful validation
+        log.info(f"[AGENTIC] All {len(validated_tool_calls)} tool calls passed validation")
+        
+        # Use validated tool calls
+        tool_calls = validated_tool_calls
+        
+        if not tool_calls:
+            log.info("[AGENTIC] No valid tool calls to execute after validation")
+            return
+        
         # Start exploration block for UI display
         self.response_chunk.emit("\n<exploration>\n")
         
@@ -2029,7 +2339,13 @@ REMEMBER: Every response should contain a TOOL CALL unless the task is truly com
             
         if name == "run_command":
             self.tool_activity.emit("run_command", args.get("command", "")[:60], "running")
-        elif name in ["write_file", "edit_file", "read_file", "delete_path", "list_directory"]:
+        elif name == "write_file":
+            self.tool_activity.emit(name, display_path or args.get("path", ""), "running")
+            # Enter creation mode when AI starts writing files
+            if not self._creation_mode:
+                self._creation_mode = True
+                log.info("[CREATION_MODE] Entered creation mode - blocking list_directory and check_syntax")
+        elif name in ["edit_file", "read_file", "delete_path", "list_directory"]:
             self.tool_activity.emit(name, display_path or args.get("path", ""), "running")
         else:
             self.tool_activity.emit(name, str(args)[:50], "running")
@@ -2388,13 +2704,49 @@ REMEMBER: Every response should contain a TOOL CALL unless the task is truly com
                 })
                 continue
             
-            if name in ("write_file", "edit_file", "create_directory"):
+            if name in ("write_file", "edit_file", "create_directory", "inject_after", "add_import", "delete_path"):
                 # Try to extract file path and details
                 file_path = "Unknown"
                 line_count = 0
                 size_str = ""
+                lines_added = 0
+                lines_removed = 0
                 
-                # Parse content for file info
+                # Get metadata FIRST - this has the actual file_path and diff stats from tools
+                metadata = res.get("metadata", {}) or {}
+                lines_added = metadata.get("lines_added", 0) or 0
+                lines_removed = metadata.get("lines_removed", 0) or 0
+                # Extract file_path from metadata if available
+                file_path = metadata.get("file_path", "")
+                
+                # Fallback: Try to extract file path from content
+                if not file_path and content:
+                    import re
+                    # Try patterns like "Created: path", "Written: path", "Edited: path"
+                    path_patterns = [
+                        r'(?:Created|Written|Edited|Overwritten|File written|File created|Successfully (?:created|written|edited|overwritten)(?:\s+file)?):\s*(.+)',
+                        r'\[File:\s*(.+?)\]',
+                    ]
+                    for pattern in path_patterns:
+                        match = re.search(pattern, content, re.IGNORECASE)
+                        if match:
+                            file_path = match.group(1).strip()
+                            break
+                
+                # Final fallback to Unknown
+                if not file_path:
+                    file_path = "Unknown"
+                
+                # Determine operation type for display
+                op_type = "edit"
+                if name == "write_file":
+                    op_type = "create"
+                elif name == "delete_path":
+                    op_type = "delete"
+                elif name == "create_directory":
+                    op_type = "directory"
+                
+                # Parse content for file info and fallback diff stats
                 if content:
                     lines = content.split('\n')
                     first_line = lines[0] if lines else ""
@@ -2405,11 +2757,22 @@ REMEMBER: Every response should contain a TOOL CALL unless the task is truly com
                         if len(parts) > 1:
                             file_path = parts[1].strip()
                     
+                    # Fallback: Extract lines_added/lines_removed from text output via regex
+                    # Only if not already set from metadata
+                    import re
+                    if lines_added == 0:
+                        added_match = re.search(r'Lines\s+added[:\s]+(\d+)', content, re.IGNORECASE)
+                        if added_match:
+                            lines_added = int(added_match.group(1))
+                    if lines_removed == 0:
+                        removed_match = re.search(r'Lines\s+removed[:\s]+(\d+)', content, re.IGNORECASE)
+                        if removed_match:
+                            lines_removed = int(removed_match.group(1))
+                    
                     # Try to get line count from content
-                    if len(lines) > 1:
+                    if line_count == 0 and len(lines) > 1:
                         for line in lines[1:10]:  # Check first few lines
                             if "lines" in line.lower() or "line" in line.lower():
-                                import re
                                 match = re.search(r'(\d+)\s*lines?', line, re.IGNORECASE)
                                 if match:
                                     line_count = int(match.group(1))
@@ -2434,7 +2797,9 @@ REMEMBER: Every response should contain a TOOL CALL unless the task is truly com
                     "path": file_path,
                     "line_count": line_count,
                     "size": size_str,
-                    "type": "edit" if name == "edit_file" else "create"
+                    "type": op_type,
+                    "lines_added": lines_added,
+                    "lines_removed": lines_removed
                 })
                 
             elif name in ("read_file", "read_multiple_files"):
@@ -2647,11 +3012,16 @@ REMEMBER: Every response should contain a TOOL CALL unless the task is truly com
             from src.ai.permission_system import get_permission_manager
             perm_manager = get_permission_manager()
             
-            if response in ["allow", "always"]:
-                log.info(f"User GRANTED permission for {tool_name}. Executing now...")
+            # Parse response - can be "allow", "always", "allow:global", "always:global", etc.
+            response_parts = response.split(':')
+            response_action = response_parts[0]  # "allow" or "always"
+            response_scope = response_parts[1] if len(response_parts) > 1 else 'session'  # "global" or "session"
+            
+            if response_action in ["allow", "always"]:
+                log.info(f"User GRANTED permission for {tool_name} (scope: {response_scope}). Executing now...")
                 
                 # CRITICAL: Inform permission manager about this approval before re-executing
-                if response == "always":
+                if response_action == "always" or response_scope == "global":
                     perm_manager.remember_decision(tool_name, True)
                 else:
                     perm_manager.add_session_approval(tool_name)
@@ -2664,14 +3034,17 @@ REMEMBER: Every response should contain a TOOL CALL unless the task is truly com
                     # Now execute_tool will actually proceed because check_permission will return True
                     real_result = self._tool_registry.execute_tool(tool_name, params)
                     
-                    # Update the tool result in history with actual content
+                    # Update the tool result in history with actual content and metadata
                     target_tool_res["content"] = str(real_result.result) if real_result.success else f"Error: {real_result.error}"
                     target_tool_res["success"] = real_result.success
+                    # Copy metadata so UI can display line count, size, etc.
+                    if real_result.metadata:
+                        target_tool_res["metadata"] = real_result.metadata
                 finally:
                     self._tool_registry._always_allowed = old_reg_allowed
             else:
                 log.info(f"User DENIED permission for {tool_name}")
-                if response == "never": # Just in case we add this
+                if response_action == "never": # Just in case we add this
                      perm_manager.remember_decision(tool_name, False)
                 target_tool_res["content"] = "Error: User denied permission for this operation."
                 target_tool_res["success"] = False

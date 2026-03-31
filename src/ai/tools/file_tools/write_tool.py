@@ -84,7 +84,10 @@ class WriteTool(BaseTool):
                         duration_ms=duration_ms,
                         metadata={
                             'file_path': str_path,
-                            'lines': result.lines_after,
+                            'file_size_bytes': len(content_bytes),
+                            'lines_added': result.lines_after,
+                            'lines_removed': 0,
+                            'line_count': result.lines_after,
                             'using_editor': True,
                             'written': "NO_CHANGE" not in (result.error or "")
                         }
@@ -115,6 +118,8 @@ class WriteTool(BaseTool):
                 metadata={
                     'file_path': str_path,
                     'file_size_bytes': file_size,
+                    'lines_added': line_count,
+                    'lines_removed': 0,
                     'line_count': line_count,
                     'was_existing': file_exists,
                     'using_editor': False

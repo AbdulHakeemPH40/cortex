@@ -2103,6 +2103,16 @@ var currentActivitySection = null;
 var fileCount = 0;
 
 function showToolActivity(type, info, status) {
+    // Handle both calling conventions:
+    // 1. showToolActivity(type, info, status) - legacy
+    // 2. showToolActivity({tool_type, info, status}) - new object format from Python
+    if (typeof type === 'object' && type !== null) {
+        var obj = type;
+        type = obj.tool_type;
+        info = obj.info;
+        status = obj.status;
+    }
+    
     var container = document.getElementById('chatMessages');
     if (!container) return;
 
@@ -2140,7 +2150,7 @@ function showToolActivity(type, info, status) {
         }
 
         // Parse file path from info (e.g., "hakeem.html (200 lines)")
-        var filePath = info.split(' ')[0];
+        var filePath = info ? info.split(' ')[0] : '';
         
         // Check if card already exists for this file
         var existingCard = cardsEl.querySelector('[data-path*="' + filePath + '"]');
@@ -2158,8 +2168,8 @@ function showToolActivity(type, info, status) {
             card.dataset.path = filePath;
             card.dataset.status = status === 'running' ? 'pending' : 'applied';
             
-            var fileName = filePath.split('/').pop().split('\\').pop();
-            var ext = fileName.split('.').pop().toLowerCase();
+            var fileName = filePath ? filePath.split('/').pop().split('\\').pop() : 'unknown';
+            var ext = fileName ? fileName.split('.').pop().toLowerCase() : 'default';
             var extClass = 'fec-ext-' + (ext || 'default');
             
             var icon = type === 'read_file' ? '👁' : type === 'edit_file' ? '✎' : '📝';
@@ -2417,17 +2427,39 @@ function showToolSummary(summaryData) {
         contentHtml += '<div class="summary-section">';
         contentHtml += '<div class="section-header"><span class="section-icon">📁</span>Files Modified (' + totalWrites + ')</div>';
         contentHtml += '<div class="section-items">';
-        summaryData.file_writes.forEach(function(item) {
-            var icon = item.type === 'edit' ? '✏️' : '✅';
-            var fileName = item.path.split('/').pop().split('\\').pop();
+        summaryData.file_writes.forEach(function(item, index) {
+            // Icon based on operation type
+            var iconMap = {
+                'edit': '✏️',
+                'create': '✅',
+                'delete': '🗑️',
+                'directory': '📁'
+            };
+            var icon = iconMap[item.type] || '📄';
+            var fileName = item.path ? item.path.split('/').pop().split('\\').pop() : 'unknown';
             contentHtml += '<div class="summary-item">';
             contentHtml += '<span class="item-icon">' + icon + '</span>';
             contentHtml += '<span class="item-name" title="' + escapeHtml(item.path) + '">' + escapeHtml(fileName) + '</span>';
-            if (item.line_count > 0) {
+            // Show diff stats if available (+X -Y)
+            if (item.lines_added > 0 || item.lines_removed > 0) {
+                var diffHtml = '';
+                if (item.lines_added > 0) {
+                    diffHtml += '<span class="item-meta diff-added">+' + item.lines_added + '</span>';
+                }
+                if (item.lines_removed > 0) {
+                    diffHtml += '<span class="item-meta diff-removed">-' + item.lines_removed + '</span>';
+                }
+                contentHtml += diffHtml;
+            } else if (item.line_count > 0) {
                 contentHtml += '<span class="item-meta">' + item.line_count + ' lines</span>';
             }
             if (item.size) {
                 contentHtml += '<span class="item-meta">' + item.size + '</span>';
+            }
+            // Add clickable diff link if file path is valid
+            if (item.path && item.path !== 'Unknown' && !item.path.startsWith('Error')) {
+                var escapedPath = item.path.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                contentHtml += '<span class="item-diff-link" onclick="showDiff(\'' + escapedPath + '\')">diff</span>';
             }
             contentHtml += '</div>';
         });
@@ -2440,7 +2472,7 @@ function showToolSummary(summaryData) {
         contentHtml += '<div class="section-header"><span class="section-icon">📖</span>Files Read (' + totalReads + ')</div>';
         contentHtml += '<div class="section-items">';
         summaryData.file_reads.forEach(function(item) {
-            var fileName = item.path.split('/').pop().split('\\').pop();
+            var fileName = item.path ? item.path.split('/').pop().split('\\').pop() : 'unknown';
             contentHtml += '<div class="summary-item">';
             contentHtml += '<span class="item-icon">👁</span>';
             contentHtml += '<span class="item-name">' + escapeHtml(fileName) + '</span>';
@@ -2519,7 +2551,7 @@ function getFileIcon(type, info) {
     }
     
     if (type === 'read_file' || type === 'write_file' || type === 'edit_file' || type === 'inject_after' || type === 'add_import' || type === 'create_file') {
-        var ext = info.split('.').pop().toLowerCase();
+        var ext = info ? info.split('.').pop().toLowerCase() : 'default';
         var icons = {
             'js': '<span class="file-icon js">JS</span>',
             'py': '<span class="file-icon py">PY</span>',
@@ -3142,6 +3174,7 @@ function updateTodos(todos, mainTask) {
         item.dataset.id = todo.id;
 
         var iconHtml = '';
+        var newStatus = todo.status === 'COMPLETE' ? false : true;
         switch (todo.status) {
             case 'COMPLETE':
                 iconHtml = '<div class="todo-icon todo-icon-done"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><polyline points="20 6 9 17 4 12"/></svg></div>';
@@ -3157,6 +3190,12 @@ function updateTodos(todos, mainTask) {
         }
 
         item.innerHTML = iconHtml + '<span class="todo-text">' + escapeHtml(todo.content) + '</span>';
+        item.style.cursor = 'pointer';
+        item.addEventListener('click', function() {
+            if (window.bridge && window.bridge.on_toggle_todo) {
+                window.bridge.on_toggle_todo(todo.id, newStatus);
+            }
+        });
         list.appendChild(item);
     });
 }
@@ -3780,9 +3819,9 @@ function renderExplorationBlock(data, isStreaming) {
 function renderFileEditedBlock(data, isStreaming) {
     if (isStreaming) return '<div class="file-edit-inline"><span class="pending">⏳ Editing...</span></div>';
     
-    var lines = data.trim().split('\n');
-    var filePath = lines[0] || data.trim();
-    var fileName = filePath.split('/').pop().split('\\').pop();
+    var lines = data ? data.trim().split('\n') : [''];
+    var filePath = lines[0] || (data ? data.trim() : '');
+    var fileName = filePath ? filePath.split('/').pop().split('\\').pop() : 'unknown';
     
     // Parse change stats if available (+X -Y format)
     var changeStats = '';
@@ -3951,8 +3990,8 @@ function showFileReference(filePath, lineNumber, content) {
     var container = document.getElementById('chatMessages');
     if (!container) return;
     
-    var fileName = filePath.split('/').pop().split('\\').pop();
-    var escapedPath = filePath.replace(/\\/g, '\\\\');
+    var fileName = filePath ? filePath.split('/').pop().split('\\').pop() : 'unknown';
+    var escapedPath = filePath ? filePath.replace(/\\/g, '\\\\') : '';
     
     var html = '<div class="file-reference-block">';
     html += '<div class="file-reference-header">';
@@ -4944,8 +4983,8 @@ function renderChangedFileRow(filePath, added, removed, editType, status) {
 
     section.style.display = 'flex';
 
-    var fileName    = filePath.split('/').pop().split('\\').pop();
-    var esc         = filePath.replace(/'/g, "\\'");
+    var fileName    = filePath ? filePath.split('/').pop().split('\\').pop() : 'unknown';
+    var esc         = filePath ? filePath.replace(/'/g, "\\'") : '';
     var badgeClass  = { 'M': 'cfs-badge-m', 'C': 'cfs-badge-c', 'D': 'cfs-badge-d' }[editType] || 'cfs-badge-m';
     var addedHtml   = added   > 0 ? '<span class="cfs-stat-added">+' + added   + '</span>' : '';
     var removedHtml = removed > 0 ? '<span class="cfs-stat-removed">-' + removed + '</span>' : '';
@@ -5128,9 +5167,9 @@ function buildFileEditCard(filePath, added, removed, editType, status, original,
     editType = editType || 'M';
     status   = status   || 'pending';
 
-    var fileName = filePath.split('/').pop().split('\\').pop();
-    var ext      = fileName.split('.').pop().toLowerCase();
-    var esc      = filePath.replace(/'/g, "\\'");
+    var fileName = filePath ? filePath.split('/').pop().split('\\').pop() : 'unknown';
+    var ext      = fileName ? fileName.split('.').pop().toLowerCase() : 'default';
+    var esc      = filePath ? filePath.replace(/'/g, "\\'") : '';
 
     // ── File type badge (colored, matches Cursor/Qoder) ──────────────────
     var ftBadge = getFileTypeBadge(ext);
@@ -6439,10 +6478,11 @@ window.showQuestionCard = function(info) {
             }
             
             container.appendChild(card);
-            setTimeout(function() {
+            // Use requestAnimationFrame for smooth scrolling (non-blocking)
+            requestAnimationFrame(function() {
                 container.scrollTop = container.scrollHeight;
                 console.log('[CHAT] Professional permission card appended');
-            }, 50);
+            });
             return;
         }
     }
@@ -6488,15 +6528,15 @@ window.showQuestionCard = function(info) {
     card.innerHTML = html;
     container.appendChild(card);
     
-    // FORCE scroll to bottom for interactions - high priority
-    setTimeout(function() {
+    // FORCE scroll to bottom for interactions - high priority (non-blocking)
+    requestAnimationFrame(function() {
         container.scrollTop = container.scrollHeight;
         console.log('[CHAT] Interaction card appended and scrolled to bottom');
-    }, 50);
+    });
 
-    // Focus input if it's a text type and handle Enter key
+    // Focus input if it's a text type and handle Enter key (non-blocking)
     if (info.type !== 'confirm' && info.type !== 'choice' && info.type !== 'permission') {
-        setTimeout(function() {
+        requestAnimationFrame(function() {
             var input = document.getElementById('input-' + info.id);
             if (input) {
                 input.focus();
@@ -6506,7 +6546,7 @@ window.showQuestionCard = function(info) {
                     }
                 };
             }
-        }, 150);
+        });
     }
 };
 
@@ -6595,6 +6635,11 @@ window.submitInteractionByInput = function(id) {
 window.permissionScopes = {};
 
 /**
+ * Global storage for permission remember choices
+ */
+window.permissionRemember = {};
+
+/**
  * Display a permission card in the chat
  * @param {string} requestId - The permission request ID
  * @param {string} html - The HTML content of the permission card
@@ -6621,8 +6666,9 @@ window.showPermissionCard = function(requestId, html) {
         chatContainer.scrollTop = chatContainer.scrollHeight;
     }
     
-    // Initialize scope storage
+    // Initialize scope and remember storage
     window.permissionScopes[requestId] = 'session';
+    window.permissionRemember[requestId] = false;
     
     // Setup scope button handlers
     // Setup permission card immediately - no delay
@@ -6645,7 +6691,8 @@ window.showPermissionCard = function(requestId, html) {
             if (target) {
                 console.log('ALLOW BUTTON CLICKED!');
                 var scope = window.permissionScopes[requestId] || 'session';
-                window.grantPermission(requestId);
+                var remember = window.permissionRemember[requestId] || false;
+                window.grantPermission(requestId, remember);
                 return;
             }
             
@@ -6660,7 +6707,8 @@ window.showPermissionCard = function(requestId, html) {
                 window.permissionScopes[requestId] = 'global';
                 var rememberCheck = card.querySelector('.permission-remember-checkbox');
                 if (rememberCheck) rememberCheck.checked = true;
-                window.grantPermission(requestId);
+                window.permissionRemember[requestId] = true;
+                window.grantPermission(requestId, true);
                 return;
             }
             
@@ -6670,6 +6718,7 @@ window.showPermissionCard = function(requestId, html) {
                 var rememberCheck = card.querySelector('.permission-remember-checkbox');
                 if (rememberCheck) {
                     rememberCheck.checked = !rememberCheck.checked;
+                    window.permissionRemember[requestId] = rememberCheck.checked;
                 }
                 return;
             }
@@ -6704,15 +6753,17 @@ window.selectScope = function(requestId, scope) {
 /**
  * Grant permission
  * @param {string} requestId - The permission request ID
+ * @param {boolean} remember - Whether to remember this choice
  */
-window.grantPermission = function(requestId) {
-    console.log('[Permission] Granting permission:', requestId);
+window.grantPermission = function(requestId, remember) {
+    console.log('[Permission] Granting permission:', requestId, 'remember:', remember);
     
     var scope = window.permissionScopes[requestId] || 'session';
+    remember = remember || window.permissionRemember[requestId] || false;
     
-    // Send to Python
+    // Send to Python with remember flag
     if (window.bridge && typeof window.bridge.on_permission_card_response === 'function') {
-        window.bridge.on_permission_card_response(requestId, true, scope);
+        window.bridge.on_permission_card_response(requestId, true, scope, remember);
     }
     
     // Update UI

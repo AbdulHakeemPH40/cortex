@@ -33,6 +33,44 @@ class VisionWorker(QObject):
             self.error_occurred.emit(str(e))
 
 
+class FileSearchWorker(QThread):
+    """Background worker for file search to avoid blocking UI."""
+    results_ready = pyqtSignal(list)
+    
+    def __init__(self, project_root: str, query: str, max_results: int = 10):
+        super().__init__()
+        self._project_root = project_root
+        self._query = query
+        self._max_results = max_results
+    
+    def run(self):
+        try:
+            results = []
+            count = 0
+            for root, dirs, files in os.walk(self._project_root):
+                if '.git' in dirs: dirs.remove('.git')
+                if 'node_modules' in dirs: dirs.remove('node_modules')
+                if '__pycache__' in dirs: dirs.remove('__pycache__')
+                if 'venv' in dirs: dirs.remove('venv')
+                if '.venv' in dirs: dirs.remove('.venv')
+                
+                for file in files:
+                    if self._query.lower() in file.lower():
+                        rel_path = os.path.relpath(os.path.join(root, file), self._project_root)
+                        results.append(rel_path.replace("\\", "/"))
+                        count += 1
+                        if count >= self._max_results:
+                            self.results_ready.emit(results)
+                            return
+                if count >= self._max_results:
+                    break
+            
+            self.results_ready.emit(results)
+        except Exception as e:
+            log.error(f"FileSearchWorker error: {e}")
+            self.results_ready.emit([])
+
+
 class ChatBridge(QObject):
     """Bridge for communication between JS and Python."""
     def __init__(self, view):
@@ -89,10 +127,13 @@ class ChatBridge(QObject):
     answer_question_requested = pyqtSignal(str, str) # tool_call_id, answer
     
     # NEW: Permission response from chat UI (OpenCode enhancement)
-    permission_response = pyqtSignal(str, bool, str)  # request_id, approved, scope
+    permission_response = pyqtSignal(str, bool, str, bool)  # request_id, approved, scope, remember
     
     # Code Completion signals (OpenCode-style)
     code_completion_requested = pyqtSignal(dict)  # {code, language, cursorPosition}
+    
+    # Todo Management signals
+    toggle_todo_requested = pyqtSignal(str, bool)  # task_id, completed
     code_completion_selected = pyqtSignal(dict)   # {requestId, index, completion}
     code_completion_accepted = pyqtSignal(dict)   # {requestId, completedCode}
     code_completion_dismissed = pyqtSignal(dict)  # {requestId}
@@ -205,11 +246,11 @@ class ChatBridge(QObject):
         else:
             log.info("User denied tool execution permission")
 
-    @pyqtSlot(str, bool, str)
-    def on_permission_card_response(self, request_id: str, approved: bool, scope: str):
+    @pyqtSlot(str, bool, str, bool)
+    def on_permission_card_response(self, request_id: str, approved: bool, scope: str, remember: bool = False):
         """Handle permission card response from JS (OpenCode enhancement)."""
-        log.info(f"Permission card response: {request_id} - approved={approved}, scope={scope}")
-        self.permission_response.emit(request_id, approved, scope)
+        log.info(f"Permission card response: {request_id} - approved={approved}, scope={scope}, remember={remember}")
+        self.permission_response.emit(request_id, approved, scope, remember)
 
     # ── CODE COMPLETION SLOTS (OpenCode-style) ───────────────────────
     
@@ -258,6 +299,12 @@ class ChatBridge(QObject):
         self.diff_line_commented.emit(data)
 
     # ── ENHANCEMENT GUIDE: Missing Bridge Slots ──────────────────────
+
+    @pyqtSlot(str, bool)
+    def on_toggle_todo(self, task_id: str, completed: bool):
+        """User toggled a todo item in the UI."""
+        log.info(f"Todo toggled: {task_id} -> {'completed' if completed else 'pending'}")
+        self.toggle_todo_requested.emit(task_id, completed)
 
     @pyqtSlot()
     def on_stop_generation(self):
@@ -680,6 +727,9 @@ class AIChatWidget(QWidget):
     load_full_chat_requested = pyqtSignal(str)  # conversation_id
     save_finished = pyqtSignal(str)             # status
     
+    # Todo management signal
+    toggle_todo_requested = pyqtSignal(str, bool)  # task_id, completed
+    
     def show_question(self, info: dict):
         """Show a question card in the chat UI."""
         self._bridge.show_question(info)
@@ -817,6 +867,9 @@ class AIChatWidget(QWidget):
         
         # NEW: Lazy load full chat when JS requests it
         self._bridge.load_full_chat_requested.connect(self._on_load_full_chat_requested)
+        
+        # NEW: Connect todo toggle from bridge to widget
+        self._bridge.toggle_todo_requested.connect(self.toggle_todo_requested.emit)
         
         # Terminal signals
         self._bridge.terminal_input.connect(lambda d: self._pty_process.write(d) if self._pty_process else (self._terminal_process.write(d.encode()) if self._terminal_process else None))
@@ -1033,32 +1086,19 @@ class AIChatWidget(QWidget):
             return
             
         try:
-            results = []
-            import os
-            
-            # Simple recursive search
-            count = 0
-            for root, dirs, files in os.walk(self._project_root):
-                if '.git' in dirs: dirs.remove('.git')
-                if 'node_modules' in dirs: dirs.remove('node_modules')
-                if '__pycache__' in dirs: dirs.remove('__pycache__')
-                if 'venv' in dirs: dirs.remove('venv')
-                if '.venv' in dirs: dirs.remove('.venv')
-                
-                for file in files:
-                    if query.lower() in file.lower():
-                        rel_path = os.path.relpath(os.path.join(root, file), self._project_root)
-                        results.append(rel_path.replace("\\", "/"))
-                        count += 1
-                        if count >= 10: break
-                if count >= 10: break
-            
-            # Return results to JS
-            js_results = json.dumps(results)
-            self._view.page().runJavaScript(f"if(window.onFileSearchResults) window.onFileSearchResults({js_results});")
-            
+            self._file_search_worker = FileSearchWorker(self._project_root, query, 10)
+            self._file_search_worker.results_ready.connect(self._on_file_search_results)
+            self._file_search_worker.start()
         except Exception as e:
-            log.error(f"Error searching files: {e}")
+            log.error(f"Error starting file search: {e}")
+    
+    def _on_file_search_results(self, results: list):
+        """Handle file search results from background thread."""
+        js_results = json.dumps(results)
+        self._view.page().runJavaScript(f"if(window.onFileSearchResults) window.onFileSearchResults({js_results});")
+        if self._file_search_worker:
+            self._file_search_worker.deleteLater()
+            self._file_search_worker = None
 
     def set_project_root(self, path: str):
         """Set the project root for file searching."""
@@ -1106,10 +1146,11 @@ class AIChatWidget(QWidget):
         """Hide the thinking indicator."""
         self._view.page().runJavaScript("if(window.hideThinking) window.hideThinking();")
 
-    def update_todos(self, todos: list):
+    def update_todos(self, todos: list, main_task: str = ""):
         """Update the todo list in the UI."""
         safe_todos = json.dumps(todos)
-        self._view.page().runJavaScript(f"if(window.updateTodos) window.updateTodos({safe_todos});")
+        safe_task = json.dumps(main_task)
+        self._view.page().runJavaScript(f"if(window.updateTodos) window.updateTodos({safe_todos}, {safe_task});")
 
     def show_tool_activity(self, tool_type: str, info: str, status: str):
         """Show tool execution progress.

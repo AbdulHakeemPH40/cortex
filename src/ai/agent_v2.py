@@ -250,7 +250,7 @@ class AIAgentV2(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._worker: Optional[AIWorkerV2] = None
-        self._model = "deepseek-chat"
+        self._model = "deepseek-reasoner"
         self._provider = "deepseek"
         self._session_manager = get_session_manager()
         self._streaming_emitter = get_streaming_emitter()

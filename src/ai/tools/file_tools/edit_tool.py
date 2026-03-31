@@ -9,6 +9,9 @@ from pathlib import Path
 from typing import Dict, Any
 
 from src.ai.tools.base_tool import BaseTool, ToolResult, ToolParameter, success_result, error_result
+from src.utils.logger import get_logger
+
+log = get_logger("EditTool")
 
 
 class EditTool(BaseTool):
@@ -58,6 +61,10 @@ class EditTool(BaseTool):
                 return error_result("Missing required parameter: new_string")
             
             expected_occurrences = params.get("expected_occurrences", 1)
+            
+            # Debug logging
+            log.info(f"EditTool: path='{path}', old_string length={len(old_string)}, new_string length={len(new_string)}")
+            log.info(f"EditTool: precise_editor is {'set' if self.precise_editor else 'NOT SET'}")
             
             # Resolve path
             file_path = self._resolve_path(path)

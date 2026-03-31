@@ -52,6 +52,9 @@ class AIIntegrationLayer(QObject):
     test_execution_completed = pyqtSignal(bool, int, int)  # all_passed, passed_count, failed_count
     test_analysis_ready = pyqtSignal(dict)  # analysis results
     
+    # User denied workflow signal
+    user_denied_workflow = pyqtSignal(str)  # tool_name
+    
     def __init__(self, parent=None):
         super().__init__(parent)
         
@@ -71,6 +74,10 @@ class AIIntegrationLayer(QObject):
         self._workspace_path = None
         self._pending_permission_requests = {}  # request_id -> callback
         self._testing_results = {}  # Store testing results
+        
+        # Track denials per tool for stopping AI on repeated denial
+        self._tool_denial_counts = {}  # tool_name -> denial count
+        self._max_denial_count = 2  # Stop AI after 2 denials
         
         log.info("AIIntegrationLayer initialized")
     
@@ -215,18 +222,24 @@ class AIIntegrationLayer(QObject):
         
         return result
     
-    def grant_permission(self, request_id: str, scope: str = "session"):
+    def grant_permission(self, request_id: str, scope: str = "session", remember: bool = False):
         """Grant a pending permission request."""
         scope_enum = PermissionScope(scope)
         
+        # Determine duration based on remember flag
+        duration_hours = None
+        if remember and scope == "global":
+            duration_hours = 24 * 30  # 30 days for "Always" with remember
+        
         grant = self._permission_manager.grant_permission(
             request_id=request_id,
-            scope=scope_enum
+            scope=scope_enum,
+            duration_hours=duration_hours
         )
         
         if grant:
             self.permission_granted.emit(request_id, scope)
-            log.info(f"Permission granted: {request_id} (scope: {scope})")
+            log.info(f"Permission granted: {request_id} (scope: {scope}, remember: {remember})")
             
             # Remove from pending
             if request_id in self._pending_permission_requests:
@@ -241,11 +254,23 @@ class AIIntegrationLayer(QObject):
         self._permission_manager.deny_permission(request_id, reason)
         self.permission_denied.emit(request_id, reason)
         
-        log.info(f"Permission denied: {request_id} ({reason})")
+        # Track denial count for this tool
+        pending_req = self._pending_permission_requests.get(request_id, {})
+        tool_name = pending_req.get("tool", "unknown")
+        
+        self._tool_denial_counts[tool_name] = self._tool_denial_counts.get(tool_name, 0) + 1
+        denial_count = self._tool_denial_counts[tool_name]
+        
+        log.info(f"Permission denied: {request_id} ({reason}) - tool: {tool_name}, denial count: {denial_count}")
         
         # Remove from pending
         if request_id in self._pending_permission_requests:
             del self._pending_permission_requests[request_id]
+        
+        # Stop AI if user denied twice
+        if denial_count >= self._max_denial_count:
+            log.warning(f"User denied {tool_name} {denial_count} times - signaling AI to stop")
+            self.user_denied_workflow.emit(tool_name)
     
     def analyze_command_safety(self, command: str) -> Dict[str, Any]:
         """Analyze a command for safety."""

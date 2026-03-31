@@ -163,12 +163,21 @@ INTENT_PATTERNS = {
     ],
     
     IntentType.CODE_ANALYSIS: [
-        r'\banalyze\b.*\b(code|function|class)\b',
+        r'\banalyze\b.*\b(code|function|class|project)\b',
         r'\bexplain\b.*\b(code|function|algorithm)\b',
         r'\bwhat\s+does\b.*\b(code|function|class)\b',
         r'\bhow\s+does\b.*\b(work|function)\b',
-        r'\breview\b.*\b(code|implementation)\b',
-        r'\bcheck\b.*\b(code|quality|style)\b',
+        r'\breview\b.*\b(code|implementation|project)\b',
+        r'\bcheck\b.*\b(code|quality|style|project)\b',
+        r'\bindex\b.*\b(project|code|files)\b',
+        r'\bexplore\b.*\b(project|code|files|structure)\b',
+        r'\bscan\b.*\b(project|code|files)\b',
+        r'\bmap\b.*\b(project|structure|codebase)\b',
+        r'\bunderstand\b.*\b(project|codebase|structure)\b',
+        r'\b(project|this|my)\b.*\b(understand|know|learn|see)\b',  # "my project understand"
+        r'\btell\s+me\s+about\s+(this|the|my)\s+(project|code|codebase)\b',
+        r'\bwhat\s+is\s+(this|the|my)\s+(project|codebase)\b',
+        r'\bshow\s+me\s+(the|this|my)\s+(project|structure|files)\b',
     ],
     
     IntentType.DEBUGGING: [
@@ -224,11 +233,15 @@ COMPLEXITY_INDICATORS = {
         r'\bimplement\b.*\b(system|feature|module)\b',
         r'\bcreate\b.*\b(project|application|system)\b',
         r'\bsetup\b.*\b(project|environment)\b',
+        r'\bindex\b.*\b(project|codebase)\b',
+        r'\bexplore\b.*\b(project|codebase)\b',
+        r'\bscan\b.*\b(project|codebase)\b',
     ],
     "multi_step": [
         r'\bplan\b|\broadmap\b|\bstrategy\b',
         r'\bdesign\b.*\b(architecture|system)\b',
         r'\bbreak\s+down\b|\bdecompose\b',
+        r'\bindex\b|\bexplore\b|\bmap\b',
     ],
 }
 

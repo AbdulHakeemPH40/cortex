@@ -69,20 +69,82 @@ class BashTool(BaseTool):
             
             # Windows Shims for Linux-isms
             if platform.system() == "Windows":
+                cmd_lower = command.strip().lower()
+                
                 # Handle 'mkdir -p' (common AI mistake on Windows)
-                if command.strip().startswith("mkdir -p "):
+                if cmd_lower.startswith("mkdir -p "):
                     path = command.strip()[len("mkdir -p "):].strip().strip('"').strip("'")
                     win_path = path.replace('/', '\\')
-                    # In PowerShell, New-Item -ItemType Directory -Force creates parents
                     command = f'New-Item -ItemType Directory -Force -Path "{win_path}"'
                     log.info(f"BashTool: Shimmed 'mkdir -p' to PowerShell: {command}")
                 
                 # Handle 'wc -l' (common for counting lines)
                 elif "wc -l" in command:
-                    # Replace wc -l "file" with (Get-Content "file" | Measure-Object -Line).Lines
                     import re
                     command = re.sub(r'wc -l\s+["\']?([^"\'\s;&|]+)["\']?', r'(Get-Content "\1" | Measure-Object -Line).Lines', command)
                     log.info(f"BashTool: Shimmed 'wc -l' to PowerShell: {command}")
+                
+                # Handle 'which' -> 'where'
+                elif cmd_lower.startswith("which "):
+                    import re
+                    match = re.match(r'which\s+["\']?(\S+)["\']?', command)
+                    if match:
+                        target = match.group(1)
+                        command = f'where {target}'
+                        log.info(f"BashTool: Shimmed 'which' to 'where': {command}")
+                
+                # Handle 'pwd' -> 'cd' (pwd output)
+                elif cmd_lower.strip() == "pwd":
+                    command = "(Get-Location).Path"
+                    log.info(f"BashTool: Shimmed 'pwd' to PowerShell: {command}")
+                
+                # Handle 'rm -rf' -> 'Remove-Item -Recurse -Force'
+                elif "rm -rf " in cmd_lower or "rm -r " in cmd_lower:
+                    import re
+                    match = re.search(r'rm\s+-rf?\s+["\']?([^"\'\s]+)["\']?', command)
+                    if match:
+                        target = match.group(1).replace('/', '\\')
+                        command = f'Remove-Item -Recurse -Force -Path "{target}"'
+                        log.info(f"BashTool: Shimmed 'rm' to PowerShell: {command}")
+                
+                # Handle 'ls' -> 'Get-ChildItem'
+                elif cmd_lower.strip() == "ls" or cmd_lower.startswith("ls "):
+                    import re
+                    # Check for flags like -la, -l, -a, -al
+                    flags_match = re.search(r'ls\s+(-[a-zA-Z]+)', cmd_lower)
+                    flags = flags_match.group(1) if flags_match else ""
+                    # Get the path (anything after flags or the ls command itself)
+                    path_match = re.search(r'ls\s+[^\s-]+\s+(.+)|ls\s+(.+?)\s*$', command)
+                    
+                    if "-a" in flags or "-all" in flags:
+                        # Include hidden files
+                        target = (path_match.group(1) or path_match.group(2) or ".") if path_match else "."
+                        command = f'Get-ChildItem -Path "{target}" -Force'
+                    else:
+                        target = (path_match.group(1) or path_match.group(2) or ".") if path_match else "."
+                        command = f'Get-ChildItem -Path "{target}"'
+                    
+                    if flags:
+                        command += f"  # Flags: {flags}"
+                    log.info(f"BashTool: Shimmed 'ls' to PowerShell: {command}")
+                
+                # Handle 'cat' -> 'Get-Content'
+                elif cmd_lower.startswith("cat "):
+                    import re
+                    match = re.match(r'cat\s+["\']?([^"\'\s]+)["\']?', command)
+                    if match:
+                        target = match.group(1)
+                        command = f'Get-Content -Path "{target}"'
+                    log.info(f"BashTool: Shimmed 'cat' to PowerShell: {command}")
+                
+                # Handle 'touch' -> 'New-Item'
+                elif cmd_lower.startswith("touch "):
+                    import re
+                    match = re.match(r'touch\s+["\']?([^"\'\s]+)["\']?', command)
+                    if match:
+                        target = match.group(1)
+                        command = f'if (!(Test-Path "{target}")) {{ New-Item -ItemType File -Path "{target}" }}'
+                    log.info(f"BashTool: Shimmed 'touch' to PowerShell: {command}")
 
             # Security check: prevent dangerous commands
             dangerous_commands = ['rm -rf /', 'format c:', 'del /f /q *', 'sudo rm']
@@ -93,23 +155,70 @@ class BashTool(BaseTool):
             try:
                 # 🗲 PERFORMANCE: On Windows, use PowerShell for better compatibility with Linux-style commands
                 # This allows ls, cat, rm, cp, mv, etc. to work via PowerShell aliases
-                shell_exec = None
-                if platform.system() == "Windows":
-                    shell_exec = "powershell.exe"
                 
                 log.info(f"Executing command: {command}")
                 log.info(f"Working directory: {cwd}")
-                log.info(f"Shell executable: {shell_exec}")
                 
-                result = subprocess.run(
-                    command,
-                    shell=True,
-                    executable=shell_exec,
-                    cwd=cwd,
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout
-                )
+                # Try PowerShell first on Windows, then fallback to CMD
+                result = None
+                last_error = None
+                
+                if platform.system() == "Windows":
+                    # On Windows, use full system paths for shells (they may not be in venv PATH)
+                    windows_dir = os.environ.get('WINDIR', 'C:\\Windows')
+                    system32 = os.path.join(windows_dir, 'System32')
+                    powershell_path = os.path.join(system32, 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+                    cmd_path = os.path.join(system32, 'cmd.exe')
+                    
+                    shells_to_try = [
+                        (powershell_path, ["-NoProfile", "-Command", command]),
+                        (cmd_path, ["/c", command]),
+                    ]
+                    
+                    for shell_name, cmd_args in shells_to_try:
+                        try:
+                            log.info(f"Trying shell: {shell_name} with args: {cmd_args[:2]}...")
+                            result = subprocess.run(
+                                cmd_args,
+                                shell=False,  # Don't use shell=True with cmd array
+                                executable=shell_name,
+                                cwd=cwd,
+                                capture_output=True,
+                                text=True,
+                                timeout=timeout
+                            )
+                            log.info(f"Command executed successfully with shell: {shell_name}, exit code: {result.returncode}")
+                            break  # Success
+                        except FileNotFoundError as e:
+                            log.warning(f"{shell_name} not found: {e}")
+                            last_error = e
+                            continue  # Try next shell
+                        except Exception as e:
+                            log.warning(f"{shell_name} failed: {e}")
+                            last_error = e
+                            continue
+                else:
+                    # On Unix, just run the command directly
+                    try:
+                        result = subprocess.run(
+                            command,
+                            shell=True,
+                            cwd=cwd,
+                            capture_output=True,
+                            text=True,
+                            timeout=timeout
+                        )
+                        log.info(f"Command executed successfully with exit code: {result.returncode}")
+                    except Exception as e:
+                        return error_result(f"Command execution failed: {str(e)}")
+                
+                if result is None:
+                    cmd_name = command.split()[0] if command else 'unknown'
+                    return error_result(
+                        f"Command not found: {cmd_name}\n\n"
+                        f"Failed to execute with PowerShell and CMD. "
+                        f"Ensure the command exists and is in your PATH."
+                    )
                 
                 log.info(f"Command completed with exit code: {result.returncode}")
                 log.debug(f"STDOUT: {result.stdout[:500] if result.stdout else 'empty'}")
@@ -157,8 +266,20 @@ class BashTool(BaseTool):
                     f"Consider increasing timeout or optimizing the command."
                 )
             except FileNotFoundError as e:
-                log.error(f"Command not found: {command} - {e}")
-                return error_result(f"Command not found: {command.split()[0] if command else 'unknown'}")
+                cmd_name = command.split()[0] if command else 'unknown'
+                log.error(f"Command not found: {cmd_name} - {e}")
+                
+                # Provide helpful error message for Windows users
+                if platform.system() == "Windows":
+                    return error_result(
+                        f"Command not found: {cmd_name}\n\n"
+                        f"On Windows, some commands may need different syntax:\n"
+                        f"- 'echo' works in CMD but may need 'Write-Output' in PowerShell\n"
+                        f"- 'where.exe' is 'where' in PowerShell\n"
+                        f"- Use full paths if the command is not in PATH\n"
+                        f"- Try using 'cmd /c {command}' to force CMD execution"
+                    )
+                return error_result(f"Command not found: {cmd_name}")
             except Exception as e:
                 log.error(f"Command execution failed: {command} - {e}")
                 return error_result(f"Command execution failed: {str(e)}")

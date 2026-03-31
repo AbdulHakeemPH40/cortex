@@ -9,6 +9,9 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 from pathlib import Path
 
+from src.utils.logger import get_logger
+log = get_logger("BaseTool")
+
 
 @dataclass
 class ToolResult:
@@ -143,18 +146,30 @@ class BaseTool(ABC):
         Returns:
             Absolute Path object
         """
+        import os
+        import platform
+        
+        # Handle None or empty path
+        if not path:
+            log.warning(f"BaseTool: Empty path received")
+            return Path.cwd()
+        
         p = Path(path)
         
-        # If absolute, use as-is
+        # If absolute, use as-is (normalize for cross-platform)
         if p.is_absolute():
-            return p
+            return p.resolve()
         
         # If project root set, resolve relative to it
         if self.project_root:
-            return Path(self.project_root) / p
+            resolved = Path(self.project_root) / p
+            log.debug(f"BaseTool: Resolved relative path '{path}' to '{resolved}' using project_root '{self.project_root}'")
+            return resolved.resolve()
         
         # Fallback to current directory
-        return Path.cwd() / path
+        fallback = Path.cwd() / path
+        log.debug(f"BaseTool: Resolved relative path '{path}' to '{fallback}' using cwd")
+        return fallback.resolve()
 
     def _sync_file_cache(self, path: str, content: Optional[str] = None):
         """

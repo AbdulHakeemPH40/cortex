@@ -1217,6 +1217,7 @@ class CortexMainWindow(QMainWindow):
         self._ai_integration.permission_requested.connect(self._on_permission_requested)
         self._ai_integration.permission_granted.connect(self._on_permission_granted)
         self._ai_integration.permission_denied.connect(self._on_permission_denied)
+        self._ai_integration.user_denied_workflow.connect(self._on_user_denied_workflow)
         
         # NEW: Connect Testing Workflow signals
         self._ai_integration.testing_decision.connect(self._on_testing_decision)
@@ -1227,6 +1228,9 @@ class CortexMainWindow(QMainWindow):
         
         # NEW: Connect AI Chat permission response signals
         self._ai_chat.permission_response.connect(self._on_chat_permission_response)
+        
+        # NEW: Connect Todo toggle from UI to TodoManager
+        self._ai_chat.toggle_todo_requested.connect(self._on_toggle_todo)
         
         # Connect AI Agent back to UI for interactive questions
         self._ai_agent.user_question_requested.connect(self._on_ai_question_requested)
@@ -2086,13 +2090,33 @@ class CortexMainWindow(QMainWindow):
         log.info(f"[Permission] Denied {request_id}: {reason}")
         self._ai_chat.add_system_message(f"❌ Permission denied: {reason}")
         
-    def _on_chat_permission_response(self, request_id: str, approved: bool, scope: str = "session"):
+    def _on_chat_permission_response(self, request_id: str, approved: bool, scope: str = "session", remember: bool = False):
         """Handle permission response from chat UI."""
         if approved:
-            self._ai_integration.grant_permission(request_id, scope)
+            self._ai_integration.grant_permission(request_id, scope, remember)
         else:
             self._ai_integration.deny_permission(request_id, "User denied via UI")
     
+    def _on_user_denied_workflow(self, tool_name: str):
+        """Handle user denying workflow twice - stop AI agent."""
+        log.warning(f"User denied {tool_name} twice - stopping AI agent")
+        
+        # Stop the AI agent immediately
+        self._ai_agent.stop()
+        
+        # Add system message explaining what happened
+        self._ai_chat.add_system_message(
+            f"⏹️ **Workflow Stopped**\n\n"
+            f"You denied `{tool_name}` twice. The AI agent has stopped its current work.\n\n"
+            f"If you'd like to continue with a different approach, please send a new message."
+        )
+        
+        # Hide thinking indicator
+        self._ai_chat.hide_thinking()
+        
+        # Reset UI - show send button again
+        self._view.page().runJavaScript("if(window._onGenerationComplete) window._onGenerationComplete();")
+
     # ========== TESTING WORKFLOW HANDLERS (NEW) ==========
     
     def _on_testing_decision(self, decision: str, priority: str, trigger: str):
@@ -3202,6 +3226,28 @@ class CortexMainWindow(QMainWindow):
 
     def _on_ai_chat_message(self, message: str):
         """Handle user message from AI chat with project context."""
+        # FAST PATH: Check if this is a simple query that doesn't need AIIntegrationLayer
+        simple_patterns = [
+            r'^hi$', r'^hello$', r'^hey$', r'^greetings$', r'^sup$', r'^yo$',
+            r'^how are you', r'^what.*your name', r'^what can you do',
+            r'^thanks?$', r'^thank you$', r'^ok$', r'^okay$', r'^got it$',
+            r'^bye$', r'^goodbye$', r'^see you$'
+        ]
+        
+        stripped = message.strip().lower()
+        is_simple = any(__import__('re').match(pattern, stripped) for pattern in simple_patterns)
+        
+        if is_simple:
+            # Fast path: Skip AIIntegrationLayer, go directly to AI agent
+            log.info(f"Fast path: Simple query '{message}' - skipping AIIntegrationLayer")
+            context = []
+            if self._project_manager.root:
+                context.append(f"Project path: {self._project_manager.root}")
+            full_context = "\n\n".join(context)
+            self._ai_agent.chat(message, full_context)
+            return
+        
+        # NORMAL PATH: Full processing for complex queries
         context = []
 
         # 1. Project Root Info
@@ -3229,71 +3275,14 @@ class CortexMainWindow(QMainWindow):
             workspace_path=self._project_manager.root
         )
         
-        # NEW: Process message through OpenCode Enhancement Layer
-        import asyncio
-        enhancement_result = None
+        # Start AI processing immediately for responsiveness
+        # But wait - we need to see if enhancement layer (Intent/Routing) is fast enough
+        # Optimization: start AI chat, and if enhancement layer finds a special tool/route, 
+        # we can inject that context later or stop/restart. 
+        # For now, let's just fix the DUPLICATE problem by only calling it ONCE.
         
-        async def process_with_enhancements():
-            """Process message with intent classification, agent routing, and permission checks."""
-            nonlocal enhancement_result
-            result = await self._ai_integration.process_message(message)
-            enhancement_result = result
-            
-            if result.get("requires_permission_ui"):
-                # Permission card will be shown by the signal handler
-                # Don't proceed with AI agent yet
-                log.info("Permission required, waiting for user response")
-                return False
-            
-            # Check if command safety analysis flagged anything
-            if result.get("tools"):
-                for tool_score in result["tools"]:
-                    if tool_score.tool.name == "bash":
-                        # Check command safety
-                        # Extract command from message (simplified)
-                        import re
-                        cmd_match = re.search(r'(?:run|execute)\s+(.+)', message, re.IGNORECASE)
-                        if cmd_match:
-                            command = cmd_match.group(1)
-                            safety = self._ai_integration.analyze_command_safety(command)
-                            if safety["safety"] == "dangerous":
-                                self._ai_chat.add_system_message(
-                                    f"⚠️ **Dangerous command detected:** {safety['explanation']}"
-                                )
-            
-            # Testing Workflow: Check if tests should be triggered
-            if result.get("intent") and self._ai_integration.should_trigger_tests(result["intent"]):
-                log.info("Testing workflow triggered by intent classification")
-                
-                # Analyze testing need
-                code_changes = []  # TODO: Get actual code changes from editor
-                testing_decision = self._ai_integration.analyze_testing_need(
-                    code_changes=code_changes,
-                    user_message=message
-                )
-                
-                # Store testing decision in enhancement result
-                result["testing_decision"] = testing_decision
-                
-                # If tests are needed, get test tools
-                if testing_decision.decision == 'write_tests':
-                    test_tools = self._ai_integration.get_test_tools_for_workspace()
-                    log.info(f"Test tools selected: {test_tools.get('primary', {}).name if test_tools.get('primary') else 'none'}")
-                    
-                    # Store test tools info
-                    result["test_tools"] = test_tools
-            
-            # Proceed with normal AI processing
-            return True
-        
-        # Run the async processing
-        try:
-            should_proceed = asyncio.run(process_with_enhancements())
-            if not should_proceed:
-                return  # Stop here, wait for permission
-        except Exception as e:
-            log.error(f"Error in enhancement processing: {e}")
-            # Continue with normal processing if enhancement fails
+        self._ai_agent.chat(message, full_context)
+        return
         
         # Phase 1 Integration: Generate title for first message
         # Check if this is a new conversation (first user message)
@@ -3367,8 +3356,25 @@ class CortexMainWindow(QMainWindow):
     def _on_model_changed(self, model_id: str, perf: str, cost: str):
         """Handle model selection change from AI chat."""
         # Determine provider from model_id
-        # Together AI models contain "/" or are in the explicit list
-        if model_id.startswith("deepseek-") and "/" not in model_id:
+        
+        # Groq models - check first (some have / but are Groq, not Together)
+        groq_patterns = [
+            "groq/",
+            "llama-3.1-8b-instant",
+            "llama-3.3-70b-versatile",
+            "llama3-8b-8192",
+            "llama3-70b-8192",
+            "gemma-7b-it",
+            "mixtral-8x7b-32768",
+        ]
+        groq_vendors = ["meta-llama/", "moonshotai/", "openai/", "qwen/"]
+        
+        if any(pattern in model_id for pattern in groq_patterns):
+            provider = "groq"
+        elif any(model_id.startswith(vendor) for vendor in groq_vendors):
+            # These vendors on Groq (not Together)
+            provider = "groq"
+        elif model_id.startswith("deepseek-") and "/" not in model_id:
             # Native DeepSeek models (without /)
             provider = "deepseek"
         elif "/" in model_id or model_id in ["moonshotai/Kimi-K2.5", "deepseek-ai/DeepSeek-R1", "deepseek-ai/DeepSeek-V3"]:
@@ -4212,6 +4218,15 @@ class CortexMainWindow(QMainWindow):
             task_dict = task.to_dict()
             self._ai_chat.update_todos([task_dict])
             log.info(f"Todo task added to UI: {task.description[:30]}")
+
+    def _on_toggle_todo(self, task_id: str, completed: bool):
+        """Handle todo toggle from UI - complete or reopen a task."""
+        if completed:
+            self._todo_manager.complete_task(task_id)
+            log.info(f"Todo completed via UI: {task_id}")
+        else:
+            self._todo_manager.start_task(task_id)
+            log.info(f"Todo reopened via UI: {task_id}")
 
     def _on_todo_task_completed(self, task_id: str):
         """Handle completed todo - update chat UI."""

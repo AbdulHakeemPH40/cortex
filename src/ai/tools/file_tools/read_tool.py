@@ -48,6 +48,10 @@ class ReadTool(BaseTool):
             if not path:
                 return error_result("Missing required parameter: path")
             
+            # DEBUG: Log the incoming path to diagnose truncation
+            log.info(f"ReadTool: Received path parameter: '{path}' (type: {type(path).__name__})")
+            log.info(f"ReadTool: project_root is set to: '{self.project_root}'")
+            
             start_line = params.get("start_line", 1)
             end_line = params.get("end_line")
             numbered = params.get("numbered", True)
@@ -56,9 +60,12 @@ class ReadTool(BaseTool):
             file_path = self._resolve_path(path)
             str_path = str(file_path)
             
+            log.info(f"ReadTool: Resolved path to: '{str_path}'")
+            
             # Check if file exists
             if not file_path.exists():
-                error_msg = f"File not found: {file_path}"
+                error_msg = f"File not found: {str_path}"
+                log.warning(f"ReadTool: {error_msg}")
                 
                 # Try to find similar files to suggest
                 suggestions = self._find_similar_files(path)

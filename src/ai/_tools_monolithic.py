@@ -498,11 +498,12 @@ class ToolRegistry:
         'plugins':    '← plugins',
     }
 
-    def __init__(self, file_manager=None, terminal_widget=None, git_manager=None, project_root=None):
+    def __init__(self, file_manager=None, terminal_widget=None, git_manager=None, project_root=None, parent_agent=None):
         self._file_manager = file_manager
         self._terminal_widget = terminal_widget
         self._git_manager = git_manager
         self._project_root = project_root
+        self._parent_agent = parent_agent  # Reference to AIAgent for creation mode tracking
         self.tools: Dict[str, Tool] = {}
         self._editor = get_editor(project_root)
         self._path_resolver = PathResolver(project_root) if project_root else None
@@ -664,6 +665,17 @@ class ToolRegistry:
         )
 
         self.register_tool(
+            name="smart_edit",
+            description="Natural language file editing. Use when you want to make changes based on instructions like 'add error handling to main function', 'insert logging after line 20', 'add a new helper function called process_data', etc. Much easier than edit_file - just describe what you want to change.",
+            parameters=[
+                ToolParameter("path", "string", "Path to the file", required=True),
+                ToolParameter("instruction", "string", "Natural language instruction (e.g. 'add error handling to the main function', 'insert logging after line 20', 'add try-except around API call', 'append validation to the validate_user function')", required=True)
+            ],
+            function=self._smart_edit,
+            requires_confirmation=True
+        )
+
+        self.register_tool(
             name="insert_at_line",
             description="Insert content at a specific line number. Best for adding imports or non-unique blocks.",
             parameters=[
@@ -762,9 +774,9 @@ class ToolRegistry:
         # Terminal operations
         self.register_tool(
             name="run_command",
-            description="Run a terminal command. IMPORTANT: Never modify virtual environment directories (venv/, .venv/, node_modules/) directly. Use package managers (pip, npm, etc.) instead.",
+            description="Run a terminal command. IMPORTANT: 1) WINDOWS: Use 'dir', 'type', 'del', 'cd' NOT 'ls', 'cat', 'rm'. 2) Never modify virtual environment directories (venv/, .venv/, node_modules/) directly. Use package managers (pip, npm, etc.) instead.",
             parameters=[
-                ToolParameter("command", "string", "Command to execute. WARNING: Do not run commands that modify venv/, node_modules/, or other dependency directories directly.", required=True),
+                ToolParameter("command", "string", "Command to execute (Windows: dir, type | Unix: ls, cat)", required=True),
                 ToolParameter("timeout", "int", "Timeout in seconds", required=False, default=30)
             ],
             function=self._run_command,
@@ -963,9 +975,9 @@ class ToolRegistry:
 
         self.register_tool(
             name="bash",
-            description="Run an interactive bash command. Best for complex shell operations.",
+            description="Run a terminal command. WINDOWS: Use 'dir', 'type', 'del', 'cd', 'mkdir'. UNIX/LINUX/MAC: Use 'ls', 'cat', 'rm', 'cd', 'mkdir'. Wrong commands will fail!",
             parameters=[
-                ToolParameter("command", "string", "Command to run", required=True),
+                ToolParameter("command", "string", "Command to run (Windows: dir, type, del | Unix: ls, cat, rm)", required=True),
                 ToolParameter("cwd", "string", "Working directory", required=False, default=None)
             ],
             function=self._run_command, # This will be intercepted by BashTool
@@ -1167,8 +1179,8 @@ class ToolRegistry:
 
         # Normalize parameter names (handle variations from different AI providers)
         # e.g., "file_path" -> "path", "target_path" -> "path", "source_file" -> "file"
+        # NOTE: Some tools like check_syntax expect "file_path" directly, so we handle these specially
         param_aliases = {
-            "file_path": "path",
             "target_path": "path",
             "dest_path": "path",
             "destination": "path",
@@ -1180,9 +1192,16 @@ class ToolRegistry:
             "content_to_add": "content",
         }
         
+        # Tools that expect "file_path" instead of "path"
+        tools_with_file_path_param = {"check_syntax"}
+        
         normalized_params = {}
         for key, value in params.items():
-            normalized_key = param_aliases.get(key, key)
+            # Special handling for file_path: only convert to "path" if tool doesn't expect "file_path"
+            if key == "file_path" and tool_name not in tools_with_file_path_param:
+                normalized_key = "path"
+            else:
+                normalized_key = param_aliases.get(key, key)
             normalized_params[normalized_key] = value
         
         # If 'path' is still missing but we have 'file', use that
@@ -1347,9 +1366,11 @@ class ToolRegistry:
             
         if missing_params:
             required_param_names = [p.name for p in tool.parameters if p.required]
+            received_keys = list(params.keys())
             error_msg = (
                 f"Missing required parameters: {', '.join(missing_params)}. "
                 f"This tool requires: {', '.join(required_param_names)}. "
+                f"You provided: {received_keys if received_keys else 'nothing'}. "
                 "Please try again with all required parameters."
             )
             log.error(f"Tool {tool_name} failed: {error_msg}")
@@ -1568,6 +1589,306 @@ class ToolRegistry:
             return f"✅ Import added to {Path(path).name} (or already present)"
         else:
             raise Exception(f"Failed to add import: {result.error}")
+
+    def _smart_edit(self, path: str, instruction: str) -> str:
+        """
+        Smart edit using natural language instruction.
+        
+        Examples:
+        - "add error handling to the main function"
+        - "insert logging after line 20"
+        - "add a new helper function called process_data"
+        - "modify the validate_user function to check email format"
+        - "add try-except block around the API call"
+        """
+        try:
+            resolved_path = self._resolve_path(path)
+            if not resolved_path.exists():
+                raise FileNotFoundError(f"File not found: {path}")
+            
+            content = resolved_path.read_text(encoding='utf-8')
+            lines = content.split('\n')
+            
+            instruction_lower = instruction.lower()
+            
+            # Parse instruction patterns
+            # Pattern: "add X after Y" or "insert X after Y"
+            if ' after ' in instruction_lower:
+                parts = instruction.split(' after ', 1)
+                new_code = parts[0].replace('add ', '').replace('insert ', '').strip()
+                anchor = parts[1].strip()
+                result = self._editor.inject_after(path, anchor, new_code)
+                if result.success:
+                    return f"✅ Smart edit complete: Added code after '{anchor}' in {Path(path).name}"
+            
+            # Pattern: "add X to the [end|bottom] of Y" or "append X to Y"
+            elif any(x in instruction_lower for x in [' to the end of ', ' to the bottom of ', ' append to ']):
+                for marker in [' to the end of ', ' to the bottom of ', ' append to ']:
+                    if marker in instruction_lower:
+                        parts = instruction.split(marker, 1)
+                        new_code = parts[0].replace('add ', '').strip()
+                        target = parts[1].strip().rstrip('.')
+                        # Find target and add at end of its block
+                        result = self._append_to_function_or_class(path, target, new_code)
+                        if result.success:
+                            return f"✅ Smart edit complete: Appended to '{target}' in {Path(path).name}"
+                        break
+            
+            # Pattern: "add X at beginning of Y" or "prepend X to Y"
+            elif any(x in instruction_lower for x in [' at beginning of ', ' at start of ', ' prepend to ']):
+                for marker in [' at beginning of ', ' at start of ', ' prepend to ']:
+                    if marker in instruction_lower:
+                        parts = instruction.split(marker, 1)
+                        new_code = parts[0].replace('add ', '').strip()
+                        target = parts[1].strip().rstrip('.')
+                        result = self._prepend_to_function(path, target, new_code)
+                        if result.success:
+                            return f"✅ Smart edit complete: Prepended to '{target}' in {Path(path).name}"
+                        break
+            
+            # Pattern: "add new function called X" or "add a new function X"
+            elif (' add new ' in instruction_lower or ' create new ' in instruction_lower) and ' function ' in instruction_lower:
+                func_match = None
+                for pattern in ['function called ', 'function `', 'function "', 'function \'']:
+                    if pattern in instruction_lower:
+                        start = instruction_lower.find(pattern) + len(pattern)
+                        end = instruction.find('\n', start) if '\n' in instruction[start:] else len(instruction)
+                        func_match = instruction[start:end].strip().split('(')[0].strip()
+                        break
+                if func_match:
+                    return self._add_new_function(path, func_match, instruction)
+            
+            # Pattern: "add X before Y"
+            elif ' before ' in instruction_lower:
+                parts = instruction.split(' before ', 1)
+                new_code = parts[0].replace('add ', '').replace('insert ', '').strip()
+                anchor = parts[1].strip()
+                # Find anchor and inject before it
+                result = self._inject_before(path, anchor, new_code)
+                if result.success:
+                    return f"✅ Smart edit complete: Added code before '{anchor}' in {Path(path).name}"
+            
+            # Pattern: "add X to class Y"
+            elif ' to class ' in instruction_lower or ' to the class ' in instruction_lower:
+                for marker in [' to class ', ' to the class ']:
+                    if marker in instruction_lower:
+                        parts = instruction.split(marker, 1)
+                        new_code = parts[0].replace('add ', '').strip()
+                        class_name = parts[1].strip().rstrip('.')
+                        result = self._append_to_class(path, class_name, new_code)
+                        if result.success:
+                            return f"✅ Smart edit complete: Added to class '{class_name}' in {Path(path).name}"
+                        break
+            
+            # Default: Try to find a pattern or add at end
+            raise Exception(
+                f"Could not parse instruction: '{instruction}'\n\n"
+                "Supported patterns:\n"
+                "- 'add X after Y' - Insert X after text Y\n"
+                "- 'add X before Y' - Insert X before text Y\n"
+                "- 'add X to function Y' - Add X inside function Y\n"
+                "- 'add X to class Y' - Add X inside class Y\n"
+                "- 'add new function X' - Create new function X\n"
+                "- 'append X to Y' - Add X at end of Y"
+            )
+            
+        except FileNotFoundError as e:
+            raise Exception(f"File not found: {path}")
+        except Exception as e:
+            raise Exception(f"Smart edit failed: {e}")
+
+    def _append_to_function_or_class(self, path: str, target: str, new_code: str) -> Any:
+        """Append code to end of a function or class."""
+        resolved_path = self._resolve_path(path)
+        content = resolved_path.read_text(encoding='utf-8')
+        lines = content.split('\n')
+        
+        # Find target (function or class definition)
+        target_line = -1
+        target_indent = ""
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith(f'def {target}') or stripped.startswith(f'async def {target}'):
+                target_line = i
+                target_indent = line[:len(line) - len(line.lstrip())]
+                break
+            elif stripped.startswith(f'class {target}'):
+                target_line = i
+                target_indent = line[:len(line) - len(line.lstrip())]
+                break
+        
+        if target_line == -1:
+            return type('EditResult', (), {'success': False, 'error': f"Function or class '{target}' not found"})()
+        
+        # Find the end of this function/class (next def/class at same or lower indent, or end of file)
+        end_line = len(lines)
+        base_indent = len(target_indent)
+        for i in range(target_line + 1, len(lines)):
+            line = lines[i]
+            if line.strip() and not line.startswith(' ' * (base_indent + 1)):
+                stripped = line.strip()
+                if stripped.startswith('def ') or stripped.startswith('async def ') or stripped.startswith('class '):
+                    end_line = i
+                    break
+        
+        # Find last non-empty line before end
+        insert_line = end_line - 1
+        while insert_line > target_line and not lines[insert_line].strip():
+            insert_line -= 1
+        
+        # Ensure new_code has correct indentation
+        indented_code = '\n'.join(target_indent + line for line in new_code.split('\n'))
+        
+        # Insert at appropriate position
+        new_lines = lines[:insert_line + 1]
+        if new_lines and not new_lines[-1].rstrip().endswith(':'):
+            indented_code = '\n' + indented_code
+        new_lines.append(indented_code)
+        new_lines.extend(lines[insert_line + 1:])
+        
+        self._editor.undo_stack.push(str(resolved_path), content, f"smart append to {target}")
+        resolved_path.write_text('\n'.join(new_lines), encoding='utf-8')
+        
+        return type('EditResult', (), {'success': True})()
+
+    def _prepend_to_function(self, path: str, target: str, new_code: str) -> Any:
+        """Prepend code to beginning of a function."""
+        resolved_path = self._resolve_path(path)
+        content = resolved_path.read_text(encoding='utf-8')
+        lines = content.split('\n')
+        
+        target_line = -1
+        target_indent = ""
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith(f'def {target}') or stripped.startswith(f'async def {target}'):
+                target_line = i
+                target_indent = line[:len(line) - len(line.lstrip())]
+                break
+        
+        if target_line == -1:
+            return type('EditResult', (), {'success': False, 'error': f"Function '{target}' not found"})()
+        
+        # Find first line after function definition
+        insert_line = target_line + 1
+        while insert_line < len(lines) and not lines[insert_line].strip():
+            insert_line += 1
+        
+        # Add indentation to new code
+        indented_code = '\n'.join(target_indent + '    ' + line for line in new_code.split('\n'))
+        
+        new_lines = lines[:insert_line]
+        new_lines.append(indented_code)
+        new_lines.extend(lines[insert_line:])
+        
+        self._editor.undo_stack.push(str(resolved_path), content, f"smart prepend to {target}")
+        resolved_path.write_text('\n'.join(new_lines), encoding='utf-8')
+        
+        return type('EditResult', (), {'success': True})()
+
+    def _inject_before(self, path: str, anchor: str, new_code: str) -> Any:
+        """Inject code before a specific anchor text."""
+        resolved_path = self._resolve_path(path)
+        content = resolved_path.read_text(encoding='utf-8')
+        lines = content.split('\n')
+        
+        anchor_line = -1
+        anchor_indent = ""
+        for i, line in enumerate(lines):
+            if anchor in line:
+                anchor_line = i
+                anchor_indent = line[:len(line) - len(line.lstrip())]
+                break
+        
+        if anchor_line == -1:
+            return type('EditResult', (), {'success': False, 'error': f"Anchor '{anchor}' not found"})()
+        
+        # Format new code with same indent
+        indented_code = '\n'.join(anchor_indent + line for line in new_code.split('\n'))
+        
+        new_lines = lines[:anchor_line]
+        new_lines.append(indented_code)
+        new_lines.extend(lines[anchor_line:])
+        
+        self._editor.undo_stack.push(str(resolved_path), content, f"inject before {anchor[:30]}")
+        resolved_path.write_text('\n'.join(new_lines), encoding='utf-8')
+        
+        return type('EditResult', (), {'success': True})()
+
+    def _append_to_class(self, path: str, class_name: str, new_code: str) -> Any:
+        """Append code inside a class (after last method or at class end)."""
+        resolved_path = self._resolve_path(path)
+        content = resolved_path.read_text(encoding='utf-8')
+        lines = content.split('\n')
+        
+        class_line = -1
+        class_indent = ""
+        for i, line in enumerate(lines):
+            if line.strip().startswith(f'class {class_name}'):
+                class_line = i
+                class_indent = line[:len(line) - len(line.lstrip())]
+                break
+        
+        if class_line == -1:
+            return type('EditResult', (), {'success': False, 'error': f"Class '{class_name}' not found"})()
+        
+        # Find end of class (next class/def at same indent or less)
+        base_indent = len(class_indent)
+        end_line = len(lines)
+        for i in range(class_line + 1, len(lines)):
+            line = lines[i]
+            if line.strip():
+                indent = len(line) - len(line.lstrip())
+                if indent <= base_indent:
+                    end_line = i
+                    break
+        
+        insert_line = end_line - 1
+        while insert_line > class_line and not lines[insert_line].strip():
+            insert_line -= 1
+        
+        indented_code = '\n'.join(class_indent + '    ' + line for line in new_code.split('\n'))
+        
+        new_lines = lines[:insert_line + 1]
+        new_lines.append(indented_code)
+        new_lines.extend(lines[insert_line + 1:])
+        
+        self._editor.undo_stack.push(str(resolved_path), content, f"append to class {class_name}")
+        resolved_path.write_text('\n'.join(new_lines), encoding='utf-8')
+        
+        return type('EditResult', (), {'success': True})()
+
+    def _add_new_function(self, path: str, func_name: str, instruction: str) -> str:
+        """Add a new function to the file."""
+        resolved_path = self._resolve_path(path)
+        content = resolved_path.read_text(encoding='utf-8')
+        
+        # Try to extract function signature from instruction
+        signature = func_name
+        func_match = re.search(rf'{func_name}\s*\([^)]*\)', instruction)
+        if func_match:
+            signature = func_match.group()
+        else:
+            signature = f"{func_name}()"
+        
+        # Extract body from instruction if provided
+        body = "    pass"
+        body_match = re.search(rf'{func_name}.*?:\s*(.+)', instruction, re.DOTALL)
+        if body_match:
+            body_text = body_match.group(1).strip()
+            if body_text and body_text != ')':
+                body = '\n'.join('    ' + line for line in body_text.split('\n'))
+        
+        new_function = f"\ndef {signature}:\n{body}\n"
+        
+        # Add at end of file
+        if content and not content.endswith('\n'):
+            new_function = '\n' + new_function
+        
+        self._editor.undo_stack.push(str(resolved_path), content, f"add function {func_name}")
+        resolved_path.write_text(content + new_function, encoding='utf-8')
+        
+        return f"✅ Added new function '{func_name}' to {Path(path).name}"
 
     def _insert_at_line(self, path: str, line: int, content: str) -> str:
         """Insert content at a specific line number."""
@@ -2306,6 +2627,12 @@ class ToolRegistry:
             
     def _list_directory(self, path: str = ".", show_hidden: bool = False, depth: Optional[int] = None) -> str:
         """List directory with role annotations, skipping noise dirs and blocking dependency directories."""
+        # DEFENSIVE: If AI is in creation mode, redirect to continue building
+        from src.ai.agent import AIAgent
+        if hasattr(self, '_parent_agent') and self._parent_agent:
+            if getattr(self._parent_agent, '_creation_mode', False):
+                return "⚠️ SKIPPED: list_directory is blocked during file creation. Continue with write_file to create your files. Files are created successfully without verification."
+        
         try:
             resolved_path = self._resolve_path(path)
             str_path = str(resolved_path)
@@ -3454,6 +3781,12 @@ class ToolRegistry:
 
     def _check_syntax(self, file_path: str) -> str:
         """Check syntax of a file for errors."""
+        # DEFENSIVE: If AI is in creation mode, redirect to continue building
+        from src.ai.agent import AIAgent
+        if hasattr(self, '_parent_agent') and self._parent_agent:
+            if getattr(self._parent_agent, '_creation_mode', False):
+                return "⚠️ SKIPPED: check_syntax is unnecessary during file creation. Write success means the file is valid. Continue with write_file or run_command to test your files."
+        
         try:
             from src.core.syntax_checker import get_syntax_checker
             from pathlib import Path

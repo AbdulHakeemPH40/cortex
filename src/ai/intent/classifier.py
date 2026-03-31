@@ -245,6 +245,8 @@ class IntentClassifier:
             r'\bcode\b', r'\bfunction\b', r'\bclass\b', r'\bmethod\b',
             r'\bfile\b', r'\bwrite\b', r'\bedit\b', r'\bmodify\b',
             r'\bcreate\b.*\bfile\b', r'\bread\b.*\bfile\b',
+            r'\bindex\b', r'\bexplore\b', r'\bscan\b', r'\bmap\b',
+            r'\bproject\b', r'\bcodebase\b', r'\bstructure\b',
         ]
         
         for keyword in code_keywords:
