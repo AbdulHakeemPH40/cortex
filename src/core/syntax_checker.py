@@ -256,16 +256,29 @@ class SyntaxChecker:
         errors = []
         
         try:
-            # Try --check flag first
+            import tempfile
+            import os
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.js', delete=False, encoding='utf-8') as f:
+                f.write(content)
+                temp_path = f.name
+                
             result = subprocess.run(
-                ['node', '--check', file_path],
+                ['node', '--check', temp_path],
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
                 timeout=5
             )
+            with open('tmp/node_test_input.js', 'w', encoding='utf-8') as dbg:
+                dbg.write(content)
             
             if result.returncode != 0:
                 errors.extend(self._parse_node_error(result.stderr, file_path))
+                
+            try:
+                os.unlink(temp_path)
+            except Exception:
+                pass
         except FileNotFoundError:
             # Node not installed - try basic regex checks
             errors = self._check_js_regex(file_path, content)
@@ -309,20 +322,22 @@ class SyntaxChecker:
         """Parse Node.js error output."""
         errors = []
         
-        # Example: SyntaxError: Unexpected token '{'
-        # at Object.<anonymous> (/path/to/file.js:5:10)
-        pattern = r'SyntaxError: (.+?)(?:\n|$)'
-        line_pattern = r':(\d+):(\d+)'
-        
         lines = stderr.strip().split('\n')
+        line_num = 1
+        col_num = 0
+        
+        # In node errors, the first line is usually "filename:line" or similar
+        if lines:
+            first_line_match = re.search(r':(\d+)(?::(\d+))?', lines[0])
+            if first_line_match:
+                line_num = int(first_line_match.group(1))
+                if len(first_line_match.groups()) > 1 and first_line_match.group(2):
+                    col_num = int(first_line_match.group(2))
+
         for line in lines:
-            if 'SyntaxError' in line or 'error' in line.lower():
-                match = re.search(line_pattern, line)
-                line_num = int(match.group(1)) if match else 1
-                col_num = int(match.group(2)) if match and len(match.groups()) > 1 else 0
-                
+            if 'SyntaxError' in line or 'Error' in line:
                 # Get error message
-                msg_match = re.search(r'SyntaxError: (.+)', line)
+                msg_match = re.search(r'(?:SyntaxError|Error):\s*(.+)', line)
                 msg = msg_match.group(1) if msg_match else line
                 
                 errors.append(DiagnosticError(
@@ -929,8 +944,11 @@ class SyntaxChecker:
             inner_js = match.group(1)
             line_offset = content[:match.start()].count('\n')
             if inner_js.strip():
-                js_errors = self._check_javascript(file_path, inner_js)
+                # For embedded JS, we strip leading whitespace from the block
+                # to avoid indentation-related syntax errors in node check
+                js_errors = self._check_javascript(file_path, inner_js.lstrip())
                 for e in js_errors:
+                    # Precise line calculation: offset + 1 (for the <script tag itself)
                     e.line += line_offset
                     e.source = f"html-js ({e.source})"
                     errors.append(e)

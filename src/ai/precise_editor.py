@@ -13,6 +13,7 @@ import time
 import shutil
 import difflib
 import subprocess
+import unicodedata
 from pathlib import Path
 from typing import Optional, Tuple, List
 from dataclasses import dataclass, field
@@ -88,39 +89,23 @@ class SyntaxChecker:
     
     @staticmethod
     def check(file_path: str, content: str) -> Tuple[bool, str]:
-        """Returns (is_valid, error_message)"""
-        ext = Path(file_path).suffix.lower()
-        
-        if ext == ".py":
-            return SyntaxChecker._check_python(content)
-        elif ext in (".js", ".jsx", ".ts", ".tsx"):
-            return SyntaxChecker._check_js(content, file_path)
-        elif ext in (".html", ".htm", ".templates"):
-            return SyntaxChecker._check_html(content)
-        else:
-            return True, ""  # Unknown type — assume valid
-    
-    @staticmethod
-    def _check_python(content: str) -> Tuple[bool, str]:
+        """Returns (is_valid, error_message) using the unified diagnostic engine."""
         try:
-            ast.parse(content)
-            return True, ""
-        except SyntaxError as e:
-            return False, f"Line {e.lineno}: {e.msg}"
-    
-    @staticmethod
-    def _check_js(content: str, file_path: str) -> Tuple[bool, str]:
-        try:
-            # Use node to check syntax if available
-            result = subprocess.run(
-                ["node", "--check"],
-                input=content, capture_output=True, text=True, timeout=5
-            )
-            if result.returncode == 0:
+            from src.core.syntax_checker import get_syntax_checker
+            checker = get_syntax_checker()
+            result = checker.check_file(file_path, content)
+            
+            if result.success:
                 return True, ""
-            return False, str(result.stderr)[:200]
-        except Exception:
-            # node not available — skip check
+            
+            # Format first error for the editor's result
+            if result.errors:
+                err = result.errors[0]
+                return False, f"Line {err.line}: {err.message} ({err.source})"
+            return False, "Unknown syntax error"
+        except Exception as e:
+            # Fallback to absolute assumption if core checker fails
+            log.warning(f"PreciseEditor: Core syntax check failed, falling back: {e}")
             return True, ""
 
     @staticmethod
@@ -264,6 +249,12 @@ class PreciseEditor:
             return EditResult(False, path=path, error=str(e))
         
         lines_before = content.count("\n") + 1
+        
+        # Unicode Normalization (NFC)
+        # Prevents mismatch between AI's symbols and disk content
+        content = unicodedata.normalize('NFC', content)
+        old_string = unicodedata.normalize('NFC', old_string)
+        new_string = unicodedata.normalize('NFC', new_string)
         
         # Validate old_string
         count = content.count(old_string)
@@ -484,6 +475,55 @@ class PreciseEditor:
             delta=1,
             undo_available=True
         )
+    
+    # ── PLACEHOLDER INJECTION ────────────────────────────────────────────────
+    
+    def replace_placeholder(
+        self,
+        path: str,
+        placeholder: str,
+        content_to_inject: str
+    ) -> EditResult:
+        """
+        Surgically inject code into a specific placeholder (comment block).
+        Supports common patterns like /* CSS_PLACEHOLDER */ or // JS_PLACEHOLDER.
+        """
+        full_path = self._resolve(path)
+        content = full_path.read_text(encoding="utf-8")
+        
+        # Normalize for search
+        content = unicodedata.normalize('NFC', content)
+        placeholder = unicodedata.normalize('NFC', placeholder)
+        
+        # Try to be smart and consume the entire comment marker if the user just passed the inner name
+        patterns = [
+            f"/* {placeholder} */",
+            f"// {placeholder}",
+            f"<!-- {placeholder} -->",
+            placeholder
+        ]
+        
+        found_p = None
+        for p in patterns:
+            if p in content:
+                found_p = p
+                break
+        
+        if found_p:
+            placeholder = found_p
+        else:
+            return EditResult(False, path=path, error=f"Placeholder '{placeholder}' not found.",
+                             action="Check typo or use read_file to see exact placeholder string.")
+        
+        # Determine indentation of the placeholder line
+        lines = content.splitlines()
+        placeholder_line = next(l for l in lines if placeholder in l)
+        indent = self._indent.get_line_indent(placeholder_line)
+        
+        # Normalize the injected block to match indent
+        normalized_injection = self._indent.normalize_block(content_to_inject, indent)
+        
+        return self.edit(path, placeholder, normalized_injection)
     
     # ── WRITE NEW FILE ───────────────────────────────────────────────────────
     

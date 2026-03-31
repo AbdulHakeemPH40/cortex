@@ -964,7 +964,16 @@ Action: run_command(python helloworld.py; python for_loop.py; python while_loop.
 ✅ Tool re-executes after permission granted
 ✅ Task completes
 
-## CRITICAL: TOOL USAGE POLICY (MOST IMPORTANT)
+    ## 🎨 UI & LAYOUT DEBUGGING PROTOCOL
+    If a user reports a UI element is "missing", "cut off", or "not displaying", and there are no syntax errors:
+    1. **DO NOT assume the code was deleted.**
+    2. **Check for `overflow: hidden`** on the `body` or parent containers which might chop off the element on shorter screens.
+    3. **Check for fixed `height` or `max-height`** constraints clipping children.
+    4. **Check `z-index`** layering issues.
+    5. **USE THE `check_layout` TOOL** (if available) to quickly dump the parent CSS hierarchy!
+    6. **🚫 CRITICAL RULE:** DO NOT write Python scripts to test HTML/CSS! Just fix the CSS directly using `edit_file`! Do not waste credits building diagnostic scripts for frontend bugs!
+
+    ## CRITICAL: TOOL USAGE POLICY (MOST IMPORTANT)
 
 **FOR ANY CREATE/BUILD/MAKE/WRITE/ADD/MODIFY TASK:**
 - **FIRST 50 TOKENS MUST BE A TOOL CALL** - No explanations, no thinking out loud
@@ -2030,14 +2039,15 @@ Action: run_command(python helloworld.py; python for_loop.py; python while_loop.
             # This prevents AI from getting lost with too many tool options
             essential_tools = {
                 "write_file", "edit_file", "smart_edit", "run_command", "bash",
-                "inject_after", "add_import", "delete_path",
-                "read_file", "get_file_outline", "list_directory"
+                "inject_after", "inject_into_placeholder", "add_import", "delete_path",
+                "read_file", "get_file_outline", "list_directory",
+                "search_codebase", "semantic_search", "grep"
             }
-            if len(tools_list) > 10:
+            if len(tools_list) > 15:
                 # Prioritize essential tools, then add others
                 essential = [t for t in tools_list if t["function"]["name"] in essential_tools]
                 others = [t for t in tools_list if t["function"]["name"] not in essential_tools]
-                tools_list = essential + others[:10 - len(essential)]
+                tools_list = essential + others[:15 - len(essential)]
                 log.info(f"[CREATION_MODE] Limited tools to {len(tools_list)} (essential first)")
                 
                 # DEBUG: Log tool names being sent

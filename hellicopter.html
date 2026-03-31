@@ -1,0 +1,991 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Realistic Helicopter Animation</title>
+    <style>
+        /* CSS Reset */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(to bottom, #87CEEB, #E0F7FF);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            width: 100%;
+            text-align: center;
+        }
+
+        h1 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+            font-size: 2.5rem;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .subtitle {
+            color: #34495e;
+            margin-bottom: 30px;
+            font-size: 1.2rem;
+        }
+
+        /* Scene Container */
+        .scene-container {
+            position: relative;
+            width: 800px;
+            height: 600px;
+            margin: 0 auto 40px;
+            background: linear-gradient(to bottom, #87CEEB 40%, #5D8AA8 100%);
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+            overflow: hidden;
+            border: 10px solid #2c3e50;
+        }
+
+        /* Ground */
+        .ground {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 150px;
+            background: linear-gradient(to top, #8B4513, #A0522D);
+            border-top: 5px solid #654321;
+        }
+
+        .ground-shadow {
+            position: absolute;
+            bottom: 150px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 300px;
+            height: 80px;
+            background: radial-gradient(ellipse at center, rgba(0,0,0,0.4) 0%, rgba(0,0,0,0) 70%);
+            border-radius: 50%;
+            transition: all 0.3s ease;
+        }
+
+        /* Helicopter Container */
+        .helicopter {
+            position: absolute;
+            bottom: 180px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 400px;
+            height: 200px;
+            transition: transform 0.1s ease;
+        }
+
+        /* Fuselage (Main Body) */
+        .fuselage {
+            position: absolute;
+            width: 200px;
+            height: 80px;
+            background: linear-gradient(to right, #2c3e50, #34495e);
+            border-radius: 40px 10px 10px 40px;
+            left: 100px;
+            top: 60px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+        }
+
+        .cockpit {
+            position: absolute;
+            width: 60px;
+            height: 40px;
+            background: linear-gradient(135deg, #3498db, #2980b9);
+            border-radius: 30px 10px 10px 30px;
+            left: 220px;
+            top: 70px;
+            box-shadow: inset -5px 0 10px rgba(0,0,0,0.2);
+        }
+
+        .cockpit-window {
+            position: absolute;
+            width: 40px;
+            height: 25px;
+            background: rgba(173, 216, 230, 0.8);
+            border-radius: 20px 5px 5px 20px;
+            left: 230px;
+            top: 77px;
+            border: 2px solid #2c3e50;
+        }
+
+        /* Main Rotor Assembly */
+        .main-rotor {
+            position: absolute;
+            width: 400px;
+            height: 20px;
+            left: 0;
+            top: 0;
+            transform-origin: center center;
+        }
+
+        .rotor-hub {
+            position: absolute;
+            width: 40px;
+            height: 40px;
+            background: #e74c3c;
+            border-radius: 50%;
+            left: 180px;
+            top: -10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+            z-index: 10;
+        }
+
+        .blade {
+            position: absolute;
+            width: 180px;
+            height: 15px;
+            background: linear-gradient(to right, #95a5a6, #7f8c8d);
+            border-radius: 5px;
+            transform-origin: left center;
+            filter: blur(0px);
+            transition: filter 0.3s ease;
+        }
+
+        .blade-1 { transform: rotate(0deg); left: 200px; top: 0; }
+        .blade-2 { transform: rotate(90deg); left: 200px; top: 0; }
+        .blade-3 { transform: rotate(180deg); left: 200px; top: 0; }
+        .blade-4 { transform: rotate(270deg); left: 200px; top: 0; }
+
+        /* Tail Section */
+        .tail {
+            position: absolute;
+            width: 150px;
+            height: 20px;
+            background: linear-gradient(to right, #2c3e50, #34495e);
+            left: 290px;
+            top: 90px;
+            border-radius: 0 10px 10px 0;
+        }
+
+        .tail-rotor {
+            position: absolute;
+            width: 60px;
+            height: 60px;
+            left: 430px;
+            top: 80px;
+            transform-origin: center center;
+        }
+
+        .tail-rotor-blade {
+            position: absolute;
+            width: 50px;
+            height: 8px;
+            background: #7f8c8d;
+            border-radius: 4px;
+            left: 5px;
+            top: 26px;
+            transform-origin: center center;
+        }
+
+        .tail-rotor-blade-2 {
+            transform: rotate(90deg);
+        }
+
+        /* Landing Gear */
+        .landing-gear {
+            position: absolute;
+            width: 200px;
+            height: 40px;
+            left: 100px;
+            top: 140px;
+        }
+
+        .gear-leg {
+            position: absolute;
+            width: 10px;
+            height: 40px;
+            background: #34495e;
+            border-radius: 5px;
+        }
+
+        .gear-leg-1 { left: 50px; }
+        .gear-leg-2 { left: 140px; }
+
+        .gear-skid {
+            position: absolute;
+            width: 180px;
+            height: 10px;
+            background: #2c3e50;
+            border-radius: 5px;
+            top: 40px;
+            left: 10px;
+        }
+
+        /* Dust Particles */
+        .dust-particles {
+            position: absolute;
+            width: 100%;
+            height: 100px;
+            bottom: 150px;
+            left: 0;
+            pointer-events: none;
+        }
+
+        .dust-particle {
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            background: rgba(210, 180, 140, 0.7);
+            border-radius: 50%;
+            opacity: 0;
+            filter: blur(1px);
+        }
+
+        /* Controls */
+        .controls {
+            background: rgba(255, 255, 255, 0.9);
+            padding: 25px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            margin-top: 20px;
+            max-width: 800px;
+            width: 100%;
+        }
+
+        .control-group {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .control-btn {
+            padding: 12px 25px;
+            font-size: 1.1rem;
+            background: linear-gradient(to bottom, #3498db, #2980b9);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 600;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .control-btn:hover {
+            background: linear-gradient(to bottom, #2980b9, #1f618d);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 8px rgba(0,0,0,0.15);
+        }
+
+        .control-btn:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .control-btn:disabled {
+            background: linear-gradient(to bottom, #95a5a6, #7f8c8d);
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .slider-container {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin: 15px 0;
+            justify-content: center;
+        }
+
+        .slider-label {
+            font-weight: 600;
+            color: #2c3e50;
+            min-width: 120px;
+            text-align: right;
+        }
+
+        .slider {
+            width: 300px;
+            height: 8px;
+            -webkit-appearance: none;
+            appearance: none;
+            background: linear-gradient(to right, #3498db, #2ecc71);
+            border-radius: 4px;
+            outline: none;
+        }
+
+        .slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 24px;
+            height: 24px;
+            background: #e74c3c;
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            border: 3px solid white;
+        }
+
+        .slider::-moz-range-thumb {
+            width: 24px;
+            height: 24px;
+            background: #e74c3c;
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            border: 3px solid white;
+        }
+
+        .status-display {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            border-left: 5px solid #3498db;
+        }
+
+        .status-text {
+            font-size: 1.1rem;
+            color: #2c3e50;
+            font-weight: 500;
+        }
+
+        .phase-indicator {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .phase-dot {
+            width: 12px;
+            height: 12px;
+            background: #bdc3c7;
+            border-radius: 50%;
+            transition: all 0.3s ease;
+        }
+
+        .phase-dot.active {
+            background: #2ecc71;
+            transform: scale(1.3);
+            box-shadow: 0 0 10px #2ecc71;
+        }
+
+        .instructions {
+            margin-top: 30px;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.8);
+            border-radius: 10px;
+            text-align: left;
+            max-width: 800px;
+        }
+
+        .instructions h3 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+
+        .instructions ul {
+            padding-left: 20px;
+            color: #34495e;
+        }
+
+        .instructions li {
+            margin-bottom: 8px;
+        }
+
+        /* Animation Classes */
+        @keyframes mainRotorSpin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        @keyframes tailRotorSpin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        @keyframes helicopterShake {
+            0%, 100% { transform: translateX(-50%) translateY(0); }
+            25% { transform: translateX(-50%) translateY(-2px) translateX(1px); }
+            50% { transform: translateX(-50%) translateY(0) translateX(-1px); }
+            75% { transform: translateX(-50%) translateY(2px) translateX(1px); }
+        }
+
+        @keyframes liftOff {
+            0% { bottom: 180px; }
+            100% { bottom: 400px; }
+        }
+
+        @keyframes dustParticle {
+            0% { 
+                opacity: 0;
+                transform: translateY(0) translateX(0) scale(0.5);
+            }
+            10% { 
+                opacity: 0.8;
+                transform: translateY(-10px) translateX(var(--dust-x)) scale(1);
+            }
+            100% { 
+                opacity: 0;
+                transform: translateY(-80px) translateX(calc(var(--dust-x) * 2)) scale(0.3);
+            }
+        }
+
+        .main-rotor-spinning {
+            animation: mainRotorSpin linear infinite;
+        }
+
+        .tail-rotor-spinning {
+            animation: tailRotorSpin linear infinite;
+        }
+
+        .helicopter-shaking {
+            animation: helicopterShake 0.1s infinite;
+        }
+
+        .helicopter-lifting {
+            animation: liftOff 3s ease-out forwards;
+        }
+
+        .dust-particle-animating {
+            animation: dustParticle 2s ease-out forwards;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚁 Realistic Helicopter Animation</h1>
+        <p class="subtitle">Watch the helicopter start up, create dust clouds, shake at full power, and lift off!</p>
+        
+        <div class="scene-container">
+            <!-- Ground and Shadow -->
+            <div class="ground"></div>
+            <div class="ground-shadow" id="groundShadow"></div>
+            
+            <!-- Dust Particles Container -->
+            <div class="dust-particles" id="dustContainer"></div>
+            
+            <!-- Helicopter -->
+            <div class="helicopter" id="helicopter">
+                <!-- Main Rotor -->
+                <div class="main-rotor" id="mainRotor">
+                    <div class="rotor-hub"></div>
+                    <div class="blade blade-1" id="blade1"></div>
+                    <div class="blade blade-2" id="blade2"></div>
+                    <div class="blade blade-3" id="blade3"></div>
+                    <div class="blade blade-4" id="blade4"></div>
+                </div>
+                
+                <!-- Fuselage and Cockpit -->
+                <div class="fuselage"></div>
+                <div class="cockpit"></div>
+                <div class="cockpit-window"></div>
+                
+                <!-- Tail and Tail Rotor -->
+                <div class="tail"></div>
+                <div class="tail-rotor" id="tailRotor">
+                    <div class="tail-rotor-blade"></div>
+                    <div class="tail-rotor-blade tail-rotor-blade-2"></div>
+                </div>
+                
+                <!-- Landing Gear -->
+                <div class="landing-gear">
+                    <div class="gear-leg gear-leg-1"></div>
+                    <div class="gear-leg gear-leg-2"></div>
+                    <div class="gear-skid"></div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="controls">
+            <div class="control-group">
+                <button class="control-btn" id="startBtn">[PLAY] Start Animation</button>
+                <button class="control-btn" id="pauseBtn" disabled>[PAUSE] Pause</button>
+                <button class="control-btn" id="resetBtn">[RESET] Reset</button>
+            </div>
+            
+            <div class="slider-container">
+                <span class="slider-label">Rotor Speed:</span>
+                <input type="range" min="0" max="100" value="0" class="slider" id="speedSlider">
+                <span id="speedValue">0%</span>
+            </div>
+            
+            <div class="status-display">
+                <div class="status-text" id="statusText">Ready to start animation. Click "Start Animation" to begin.</div>
+                <div class="phase-indicator">
+                    <div class="phase-dot" id="phase1"></div>
+                    <div class="phase-dot" id="phase2"></div>
+                    <div class="phase-dot" id="phase3"></div>
+                    <div class="phase-dot" id="phase4"></div>
+                    <div class="phase-dot" id="phase5"></div>
+                    <div class="phase-dot" id="phase6"></div>
+                    <div class="phase-dot" id="phase7"></div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="instructions">
+            <h3>Animation Sequence:</h3>
+            <ul>
+                <li><strong>Phase 1:</strong> Helicopter stationary on ground</li>
+                <li><strong>Phase 2:</strong> Main rotor blades start spinning slowly</li>
+                <li><strong>Phase 3:</strong> Rotors accelerate with motion blur effect</li>
+                <li><strong>Phase 4:</strong> Tail rotor spins continuously</li>
+                <li><strong>Phase 5:</strong> Dust and ground shadows react to increasing rotor speed</li>
+                <li><strong>Phase 6:</strong> Helicopter lightly shakes at full speed</li>
+                <li><strong>Phase 7:</strong> Helicopter lifts off vertically</li>
+            </ul>
+            <p style="margin-top: 10px; color: #7f8c8d; font-style: italic;">Use the slider to manually control rotor speed, or let the automatic animation run through all phases.</p>
+        </div>
+    </div>
+
+    <script>
+        // DOM Elements
+        const helicopter = document.getElementById('helicopter');
+        const mainRotor = document.getElementById('mainRotor');
+        const tailRotor = document.getElementById('tailRotor');
+        const groundShadow = document.getElementById('groundShadow');
+        const dustContainer = document.getElementById('dustContainer');
+        const blades = [
+            document.getElementById('blade1'),
+            document.getElementById('blade2'),
+            document.getElementById('blade3'),
+            document.getElementById('blade4')
+        ];
+        
+        // Control Elements
+        const startBtn = document.getElementById('startBtn');
+        const pauseBtn = document.getElementById('pauseBtn');
+        const resetBtn = document.getElementById('resetBtn');
+        const speedSlider = document.getElementById('speedSlider');
+        const speedValue = document.getElementById('speedValue');
+        const statusText = document.getElementById('statusText');
+        const phaseDots = [
+            document.getElementById('phase1'),
+            document.getElementById('phase2'),
+            document.getElementById('phase3'),
+            document.getElementById('phase4'),
+            document.getElementById('phase5'),
+            document.getElementById('phase6'),
+            document.getElementById('phase7')
+        ];
+
+        // Animation State
+        let animationState = {
+            isRunning: false,
+            isPaused: false,
+            currentPhase: 0,
+            rotorSpeed: 0,
+            maxRotorSpeed: 100,
+            animationInterval: null,
+            dustInterval: null,
+            isLiftingOff: false
+        };
+
+        // Phase Configuration
+        const phases = [
+            { name: "Stationary", speed: 0, duration: 1000, status: "Helicopter stationary on ground" },
+            { name: "Startup", speed: 20, duration: 2000, status: "Main rotor blades starting to spin slowly" },
+            { name: "Acceleration", speed: 60, duration: 3000, status: "Rotors accelerating with motion blur" },
+            { name: "Tail Rotor", speed: 80, duration: 1500, status: "Tail rotor spinning continuously" },
+            { name: "Dust Effects", speed: 90, duration: 2000, status: "Dust and shadows reacting to rotor speed" },
+            { name: "Vibration", speed: 100, duration: 1500, status: "Helicopter shaking at full power" },
+            { name: "Lift Off", speed: 100, duration: 3000, status: "Helicopter lifting off vertically" }
+        ];
+
+        // Initialize
+        function init() {
+            console.log("init() function called - DOM loaded");
+            console.log("startBtn found:", startBtn);
+            console.log("pauseBtn found:", pauseBtn);
+            console.log("resetBtn found:", resetBtn);
+            console.log("speedSlider found:", speedSlider);
+            console.log("statusText found:", statusText);
+            
+            updateRotorSpeed(0);
+            updatePhaseIndicator(0);
+            updateStatus("Ready to start animation. Click 'Start Animation' to begin.");
+            
+            // Event Listeners
+            console.log("Attaching event listeners...");
+            startBtn.addEventListener('click', startAnimation);
+            console.log("startBtn click listener attached");
+            pauseBtn.addEventListener('click', togglePause);
+            console.log("pauseBtn click listener attached");
+            resetBtn.addEventListener('click', resetAnimation);
+            console.log("resetBtn click listener attached");
+            speedSlider.addEventListener('input', handleManualSpeedChange);
+            console.log("speedSlider input listener attached");
+            console.log("All event listeners attached successfully");
+        }
+
+        // Start Animation Sequence
+        function startAnimation() {
+            console.log("startAnimation() called");
+            console.log("Current state:", animationState);
+            if (animationState.isRunning && !animationState.isPaused) return;
+            
+            if (animationState.isPaused) {
+                // Resume from pause
+                animationState.isPaused = false;
+                pauseBtn.textContent = "[PAUSE] Pause";
+                startBtn.disabled = true;
+                return;
+            }
+            
+            animationState.isRunning = true;
+            animationState.currentPhase = 0;
+            animationState.isLiftingOff = false;
+            
+            startBtn.disabled = true;
+            pauseBtn.disabled = false;
+            speedSlider.disabled = true;
+            
+            runPhaseSequence();
+        }
+
+        // Run through all phases
+        function runPhaseSequence() {
+            if (animationState.currentPhase >= phases.length) {
+                completeAnimation();
+                return;
+            }
+            
+            const phase = phases[animationState.currentPhase];
+            updatePhaseIndicator(animationState.currentPhase + 1);
+            updateStatus(phase.status);
+            
+            // Animate to target speed
+            animateToSpeed(phase.speed, phase.duration, () => {
+                animationState.currentPhase++;
+                if (!animationState.isPaused) {
+                    setTimeout(runPhaseSequence, 500); // Brief pause between phases
+                }
+            });
+        }
+
+        // Animate rotor speed with easing
+        function animateToSpeed(targetSpeed, duration, onComplete) {
+            const startSpeed = animationState.rotorSpeed;
+            const startTime = Date.now();
+            const endTime = startTime + duration;
+            
+            function update() {
+                if (animationState.isPaused) return;
+                
+                const now = Date.now();
+                if (now >= endTime) {
+                    updateRotorSpeed(targetSpeed);
+                    if (onComplete) onComplete();
+                    return;
+                }
+                
+                const progress = (now - startTime) / duration;
+                // Easing function for smooth acceleration
+                const easedProgress = 1 - Math.pow(1 - progress, 3);
+                const currentSpeed = startSpeed + (targetSpeed - startSpeed) * easedProgress;
+                
+                updateRotorSpeed(currentSpeed);
+                
+                if (!animationState.isPaused) {
+                    requestAnimationFrame(update);
+                }
+            }
+            
+            update();
+        }
+
+        // Update rotor speed and all related effects
+        function updateRotorSpeed(speed) {
+            animationState.rotorSpeed = Math.min(speed, animationState.maxRotorSpeed);
+            
+            // Update slider and display
+            speedSlider.value = animationState.rotorSpeed;
+            speedValue.textContent = Math.round(animationState.rotorSpeed) + "%";
+            
+            // Update rotor animations
+            updateRotorAnimation();
+            
+            // Update visual effects based on speed
+            updateVisualEffects();
+            
+            // Check for phase-specific effects
+            checkPhaseEffects();
+        }
+
+        // Update rotor animation properties
+        function updateRotorAnimation() {
+            const speed = animationState.rotorSpeed;
+            
+            // Main rotor animation
+            if (speed > 0) {
+                const duration = Math.max(100, 5000 / (speed * 0.5)); // Faster spin with higher speed
+                mainRotor.style.animationDuration = `${duration}ms`;
+                mainRotor.classList.add('main-rotor-spinning');
+                
+                // Motion blur effect on blades
+                const blurAmount = Math.min(3, speed / 40);
+                blades.forEach(blade => {
+                    blade.style.filter = `blur(${blurAmount}px)`;
+                });
+            } else {
+                mainRotor.classList.remove('main-rotor-spinning');
+                blades.forEach(blade => {
+                    blade.style.filter = 'blur(0px)';
+                });
+            }
+            
+            // Tail rotor animation (starts earlier, spins faster)
+            if (speed > 10) {
+                const tailDuration = Math.max(50, 1000 / (speed * 0.8));
+                tailRotor.style.animationDuration = `${tailDuration}ms`;
+                tailRotor.classList.add('tail-rotor-spinning');
+            } else {
+                tailRotor.classList.remove('tail-rotor-spinning');
+            }
+        }
+
+        // Update visual effects based on rotor speed
+        function updateVisualEffects() {
+            const speed = animationState.rotorSpeed;
+            
+            // Ground shadow effect
+            const shadowOpacity = Math.min(0.6, speed / 200);
+            const shadowScale = 1 + (speed / 200);
+            groundShadow.style.opacity = shadowOpacity;
+            groundShadow.style.transform = `translateX(-50%) scale(${shadowScale})`;
+            
+            // Helicopter shake effect (starts at high speed)
+            if (speed > 80 && !animationState.isLiftingOff) {
+                helicopter.classList.add('helicopter-shaking');
+            } else {
+                helicopter.classList.remove('helicopter-shaking');
+            }
+            
+            // Dust particle generation
+            if (speed > 40 && animationState.isRunning && !animationState.isPaused) {
+                startDustGeneration(speed);
+            } else {
+                stopDustGeneration();
+            }
+        }
+
+        // Check for phase-specific effects
+        function checkPhaseEffects() {
+            const speed = animationState.rotorSpeed;
+            const phase = animationState.currentPhase;
+            
+            // Lift-off effect (phase 7)
+            if (phase === 6 && speed >= 95 && !animationState.isLiftingOff) {
+                startLiftOff();
+            }
+        }
+
+        // Start dust particle generation
+        function startDustGeneration(speed) {
+            if (animationState.dustInterval) return;
+            
+            const dustFrequency = Math.max(100, 500 - (speed * 4));
+            
+            animationState.dustInterval = setInterval(() => {
+                if (animationState.isPaused) return;
+                
+                createDustParticle();
+                // Create more particles at higher speeds
+                if (speed > 70) createDustParticle();
+                if (speed > 85) createDustParticle();
+            }, dustFrequency);
+        }
+
+        // Stop dust particle generation
+        function stopDustGeneration() {
+            if (animationState.dustInterval) {
+                clearInterval(animationState.dustInterval);
+                animationState.dustInterval = null;
+            }
+        }
+
+        // Create a single dust particle
+        function createDustParticle() {
+            const particle = document.createElement('div');
+            particle.className = 'dust-particle';
+            
+            // Random position around helicopter
+            const angle = Math.random() * Math.PI * 2;
+            const distance = 100 + Math.random() * 80;
+            const x = Math.cos(angle) * distance;
+            
+            particle.style.left = `calc(50% + ${x}px)`;
+            particle.style.bottom = '150px';
+            particle.style.setProperty('--dust-x', `${(Math.random() - 0.5) * 40}px`);
+            
+            // Random size and opacity
+            const size = 4 + Math.random() * 8;
+            particle.style.width = `${size}px`;
+            particle.style.height = `${size}px`;
+            particle.style.opacity = 0.4 + Math.random() * 0.4;
+            
+            dustContainer.appendChild(particle);
+            particle.classList.add('dust-particle-animating');
+            
+            // Remove particle after animation
+            setTimeout(() => {
+                if (particle.parentNode) {
+                    particle.parentNode.removeChild(particle);
+                }
+            }, 2000);
+        }
+
+        // Start lift-off sequence
+        function startLiftOff() {
+            animationState.isLiftingOff = true;
+            helicopter.classList.add('helicopter-lifting');
+            helicopter.classList.remove('helicopter-shaking');
+            
+            // Reduce dust generation during lift-off
+            stopDustGeneration();
+            
+            // Fade out shadow during lift-off
+            let shadowOpacity = 0.6;
+            const shadowFadeInterval = setInterval(() => {
+                shadowOpacity -= 0.02;
+                if (shadowOpacity <= 0) {
+                    clearInterval(shadowFadeInterval);
+                    groundShadow.style.opacity = 0;
+                } else {
+                    groundShadow.style.opacity = shadowOpacity;
+                }
+            }, 100);
+        }
+
+        // Toggle pause state
+        function togglePause() {
+            animationState.isPaused = !animationState.isPaused;
+            
+            if (animationState.isPaused) {
+                pauseBtn.textContent = "[PLAY] Resume";
+                updateStatus("Animation paused");
+                
+                // Pause CSS animations
+                mainRotor.style.animationPlayState = 'paused';
+                tailRotor.style.animationPlayState = 'paused';
+                helicopter.style.animationPlayState = 'paused';
+                
+                // Stop dust generation
+                stopDustGeneration();
+            } else {
+                pauseBtn.textContent = "[PAUSE] Pause";
+                updateStatus("Animation resumed");
+                
+                // Resume CSS animations
+                mainRotor.style.animationPlayState = 'running';
+                tailRotor.style.animationPlayState = 'running';
+                helicopter.style.animationPlayState = 'running';
+                
+                // Continue with phase sequence
+                if (animationState.isRunning) {
+                    runPhaseSequence();
+                }
+            }
+        }
+
+        // Reset animation to initial state
+        function resetAnimation() {
+            // Clear intervals
+            if (animationState.animationInterval) {
+                clearInterval(animationState.animationInterval);
+            }
+            stopDustGeneration();
+            
+            // Reset state
+            animationState.isRunning = false;
+            animationState.isPaused = false;
+            animationState.currentPhase = 0;
+            animationState.isLiftingOff = false;
+            
+            // Reset visual elements
+            updateRotorSpeed(0);
+            helicopter.classList.remove('helicopter-shaking', 'helicopter-lifting');
+            helicopter.style.bottom = '180px';
+            helicopter.style.animation = '';
+            
+            // Reset ground shadow
+            groundShadow.style.opacity = '0.4';
+            groundShadow.style.transform = 'translateX(-50%) scale(1)';
+            
+            // Clear dust particles
+            dustContainer.innerHTML = '';
+            
+            // Reset controls
+            startBtn.disabled = false;
+            pauseBtn.disabled = true;
+            pauseBtn.textContent = "[PAUSE] Pause";
+            speedSlider.disabled = false;
+            
+            // Update UI
+            updatePhaseIndicator(0);
+            updateStatus("Ready to start animation. Click 'Start Animation' to begin.");
+        }
+
+        // Complete animation sequence
+        function completeAnimation() {
+            animationState.isRunning = false;
+            startBtn.disabled = false;
+            pauseBtn.disabled = true;
+            speedSlider.disabled = false;
+            
+            updateStatus("Animation complete! Helicopter has lifted off. Click 'Reset' to start over.");
+            updatePhaseIndicator(phases.length);
+        }
+
+        // Handle manual speed change via slider
+        function handleManualSpeedChange() {
+            if (animationState.isRunning && !animationState.isPaused) return;
+            
+            const speed = parseInt(speedSlider.value);
+            updateRotorSpeed(speed);
+            
+            // Update status based on speed
+            if (speed === 0) {
+                updateStatus("Helicopter stationary");
+            } else if (speed < 30) {
+                updateStatus("Main rotor starting up");
+            } else if (speed < 70) {
+                updateStatus("Rotors accelerating");
+            } else if (speed < 90) {
+                updateStatus("High speed - dust effects visible");
+            } else {
+                updateStatus("Maximum power - ready for lift-off");
+            }
+        }
+
+        // Update phase indicator dots
+        function updatePhaseIndicator(activePhase) {
+            phaseDots.forEach((dot, index) => {
+                if (index < activePhase) {
+                    dot.classList.add('active');
+                } else {
+                    dot.classList.remove('active');
+                }
+            });
+        }
+
+        // Update status text
+        function updateStatus(text) {
+            statusText.textContent = text;
+        }
+
+        // Initialize when page loads
+        window.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>

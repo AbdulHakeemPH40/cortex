@@ -156,7 +156,7 @@ class PermissionManager:
             'semantic_search',
             'get_file_outline', 'analyze_file',
             'find_usages', 'find_function', 'find_class',
-            'check_syntax', 'get_problems',
+            'check_syntax', 'get_problems', 'check_layout',
             'lsp_find_references', 'lsp_go_to_definition',
             'search_memory'
         }

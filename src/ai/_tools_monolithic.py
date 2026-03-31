@@ -513,11 +513,13 @@ class ToolRegistry:
         
         # ========== MODULAR TOOLS INTEGRATION (FINAL) ==========
         # Initialize modular tool instances from their dedicated packages
-        from src.ai.tools.file_tools import ReadTool, WriteTool, EditTool
-        from src.ai.tools.search_tools import GrepTool, GlobTool, LspTool
+        from src.ai.tools.file_tools import ReadTool, WriteTool, EditTool, SurgicalInjectionTool
+        from src.ai.tools.search_tools import GrepTool, GlobTool, LspTool, SemanticSearchTool, CodebaseSearchTool
         from src.ai.tools.system_tools import BashTool, TaskTool
         from src.ai.tools.web_tools import WebFetchTool, WebSearchTool
         from src.ai.tools.interaction_tools import QuestionTool
+        from src.ai.tools.diagnostic_tools import CheckSyntaxTool, GetProblemsTool
+        from src.ai.tools.diagnostic_tools.check_layout_tool import CheckLayoutTool
         
         # Map of tool names (what AI uses) to modular tool implementations
         # This acts as the "bridge" for the migration.
@@ -526,14 +528,22 @@ class ToolRegistry:
             'read_file': ReadTool(),
             'write_file': WriteTool(),
             'edit_file': EditTool(),
+            'inject_into_placeholder': SurgicalInjectionTool(),
             
-            # Search & Insight (Aliased for compatibility)
+            # Diagnostics
+            'check_syntax': CheckSyntaxTool(),
+            'get_problems': GetProblemsTool(),
+            'check_layout': CheckLayoutTool(),
             'grep': GrepTool(),
             'search_code': GrepTool(),  # Legacy name alias
             'glob': GlobTool(),
             'lsp': LspTool(),
             'lsp_find_references': LspTool(),  # Alias for specific LSP op
             'lsp_go_to_definition': LspTool(), # Alias for specific LSP op
+            
+            # Semantic & Codebase Search
+            'search_codebase': CodebaseSearchTool(),
+            'semantic_search': SemanticSearchTool(),
             
             # System & Task
             'bash': BashTool(),
@@ -891,6 +901,16 @@ class ToolRegistry:
                 ToolParameter("file_path", "string", "Path to the file to check", required=True)
             ],
             function=self._check_syntax
+        )
+        
+        self.register_tool(
+            name="check_layout",
+            description="Inspect an HTML file to see why a UI element is missing or cut off. Extracts the DOM hierarchy up to the body tag and prints all CSS rules applied to its parent containers to debug layout overflow and height issues.",
+            parameters=[
+                ToolParameter("file_path", "string", "Path to the HTML file", required=True),
+                ToolParameter("selector", "string", "CSS selector for the missing element (e.g., '#startBtn')", required=True)
+            ],
+            function=self._check_layout
         )
         
         # Code quality operations
@@ -4137,46 +4157,19 @@ class ToolRegistry:
             raise Exception(f"Failed to analyze error: {e}")
 
     def _check_syntax(self, file_path: str) -> str:
-        """Check syntax of a file for errors."""
-        # DEFENSIVE: If AI is in creation mode, redirect to continue building
-        from src.ai.agent import AIAgent
-        if hasattr(self, '_parent_agent') and self._parent_agent:
-            if getattr(self._parent_agent, '_creation_mode', False):
-                return "⚠️ SKIPPED: check_syntax is unnecessary during file creation. Write success means the file is valid. Continue with write_file or run_command to test your files."
-        
-        try:
-            from src.core.syntax_checker import get_syntax_checker
-            from pathlib import Path
-            
-            resolved_path = self._resolve_path(file_path)
-            
-            if not resolved_path.exists():
-                return f"File not found: {file_path}"
-            
-            checker = get_syntax_checker()
-            content = resolved_path.read_text(encoding='utf-8', errors='ignore')
-            result = checker.check_file(str(resolved_path), content)
-            
-            if result.success:
-                return f"✅ No syntax errors in {file_path} ({result.language})"
-            
-            output_lines = [f"## Syntax Errors in {file_path}\n"]
-            output_lines.append(f"Language: {result.language}\n")
-            
-            for i, error in enumerate(result.errors, 1):
-                severity_icon = "❌" if error.severity == "error" else "⚠️" if error.severity == "warning" else "ℹ️"
-                output_lines.append(f"{i}. {severity_icon} Line {error.line}:{error.column}")
-                output_lines.append(f"   {error.message}")
-                if error.code:
-                    output_lines.append(f"   Code: {error.code}")
-                if error.source:
-                    output_lines.append(f"   Source: {error.source}")
-                output_lines.append("")
-            
-            return "\n".join(output_lines)
-            
-        except ImportError:
-            # Fallback to Python-only syntax check
-            return self._get_problems([file_path])
-        except Exception as e:
-            raise Exception(f"Failed to check syntax: {e}")
+        """Check syntax of a file using the NEW modular diagnostic tool."""
+        params = {"path": file_path}
+        result = self._modular_tools['check_syntax'].execute(params)
+        return result.result if result.success else f"Error checking syntax: {result.error}"
+
+    def _check_layout(self, file_path: str, selector: str) -> str:
+        """Check layout bounds using the CHECK LAYOUT modular diagnostic tool."""
+        params = {"path": file_path, "selector": selector}
+        result = self._modular_tools['check_layout'].execute(params)
+        return result.result if result.success else f"Error checking layout: {result.error}"
+
+    def _get_problems(self, file_paths: list) -> str:
+        """Get problems using the NEW modular diagnostic tool."""
+        params = {"paths": file_paths}
+        result = self._modular_tools['get_problems'].execute(params)
+        return result.result if result.success else f"Error getting problems: {result.error}"

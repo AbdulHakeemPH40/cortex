@@ -29,7 +29,11 @@ class WriteTool(BaseTool):
     """
     
     name = "write_file"
-    description = "Write content to a file. Creates new file or overwrites existing one."
+    description = (
+        "Write content to a file. Creates new file or overwrites existing one. "
+        "For massive files (> 500 lines) with mixed content (HTML+JS+CSS), consider writing a structural skeleton "
+        "first with placeholders like `// JS_PLACEHOLDER`, then use `inject_into_placeholder`."
+    )
     requires_confirmation = True
     is_safe = False
     
