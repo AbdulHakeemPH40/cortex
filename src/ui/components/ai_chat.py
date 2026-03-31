@@ -1148,6 +1148,9 @@ class AIChatWidget(QWidget):
 
     def update_todos(self, todos: list, main_task: str = ""):
         """Update the todo list in the UI."""
+        import logging
+        log = logging.getLogger('cortex.chat')
+        log.info(f"[TODO] update_todos called with {len(todos)} todos, main_task: '{main_task}'")
         safe_todos = json.dumps(todos)
         safe_task = json.dumps(main_task)
         self._view.page().runJavaScript(f"if(window.updateTodos) window.updateTodos({safe_todos}, {safe_task});")

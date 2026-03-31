@@ -35,6 +35,7 @@ from src.ui.dialogs.diff_viewer import DiffWindow
 from src.utils.icons import make_icon
 from src.utils.helpers import detect_language, shorten_path
 from src.utils.logger import get_logger
+from src.utils.notifications import show_task_complete_notification
 
 # Phase 1, 2, 3 Integration Imports
 from src.ai.title_generator import get_title_generator
@@ -1179,6 +1180,7 @@ class CortexMainWindow(QMainWindow):
         self._ai_chat.model_changed.connect(self._on_model_changed)
         self._ai_agent.response_chunk.connect(self._ai_chat.on_chunk)
         self._ai_agent.response_complete.connect(self._ai_chat.on_complete)
+        self._ai_agent.response_complete.connect(self._on_ai_task_complete)
         self._ai_agent.request_error.connect(self._ai_chat.on_error)
         self._ai_agent.file_generated.connect(self._open_file)
         self._ai_agent.file_edited_diff.connect(self._file_tracker.add_edit)
@@ -1678,18 +1680,22 @@ class CortexMainWindow(QMainWindow):
 
     def _on_show_diff(self, file_path: str):
         """Show diff in Qt dialog window — triggered by Diff button click in chat."""
+        log.info(f"[Diff] _on_show_diff called with: {file_path}")
         original, modified = '', ''
 
         # 1. Try the Python diff data store (most reliable)
         if hasattr(self, '_diff_data_store') and file_path in self._diff_data_store:
             original, modified = self._diff_data_store[file_path]
+            log.info(f"[Diff] Found in _diff_data_store: {file_path}")
         else:
+            log.debug(f"[Diff] Not in _diff_data_store directly. Checking normalized paths...")
             # 2. Normalize path and try again (Windows backslash vs forward slash)
             norm = file_path.replace('\\', '/')
             if hasattr(self, '_diff_data_store'):
                 for k, v in self._diff_data_store.items():
                     if k.replace('\\', '/') == norm:
                         original, modified = v
+                        log.info(f"[Diff] Found with normalized path: {k} -> {norm}")
                         break
 
         # 3. Fallback to file_tracker
@@ -1698,11 +1704,14 @@ class CortexMainWindow(QMainWindow):
             if edit_info:
                 original = edit_info.original_content if edit_info.edit_type != 'C' else ''
                 modified = edit_info.new_content
+                log.info(f"[Diff] Found in file_tracker: {file_path}")
 
         if not modified:
-            log.warning(f"No diff data found for {file_path}")
+            log.warning(f"[Diff] No diff data found for {file_path}")
+            log.debug(f"[Diff] _diff_data_store keys: {list(getattr(self, '_diff_data_store', {}).keys())}")
             return
 
+        log.info(f"[Diff] Opening diff tab for {file_path} (+{len(modified)} chars)")
         is_dark = self._theme_manager.is_dark
         self._editor_tabs.open_diff_tab(file_path, original, modified, is_dark)
 
@@ -1823,7 +1832,8 @@ class CortexMainWindow(QMainWindow):
         if not hasattr(self, '_diff_data_store'):
             self._diff_data_store = {}
         self._diff_data_store[file_path] = (original, new_content)
-        log.debug(f"Stored diff data for: {file_path}")
+        log.info(f"[Diff] Stored diff data for: {file_path} (original: {len(original)} chars, new: {len(new_content)} chars)")
+        log.debug(f"[Diff] _diff_data_store now has {len(self._diff_data_store)} entries")
 
         # Update sidebar changed files panel
         try:
@@ -4245,6 +4255,15 @@ class CortexMainWindow(QMainWindow):
             # Refresh all todos in chat UI
             tasks_list = [t.to_dict() for t in tasks]
             self._ai_chat.update_todos(tasks_list)
+
+    def _on_ai_task_complete(self, response: str):
+        """Show Windows toast notification when AI task completes."""
+        try:
+            if response and len(response) > 10:
+                summary = response[:150].replace('\n', ' ').strip()
+                show_task_complete_notification(summary)
+        except Exception:
+            pass
 
     def _on_title_generated(self, conversation_id: str, title: str):
         """Handle auto-generated title - update chat tab and UI."""

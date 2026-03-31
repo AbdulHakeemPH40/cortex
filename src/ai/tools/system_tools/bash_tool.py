@@ -159,6 +159,31 @@ class BashTool(BaseTool):
                 log.info(f"Executing command: {command}")
                 log.info(f"Working directory: {cwd}")
                 
+                # Detect interactive commands that might hang - log warning but always use DEVNULL
+                is_interactive = False
+                cmd_for_check = command.lower()
+                
+                # Python scripts with input() are interactive
+                if 'python' in cmd_for_check or 'py ' in cmd_for_check:
+                    # Check if it's running a Python script file
+                    import re
+                    py_match = re.search(r'python\s+(\S+\.py)', command, re.IGNORECASE)
+                    if py_match:
+                        script_path = os.path.join(cwd, py_match.group(1)) if not os.path.isabs(py_match.group(1)) else py_match.group(1)
+                        if os.path.exists(script_path):
+                            try:
+                                with open(script_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                    content = f.read()
+                                    if 'input(' in content or 'sys.stdin' in content:
+                                        is_interactive = True
+                                        log.warning(f"BashTool: Detected interactive Python script with input() - will use DEVNULL stdin: {script_path}")
+                            except Exception:
+                                pass
+                
+                # Always use DEVNULL to prevent hanging on interactive commands
+                # Interactive scripts (with input()) will get empty string from stdin
+                stdin_source = subprocess.DEVNULL
+                
                 # Try PowerShell first on Windows, then fallback to CMD
                 result = None
                 last_error = None
@@ -185,7 +210,8 @@ class BashTool(BaseTool):
                                 cwd=cwd,
                                 capture_output=True,
                                 text=True,
-                                timeout=timeout
+                                timeout=timeout,
+                                stdin=stdin_source  # DEVNULL for non-interactive, None for interactive
                             )
                             log.info(f"Command executed successfully with shell: {shell_name}, exit code: {result.returncode}")
                             break  # Success
@@ -206,7 +232,8 @@ class BashTool(BaseTool):
                             cwd=cwd,
                             capture_output=True,
                             text=True,
-                            timeout=timeout
+                            timeout=timeout,
+                            stdin=stdin_source
                         )
                         log.info(f"Command executed successfully with exit code: {result.returncode}")
                     except Exception as e:

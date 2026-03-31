@@ -1611,7 +1611,140 @@ class ToolRegistry:
             
             instruction_lower = instruction.lower()
             
-            # Parse instruction patterns
+            # Extract code from inline code blocks (```code``` or `code`)
+            code_blocks = []
+            for match in re.finditer(r'```[\w]*\n?(.*?)```', instruction, re.DOTALL):
+                code_blocks.append(match.group(1).strip())
+            if not code_blocks:
+                for match in re.finditer(r'`([^`]+)`', instruction):
+                    code = match.group(1).strip()
+                    if '\n' in code or len(code) > 3:
+                        code_blocks.append(code)
+            
+            # Pattern: "add this code after/in Y" with embedded code
+            if code_blocks and (' after ' in instruction_lower or ' before ' in instruction_lower or ' to ' in instruction_lower):
+                code_to_add = '\n'.join(code_blocks)
+                for sep in [' after ', ' before ']:
+                    if sep in instruction_lower:
+                        parts = instruction.split(sep, 1)
+                        anchor = parts[1].strip().rstrip('.').strip()
+                        if sep == ' after ':
+                            result = self._editor.inject_after(path, anchor, code_to_add)
+                            if result.success:
+                                return f"✅ Smart edit complete: Added code after '{anchor}' in {Path(path).name}"
+                        else:
+                            result = self._inject_before(path, anchor, code_to_add)
+                            if result.success:
+                                return f"✅ Smart edit complete: Added code before '{anchor}' in {Path(path).name}"
+                        break
+                else:
+                    # "add this code to X" - try as append
+                    parts = instruction.split(' to ', 1)
+                    if len(parts) > 1:
+                        target = parts[1].strip().rstrip('.').strip()
+                        result = self._append_to_function_or_class(path, target, code_to_add)
+                        if result.success:
+                            return f"✅ Smart edit complete: Added to '{target}' in {Path(path).name}"
+            
+            # Pattern: "add code: X after Y" or "code: X after Y"
+            code_colon_match = re.search(r'code:\s*([^\n]+(?:\n(?!\w+:)[^\n]+)*)\s+after\s+(\d+|.+)', instruction, re.IGNORECASE)
+            if code_colon_match:
+                code_to_add = code_colon_match.group(1).strip()
+                anchor = code_colon_match.group(2).strip()
+                result = self._editor.inject_after(path, anchor, code_to_add)
+                if result.success:
+                    return f"✅ Smart edit complete: Added code after '{anchor}' in {Path(path).name}"
+            
+            # Pattern: "after line X" with code mentioned
+            line_after_match = re.search(r'after\s+line\s+(\d+)', instruction_lower)
+            if line_after_match and code_blocks:
+                line_num = int(line_after_match.group(1))
+                if 1 <= line_num <= len(lines):
+                    anchor = lines[line_num - 1].strip()
+                    if anchor:
+                        code_to_add = '\n'.join(code_blocks)
+                        result = self._editor.inject_after(path, anchor, code_to_add)
+                        if result.success:
+                            return f"✅ Smart edit complete: Added code after line {line_num} in {Path(path).name}"
+            
+            # Pattern: Extract anchor from "after 'X'" or "after \"X\""
+            quoted_after_match = re.search(r"after\s+['\"](.+?)['\"]", instruction, re.IGNORECASE)
+            if quoted_after_match and code_blocks:
+                anchor = quoted_after_match.group(1).strip()
+                code_to_add = '\n'.join(code_blocks)
+                result = self._editor.inject_after(path, anchor, code_to_add)
+                if result.success:
+                    return f"✅ Smart edit complete: Added code after '{anchor}' in {Path(path).name}"
+            
+            # Pattern: Look for "Add this code:" followed by actual code on next lines
+            add_this_code_match = re.search(r'add\s+this\s+code\s*:?\s*\n(.*?)(?:\n\n|\Z)', instruction, re.IGNORECASE | re.DOTALL)
+            if add_this_code_match:
+                code_to_add = add_this_code_match.group(1).strip()
+                # Try to find anchor
+                anchor_match = re.search(r'after\s+(?:the\s+)?(.+?)(?:\.|$)', instruction, re.IGNORECASE)
+                if anchor_match:
+                    anchor = anchor_match.group(1).strip()
+                    result = self._editor.inject_after(path, anchor, code_to_add)
+                    if result.success:
+                        return f"✅ Smart edit complete: Added code after '{anchor}' in {Path(path).name}"
+                # Try "to function X" or "to X function"
+                func_match = re.search(r'to\s+(?:the\s+)?(\w+)\s+function', instruction_lower)
+                if not func_match:
+                    func_match = re.search(r'to\s+(?:the\s+)?(\w+)\s+function', instruction_lower)
+                if not func_match:
+                    func_match = re.search(r'(?:the\s+)?(\w+)\s+function', instruction_lower)
+                if func_match:
+                    func_name = func_match.group(1)
+                    result = self._append_to_function_or_class(path, func_name, code_to_add)
+                    if result.success:
+                        return f"✅ Smart edit complete: Added to '{func_name}' in {Path(path).name}"
+            
+            # Pattern: "add error handling to the X function" or "add error handling to X function"
+            if 'error handling' in instruction_lower:
+                func_match = re.search(r'the (\w+) function', instruction_lower)
+                if not func_match:
+                    func_match = re.search(r'to (\w+) function', instruction_lower)
+                if not func_match:
+                    func_match = re.search(r'(\w+) function', instruction_lower)
+                if func_match:
+                    func_name = func_match.group(1)
+                    if func_name not in ['error', 'function', 'add', 'insert']:
+                        return self._add_error_handling_to_function(path, func_name)
+            
+            # Pattern: "wrap X in try-except" or "add try-except around X"
+            if ('wrap' in instruction_lower and 'try-except' in instruction_lower) or \
+               ('try-except' in instruction_lower and 'around' in instruction_lower):
+                return self._wrap_in_try_except(path, instruction)
+            
+            # Pattern: "add logging to X" or "add logging to function X" or "add X to function Y"
+            if 'logging' in instruction_lower or 'print statement' in instruction_lower:
+                func_match = re.search(r'the (\w+) function', instruction_lower)
+                if not func_match:
+                    func_match = re.search(r'to (\w+) function', instruction_lower)
+                if not func_match:
+                    func_match = re.search(r'(\w+) function', instruction_lower)
+                if func_match:
+                    func_name = func_match.group(1)
+                    # Verify it's a reasonable function name
+                    if func_name not in ['error', 'function', 'add', 'insert']:
+                        return self._add_logging_to_function(path, func_name)
+            
+            # Pattern: "modify the X function" or "change the X function" or "modify X function"
+            if ('modify' in instruction_lower or 'change' in instruction_lower or 'update' in instruction_lower) and \
+               'function' in instruction_lower:
+                func_match = re.search(r'the (\w+) function', instruction_lower)
+                if not func_match:
+                    func_match = re.search(r'(\w+) function', instruction_lower)
+                if func_match:
+                    func_name = func_match.group(1)
+                    if func_name not in ['modify', 'change', 'update', 'function', 'add', 'insert']:
+                        # Extract what modification is needed from instruction
+                        modification = instruction.replace('modify', '').replace('change', '').replace('update', '').strip()
+                        modification = modification.replace(f'the {func_name} function', '').strip()
+                        modification = modification.replace(f'{func_name} function', '').strip()
+                        if modification:
+                            return self._modify_function_based_on_instruction(path, func_name, modification)
+            
             # Pattern: "add X after Y" or "insert X after Y"
             if ' after ' in instruction_lower:
                 parts = instruction.split(' after ', 1)
@@ -1679,6 +1812,40 @@ class ToolRegistry:
                         if result.success:
                             return f"✅ Smart edit complete: Added to class '{class_name}' in {Path(path).name}"
                         break
+            
+            # Pattern: "add X to the Y function" or "add X to Y function" (flexible function targeting)
+            # Handles: "add logging to the main function", "add X to main function", etc.
+            func_patterns = [
+                r"add\s+(.+?)\s+to\s+the\s+(\w+)\s+function\b",
+                r"add\s+(.+?)\s+to\s+(\w+)\s+function\b",
+                r"add\s+(.+?)\s+to\s+(\w+)$",
+                r"(?:add|insert)\s+(.+?)\s+(?:inside|in)\s+(?:the\s+)?(\w+)\b",
+            ]
+            for pattern in func_patterns:
+                match = re.search(pattern, instruction_lower)
+                if match:
+                    new_code = match.group(1).strip()
+                    func_name = match.group(2).strip()
+                    # Skip if this looks like a different pattern
+                    if func_name in ['class', 'end', 'bottom', 'start', 'beginning']:
+                        continue
+                    result = self._append_to_function_or_class(path, func_name, new_code)
+                    if result.success:
+                        return f"✅ Smart edit complete: Added to '{func_name}' in {Path(path).name}"
+                    break
+            
+            # Pattern: "add X to Y" where Y is any identifier - try as function name
+            # This is a fallback for instructions like "add logging to main"
+            add_to_pattern = r"add\s+(.+?)\s+to\s+(\w+)"
+            match = re.search(add_to_pattern, instruction_lower)
+            if match:
+                new_code = match.group(1).strip()
+                target = match.group(2).strip()
+                # Skip common words
+                if target not in ['end', 'bottom', 'start', 'beginning', 'class', 'function', 'file']:
+                    result = self._append_to_function_or_class(path, target, new_code)
+                    if result.success:
+                        return f"✅ Smart edit complete: Added to '{target}' in {Path(path).name}"
             
             # Default: Try to find a pattern or add at end
             raise Exception(
@@ -1889,6 +2056,190 @@ class ToolRegistry:
         resolved_path.write_text(content + new_function, encoding='utf-8')
         
         return f"✅ Added new function '{func_name}' to {Path(path).name}"
+
+    def _add_error_handling_to_function(self, path: str, func_name: str) -> str:
+        """Add try-except error handling to a function."""
+        resolved_path = self._resolve_path(path)
+        content = resolved_path.read_text(encoding='utf-8')
+        lines = content.split('\n')
+        
+        func_line = -1
+        func_indent = ""
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith(f'def {func_name}') or stripped.startswith(f'async def {func_name}'):
+                func_line = i
+                func_indent = line[:len(line) - len(line.lstrip())]
+                break
+        
+        if func_line == -1:
+            return type('EditResult', (), {'success': False, 'error': f"Function '{func_name}' not found"})()
+        
+        base_indent = len(func_indent)
+        
+        # Find function body (skip def line and docstring)
+        body_start = func_line + 1
+        if body_start < len(lines) and '"""' in lines[body_start] or "'''" in lines[body_start]:
+            quote_char = '"""' if '"""' in lines[body_start] else "'''"
+            body_start += 1
+            while body_start < len(lines) and quote_char not in lines[body_start]:
+                body_start += 1
+            body_start += 1
+        
+        # Find the end of function
+        body_end = len(lines)
+        for i in range(body_start, len(lines)):
+            line = lines[i]
+            if line.strip() and not line.startswith(' ' * (base_indent + 1)):
+                body_end = i
+                break
+        
+        # Get function body content
+        body_lines = lines[body_start:body_end]
+        if not body_lines:
+            return type('EditResult', (), {'success': False, 'error': f"Function '{func_name}' has no body to wrap"})()
+        
+        # Create wrapped body with try-except
+        indent4 = func_indent + '    '
+        indent8 = func_indent + '        '
+        
+        wrapped_lines = []
+        wrapped_lines.append(f"{indent4}try:")
+        for body_line in body_lines:
+            stripped = body_line.strip()
+            if stripped:
+                wrapped_lines.append(f"{indent8}{body_line.strip()}")
+            else:
+                wrapped_lines.append(f"{indent8}")
+        wrapped_lines.append(f"{indent4}except Exception as e:")
+        wrapped_lines.append(f"{indent8}print(f\"Error in {func_name}: {{e}}\")")
+        wrapped_lines.append(f"{indent8}raise")
+        
+        new_lines = lines[:body_start] + wrapped_lines + lines[body_end:]
+        
+        self._editor.undo_stack.push(str(resolved_path), content, f"add error handling to {func_name}")
+        resolved_path.write_text('\n'.join(new_lines), encoding='utf-8')
+        
+        return f"✅ Added error handling to function '{func_name}' in {Path(path).name}"
+
+    def _wrap_in_try_except(self, path: str, instruction: str) -> str:
+        """Wrap code in try-except block based on instruction."""
+        resolved_path = self._resolve_path(path)
+        content = resolved_path.read_text(encoding='utf-8')
+        lines = content.split('\n')
+        
+        instruction_lower = instruction.lower()
+        
+        # Try to find a specific statement to wrap
+        wrap_keywords = ['print', 'call', 'request', 'execute', 'run', 'fetch', 'load', 'save', 'write', 'read']
+        target_line = -1
+        
+        for keyword in wrap_keywords:
+            if keyword in instruction_lower:
+                for i, line in enumerate(lines):
+                    if keyword in line.lower() and not line.strip().startswith('#'):
+                        target_line = i
+                        break
+                if target_line != -1:
+                    break
+        
+        if target_line == -1:
+            return type('EditResult', (), {'success': False, 'error': "Could not find code to wrap in try-except"})()
+        
+        target_content = lines[target_line]
+        indent = target_content[:len(target_content) - len(target_content.lstrip())]
+        
+        wrapped = f"{indent}try:\n{indent}    {target_content.strip()}\n{indent}except Exception as e:\n{indent}    print(f\"Error: {{e}}\")"
+        
+        new_lines = lines[:target_line] + wrapped.split('\n') + lines[target_line + 1:]
+        
+        self._editor.undo_stack.push(str(resolved_path), content, "wrap in try-except")
+        resolved_path.write_text('\n'.join(new_lines), encoding='utf-8')
+        
+        return f"✅ Wrapped code in try-except in {Path(path).name}"
+
+    def _add_logging_to_function(self, path: str, func_name: str) -> str:
+        """Add logging/print statements to a function."""
+        resolved_path = self._resolve_path(path)
+        content = resolved_path.read_text(encoding='utf-8')
+        lines = content.split('\n')
+        
+        func_line = -1
+        func_indent = ""
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith(f'def {func_name}') or stripped.startswith(f'async def {func_name}'):
+                func_line = i
+                func_indent = line[:len(line) - len(line.lstrip())]
+                break
+        
+        if func_line == -1:
+            return type('EditResult', (), {'success': False, 'error': f"Function '{func_name}' not found"})()
+        
+        base_indent = len(func_indent)
+        
+        # Find first line of function body
+        body_start = func_line + 1
+        if body_start < len(lines) and ('"""' in lines[body_start] or "'''" in lines[body_start]):
+            quote_char = '"""' if '"""' in lines[body_start] else "'''"
+            body_start += 1
+            while body_start < len(lines) and quote_char not in lines[body_start]:
+                body_start += 1
+            body_start += 1
+        
+        # Skip empty lines
+        while body_start < len(lines) and not lines[body_start].strip():
+            body_start += 1
+        
+        indent4 = func_indent + '    '
+        log_line = f"{indent4}print(f\"{func_name}: starting...\")"
+        
+        new_lines = lines[:body_start] + [log_line] + lines[body_start:]
+        
+        self._editor.undo_stack.push(str(resolved_path), content, f"add logging to {func_name}")
+        resolved_path.write_text('\n'.join(new_lines), encoding='utf-8')
+        
+        return f"✅ Added logging to function '{func_name}' in {Path(path).name}"
+
+    def _modify_function_based_on_instruction(self, path: str, func_name: str, modification: str) -> str:
+        """Modify a function based on natural language instruction."""
+        resolved_path = self._resolve_path(path)
+        content = resolved_path.read_text(encoding='utf-8')
+        lines = content.split('\n')
+        
+        func_line = -1
+        func_indent = ""
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith(f'def {func_name}') or stripped.startswith(f'async def {func_name}'):
+                func_line = i
+                func_indent = line[:len(line) - len(line.lstrip())]
+                break
+        
+        if func_line == -1:
+            return type('EditResult', (), {'success': False, 'error': f"Function '{func_name}' not found"})()
+        
+        modification_lower = modification.lower()
+        
+        # Determine what to add based on modification request
+        if 'return' in modification_lower and ('non-zero' in modification_lower or 'error' in modification_lower or 'fail' in modification_lower):
+            indent4 = func_indent + '    '
+            end_marker = f"{indent4}return 1  # Error"
+            for i in range(len(lines) - 1, func_line, -1):
+                if lines[i].strip() and not lines[i].startswith(func_indent + '    '):
+                    break
+                if lines[i].strip().startswith('return'):
+                    lines[i] = indent4 + 'return 1  # Error case'
+                    break
+            else:
+                lines.append('')
+                lines.append(end_marker)
+            
+            self._editor.undo_stack.push(str(resolved_path), content, f"modify {func_name}")
+            resolved_path.write_text('\n'.join(lines), encoding='utf-8')
+            return f"✅ Modified '{func_name}' to return error status in {Path(path).name}"
+        
+        return type('EditResult', (), {'success': False, 'error': f"Could not understand modification: '{modification}'"})()
 
     def _insert_at_line(self, path: str, line: int, content: str) -> str:
         """Insert content at a specific line number."""

@@ -3056,7 +3056,8 @@ function showCreatedFilesCard(summaryData) {
             } else {
                 diffBtn.onclick = (function(p) {
                     return function() {
-                        if (bridge && bridge.show_diff) bridge.show_diff(p);
+                        if (window.bridge && window.bridge.on_show_diff) window.bridge.on_show_diff(p);
+                        else if (bridge && bridge.on_show_diff) bridge.on_show_diff(p);
                     };
                 })(path);
             }
@@ -3110,17 +3111,25 @@ function getCfcFileIcon(ext) {
 var currentTodoList = [];
 
 function updateTodos(todos, mainTask) {
-    if (!todos || !Array.isArray(todos)) return;
+    console.log('[TODO] updateTodos called, todos count:', todos ? todos.length : 0);
+    if (!todos || !Array.isArray(todos)) {
+        console.log('[TODO] Invalid todos data, returning');
+        return;
+    }
 
     var section  = document.getElementById('todo-section');
     var list     = document.getElementById('todo-list');
     var previewEl = document.getElementById('todo-preview-text');
     var countEl  = document.getElementById('todo-progress-count');
 
-    if (!section || !list) return;
+    if (!section || !list) {
+        console.log('[TODO] section or list not found, section:', !!section, 'list:', !!list);
+        return;
+    }
 
     // If empty todos received, don't clear existing ones - persist until completed
     if (todos.length === 0) {
+        console.log('[TODO] Empty todos received');
         // Only hide if there are no existing todos
         if (currentTodoList.length === 0) {
             section.style.display = 'none';
@@ -3130,6 +3139,8 @@ function updateTodos(todos, mainTask) {
         }
         return;
     }
+    
+    console.log('[TODO] Processing', todos.length, 'todos');
 
     // Merge new todos with existing ones (avoid duplicates by id)
     var existingIds = new Set(currentTodoList.map(function(t) { return t.id; }));
@@ -4570,7 +4581,16 @@ document.addEventListener('DOMContentLoaded', function() {
     };
 
     window.showDiff = function(filePath) {
-        if (bridge) bridge.on_show_diff(filePath);
+        console.log('[Diff] showDiff called with:', filePath);
+        if (window.bridge && window.bridge.on_show_diff) {
+            window.bridge.on_show_diff(filePath);
+            console.log('[Diff] Bridge method called successfully');
+        } else if (bridge && bridge.on_show_diff) {
+            bridge.on_show_diff(filePath);
+            console.log('[Diff] Legacy bridge method called');
+        } else {
+            console.error('[Diff] Bridge or on_show_diff not available. bridgeReady:', window.bridgeReady);
+        }
     };
 
     window.markFileAccepted = function(filePath) {

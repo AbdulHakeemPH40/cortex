@@ -3317,9 +3317,12 @@ REMEMBER:
         main_task = ""
         cleaned_text = text
         
+        log.info(f"[TODO] _parse_and_emit_todos called, text length: {len(text)}")
+        
         # 1. Try to find a <tasklist> section first
         tasklist_match = re.search(r'<tasklist>(.*?)</tasklist>', text, re.DOTALL)
         content_to_parse = tasklist_match.group(1) if tasklist_match else text
+        log.info(f"[TODO] tasklist_match found: {tasklist_match is not None}")
         
         # 2. Global search for [ ] or [x] items
         # Matches "- [ ] Task" or "* [x] Task" or "1. [ ] Task"
@@ -3327,6 +3330,8 @@ REMEMBER:
         task_pattern = r'\[([ xX])\]\s*([^\[\n<]+)'
         
         matches = list(re.finditer(task_pattern, content_to_parse))
+        log.info(f"[TODO] Found {len(matches)} [ ]/[x] patterns in text")
+        
         task_id = 0
         
         for match in matches:
@@ -3344,6 +3349,8 @@ REMEMBER:
             
             task_id += 1
             checked = status_char == 'x'
+            
+            log.info(f"[TODO] Parsed todo {task_id}: '{content[:50]}...' status: {'COMPLETE' if checked else 'PENDING'}")
             
             # Clean up markdown formatting
             content = re.sub(r'\*\*(.+?)\*\*', r'\1', content)
