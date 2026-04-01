@@ -40,13 +40,12 @@ a = Analysis(
     ],
     hiddenimports=[
         'winpty',          # pywinpty package imports as winpty
-        'winpty._winpty',  # C extension module
         'PyQt6.QtWebEngineWidgets',
         'PyQt6.QtWebChannel',
         'PyQt6.QtWebEngineCore',
         'PyQt6.sip',
         'src.ai.providers.deepseek_provider',
-        'src.ai.providers.together_provider',
+        'src.ai.providers.siliconflow_provider',
         'src.core.lsp_manager',
     ],
     hookspath=[],

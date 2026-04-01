@@ -10,17 +10,36 @@ from pathlib import Path
 # CRITICAL: Load .env FIRST before ANY other imports!
 try:
     from dotenv import load_dotenv
+    
+    # Resolve correct root path for PyInstaller
+    if getattr(sys, 'frozen', False):
+        # Running as compiled executable
+        if hasattr(sys, '_MEIPASS'):
+            # PyInstaller bundled app - .env is in _MEIPASS temp folder
+            app_root = Path(sys._MEIPASS)
+        else:
+            # Nuitka or other compiler - next to executable
+            app_root = Path(sys.executable).parent
+    else:
+        # Development mode
+        app_root = Path(__file__).parent.parent
+        
     env_paths = [
-        Path(__file__).parent.parent.parent / ".env",
+        app_root / ".env",
         Path.cwd() / ".env",
+        # Fallback: user's home directory
+        Path.home() / ".cortex" / ".env",
     ]
+    
     for env_path in env_paths:
         if env_path.exists():
             load_dotenv(env_path)
             print(f"[MAIN] Loaded .env from: {env_path}")
             break
+    else:
+        print("[MAIN] WARNING: No .env file found!")
 except ImportError:
-    pass
+    print("[MAIN] WARNING: python-dotenv not installed")
 
 # HiDPI + Windows platform setup (BEFORE QApplication)
 os.environ['QT_ENABLE_HIGHDPI_SCALING'] = '1'

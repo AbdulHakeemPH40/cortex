@@ -18,11 +18,15 @@ try:
     from dotenv import load_dotenv
     import sys
     
-    # Possible locations for .env file
+    # Resolve correct root path for PyInstaller
+    if getattr(sys, 'frozen', False):
+        app_root = Path(sys.executable).parent
+    else:
+        app_root = Path(__file__).parent.parent.parent
+        
     env_paths = [
-        Path(__file__).parent.parent.parent / ".env",  # Development
-        Path.cwd() / ".env",  # Current working directory
-        Path(sys.executable).parent / ".env",  # Next to EXE (packaged)
+        app_root / ".env",
+        Path.cwd() / ".env",
     ]
     
     for env_path in env_paths:
