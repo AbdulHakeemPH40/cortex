@@ -18,6 +18,7 @@ class ProviderType(Enum):
     """Supported LLM providers."""
     DEEPSEEK = "deepseek"   # Primary provider for agentic work
     SILICONFLOW = "siliconflow"  # Vision models
+    MISTRAL = "mistral"     # Mistral AI models
     OPENAI = "openai"       # For OpenAI or SiliconFlow if used as OpenAI
 
 @dataclass
@@ -325,6 +326,14 @@ class ProviderRegistry:
         
         # Register core provider
         self._register_provider(ProviderType.DEEPSEEK, DeepSeekProvider())
+        
+        # Register Mistral provider
+        try:
+            from src.ai.providers.mistral_provider import MistralProvider
+            self._register_provider(ProviderType.MISTRAL, MistralProvider())
+            log.info("MistralProvider registered")
+        except (ImportError, Exception) as e:
+            log.warning(f"Could not register MistralProvider: {e}")
         
         # Lazily register other providers if their modules are available
         try:

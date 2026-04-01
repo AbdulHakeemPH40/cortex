@@ -22,8 +22,8 @@ installer_output/
 nul
 
 # Documentation (optional)
-Docs/
-*.md
+# Docs/
+# *.md
 
 # Python cache
 __pycache__/
@@ -44,3 +44,4 @@ installer_output/
 opencode-dev/
 vscode-main/
 node_modules/
+# claude-code/

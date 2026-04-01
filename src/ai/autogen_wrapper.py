@@ -17,18 +17,18 @@ try:
     from autogen_core import CancellationToken
     from autogen_ext.models.openai import OpenAIChatCompletionClient
     AUTOGEN_AVAILABLE = True
-    log.info("✅ AutoGen 0.7+ loaded successfully")
+    log.info("[OK] AutoGen 0.7+ loaded successfully")
 except ImportError as e:
     log.debug(f"AutoGen 0.7+ not available, checking legacy... ({e})")
     # Try old import for compatibility
     try:
         from autogen import AssistantAgent, UserProxyAgent, ConversableAgent, GroupChat, GroupChatManager
         AUTOGEN_AVAILABLE = True
-        log.info("✅ AutoGen (legacy) loaded successfully")
+        log.info("[OK] AutoGen (legacy) loaded successfully")
     except ImportError as e2:
         AUTOGEN_AVAILABLE = False
         log.debug(f"Legacy AutoGen also not available ({e2})")
-        log.warning("⚠️ AutoGen not installed. Multi-agent features disabled.")
+        log.warning("[WARN] AutoGen not installed. Multi-agent features disabled.")
 
 
 class CortexAgent:

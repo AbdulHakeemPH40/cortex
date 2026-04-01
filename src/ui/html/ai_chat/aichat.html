@@ -65,6 +65,12 @@
       };
       document.head.appendChild(hljsLink);
       
+      // Load universal syntax highlighting CSS
+      var syntaxHighlightingLink = document.createElement('link');
+      syntaxHighlightingLink.rel = 'stylesheet';
+      syntaxHighlightingLink.href = 'syntax-highlighting.css';
+      document.head.appendChild(syntaxHighlightingLink);
+      
       if (window.hljs) {
         hljs.configure({
           ignoreUnescapedHTML: true,
@@ -96,7 +102,18 @@
       html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; }
       #app-container { height: 100%; display: flex; }
       #chat-container { height: 100%; display: flex; flex-direction: column; flex: 1; min-width: 0; }
-      #chatMessages { flex: 1; overflow-y: auto; min-height: 0; }
+      #chatMessages { 
+          flex: 1; 
+          overflow-y: auto; 
+          min-height: 0; 
+          position: relative;
+          display: flex;
+          flex-direction: column;
+      }
+      
+      #chatMessages > * {
+          overflow: visible;
+      }
       
       /* Indexing status bar */
       .indexing-bar {
@@ -378,75 +395,166 @@
       }
       
       /* ══════════════════════════════════════════════════════════════
-         PROFESSIONAL PERMISSION CARD - Cursor/Qoder Style
+         CLEAN PERMISSION CARD - Windsurf Style
          ══════════════════════════════════════════════════════════════ */
       
-      .permission-card.cursor-style {
+      .permission-card {
+          background: var(--bg-secondary, #1a1a1a);
+          border: 1px solid var(--border-primary, #2a2a2a);
+          border-radius: 12px;
+          padding: 16px;
+          margin: 12px 0;
+          animation: fadeIn 0.3s ease;
           position: relative;
-          margin: 16px auto;
-          width: calc(100% - 32px);
-          max-width: 580px;
-          border-radius: 14px;
-          font-family: 'Outfit', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-          animation: permissionSlideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-          z-index: 500;
+          z-index: 10000;
+          display: block;
+          width: 100%;
+          box-sizing: border-box;
+          max-width: 100%;
+          overflow: visible;
       }
       
-      .permission-backdrop {
-          position: absolute;
-          inset: 0;
-          background: linear-gradient(135deg, rgba(245, 158, 11, 0.08), rgba(59, 130, 246, 0.06));
-          border-radius: 14px;
-          border: 1px solid rgba(245, 158, 11, 0.2);
-          box-shadow: 
-              0 8px 32px rgba(0, 0, 0, 0.6),
-              0 0 20px rgba(245, 158, 11, 0.15),
-              inset 0 1px 0 rgba(255, 255, 255, 0.05);
-          z-index: -1;
+      @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(-8px); }
+          to { opacity: 1; transform: translateY(0); }
       }
       
-      .permission-card-content {
-          background: rgba(17, 17, 17, 0.95);
-          border-radius: 14px;
-          overflow: hidden;
-      }
-      
-      .permission-card-header {
+      .permission-header {
           display: flex;
           align-items: center;
           gap: 12px;
-          padding: 16px 18px;
-          background: linear-gradient(90deg, rgba(245, 158, 11, 0.08), transparent);
-          border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-      }
-      
-      .permission-icon-wrapper {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          width: 40px;
-          height: 40px;
-          background: linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(245, 158, 11, 0.08));
-          border-radius: 10px;
-          border: 1px solid rgba(245, 158, 11, 0.3);
-          flex-shrink: 0;
+          margin-bottom: 12px;
       }
       
       .permission-icon {
-          color: #f59e0b;
-          filter: drop-shadow(0 0 8px rgba(245, 158, 11, 0.4));
-      }
-      
-      .permission-header-text {
+          width: 36px;
+          height: 36px;
+          border-radius: 8px;
           display: flex;
-          flex-direction: column;
-          gap: 3px;
-          flex: 1;
+          align-items: center;
+          justify-content: center;
+          font-size: 18px;
+          flex-shrink: 0;
       }
       
-      .permission-card-title {
+      .permission-icon.write {
+          background: rgba(234, 179, 8, 0.15);
+          color: #eab308;
+      }
+      
+      .permission-icon.delete {
+          background: rgba(239, 68, 68, 0.15);
+          color: #ef4444;
+      }
+      
+      .permission-icon.terminal {
+          background: rgba(168, 85, 247, 0.15);
+          color: #a855f7;
+      }
+      
+      .permission-icon.read {
+          background: rgba(34, 197, 94, 0.15);
+          color: #22c55e;
+      }
+      
+      .permission-title {
+          font-weight: 600;
+          font-size: 14px;
+          color: var(--text-primary, #f5f5f5);
+      }
+      
+      .permission-desc {
           font-size: 12px;
-          font-weight: 700;
+          color: var(--text-secondary, #a3a3a3);
+      }
+      
+      .permission-path {
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 12px;
+          background: var(--bg-tertiary, #242424);
+          padding: 10px 12px;
+          border-radius: 8px;
+          border: 1px solid var(--border-secondary, #333);
+          margin: 12px 0;
+          word-break: break-all;
+          color: var(--text-secondary, #a3a3a3);
+      }
+      
+      .permission-actions {
+          display: flex;
+          gap: 8px;
+          margin-top: 12px;
+      }
+      
+      .permission-btn {
+          padding: 8px 16px;
+          border-radius: 8px;
+          border: none;
+          font-size: 13px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: all 0.15s ease;
+      }
+      
+      .permission-btn.primary {
+          background: #3b82f6;
+          color: white;
+      }
+      
+      .permission-btn.primary:hover {
+          background: #2563eb;
+      }
+      
+      .permission-btn.secondary {
+          background: var(--bg-tertiary, #242424);
+          color: var(--text-primary, #f5f5f5);
+          border: 1px solid var(--border-secondary, #333);
+      }
+      
+      .permission-btn.secondary:hover {
+          background: var(--bg-hover, #2a2a2a);
+      }
+      
+      .permission-btn.success {
+          background: #22c55e;
+          color: #000;
+      }
+      
+      .permission-btn.danger {
+          background: #ef4444;
+          color: white;
+      }
+      
+      /* Legacy support for old permission-card class */
+      .permission-card.cursor-style {
+          composes: permission-card;
+      }
+      
+      .permission-backdrop {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: rgba(0, 0, 0, 0.5);
+          display: none;
+          z-index: 9999;
+      }
+      
+      .permission-card.visible ~ .permission-backdrop,
+      .permission-card-content {
+          display: block;
+      }
+      
+      .permission-card-header,
+      .permission-icon-wrapper,
+      .permission-card-body,
+      .permission-details-container,
+      .permission-tool-badge {
+          display: block;
+      }
+      
+      .permission-tool-badge {
           color: #f59e0b;
           text-transform: uppercase;
           letter-spacing: 0.8px;
@@ -460,6 +568,8 @@
       
       .permission-card-body {
           padding: 18px;
+          overflow-y: auto;
+          max-height: 60vh;
       }
       
       .permission-tool-badge {
@@ -474,6 +584,8 @@
           font-size: 13px;
           font-weight: 600;
           color: #60a5fa;
+          position: relative;
+          z-index: 10001;
       }
       
       .tool-badge-icon {
@@ -841,8 +953,155 @@
       }
       
       /* ══════════════════════════════════════════════════════════════
-         CODE COMPLETION UI - OpenCode Style Integration
+         SMALL INLINE TERMINAL CARD - Inside Chat
          ══════════════════════════════════════════════════════════════ */
+      
+      .terminal-inline {
+          background: var(--bg-secondary, #1a1a1a);
+          border: 1px solid var(--border-primary, #2a2a2a);
+          border-radius: 12px;
+          margin: 12px 0;
+          overflow: hidden;
+      }
+      
+      .terminal-inline-header {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 10px 14px;
+          background: var(--bg-tertiary, #242424);
+          border-bottom: 1px solid var(--border-primary, #2a2a2a);
+      }
+      
+      .terminal-inline-icon {
+          font-size: 12px;
+      }
+      
+      .terminal-inline-title {
+          font-size: 12px;
+          font-weight: 500;
+          flex: 1;
+          color: var(--text-primary, #f5f5f5);
+      }
+      
+      .terminal-inline-status {
+          font-size: 11px;
+          color: var(--accent-green, #22c55e);
+      }
+      
+      .terminal-inline-content {
+          padding: 12px 14px;
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 12px;
+          line-height: 1.6;
+          max-height: 150px;
+          overflow-y: auto;
+          color: var(--text-secondary, #a3a3a3);
+      }
+      
+      .terminal-line {
+          margin-bottom: 2px;
+          white-space: pre-wrap;
+      }
+      
+      .terminal-prompt {
+          color: var(--accent-green, #22c55e);
+      }
+      
+      .terminal-output {
+          color: var(--text-secondary, #a3a3a3);
+      }
+      
+      /* ══════════════════════════════════════════════════════════════
+         MESSAGE LAYOUT - User Right, AI Left
+         ══════════════════════════════════════════════════════════════ */
+      
+      .message {
+          display: flex;
+          gap: 12px;
+          margin: 16px 0;
+          animation: fadeIn 0.3s ease;
+      }
+      
+      .message.user {
+          flex-direction: row-reverse;
+      }
+      
+      .message.user .message-content {
+          align-items: flex-end;
+      }
+      
+      .message.user .message-bubble {
+          background: var(--accent-blue, #3b82f6);
+          color: white;
+          border-radius: 12px 12px 4px 12px;
+      }
+      
+      .message.ai .message-bubble {
+          background: var(--bg-secondary, #1a1a1a);
+          border: 1px solid var(--border-primary, #2a2a2a);
+          border-radius: 12px 12px 12px 4px;
+      }
+      
+      .message-avatar {
+          width: 32px;
+          height: 32px;
+          border-radius: 8px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 14px;
+          flex-shrink: 0;
+      }
+      
+      .message-avatar.user {
+          background: var(--bg-tertiary, #242424);
+      }
+      
+      .message-avatar.ai {
+          background: linear-gradient(135deg, var(--accent-blue, #3b82f6), var(--accent-purple, #a855f7));
+      }
+      
+      .message-content {
+          flex: 1;
+          min-width: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+      }
+      
+      .message-header {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 12px;
+          color: var(--text-secondary, #a3a3a3);
+      }
+      
+      .message.user .message-header {
+          flex-direction: row-reverse;
+      }
+      
+      .message-author {
+          font-weight: 500;
+      }
+      
+      .message-time {
+          font-size: 11px;
+          opacity: 0.7;
+      }
+      
+      .message-bubble {
+          padding: 12px 16px;
+          font-size: 14px;
+          line-height: 1.6;
+          max-width: 80%;
+      }
+      
+      @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(8px); }
+          to { opacity: 1; transform: translateY(0); }
+      }
       
       .code-completion-popup {
           position: absolute;
@@ -1959,6 +2218,49 @@
                   </div>
                   <span class="thinking-label">Cortex is working...</span>
                 </div>
+                
+                <!-- Agent Mode Indicator (Think/Read/Explore/Surf/Dive) - Dynamic -->
+                <div id="agent-mode-indicator" style="display:none;">
+                    <div class="agent-mode-container">
+                        <div class="mode-indicator" data-mode="think" title="Thinking">
+                            <svg class="mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M12 2a3 3 0 0 0-3 3v14a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
+                                <path d="M12 11v6"></path>
+                                <path d="M9 8h6"></path>
+                            </svg>
+                            <span>Think</span>
+                        </div>
+                        <div class="mode-indicator" data-mode="read" title="Reading">
+                            <svg class="mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path>
+                                <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path>
+                            </svg>
+                            <span>Read</span>
+                        </div>
+                        <div class="mode-indicator" data-mode="explore" title="Exploring">
+                            <svg class="mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <path d="m21 21-4.35-4.35"></path>
+                            </svg>
+                            <span>Explore</span>
+                        </div>
+                        <div class="mode-indicator" data-mode="surf" title="Surfing">
+                            <svg class="mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+                            </svg>
+                            <span>Surf</span>
+                        </div>
+                        <div class="mode-indicator" data-mode="dive" title="Diving">
+                            <svg class="mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M12 2v20"></path>
+                                <path d="M2 12h20"></path>
+                                <path d="m4.93 4.93 14.14 14.14"></path>
+                                <path d="m19.07 4.93-14.14 14.14"></path>
+                            </svg>
+                            <span>Dive</span>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- Todo Section (above input, Qoder style) -->
@@ -2137,6 +2439,48 @@
                                             <span>DeepSeek R1 (Reasoner)</span>
                                         </div>
                                     </div>
+                                    
+                                    <div class="dropdown-divider"></div>
+                                    
+                                    <!-- Mistral Models -->
+                                    <div class="dropdown-header">Mistral Models</div>
+                                    
+                                    <div class="dropdown-item" data-value="mistral-large-latest" data-provider="mistral" data-perf="9.0">
+                                        <div class="item-icon" style="color: #ff7043;">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>Mistral Large</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="dropdown-item" data-value="mistral-medium-latest" data-provider="mistral" data-perf="8.5">
+                                        <div class="item-icon" style="color: #ff7043;">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>Mistral Medium</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="dropdown-item" data-value="mistral-small-latest" data-provider="mistral" data-perf="7.5">
+                                        <div class="item-icon" style="color: #ff7043;">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>Mistral Small</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="dropdown-item" data-value="codestral-latest" data-provider="mistral" data-perf="8.8">
+                                        <div class="item-icon" style="color: #ff7043;">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>Codestral (Code)</span>
+                                        </div>
+                                    </div>
+                                    
                                     <div class="dropdown-divider"></div>
                                     <div class="dropdown-footer">
                                         API key required in Settings
@@ -2365,6 +2709,283 @@
             </div>
         </div>
     </template>
+    
+    <!-- AGENT MODE CONTROLLER - Dynamic Mode Switching -->
+    <script>
+    /**
+     * Agent Mode Controller
+     * Manages Think/Read/Explore/Surf/Dive modes with animations
+     */
+    (function() {
+        'use strict';
+        
+        const MODES = ['think', 'read', 'explore', 'surf', 'dive'];
+        let currentMode = null;
+        let completedModes = [];
+        
+        /**
+         * Show the mode indicator
+         */
+        window.showAgentMode = function() {
+            const indicator = document.getElementById('agent-mode-indicator');
+            if (indicator) {
+                indicator.style.display = 'block';
+                indicator.classList.add('fade-in');
+            }
+        };
+        
+        /**
+         * Hide the mode indicator
+         */
+        window.hideAgentMode = function() {
+            const indicator = document.getElementById('agent-mode-indicator');
+            if (indicator) {
+                indicator.style.display = 'none';
+            }
+            // Reset all modes
+            currentMode = null;
+            completedModes = [];
+            updateModeDisplay();
+        };
+        
+        /**
+         * Set the current active mode
+         * @param {string} mode - One of: think, read, explore, surf, dive
+         */
+        window.setAgentMode = function(mode) {
+            if (!MODES.includes(mode)) {
+                console.warn('[AgentMode] Invalid mode:', mode);
+                return;
+            }
+            
+            // Mark previous modes as completed
+            const modeIndex = MODES.indexOf(mode);
+            completedModes = MODES.slice(0, modeIndex);
+            currentMode = mode;
+            
+            updateModeDisplay();
+            
+            console.log('[AgentMode] Mode changed to:', mode);
+        };
+        
+        /**
+         * Update the visual display of modes
+         */
+        function updateModeDisplay() {
+            const indicators = document.querySelectorAll('.mode-indicator');
+            
+            indicators.forEach(el => {
+                const mode = el.getAttribute('data-mode');
+                
+                // Reset classes
+                el.classList.remove('active', 'completed');
+                
+                if (mode === currentMode) {
+                    el.classList.add('active');
+                } else if (completedModes.includes(mode)) {
+                    el.classList.add('completed');
+                }
+            });
+        }
+        
+        /**
+         * Progress to next mode automatically
+         */
+        window.progressAgentMode = function() {
+            const currentIndex = MODES.indexOf(currentMode);
+            const nextIndex = currentIndex + 1;
+            
+            if (nextIndex < MODES.length) {
+                window.setAgentMode(MODES[nextIndex]);
+            }
+        };
+        
+        /**
+         * Use-case based mode triggers
+         */
+        window.triggerThinkMode = function() {
+            window.showAgentMode();
+            window.setAgentMode('think');
+        };
+        
+        window.triggerReadMode = function() {
+            window.showAgentMode();
+            window.setAgentMode('read');
+        };
+        
+        window.triggerExploreMode = function() {
+            window.showAgentMode();
+            window.setAgentMode('explore');
+        };
+        
+        window.triggerSurfMode = function() {
+            window.showAgentMode();
+            window.setAgentMode('surf');
+        };
+        
+        window.triggerDiveMode = function() {
+            window.showAgentMode();
+            window.setAgentMode('dive');
+        };
+        
+        /**
+         * Trigger mode based on agent activity type
+         * @param {string} activityType - Activity type (thinking, reading, searching, writing, analyzing)
+         */
+        window.triggerModeByActivity = function(activityType) {
+            const activityMap = {
+                'thinking': 'think',
+                'planning': 'think',
+                'reasoning': 'think',
+                'reading': 'read',
+                'file_read': 'read',
+                'searching': 'explore',
+                'browsing': 'surf',
+                'writing': 'dive',
+                'editing': 'dive',
+                'analyzing': 'explore',
+                'debugging': 'dive'
+            };
+            
+            const mode = activityMap[activityType] || 'think';
+            window.showAgentMode();
+            window.setAgentMode(mode);
+        };
+        
+        console.log('[AgentMode] Controller initialized');
+    })();
+    </script>
+    
+    <!-- TOOL OPERATION CARDS - Dynamic Create/Edit/Delete -->
+    <script>
+    /**
+     * Tool Operation Card Controller
+     * Manages dynamic cards for create/edit/delete/read/terminal operations
+     */
+    (function() {
+        'use strict';
+        
+        const activeCards = new Map();
+        
+        /**
+         * Show a tool operation card
+         * @param {string} operationId - Unique ID for this operation
+         * @param {string} type - Type: 'create', 'edit', 'delete', 'read', 'terminal'
+         * @param {string} fileName - Name of the file being operated on
+         * @param {string} status - Status: 'pending', 'running', 'completed', 'failed'
+         */
+        window.showToolOperation = function(operationId, type, fileName, status = 'pending') {
+            // Remove existing card with same ID if present
+            if (activeCards.has(operationId)) {
+                removeToolCard(operationId);
+            }
+            
+            const card = createToolCard(operationId, type, fileName, status);
+            const chatContainer = document.querySelector('.chat-messages') || document.querySelector('#chat-container');
+            
+            if (chatContainer) {
+                chatContainer.appendChild(card);
+                activeCards.set(operationId, card);
+                
+                // Auto-scroll to show new card
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+            }
+            
+            console.log('[ToolCard] Showed:', operationId, type, fileName);
+        };
+        
+        /**
+         * Update the status of an existing tool operation card
+         * @param {string} operationId - The operation ID
+         * @param {string} newStatus - New status: 'running', 'completed', 'failed'
+         */
+        window.updateToolOperation = function(operationId, newStatus) {
+            const card = activeCards.get(operationId);
+            if (!card) {
+                console.warn('[ToolCard] Card not found:', operationId);
+                return;
+            }
+            
+            const statusEl = card.querySelector('.tool-operation-status');
+            if (statusEl) {
+                statusEl.className = 'tool-operation-status ' + newStatus;
+                statusEl.textContent = newStatus;
+            }
+            
+            // Remove completed cards after delay
+            if (newStatus === 'completed' || newStatus === 'failed') {
+                setTimeout(() => {
+                    removeToolCard(operationId);
+                }, 3000);
+            }
+            
+            console.log('[ToolCard] Updated:', operationId, newStatus);
+        };
+        
+        /**
+         * Create a tool operation card element
+         */
+        function createToolCard(operationId, type, fileName, status) {
+            const card = document.createElement('div');
+            card.className = 'tool-operation-card ' + type;
+            card.id = 'tool-op-' + operationId;
+            
+            const icons = {
+                create: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>',
+                edit: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>',
+                delete: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>',
+                read: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>',
+                terminal: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>'
+            };
+            
+            const titles = {
+                create: 'Creating file',
+                edit: 'Editing file',
+                delete: 'Deleting file',
+                read: 'Reading file',
+                terminal: 'Running command'
+            };
+            
+            card.innerHTML = `
+                <div class="tool-operation-icon">${icons[type] || icons.read}</div>
+                <div class="tool-operation-content">
+                    <div class="tool-operation-title">${titles[type] || 'Operation'}</div>
+                    <div class="tool-operation-file">${fileName}</div>
+                </div>
+                <div class="tool-operation-status ${status}">${status}</div>
+            `;
+            
+            return card;
+        }
+        
+        /**
+         * Remove a tool operation card with animation
+         */
+        function removeToolCard(operationId) {
+            const card = activeCards.get(operationId);
+            if (card) {
+                card.classList.add('removing');
+                setTimeout(() => {
+                    if (card.parentNode) {
+                        card.parentNode.removeChild(card);
+                    }
+                    activeCards.delete(operationId);
+                }, 300);
+            }
+        }
+        
+        /**
+         * Clear all tool operation cards
+         */
+        window.clearToolOperations = function() {
+            activeCards.forEach((card, id) => {
+                removeToolCard(id);
+            });
+        };
+        
+        console.log('[ToolCard] Controller initialized');
+    })();
+    </script>
     
     <script src="script.js"></script>
 

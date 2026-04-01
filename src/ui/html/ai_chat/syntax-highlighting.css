@@ -1,0 +1,408 @@
+/* ================================================================
+   UNIVERSAL SYNTAX HIGHLIGHTING - DRACULA THEME
+   Applied to ALL Programming Languages & Frameworks
+   Python, JavaScript, TypeScript, Java, C++, C, CSS, HTML, etc.
+   ================================================================ */
+
+/* ========== GLOBAL FONT CONFIGURATION ========== */
+:root {
+    --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    --font-sans: 'Inter', 'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+/* ========== DRACULA THEME COLOR PALETTE ========== */
+:root {
+    /* Background Colors */
+    --dracula-bg: #282a36;
+    --dracula-bg-light: #44475a;
+    
+    /* Text Colors */
+    --dracula-text: #f8f8f2;
+    --dracula-text-faded: #6272a4;
+    
+    /* Syntax Colors */
+    --dracula-keyword: #bd93f9;      /* Purple - keywords, operators */
+    --dracula-string: #50fa7b;       /* Green - strings, text */
+    --dracula-number: #bd93f9;       /* Purple - numbers, literals */
+    --dracula-comment: #6272a4;      /* Blue-gray - comments */
+    --dracula-function: #ffb86c;     /* Orange - function names */
+    --dracula-tag: #ff79c6;          /* Pink - tags, attributes */
+    --dracula-variable: #ff5555;     /* Red - variables, deletion */
+    --dracula-class: #50fa7b;        /* Green - class names */
+    --dracula-const: #50fa7b;        /* Green - constants */
+    --dracula-import: #ff79c6;       /* Pink - imports, exports */
+}
+
+/* ========== MARKDOWN STYLING ========== */
+.markdown-body,
+.md-content {
+    font-family: var(--font-sans);
+    color: var(--dracula-text);
+    background: #1e1e1e;
+}
+
+/* Markdown Headings - Blue */
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6,
+.md-h1, .md-h2, .md-h3, .md-h4, .md-h5, .md-h6 {
+    color: #0047AB !important;
+    font-weight: 700;
+    font-family: var(--font-sans);
+}
+
+/* Markdown Text - White */
+.markdown-body p,
+.markdown-body li,
+.markdown-body td,
+.md-p, .md-li {
+    color: #ffffff !important;
+    font-family: var(--font-sans);
+}
+
+/* Markdown Code in text - String color */
+.markdown-body code:not(pre code),
+.md-inline-code {
+    color: var(--dracula-string);
+    background: rgba(82, 250, 123, 0.1);
+    border: 1px solid rgba(82, 250, 123, 0.2);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: var(--font-mono);
+}
+
+/* Markdown Links */
+.markdown-body a,
+.md-link {
+    color: var(--dracula-tag);
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+    transition: border-color 0.2s;
+}
+
+.markdown-body a:hover,
+.md-link:hover {
+    border-bottom-color: var(--dracula-tag);
+}
+
+/* ========== UNIVERSAL CODE BLOCK STYLING ========== */
+.code-block-container,
+pre, code,
+.hljs,
+.code-block,
+.code-snippet {
+    background: var(--dracula-bg) !important;
+    color: var(--dracula-text) !important;
+    font-family: var(--font-mono) !important;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+/* ========== DRACULA THEME - ALL LANGUAGES ========== */
+
+/* Base */
+.hljs {
+    color: var(--dracula-text);
+    background: var(--dracula-bg);
+}
+
+/* Comments - Blue-gray */
+.hljs-comment,
+.hljs-quote,
+.hljs-doctag,
+.hljs-formula {
+    color: var(--dracula-comment);
+    font-style: italic;
+}
+
+/* Strings & Text - Green */
+.hljs-string,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition {
+    color: var(--dracula-string);
+}
+
+/* Keywords & Reserved Words - Purple */
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-literal,
+.hljs-type,
+.hljs-params,
+.hljs-regexp {
+    color: var(--dracula-keyword);
+}
+
+/* Function & Method Names - Orange */
+.hljs-title,
+.hljs-section,
+.hljs-meta,
+.hljs-function {
+    color: var(--dracula-function);
+    font-weight: 600;
+}
+
+/* Tags & Attributes - Pink */
+.hljs-tag,
+.hljs-attr,
+.hljs-name,
+.hljs-attribute {
+    color: var(--dracula-tag);
+}
+
+/* Numbers & Literals - Purple */
+.hljs-number,
+.hljs-literal,
+.hljs-type,
+.hljs-params,
+.hljs-regexp {
+    color: var(--dracula-number);
+}
+
+/* Variables & Deletion - Red */
+.hljs-deletion,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-link {
+    color: var(--dracula-variable);
+}
+
+/* Emphasis */
+.hljs-emphasis {
+    font-style: italic;
+}
+
+.hljs-strong {
+    font-weight: bold;
+}
+
+/* ========== LANGUAGE-SPECIFIC STYLING ========== */
+
+/* PYTHON */
+.language-python .hljs-string { color: var(--dracula-string); }
+.language-python .hljs-keyword { color: var(--dracula-keyword); }
+.language-python .hljs-number { color: var(--dracula-number); }
+.language-python .hljs-built_in { color: var(--dracula-keyword); }
+.language-python .hljs-function { color: var(--dracula-function); }
+
+/* JAVASCRIPT / TYPESCRIPT */
+.language-javascript .hljs-string { color: var(--dracula-string); }
+.language-javascript .hljs-keyword { color: var(--dracula-keyword); }
+.language-javascript .hljs-number { color: var(--dracula-number); }
+.language-javascript .hljs-title.function_ { color: var(--dracula-function); }
+.language-javascript .hljs-attr { color: var(--dracula-tag); }
+.language-typescript .hljs-string { color: var(--dracula-string); }
+.language-typescript .hljs-keyword { color: var(--dracula-keyword); }
+.language-typescript .hljs-built_in { color: var(--dracula-keyword); }
+
+/* JSX / TSX */
+.language-jsx .hljs-tag { color: var(--dracula-tag); }
+.language-jsx .hljs-attr { color: var(--dracula-tag); }
+.language-jsx .hljs-string { color: var(--dracula-string); }
+.language-tsx .hljs-tag { color: var(--dracula-tag); }
+.language-tsx .hljs-attr { color: var(--dracula-tag); }
+.language-tsx .hljs-string { color: var(--dracula-string); }
+
+/* HTML */
+.language-html .hljs-tag { color: var(--dracula-tag); }
+.language-html .hljs-attr { color: var(--dracula-tag); }
+.language-html .hljs-string { color: var(--dracula-string); }
+.language-html .hljs-title { color: var(--dracula-tag); }
+
+/* CSS / SCSS / LESS */
+.language-css .hljs-selector-class { color: var(--dracula-function); }
+.language-css .hljs-selector-id { color: var(--dracula-variable); }
+.language-css .hljs-attr { color: var(--dracula-tag); }
+.language-css .hljs-number { color: var(--dracula-number); }
+.language-css .hljs-string { color: var(--dracula-string); }
+.language-scss .hljs-attr { color: var(--dracula-tag); }
+.language-scss .hljs-string { color: var(--dracula-string); }
+.language-less .hljs-attr { color: var(--dracula-tag); }
+.language-less .hljs-string { color: var(--dracula-string); }
+
+/* JAVA */
+.language-java .hljs-keyword { color: var(--dracula-keyword); }
+.language-java .hljs-title.class_ { color: var(--dracula-function); }
+.language-java .hljs-string { color: var(--dracula-string); }
+.language-java .hljs-number { color: var(--dracula-number); }
+
+/* C++ / C# / C */
+.language-cpp .hljs-keyword { color: var(--dracula-keyword); }
+.language-cpp .hljs-string { color: var(--dracula-string); }
+.language-cpp .hljs-number { color: var(--dracula-number); }
+.language-cpp .hljs-title.function_ { color: var(--dracula-function); }
+.language-c .hljs-keyword { color: var(--dracula-keyword); }
+.language-c .hljs-string { color: var(--dracula-string); }
+.language-c .hljs-number { color: var(--dracula-number); }
+.language-csharp .hljs-keyword { color: var(--dracula-keyword); }
+.language-csharp .hljs-string { color: var(--dracula-string); }
+.language-csharp .hljs-title.class_ { color: var(--dracula-function); }
+
+/* GO / RUST / PHP */
+.language-go .hljs-keyword { color: var(--dracula-keyword); }
+.language-go .hljs-string { color: var(--dracula-string); }
+.language-rust .hljs-keyword { color: var(--dracula-keyword); }
+.language-rust .hljs-string { color: var(--dracula-string); }
+.language-php .hljs-keyword { color: var(--dracula-keyword); }
+.language-php .hljs-string { color: var(--dracula-string); }
+
+/* SQL */
+.language-sql .hljs-keyword { color: var(--dracula-keyword); }
+.language-sql .hljs-string { color: var(--dracula-string); }
+.language-sql .hljs-number { color: var(--dracula-number); }
+.language-sql .hljs-title { color: var(--dracula-function); }
+
+/* JSON / YAML */
+.language-json .hljs-attr { color: var(--dracula-tag); }
+.language-json .hljs-string { color: var(--dracula-string); }
+.language-json .hljs-number { color: var(--dracula-number); }
+.language-yaml .hljs-attr { color: var(--dracula-tag); }
+.language-yaml .hljs-string { color: var(--dracula-string); }
+
+/* SHELL / BASH */
+.language-bash .hljs-keyword { color: var(--dracula-keyword); }
+.language-bash .hljs-string { color: var(--dracula-string); }
+.language-bash .hljs-number { color: var(--dracula-number); }
+.language-shell .hljs-keyword { color: var(--dracula-keyword); }
+.language-shell .hljs-string { color: var(--dracula-string); }
+
+/* FRAMEWORKS - React */
+.language-jsx .hljs-keyword { color: var(--dracula-keyword); }
+.language-tsx .hljs-keyword { color: var(--dracula-keyword); }
+
+/* FRAMEWORKS - Vue */
+.language-vue .hljs-tag { color: var(--dracula-tag); }
+.language-vue .hljs-attr { color: var(--dracula-tag); }
+.language-vue .hljs-string { color: var(--dracula-string); }
+
+/* FRAMEWORKS - Angular */
+.language-typescript .hljs-title.class_ { color: var(--dracula-function); }
+.language-typescript .hljs-keyword { color: var(--dracula-keyword); }
+
+/* FRAMEWORKS - Django / Flask */
+.language-python .hljs-title.function_ { color: var(--dracula-function); }
+
+/* ========== CODE HEADER STYLING ========== */
+.code-header {
+    background: rgba(255, 255, 255, 0.05);
+    padding: 8px 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+    color: var(--dracula-comment);
+    border-bottom: 1px solid var(--dracula-bg-light);
+    font-family: var(--font-mono);
+    text-transform: lowercase;
+}
+
+.code-header .lang-label {
+    font-weight: 600;
+    color: var(--dracula-function);
+}
+
+/* ========== COPY/RUN BUTTONS ========== */
+.copy-btn,
+.run-btn,
+.code-copy-btn,
+.code-insert-btn,
+.code-run-btn {
+    background: transparent;
+    border: 1px solid var(--dracula-comment);
+    color: var(--dracula-comment);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: all 0.2s;
+    font-family: var(--font-mono);
+}
+
+.copy-btn:hover,
+.run-btn:hover,
+.code-copy-btn:hover,
+.code-insert-btn:hover,
+.code-run-btn:hover {
+    background: rgba(82, 250, 123, 0.1);
+    border-color: var(--dracula-string);
+    color: var(--dracula-string);
+}
+
+/* ========== LINE NUMBERS ========== */
+.hljs-ln-line {
+    background: transparent;
+}
+
+.hljs-ln-numbers {
+    text-align: right;
+    color: var(--dracula-comment);
+    user-select: none;
+    padding-right: 12px;
+    border-right: 1px solid var(--dracula-bg-light);
+}
+
+.hljs-ln-code {
+    padding-left: 12px;
+}
+
+/* ========== SELECTION & HIGHLIGHT ========== */
+.hljs::selection,
+.hljs *::selection {
+    background: rgba(189, 147, 249, 0.3);
+}
+
+/* ========== SCROLLBAR STYLING ========== */
+pre::-webkit-scrollbar {
+    height: 8px;
+}
+
+pre::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+pre::-webkit-scrollbar-thumb {
+    background: var(--dracula-comment);
+    border-radius: 4px;
+}
+
+pre::-webkit-scrollbar-thumb:hover {
+    background: var(--dracula-string);
+}
+
+/* ========== LIGHT MODE OVERRIDES ========== */
+body.light .code-block-container,
+body.light pre,
+body.light code,
+body.light .hljs {
+    background: #f5f5f5 !important;
+    color: #1e1e1e !important;
+}
+
+body.light .hljs-string { color: #008000 !important; }
+body.light .hljs-keyword { color: #0000ff !important; }
+body.light .hljs-number { color: #098658 !important; }
+body.light .hljs-comment { color: #008040 !important; }
+body.light .hljs-function { color: #795e26 !important; }
+body.light .hljs-tag { color: #800000 !important; }
+body.light .hljs-attr { color: #ff0000 !important; }
+
+/* ========== RESPONSIVE TEXT SIZING ========== */
+@media (max-width: 768px) {
+    .code-block-container,
+    pre, code {
+        font-size: 12px !important;
+    }
+}
+
+@media (max-width: 480px) {
+    .code-block-container,
+    pre, code {
+        font-size: 11px !important;
+    }
+}

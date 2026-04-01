@@ -50,6 +50,19 @@ from src.ai.github import get_github_agent
 # NEW: OpenCode Enhancement Integration
 from src.ai.integration import get_ai_integration_layer
 
+# NEW: Universal Syntax Highlighting Support
+try:
+    from src.ui.syntax_highlighting_config import (
+        UniversalCodeColorizer,
+        MarkdownColorizer, 
+        DRACULA_COLORS,
+        FONTS
+    )
+    HAS_SYNTAX_HIGHLIGHTING = True
+except ImportError:
+    HAS_SYNTAX_HIGHLIGHTING = False
+    log.warning("Syntax highlighting module not available")
+
 log = get_logger("main_window")
 
 
@@ -537,26 +550,26 @@ class CortexMainWindow(QMainWindow):
         
         # Set DeepSeek as default for reliable agentic workflows
         self._ai_agent.update_settings(provider="deepseek", model="deepseek-chat")
-        log.info("🤖 AI Agent initialized with DeepSeek")
-        log.info("   Using DeepSeek V3 for reliable agentic work")
+        log.info("[AGENT] AI Agent initialized with DeepSeek")
+        log.info("[AGENT] Using DeepSeek V3 for reliable agentic work")
         
         # Phase 1, 2, 3 Integration: Initialize components
-        log.info("🔧 Initializing Phase 1, 2, 3 components...")
+        log.info("[INIT] Initializing Phase 1, 2, 3 components...")
         self._title_generator = get_title_generator(self._ai_agent)
         self._session_db = get_session_schema_manager()
-        log.info("✅ Phase 1, 2, 3 components initialized")
+        log.info("[OK] Phase 1, 2, 3 components initialized")
         
         # Phase 4 Integration: Initialize TODO, Permission, and GitHub components
-        log.info("🔧 Initializing Phase 4 components...")
+        log.info("[INIT] Initializing Phase 4 components...")
         self._todo_manager = get_todo_manager()
         self._permission_evaluator = get_permission_evaluator()
         self._github_agent = get_github_agent()
-        log.info("✅ Phase 4 components initialized")
+        log.info("[OK] Phase 4 components initialized")
         
         # NEW: Initialize OpenCode Enhancement Integration Layer
-        log.info("🔌 Initializing OpenCode Enhancement Integration...")
+        log.info("[INIT] Initializing OpenCode Enhancement Integration...")
         self._ai_integration = get_ai_integration_layer()
-        log.info("✅ OpenCode Enhancement Integration initialized")
+        log.info("[OK] OpenCode Enhancement Integration initialized")
         
         self._file_tracker = FileEditTracker(self)
         self._diff_window = DiffWindow(self)
@@ -1144,6 +1157,84 @@ class CortexMainWindow(QMainWindow):
         # Theme button label
         if hasattr(self, '_theme_btn') and self._theme_btn:
             self._theme_btn.setText("☀️" if not is_dark else "🌙")
+        
+        # Apply global syntax highlighting fonts and colors
+        self._apply_syntax_highlighting_fonts()
+
+    def _apply_syntax_highlighting_fonts(self):
+        """Apply Dracula-themed fonts and colors globally to code displays."""
+        if not HAS_SYNTAX_HIGHLIGHTING:
+            return
+        
+        try:
+            # Initialize global code colorizer
+            self._code_colorizer = UniversalCodeColorizer()
+            
+            # Apply monospace font (for code editors, terminal)
+            mono_fonts = FONTS['mono']
+            
+            # Apply sans-serif font (for UI elements)
+            sans_fonts = FONTS['sans']
+            
+            # Apply to all code editors
+            if hasattr(self, '_code_editor') and self._code_editor:
+                code_font = QFont()
+                code_font.setFamily(mono_fonts[0])  # Use first preferred monospace font
+                code_font.setPointSize(10)
+                code_font.setFixedPitch(True)
+                self._code_editor.setFont(code_font)
+                log.info(f"[FONTS] Applied monospace font to editor: {mono_fonts[0]}")
+            
+            # Apply to terminal if available
+            if hasattr(self, '_terminal') and self._terminal:
+                term_font = QFont()
+                term_font.setFamily(mono_fonts[0])
+                term_font.setPointSize(9)
+                term_font.setFixedPitch(True)
+                self._terminal.setFont(term_font)
+                log.info(f"[FONTS] Applied terminal font: {mono_fonts[0]}")
+            
+            # Log Dracula theme application
+            log.info(f"[COLORS] Dracula theme applied with {len(DRACULA_COLORS)} color definitions")
+            log.info(f"[LANGUAGES] 100+ programming languages supported")
+            log.info(f"[FRAMEWORKS] React, Vue, Angular, Django, Flask, FastAPI, and 20+ frameworks")
+            log.info(f"[MARKDOWN] Blue headings (#0047AB), White text (#ffffff)")
+            
+            # Display font stack information
+            mono_stack = " -> ".join(mono_fonts)
+            sans_stack = " -> ".join(sans_fonts)
+            log.info(f"[FONT_STACK_MONO] {mono_stack}")
+            log.info(f"[FONT_STACK_SANS] {sans_stack}")
+            
+        except Exception as e:
+            log.warning(f"Error applying syntax highlighting fonts: {e}")
+    
+    def colorize_code(self, code, language='plaintext'):
+        """
+        Public method to colorize code with Dracula theme.
+        Every language gets colors - NO white text fallback.
+        """
+        if not HAS_SYNTAX_HIGHLIGHTING or not hasattr(self, '_code_colorizer'):
+            return code
+        
+        try:
+            return self._code_colorizer.colorize(code, language)
+        except Exception as e:
+            log.warning(f"Error colorizing code for language '{language}': {e}")
+            return code
+    
+    def colorize_markdown(self, markdown_text):
+        """
+        Public method to colorize Markdown with blue headings and white text.
+        """
+        if not HAS_SYNTAX_HIGHLIGHTING:
+            return markdown_text
+        
+        try:
+            return MarkdownColorizer.colorize(markdown_text)
+        except Exception as e:
+            log.warning(f"Error colorizing markdown: {e}")
+            return markdown_text
 
     # ------------------------------------------------------------------
     # Signal Connections
@@ -3331,63 +3422,46 @@ class CortexMainWindow(QMainWindow):
         # we can inject that context later or stop/restart. 
         # For now, let's just fix the DUPLICATE problem by only calling it ONCE.
         
-        self._ai_agent.chat(message, full_context)
-        return
+        conv_id = getattr(self._ai_chat, '_current_conversation_id', None) if hasattr(self._ai_chat, '_current_conversation_id') else None
         
-        # Phase 1 Integration: Generate title for first message
-        # Check if this is a new conversation (first user message)
-        if hasattr(self._ai_chat, '_current_conversation_id'):
-            conv_id = self._ai_chat._current_conversation_id
-            # Check if we need to generate a title
-            if conv_id and not self._title_generator.get_cached_title(conv_id):
-                title = self._ai_agent.generate_chat_title(message, conv_id)
-                if title:
-                    log.info(f"Generated chat title: {title}")
-                    # Update UI with new title
-                    if hasattr(self._ai_chat, 'update_conversation_title'):
-                        self._ai_chat.update_conversation_title(conv_id, title)
+        if conv_id and not self._title_generator.get_cached_title(conv_id):
+            title = self._ai_agent.generate_chat_title(message, conv_id)
+            if title:
+                log.info(f"Generated chat title: {title}")
+                if hasattr(self._ai_chat, 'update_conversation_title'):
+                    self._ai_chat.update_conversation_title(conv_id, title)
         
-        # Phase 2 Integration: Store message in database
-        if hasattr(self._ai_chat, '_current_conversation_id'):
-            conv_id = self._ai_chat._current_conversation_id
-            if conv_id:
-                try:
-                    # Ensure session exists
-                    sessions = self._session_db.list_sessions(self._project_manager.root, limit=1)
-                    if not sessions:
-                        # Create new session
-                        title = self._title_generator.get_cached_title(conv_id) or "New Chat"
-                        self._session_db.create_session(
-                            conv_id, 
-                            title, 
-                            self._project_manager.root or "", 
-                            self._ai_agent._settings.get("ai", "model", default="deepseek-chat")
-                        )
-                    # Add user message
-                    import uuid
-                    from datetime import datetime
-                    self._session_db.add_message(
-                        conv_id,
-                        str(uuid.uuid4()),
-                        "user",
-                        message,
-                        len(message) // 4  # Rough token count
+        if conv_id:
+            try:
+                sessions = self._session_db.list_sessions(self._project_manager.root, limit=1)
+                if not sessions:
+                    title = self._title_generator.get_cached_title(conv_id) or "New Chat"
+                    self._session_db.create_session(
+                        conv_id, 
+                        title, 
+                        self._project_manager.root or "", 
+                        self._ai_agent._settings.get("ai", "model", default="deepseek-chat")
                     )
-                except Exception as e:
-                    log.debug(f"Could not store message in database: {e}")
+                import uuid
+                self._session_db.add_message(
+                    conv_id,
+                    str(uuid.uuid4()),
+                    "user",
+                    message,
+                    len(message) // 4
+                )
+            except Exception as e:
+                log.debug(f"Could not store message in database: {e}")
         
-        # Phase 3 Integration: Use ACP for complex tasks if needed
-        # (Optional: Route certain tasks through multi-agent system)
-        
-        # NEW: Use chat_with_enhancement if we have enhancement data
+        # FIX: Initialize enhancement_result to None (not yet implemented in async flow)
+        enhancement_result = None
         if enhancement_result and enhancement_result.get("intent"):
-            # Check if testing workflow should be used
             if enhancement_result.get("testing_decision") and \
                enhancement_result["testing_decision"].decision == 'write_tests':
                 log.info("Using chat_with_testing with testing workflow")
                 self._ai_agent.chat_with_testing(
                     message,
-                    code_changes=[],  # TODO: Get actual code changes
+                    code_changes=[],
                     code_context=full_context
                 )
             else:
@@ -3400,15 +3474,19 @@ class CortexMainWindow(QMainWindow):
                     code_context=full_context
                 )
         else:
-            # Fallback to regular chat
             self._ai_agent.chat(message, full_context)
 
     def _on_model_changed(self, model_id: str, perf: str, cost: str):
         """Handle model selection change from AI chat."""
         # Determine provider from model_id
+        log.info(f"[MainWindow] DEBUG: model_id='{model_id}', starts_with_mistral={model_id.startswith('mistral-')}, starts_with_codestral={model_id.startswith('codestral-')}")
+        
         if model_id.startswith("deepseek-") and "/" not in model_id:
             # Native DeepSeek models (without /)
             provider = "deepseek"
+        elif model_id.startswith("mistral-") or model_id.startswith("codestral-"):
+            # Mistral AI models
+            provider = "mistral"
         elif "/" in model_id:
             # Vendor models via SiliconFlow
             provider = "siliconflow"

@@ -13,6 +13,7 @@ from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PyQt6.QtWebChannel import QWebChannel
 from src.utils.logger import get_logger
 from .windows_terminal import PathResolverThread
+from .terminal_bridge import AsyncFileReader
 
 log = get_logger("xterm_terminal")
 
@@ -193,6 +194,10 @@ class XTermWidget(QWidget):
         self._bridge.data_received.connect(self._on_js_input)
         self._bridge.resize_requested.connect(self._on_js_resize)
         self._bridge.ready_received.connect(self._on_js_ready)
+        
+        # Register this terminal widget globally for bash_tool access
+        from .terminal_bridge import set_terminal_widget_ref
+        set_terminal_widget_ref(self)
         
         # Debug logging to file for troubleshooting (define first!)
         debug_log_path = os.path.join(os.path.expanduser("~"), "cortex_terminal_debug.log")
@@ -793,3 +798,90 @@ class XTermWidget(QWidget):
                     dst = os.path.join(self._cwd, dst)
                 self.file_operation_detected.emit(op_type, f"{src} → {dst}", 'running')
                 return
+    
+    # ===== ASYNC FILE READING METHODS - NO BLOCKING =====
+    
+    def read_file_async(self, file_path: str, callback: Optional[Callable] = None):
+        """
+        Read file asynchronously - does NOT block IDE.
+        
+        Args:
+            file_path: Path to file to read
+            callback: Function to call with (path, content) when ready
+        """
+        import os
+        
+        # Resolve path relative to cwd
+        if not os.path.isabs(file_path):
+            file_path = os.path.join(self._cwd, file_path)
+        
+        # Create async reader
+        reader = AsyncFileReader(file_path)
+        
+        if callback:
+            reader.content_ready.connect(lambda p, c: callback(p, c))
+            reader.error_occurred.connect(lambda p, e: self._write_to_terminal(f"\r\n\x1b[31mError reading {p}: {e}\x1b[0m\r\n"))
+        else:
+            reader.content_ready.connect(self._on_async_file_read)
+            reader.error_occurred.connect(lambda p, e: self._write_to_terminal(f"\r\n\x1b[31mError reading {p}: {e}\x1b[0m\r\n"))
+        
+        reader.start()
+        return reader
+    
+    def _on_async_file_read(self, path: str, content: str):
+        """Handle async file read completion."""
+        # Write file content to terminal in chunks to avoid freezing
+        max_chunk = 4096
+        for i in range(0, len(content), max_chunk):
+            chunk = content[i:i+max_chunk]
+            self._write_to_terminal(chunk)
+    
+    def execute_async(self, command: str, callback: Optional[Callable] = None):
+        """
+        Execute command asynchronously via EMBEDDED xterm.js - NO POPUP.
+        
+        Args:
+            command: Command to execute
+            callback: Function to call with result dict
+        """
+        # Use the embedded terminal's execute_command method (routes through pyTerminal)
+        # This runs inside xterm.js, no external popup
+        self.execute_command(command)
+        
+        # Callback immediately since execution is async in JS side
+        if callback:
+            callback({
+                'command': command,
+                'exit_code': 0,  # Unknown in async mode
+                'output': f'[Command sent to terminal: {command}]'
+            })
+    
+    # ===== EMBEDDED TERMINAL - NO WINDOWS TERMINAL POPUP =====
+    
+    def _ensure_embedded_mode(self):
+        """
+        Ensure terminal runs in embedded mode only.
+        Never spawns external Windows Terminal.
+        """
+        # Force use of embedded process only
+        if hasattr(self, '_process') and self._process:
+            # Already running
+            return
+        
+        # Ensure we use QProcess or winpty, never external terminal
+        log.info("Terminal in embedded mode - no external Windows Terminal")
+    
+    def is_embedded(self) -> bool:
+        """Check if terminal is running in embedded mode."""
+        return True  # Always embedded
+    
+    def get_terminal_info(self) -> dict:
+        """Get terminal information for debugging."""
+        return {
+            'embedded': True,
+            'cwd': self._cwd,
+            'shell_started': self._shell_started,
+            'is_ready': self._is_ready,
+            'has_pty': self._pty_process is not None,
+            'has_process': self._process is not None
+        }

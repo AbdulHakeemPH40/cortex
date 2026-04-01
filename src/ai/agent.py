@@ -499,6 +499,8 @@ class AIWorker(QThread):
         # Map provider string to ProviderType
         provider_map = {
             "deepseek": ProviderType.DEEPSEEK,
+            "mistral": ProviderType.MISTRAL,
+            "siliconflow": ProviderType.SILICONFLOW,
         }
         
         # Use selected provider directly (no auto-switching)
@@ -542,12 +544,12 @@ class AIWorker(QThread):
         cache_key = _get_api_cache_key(self.messages, self.model, self.provider)
         cached_response = _get_cached_api_response(cache_key)
         if cached_response:
-            log.info(f"✅ CACHE HIT: Reusing cached API response")
+            log.info(f"[CACHE] HIT: Reusing cached API response")
             self._full_response = cached_response
             self.finished.emit(self._full_response)
             return
         
-        log.info(f"💾 CACHE MISS: Making fresh API call")
+        log.info(f"[CACHE] MISS: Making fresh API call")
         
         # Stream the response for live UI updates
         log.info(f"Starting streaming request to {self.provider}...")
@@ -908,6 +910,40 @@ THAT'S IT. NO VERIFICATION NEEDED.
 # CORTEX AI — AGENTIC BUILD AGENT
 
 You are an AI AGENT with tool-calling capabilities. Your job is to BUILD by using tools effectively.
+
+## 💻 WINDOWS ENVIRONMENT DETECTION
+
+**CRITICAL: You are running on a WINDOWS system.**
+
+### Shell Syntax Requirements:
+- **Shell**: PowerShell (NOT bash, NOT Unix shell)
+- **Path separator**: Backslash `\\` (e.g., `C:\\Users\\Hakeem1\\file.txt`)
+- **Command chaining**: Use semicolons `;` or commas `,` (NOT `&&`)
+- **Virtual env activation**: `.\\venv\\Scripts\\activate` (NOT `./venv/bin/activate`)
+
+### PowerShell Commands (ALL Unix aliases work):
+- ✅ `ls` - List directory
+- ✅ `cat filename` - Read file
+- ✅ `rm path` - Delete file  
+- ✅ `cp source dest` - Copy file
+- ✅ `mv source dest` - Move/rename file
+- ✅ `cd path` - Change directory
+- ✅ `mkdir folder` - Create directory
+
+### Command Chaining Examples:
+```powershell
+# CORRECT (Windows PowerShell):
+python script1.py; python script2.py; python script3.py
+cd C:\\Project; .\\venv\\Scripts\\activate; python manage.py runserver
+
+# WRONG (Unix bash - will fail):
+cd C:/Project && ./venv/bin/activate && python manage.py runserver
+```
+
+### File Path Handling:
+- Always use **forward slashes** `/` or **escaped backslashes** `\\\\` in Python strings
+- Example: `"C:\\\\Users\\\\Hakeem1\\\\file.txt"` or `"C:/Users/Hakeem1/file.txt"`
+- In commands: `cd C:\\Project` or `cd C:/Project`
 
 ## ⚡ EFFICIENCY RULES (ABSOLUTE - NO EXCEPTIONS)
 
@@ -2197,6 +2233,7 @@ Action: run_command(python helloworld.py; python for_loop.py; python while_loop.
         # Map provider name to ProviderType
         provider_type_map = {
             "deepseek": ProviderType.DEEPSEEK,
+            "mistral": ProviderType.MISTRAL,
             "siliconflow": ProviderType.SILICONFLOW,
         }
         provider_type = provider_type_map.get(provider_name, ProviderType.DEEPSEEK)

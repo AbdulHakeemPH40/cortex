@@ -149,15 +149,26 @@ body.loaded #loading-overlay {
 .loading-spinner {
     width: 40px;
     height: 40px;
-    border: 3px solid var(--border);
-    border-top-color: var(--accent);
+    border: 3px solid rgba(59, 130, 246, 0.15);
+    border-top-color: #3b82f6;
+    border-right-color: #3b82f6;
     border-radius: 50%;
-    animation: spin 0.8s linear infinite;
+    animation: spinEnhanced 1s cubic-bezier(0.68, -0.55, 0.265, 1.55) infinite;
     margin-bottom: 16px;
+    filter: drop-shadow(0 0 4px rgba(59, 130, 246, 0.3));
 }
 
-@keyframes spin {
-    to { transform: rotate(360deg); }
+@keyframes spinEnhanced {
+    0% { 
+        transform: rotate(0deg) scale(1);
+    }
+    50% {
+        transform: rotate(180deg) scale(1.05);
+    }
+    100% { 
+        transform: rotate(360deg) scale(1);
+    }
+}
 }
 
 #loading-overlay span {
@@ -1781,24 +1792,44 @@ body.light .inline-code {
     color: var(--text);
 }
 
-.activity-icon {
-    font-size: 12px;
+.activity-spinner {
     display: inline-block;
+    color: #3b82f6;
+    animation: spinWorkingPulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    filter: drop-shadow(0 0 4px rgba(59, 130, 246, 0.4));
 }
 
-.activity-icon.running {
-    animation: spin 1s linear infinite;
-    color: var(--accent-primary);
+@keyframes spinWorkingPulse {
+    0% {
+        transform: rotate(0deg) scale(1);
+        filter: drop-shadow(0 0 4px rgba(59, 130, 246, 0.4));
+    }
+    50% {
+        transform: rotate(180deg) scale(1.1);
+        filter: drop-shadow(0 0 8px rgba(59, 130, 246, 0.6));
+    }
+    100% {
+        transform: rotate(360deg) scale(1);
+        filter: drop-shadow(0 0 4px rgba(59, 130, 246, 0.4));
+    }
 }
 
-.activity-icon.complete {
-    color: var(--success);
-    animation: none;
+.activity-mention {
+    color: #f59e0b;
+    font-weight: 600;
+    animation: mentionPulse 1.5s ease-in-out infinite;
 }
 
-@keyframes spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
+@keyframes mentionPulse {
+    0%, 100% {
+        opacity: 0.8;
+        text-shadow: 0 0 8px rgba(245, 158, 11, 0);
+    }
+    50% {
+        opacity: 1;
+        text-shadow: 0 0 12px rgba(245, 158, 11, 0.6);
+    }
+}
 }
 
 .activity-title {
@@ -5208,6 +5239,28 @@ body.light .task-summary-message {
   max-height: 260px;
 }
 
+.mention-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 16px;
+  color: #a3a3a3;
+}
+
+.mention-loading-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(59, 130, 246, 0.2);
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: mentionLoadingSpin 1s linear infinite;
+}
+
+@keyframes mentionLoadingSpin {
+  to { transform: rotate(360deg); }
+}
+
 .mention-header {
   padding: 8px 12px;
   font-size: 11px;
@@ -8172,17 +8225,151 @@ body.light ::selection {
 }
 
 /* ================================================
-   PERMISSION CARD (IN-CHAT) STYLES (NEW)
+   AGENT MODE INDICATOR - Dynamic (Think/Read/Explore/Surf/Dive)
    ================================================ */
+
+.agent-mode-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-md);
+    margin: 8px 0;
+    animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.mode-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-muted);
+    transition: all 0.3s ease;
+}
+
+.mode-indicator.active {
+    background: var(--accent-primary);
+    color: white;
+    animation: pulse-mode 2s infinite;
+}
+
+.mode-indicator.completed {
+    color: var(--accent-success);
+    opacity: 0.7;
+}
+
+.mode-indicator.completed .mode-icon {
+    color: var(--accent-success);
+}
+
+@keyframes pulse-mode {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); }
+    50% { box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1); }
+}
+
+.mode-icon {
+    width: 14px;
+    height: 14px;
+}
+
+.mode-flow {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.mode-flow-arrow {
+    width: 12px;
+    height: 12px;
+    opacity: 0.5;
+}
+
+/* Agent Activity Timeline */
+.agent-activity {
+    margin: 12px 0;
+    padding: 12px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-md);
+}
+
+.activity-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+}
+
+.activity-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.activity-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    padding: 4px 0;
+}
+
+.activity-item.current {
+    color: var(--text-primary);
+}
+
+.activity-item.current .activity-icon {
+    color: var(--accent-primary);
+    animation: pulse-activity 1.5s infinite;
+}
+
+@keyframes pulse-activity {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+.activity-icon {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+}
+
+.activity-text {
+    flex: 1;
+}
+
+.activity-time {
+    font-size: 10px;
+    color: var(--text-muted);
+}
 
 .permission-card {
     margin: var(--space-md) 0;
-    border: 2px solid var(--accent-primary);
+    border: 1px solid var(--border-primary);
     border-radius: var(--radius-lg);
-    background: var(--bg-elevated);
-    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
+    background: var(--bg-secondary);
     overflow: hidden;
     animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
 .permission-card-header {
@@ -8190,18 +8377,38 @@ body.light ::selection {
     align-items: center;
     gap: var(--space-sm);
     padding: var(--space-md) var(--space-lg);
-    background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-    color: white;
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border-primary);
 }
 
 .permission-card-icon {
-    font-size: 20px;
-    line-height: 1;
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+}
+
+.permission-card-icon.write {
+    background: rgba(234, 179, 8, 0.15);
+    color: var(--warning);
+}
+
+.permission-card-icon.delete {
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--error);
+}
+
+.permission-card-icon.terminal {
+    background: rgba(168, 85, 247, 0.15);
+    color: var(--accent-purple);
 }
 
 .permission-card-title {
     margin: 0;
-    font-size: 16px;
+    font-size: 14px;
     font-weight: 600;
 }
 
@@ -8210,8 +8417,8 @@ body.light ::selection {
 }
 
 .permission-tool-name {
-    font-family: 'Courier New', monospace;
-    font-size: 16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
     font-weight: 600;
     color: var(--accent-primary);
     margin-bottom: var(--space-sm);
@@ -8230,11 +8437,11 @@ body.light ::selection {
 
 .permission-card-details {
     background: var(--bg-tertiary);
-    border: 1px solid var(--border-light);
+    border: 1px solid var(--border-secondary);
     border-radius: var(--radius-sm);
     padding: var(--space-md);
     margin: var(--space-md) 0;
-    font-family: 'Courier New', monospace;
+    font-family: 'JetBrains Mono', monospace;
     font-size: 12px;
     color: var(--text);
     max-height: 200px;
@@ -8252,10 +8459,10 @@ body.light ::selection {
     padding: var(--space-sm) var(--space-lg);
     border: none;
     border-radius: var(--radius-sm);
-    font-size: 14px;
-    font-weight: 600;
+    font-size: 13px;
+    font-weight: 500;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.15s;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -8263,25 +8470,22 @@ body.light ::selection {
 }
 
 .permission-btn-deny {
-    background: var(--error);
-    color: white;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-secondary);
 }
 
 .permission-btn-deny:hover {
-    background: #dc2626;
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+    background: var(--bg-hover);
 }
 
 .permission-btn-approve {
-    background: var(--success);
+    background: var(--accent-primary);
     color: white;
 }
 
 .permission-btn-approve:hover {
-    background: #16a34a;
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(34, 197, 94, 0.4);
+    background: var(--accent-blue-hover);
 }
 
 .permission-card-remember {
@@ -8480,136 +8684,22 @@ body.light .permission-tool-name {
 }
 
 /* ==========================================================================
-   Enhanced Permission Cards (Additional features)
+   Responsive Adjustments
    ========================================================================== */
-.permission-scope-selection {
-    margin: var(--space-md) 0;
-}
-
-.permission-scope-title {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-secondary);
-    margin-bottom: var(--space-sm);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
-.permission-scope-options {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-xs);
-}
-
-.permission-scope-btn {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    padding: var(--space-sm);
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    transition: all 0.2s;
-    text-align: left;
-    width: 100%;
-}
-
-.permission-scope-btn:hover {
-    border-color: var(--accent-primary);
-    background: var(--bg-elevated);
-}
-
-.permission-scope-btn.active {
-    border-color: var(--accent-primary);
-    background: rgba(59, 130, 246, 0.1);
-}
-
-.permission-scope-label {
-    font-weight: 600;
-    font-size: 12px;
-    color: var(--text);
-}
-
-.permission-scope-desc {
-    font-size: 10px;
-    color: var(--text-muted);
-    margin-top: 2px;
-}
-
-.permission-risks-safeguards {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: var(--space-md);
-    margin: var(--space-md) 0;
-}
-
-.permission-risks,
-.permission-safeguards {
-    padding: var(--space-sm);
-    border-radius: var(--radius-sm);
-    font-size: 11px;
-}
-
-.permission-risks {
-    background: rgba(239, 68, 68, 0.05);
-    border-left: 2px solid var(--error);
-}
-
-.permission-risks h4 {
-    color: var(--error);
-    font-size: 11px;
-    margin-bottom: var(--space-xs);
-}
-
-.permission-safeguards {
-    background: rgba(34, 197, 94, 0.05);
-    border-left: 2px solid var(--success);
-}
-
-.permission-safeguards h4 {
-    color: var(--success);
-    font-size: 11px;
-    margin-bottom: var(--space-xs);
-}
-
-.permission-risks ul,
-.permission-safeguards ul {
-    margin: 0;
-    padding-left: 14px;
-    color: var(--text-secondary);
-}
-
-.permission-risks li,
-.permission-safeguards li {
-    margin-bottom: 2px;
-}
-
-.permission-tags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-xs);
-    margin: var(--space-sm) 0;
-}
-
-.permission-tag {
-    background: rgba(245, 158, 11, 0.1);
-    border: 1px solid rgba(245, 158, 11, 0.3);
-    padding: 2px 8px;
-    border-radius: 12px;
-    font-size: 10px;
-    color: var(--warning);
-}
-
-/* ==========================================================================
-   Enhanced Quick Actions (Additional styles)
-   ========================================================================== */
-.quick-actions-bar {
-    display: flex;
-    gap: var(--space-sm);
-    padding: var(--space-sm) 0;
-    overflow-x: auto;
-    scrollbar-width: none;
+@media (max-width: 768px) {
+    .permission-risks-safeguards {
+        grid-template-columns: 1fr;
+    }
+    
+    .tool-card {
+        max-width: 100%;
+    }
+    
+    .message-bubble.tool,
+    .message-bubble.error,
+    .message-bubble.permission {
+        max-width: 95%;
+    }
 }
 
 .quick-actions-bar::-webkit-scrollbar {
@@ -8800,8 +8890,179 @@ body.light .agent-selector-select {
 }
 
 /* ==========================================================================
-   Testing Workflow Cards
+   DYNAMIC TOOL OPERATION CARDS (Create/Edit/Delete)
    ========================================================================== */
+
+.tool-operation-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-md);
+    margin: 8px 0;
+    animation: slideInRight 0.3s ease-out, fadeIn 0.3s ease;
+    transition: all 0.2s ease;
+}
+
+.tool-operation-card:hover {
+    background: var(--bg-tertiary);
+    border-color: var(--border-secondary);
+}
+
+.tool-operation-card.create {
+    border-left: 3px solid var(--accent-success);
+}
+
+.tool-operation-card.edit {
+    border-left: 3px solid var(--accent-primary);
+}
+
+.tool-operation-card.delete {
+    border-left: 3px solid var(--error);
+}
+
+.tool-operation-card.read {
+    border-left: 3px solid var(--text-muted);
+}
+
+.tool-operation-card.terminal {
+    border-left: 3px solid var(--accent-purple);
+}
+
+.tool-operation-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    animation: iconPulse 2s infinite;
+}
+
+.tool-operation-card.create .tool-operation-icon {
+    background: rgba(34, 197, 94, 0.15);
+    color: var(--accent-success);
+}
+
+.tool-operation-card.edit .tool-operation-icon {
+    background: rgba(59, 130, 246, 0.15);
+    color: var(--accent-primary);
+}
+
+.tool-operation-card.delete .tool-operation-icon {
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--error);
+}
+
+.tool-operation-card.read .tool-operation-icon {
+    background: rgba(100, 116, 139, 0.15);
+    color: var(--text-muted);
+}
+
+.tool-operation-card.terminal .tool-operation-icon {
+    background: rgba(168, 85, 247, 0.15);
+    color: var(--accent-purple);
+}
+
+@keyframes iconPulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.05); opacity: 0.8; }
+}
+
+.tool-operation-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.tool-operation-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 2px;
+}
+
+.tool-operation-file {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tool-operation-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.tool-operation-status.pending {
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+    animation: pulseStatus 1.5s infinite;
+}
+
+.tool-operation-status.running {
+    background: rgba(59, 130, 246, 0.15);
+    color: var(--accent-primary);
+    animation: pulseStatus 1.5s infinite;
+}
+
+.tool-operation-status.completed {
+    background: rgba(34, 197, 94, 0.15);
+    color: var(--accent-success);
+}
+
+.tool-operation-status.failed {
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--error);
+}
+
+@keyframes pulseStatus {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+@keyframes slideInRight {
+    from { 
+        opacity: 0; 
+        transform: translateX(-20px); 
+    }
+    to { 
+        opacity: 1; 
+        transform: translateX(0); 
+    }
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* Tool operation card removal animation */
+.tool-operation-card.removing {
+    animation: slideOutLeft 0.3s ease-in forwards;
+}
+
+@keyframes slideOutLeft {
+    from { 
+        opacity: 1; 
+        transform: translateX(0); 
+    }
+    to { 
+        opacity: 0; 
+        transform: translateX(-20px); 
+    }
+}
 .testing-card {
     background: var(--bg-secondary);
     border: 1px solid var(--border);

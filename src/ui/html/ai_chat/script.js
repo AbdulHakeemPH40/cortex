@@ -2894,8 +2894,8 @@ function showThinking() {
         var header = document.createElement('div');
         header.className = 'activity-header';
         header.innerHTML =
-            '<span class="activity-icon running">↻</span>' +
-            '<span class="activity-title">Working</span>' +
+            '<svg class="activity-spinner" viewBox="0 0 24 24" width="16" height="16"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2" opacity="0.2"/><path d="M12 2 A 10 10 0 1 1 2 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>' +
+            '<span class="activity-title">Working <span class="activity-mention">@</span></span>' +
             '<span class="activity-toggle">▾</span>';
         header.onclick = function() {
             currentActivitySection.classList.toggle('collapsed');
@@ -3500,6 +3500,9 @@ function updateStreamingUI() {
 function formatMarkdownFallback(text) {
     if (!text) return '';
     
+    // First, normalize line endings (Windows \r\n -> \n)
+    text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    
     // Process line by line for better control
     var lines = text.split('\n');
     var result = [];
@@ -3509,8 +3512,22 @@ function formatMarkdownFallback(text) {
         var line = lines[i];
         var trimmed = line.trim();
         
+        // Horizontal rule
+        if (trimmed.match(/^(-{3,}|\*{3,}|_{3,})$/)) {
+            if (inList) {
+                result.push('</ul>');
+                inList = false;
+            }
+            result.push('<hr>');
+            continue;
+        }
+        
         // Headers
         if (trimmed.match(/^#{1,6}\s/)) {
+            if (inList) {
+                result.push('</ul>');
+                inList = false;
+            }
             var level = trimmed.match(/^(#+)/)[1].length;
             var content = trimmed.replace(/^#{1,6}\s*/, '');
             result.push('<h' + level + '>' + processInlineMarkdown(content) + '</h' + level + '>');
@@ -3531,9 +3548,25 @@ function formatMarkdownFallback(text) {
             inList = false;
         }
         
-        // Regular paragraph
-        if (trimmed) {
-            result.push('<p>' + processInlineMarkdown(line) + '</p>');
+        // Blockquotes
+        if (trimmed.startsWith('>')) {
+            if (inList) {
+                result.push('</ul>');
+                inList = false;
+            }
+            var quoteContent = trimmed.substring(1).trim();
+            result.push('<blockquote>' + processInlineMarkdown(quoteContent) + '</blockquote>');
+            continue;
+        }
+        
+        // Regular paragraph (including empty lines for spacing)
+        if (trimmed || (i > 0 && lines[i-1].trim())) {
+            if (trimmed) {
+                result.push('<p>' + processInlineMarkdown(line) + '</p>');
+            } else if (result.length > 0 && result[result.length - 1] !== '<br>') {
+                // Preserve paragraph breaks
+                result.push('<br>');
+            }
         }
     }
     
