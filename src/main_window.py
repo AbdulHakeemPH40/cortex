@@ -3576,8 +3576,15 @@ class CortexMainWindow(QMainWindow):
         self.setWindowTitle(f"Cortex AI Agent — {project_name}")
         self._ai_chat.add_system_message(f"📂 Opened: {folder_path}")
         
+        # Load existing chats for this project from SQLite BEFORE setting project info
+        try:
+            chats_json = self._ai_chat.load_chats_for_project(folder_path)
+        except Exception as e:
+            log.warning(f"Failed to load chats for project {folder_path}: {e}")
+            chats_json = "[]"
+        
         # Update project indicator in AI chat (this triggers project-specific chat loading)
-        self._ai_chat.set_project_info(project_name, folder_path)
+        self._ai_chat.set_project_info(project_name, folder_path, chats_json)
         
         # Update welcome tab if it exists
         self._update_welcome_project_info()

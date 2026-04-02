@@ -122,7 +122,7 @@ function saveProjectChats(chatList) {
         return false;
     }
     
-    // ── IMPORTANT: Capture partial AI response if streaming during shutdown ──
+    // -- IMPORTANT: Capture partial AI response if streaming during shutdown --
     if (typeof _isGenerating !== 'undefined' && _isGenerating && currentAssistantMessage && currentContent && currentContent.trim()) {
         var chat = chatList.find(function(c) { return c.id == currentChatId; });
         if (chat) {
@@ -202,7 +202,7 @@ var _taskSummaryBuffer = ""; // Accumulates <task_summary>...</task_summary> dur
 var _inTaskSummary = false;  // True while receiving a task_summary block
 
 
-// ── TASK COMPLETION TRACKING ─────────────────────────────────────────
+// -- TASK COMPLETION TRACKING -----------------------------------------
 var _taskActivities = [];
 var _taskStartTime = null;
 
@@ -238,7 +238,7 @@ function showTaskCompletionSummary() {
     card.className = 'task-completion-card';
     
     var statusClass = errors > 0 ? 'has-errors' : 'success';
-    var statusIcon = errors > 0 ? '⚠️' : '✅';
+    var statusIcon = errors > 0 ? '??' : '?';
     var statusText = errors > 0 ? 'Completed with issues' : 'Task completed';
     
     var html = '<div class="tcc-header ' + statusClass + '">' +
@@ -247,9 +247,9 @@ function showTaskCompletionSummary() {
         '<span class="tcc-duration">' + duration + 's</span></div>';
     
     html += '<div class="tcc-stats">';
-    if (filesRead > 0) html += '<span class="tcc-stat">📄 ' + filesRead + ' read</span>';
-    if (filesWritten > 0) html += '<span class="tcc-stat">✏️ ' + filesWritten + ' modified</span>';
-    if (commandsRun > 0) html += '<span class="tcc-stat">⚙️ ' + commandsRun + ' commands</span>';
+    if (filesRead > 0) html += '<span class="tcc-stat">?? ' + filesRead + ' read</span>';
+    if (filesWritten > 0) html += '<span class="tcc-stat">?? ' + filesWritten + ' modified</span>';
+    if (commandsRun > 0) html += '<span class="tcc-stat">?? ' + commandsRun + ' commands</span>';
     html += '</div>';
     
     card.innerHTML = html;
@@ -469,8 +469,8 @@ function initMarked() {
     lines.forEach(function(line) {
         if (!line.trim()) return;
         
-        // Parse tree structure (├──, └──, │, etc.)
-        var treeMatch = line.match(/^(\s*)([│├└─\-\s]*)(.*)$/);
+        // Parse tree structure (+--, |, etc.)
+        var treeMatch = line.match(/^(\s*)([-++-\-\s]*)(.*)$/);
         if (!treeMatch) return;
         
         var indent = treeMatch[1].length + treeMatch[2].length;
@@ -523,13 +523,13 @@ function initMarked() {
     return html;
 }
 
-// ── OPENCODE SPRITE ICON SYSTEM ─────────────────────────────────────────────
+// -- OPENCODE SPRITE ICON SYSTEM ---------------------------------------------
 // Uses OpenCode's file-icons/sprite.svg (1096 icons) via <use href="...#Name">
 // sprite.svg is bundled at: src/ui/html/ai_chat/file-icons/sprite.svg
 
 var SPRITE_URL = 'file-icons/sprite.svg';
 
-// Map file extension → OpenCode IconName
+// Map file extension ? OpenCode IconName
 var EXT_TO_SPRITE = {
     // JS / TS
     'js': 'Javascript', 'mjs': 'Javascript', 'cjs': 'Javascript',
@@ -587,7 +587,7 @@ var EXT_TO_SPRITE = {
     'vue': 'Vue', 'svelte': 'Svelte',
 };
 
-// Exact filename → OpenCode IconName
+// Exact filename ? OpenCode IconName
 var FILENAME_TO_SPRITE = {
     'package.json': 'Nodejs', 'package-lock.json': 'Nodejs',
     '.nvmrc': 'Nodejs', '.node-version': 'Nodejs',
@@ -628,7 +628,7 @@ var FILENAME_TO_SPRITE = {
     'license': 'Certificate',
 };
 
-// Folder name → sprite icon name (collapsed / open)
+// Folder name ? sprite icon name (collapsed / open)
 var FOLDER_TO_SPRITE = {
     'src': 'FolderSrc', 'source': 'FolderSrc',
     'lib': 'FolderLib', 'libs': 'FolderLib',
@@ -738,7 +738,7 @@ function getFileIcon(nameOrExt, isDir, expanded, size) {
            '</svg>';
 }
 
-// ── Legacy alias used by tree renderer ───────────────────────────────────────
+// -- Legacy alias used by tree renderer ---------------------------------------
 function getFileIconForTree(ext, isDir) {
     if (isDir) {
         return getFileIcon('', true, false, 18);
@@ -961,12 +961,12 @@ document.addEventListener('DOMContentLoaded', function () {
             }
             
             if (!supportsVision) {
-                alert('⚠️ Image attachment requires a vision-capable model.\n\n' +
+                alert('?? Image attachment requires a vision-capable model.\n\n' +
                       'Current model: ' + modelText + '\n\n' +
                       'Please switch to a vision model like:\n' +
-                      '• Qwen-VL (SiliconFlow)\n' +
-                      '• GPT-4 Vision\n' +
-                      '• Claude 3\n\n' +
+                      '- Qwen-VL (SiliconFlow)\n' +
+                      '- GPT-4 Vision\n' +
+                      '- Claude 3\n\n' +
                       'Click the model selector (top-right) to change models.');
                 return;
             }
@@ -1035,7 +1035,7 @@ document.addEventListener('DOMContentLoaded', function () {
                     try {
                         if (typeof showToast === 'function') {
                             showToast(
-                                isActive ? '✅ Multi-Agent Mode ENABLED' : '⚪ Multi-Agent Mode DISABLED',
+                                isActive ? '? Multi-Agent Mode ENABLED' : '? Multi-Agent Mode DISABLED',
                                 isActive ? 'success' : 'info',
                                 3000
                             );
@@ -1086,7 +1086,7 @@ document.addEventListener('DOMContentLoaded', function () {
             try {
                 if (typeof showToast === 'function') {
                     showToast(
-                        isActive ? '✅ Auto-approval ENABLED' : '⚪ Auto-approval DISABLED',
+                        isActive ? '? Auto-approval ENABLED' : '? Auto-approval DISABLED',
                         isActive ? 'success' : 'info',
                         3000
                     );
@@ -1138,7 +1138,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 });
                 
                 if (isNonVision) {
-                    alert('⚠️ Image paste requires a vision-capable model.\n\n' +
+                    alert('?? Image paste requires a vision-capable model.\n\n' +
                           'Current model: ' + modelText + '\n\n' +
                           'Please switch to a vision model like Qwen-VL.');
                     return;
@@ -1712,7 +1712,7 @@ function appendMessage(text, sender, shouldSave) {
     if (sender === 'user') {
         content.textContent = text;
 
-        // ── Enhanced user bubble: text wrap + avatar ─────────────────
+        // -- Enhanced user bubble: text wrap + avatar -----------------
         var row = document.createElement('div');
         row.className = 'user-msg-row';
 
@@ -1922,7 +1922,7 @@ function addToolResult(icon, text) {
         item.className = 'exploration-item tool-result';
         
         // Style based on icon type
-        var isError = icon === '❌';
+        var isError = icon === '?';
         var iconClass = isError ? 'error-icon' : 'success-icon';
         
         item.innerHTML = `<span class="exploration-icon ${iconClass}">${icon}</span><span class="${isError ? 'error-text' : ''}">${escapeHtml(text)}</span>`;
@@ -2020,13 +2020,13 @@ function renderPermissionBlock(permData) {
 
 function getToolIcon(toolName) {
     var name = (toolName || '').toLowerCase();
-    if (name.includes('read') || name.includes('file')) return '📄';
-    if (name.includes('write') || name.includes('edit')) return '✏️';
-    if (name.includes('run') || name.includes('command') || name.includes('terminal')) return '⚙️';
-    if (name.includes('search') || name.includes('find')) return '🔍';
-    if (name.includes('list') || name.includes('dir')) return '📁';
-    if (name.includes('git')) return '📦';
-    return '🔧';
+    if (name.includes('read') || name.includes('file')) return '??';
+    if (name.includes('write') || name.includes('edit')) return '??';
+    if (name.includes('run') || name.includes('command') || name.includes('terminal')) return '??';
+    if (name.includes('search') || name.includes('find')) return '??';
+    if (name.includes('list') || name.includes('dir')) return '??';
+    if (name.includes('git')) return '??';
+    return '??';
 }
 
 function handlePermissionAllow() {
@@ -2156,7 +2156,7 @@ function showToolActivity(type, info, status) {
         statusEl.textContent = activityText;
     }
 
-    // ── File read/edit cards (IMMEDIATE VISIBLE CARDS) ──────────────
+    // -- File read/edit cards (IMMEDIATE VISIBLE CARDS) --------------
     if (type === 'read_file' || type === 'edit_file' || type === 'write_file') {
         if (!currentAssistantMessage) {
             currentAssistantMessage = document.createElement('div');
@@ -2200,7 +2200,7 @@ function showToolActivity(type, info, status) {
             var ext = fileName ? fileName.split('.').pop().toLowerCase() : 'default';
             var extClass = 'fec-ext-' + (ext || 'default');
             
-            var icon = type === 'read_file' ? '👁' : type === 'edit_file' ? '✎' : '📝';
+            var icon = type === 'read_file' ? '??' : type === 'edit_file' ? '?' : '??';
             var actionText = type === 'read_file' ? 'Reading' : type === 'edit_file' ? 'Editing' : 'Creating';
             
             card.innerHTML = 
@@ -2214,7 +2214,7 @@ function showToolActivity(type, info, status) {
                 '<div class="fec-right">' +
                     (status === 'running' ? 
                         '<span class="fec-status-text fec-status-pending">...</span>' :
-                        '<span class="fec-status-text fec-status-applied">✓</span>'
+                        '<span class="fec-status-text fec-status-applied">?</span>'
                     ) +
                 '</div>';
             
@@ -2225,7 +2225,7 @@ function showToolActivity(type, info, status) {
         return;
     }
 
-    // ── Terminal command card handling ──────────────────────────────
+    // -- Terminal command card handling ------------------------------
     if (type === 'run_command') {
         if (!currentAssistantMessage) {
             currentAssistantMessage = document.createElement('div');
@@ -2267,7 +2267,7 @@ function showToolActivity(type, info, status) {
         return;
     }
 
-    // ── list_directory tree card ────────────────────────────────────
+    // -- list_directory tree card ------------------------------------
     if (type === 'list_directory' && status === 'complete') {
         // Tree card is rendered via showDirectoryTree from Python
         smartScroll(container);
@@ -2282,7 +2282,7 @@ function showToolActivity(type, info, status) {
         // Create collapsible header
         var header = document.createElement('div');
         header.className = 'activity-header';
-        header.innerHTML = '<span class="activity-icon running">↻</span> <span class="activity-title">Exploring</span> <span class="activity-toggle">▼</span>';
+        header.innerHTML = '<span class="activity-icon running">?</span> <span class="activity-title">Exploring</span> <span class="activity-toggle">?</span>';
         header.style.cursor = 'pointer';
         
         // Click handler for toggle
@@ -2292,7 +2292,7 @@ function showToolActivity(type, info, status) {
             var isCollapsed = section.classList.toggle('collapsed');
             var toggle = this.querySelector('.activity-toggle');
             if (toggle) {
-                toggle.textContent = isCollapsed ? '▶' : '▼';
+                toggle.textContent = isCollapsed ? '?' : '?';
             }
         };
         
@@ -2398,7 +2398,7 @@ function showToolActivity(type, info, status) {
     if (status === 'complete') {
         var iconEl = currentActivitySection.querySelector('.activity-icon');
         if (iconEl) {
-            iconEl.textContent = '✓';
+            iconEl.textContent = '?';
             iconEl.className = 'activity-icon complete';
         }
     }
@@ -2441,10 +2441,10 @@ function showToolSummary(summaryData) {
     
     // Build header
     var headerHtml = '<div class="summary-header" onclick="this.parentElement.classList.toggle(\'collapsed\')">';
-    headerHtml += '<span class="summary-icon">📋</span>';
+    headerHtml += '<span class="summary-icon">??</span>';
     headerHtml += '<span class="summary-title">Tool Execution Summary</span>';
     headerHtml += '<span class="summary-count">' + grandTotal + ' action' + (grandTotal > 1 ? 's' : '') + '</span>';
-    headerHtml += '<span class="summary-toggle">▾</span>';
+    headerHtml += '<span class="summary-toggle">?</span>';
     headerHtml += '</div>';
     
     // Build content
@@ -2453,17 +2453,17 @@ function showToolSummary(summaryData) {
     // File writes section
     if (totalWrites > 0) {
         contentHtml += '<div class="summary-section">';
-        contentHtml += '<div class="section-header"><span class="section-icon">📁</span>Files Modified (' + totalWrites + ')</div>';
+        contentHtml += '<div class="section-header"><span class="section-icon">??</span>Files Modified (' + totalWrites + ')</div>';
         contentHtml += '<div class="section-items">';
         summaryData.file_writes.forEach(function(item, index) {
             // Icon based on operation type
             var iconMap = {
-                'edit': '✏️',
-                'create': '✅',
-                'delete': '🗑️',
-                'directory': '📁'
+                'edit': '??',
+                'create': '?',
+                'delete': '???',
+                'directory': '??'
             };
-            var icon = iconMap[item.type] || '📄';
+            var icon = iconMap[item.type] || '??';
             var fileName = item.path ? item.path.split('/').pop().split('\\').pop() : 'unknown';
             contentHtml += '<div class="summary-item">';
             contentHtml += '<span class="item-icon">' + icon + '</span>';
@@ -2497,12 +2497,12 @@ function showToolSummary(summaryData) {
     // File reads section
     if (totalReads > 0) {
         contentHtml += '<div class="summary-section">';
-        contentHtml += '<div class="section-header"><span class="section-icon">📖</span>Files Read (' + totalReads + ')</div>';
+        contentHtml += '<div class="section-header"><span class="section-icon">??</span>Files Read (' + totalReads + ')</div>';
         contentHtml += '<div class="section-items">';
         summaryData.file_reads.forEach(function(item) {
             var fileName = item.path ? item.path.split('/').pop().split('\\').pop() : 'unknown';
             contentHtml += '<div class="summary-item">';
-            contentHtml += '<span class="item-icon">👁</span>';
+            contentHtml += '<span class="item-icon">??</span>';
             contentHtml += '<span class="item-name">' + escapeHtml(fileName) + '</span>';
             contentHtml += '</div>';
         });
@@ -2512,11 +2512,11 @@ function showToolSummary(summaryData) {
     // Commands section
     if (totalCommands > 0) {
         contentHtml += '<div class="summary-section">';
-        contentHtml += '<div class="section-header"><span class="section-icon">⚙️</span>Commands (' + totalCommands + ')</div>';
+        contentHtml += '<div class="section-header"><span class="section-icon">??</span>Commands (' + totalCommands + ')</div>';
         contentHtml += '<div class="section-items">';
         summaryData.commands.forEach(function(item) {
             contentHtml += '<div class="summary-item">';
-            contentHtml += '<span class="item-icon">▶️</span>';
+            contentHtml += '<span class="item-icon">??</span>';
             contentHtml += '<span class="item-name">' + escapeHtml(item.command || item.name) + '</span>';
             contentHtml += '</div>';
         });
@@ -2526,11 +2526,11 @@ function showToolSummary(summaryData) {
     // Errors section
     if (totalErrors > 0) {
         contentHtml += '<div class="summary-section error">';
-        contentHtml += '<div class="section-header"><span class="section-icon">❌</span>Errors (' + totalErrors + ')</div>';
+        contentHtml += '<div class="section-header"><span class="section-icon">?</span>Errors (' + totalErrors + ')</div>';
         contentHtml += '<div class="section-items">';
         summaryData.errors.forEach(function(item) {
             contentHtml += '<div class="summary-item error">';
-            contentHtml += '<span class="item-icon">⚠️</span>';
+            contentHtml += '<span class="item-icon">??</span>';
             contentHtml += '<span class="item-name">' + escapeHtml(item.name) + '</span>';
             contentHtml += '<span class="item-error">' + escapeHtml(item.error.substring(0, 100)) + '</span>';
             contentHtml += '</div>';
@@ -2541,11 +2541,11 @@ function showToolSummary(summaryData) {
     // Other operations
     if (totalOther > 0) {
         contentHtml += '<div class="summary-section">';
-        contentHtml += '<div class="section-header"><span class="section-icon">🔧</span>Other (' + totalOther + ')</div>';
+        contentHtml += '<div class="section-header"><span class="section-icon">??</span>Other (' + totalOther + ')</div>';
         contentHtml += '<div class="section-items">';
         summaryData.other.forEach(function(item) {
             contentHtml += '<div class="summary-item">';
-            contentHtml += '<span class="item-icon">⚡</span>';
+            contentHtml += '<span class="item-icon">?</span>';
             contentHtml += '<span class="item-name">' + escapeHtml(item.name) + '</span>';
             contentHtml += '</div>';
         });
@@ -2568,14 +2568,14 @@ function getFileIcon(type, info) {
         var opType = type.replace('terminal_', '');
         var icons = {
             'create': '<span class="file-icon terminal">+</span>',
-            'create_dir': '<span class="file-icon folder">📁</span>',
-            'delete': '<span class="file-icon delete">🗑️</span>',
-            'delete_dir': '<span class="file-icon delete">🗑️</span>',
-            'move': '<span class="file-icon move">→</span>',
-            'copy': '<span class="file-icon copy">📋</span>',
-            'rename': '<span class="file-icon rename">✎</span>'
+            'create_dir': '<span class="file-icon folder">??</span>',
+            'delete': '<span class="file-icon delete">???</span>',
+            'delete_dir': '<span class="file-icon delete">???</span>',
+            'move': '<span class="file-icon move">?</span>',
+            'copy': '<span class="file-icon copy">??</span>',
+            'rename': '<span class="file-icon rename">?</span>'
         };
-        return icons[opType] || '<span class="file-icon terminal">⌘</span>';
+        return icons[opType] || '<span class="file-icon terminal">?</span>';
     }
     
     if (type === 'read_file' || type === 'write_file' || type === 'edit_file' || type === 'inject_after' || type === 'add_import' || type === 'create_file') {
@@ -2600,15 +2600,15 @@ function getFileIcon(type, info) {
         };
         return icons[ext] || '<span class="file-icon">FILE</span>';
     }
-    if (type === 'list_directory') return '<span class="file-icon folder">📁</span>';
-    if (type === 'create_directory') return '<span class="file-icon folder">📁+</span>';
-    if (type === 'delete_file') return '<span class="file-icon delete">🗑️</span>';
-    if (type === 'delete_directory') return '<span class="file-icon delete">🗑️</span>';
-    if (type === 'run_command') return '<span class="file-icon terminal">⌘</span>';
-    if (type === 'search_code') return '<span class="file-icon search">🔍</span>';
+    if (type === 'list_directory') return '<span class="file-icon folder">??</span>';
+    if (type === 'create_directory') return '<span class="file-icon folder">??+</span>';
+    if (type === 'delete_file') return '<span class="file-icon delete">???</span>';
+    if (type === 'delete_directory') return '<span class="file-icon delete">???</span>';
+    if (type === 'run_command') return '<span class="file-icon terminal">?</span>';
+    if (type === 'search_code') return '<span class="file-icon search">??</span>';
     if (type === 'git_status' || type === 'git_diff') return '<span class="file-icon git">GIT</span>';
-    if (type === 'thinking') return '<span class="file-icon think">💭</span>';
-    return '<span class="file-icon">⚙️</span>';
+    if (type === 'thinking') return '<span class="file-icon think">??</span>';
+    return '<span class="file-icon">??</span>';
 }
 
 function formatActivityLabel(type, info, status) {
@@ -2633,22 +2633,22 @@ function formatActivityLabel(type, info, status) {
         return status === 'running' ? runningPrefix + displayInfo : displayInfo;
     }
     if (isEdit) {
-        var checkmark = (status === 'complete' && !diffMatch) ? ' ✓' : '';
+        var checkmark = (status === 'complete' && !diffMatch) ? ' ?' : '';
         return status === 'running' ? runningPrefix + displayInfo : displayInfo + checkmark;
     }
     if (isCreate) {
         var action = type === 'create_directory' ? 'Created directory' : 'Created file';
-        return status === 'running' ? runningPrefix + displayInfo : action + ' ' + displayInfo + ' ✓';
+        return status === 'running' ? runningPrefix + displayInfo : action + ' ' + displayInfo + ' ?';
     }
     if (isDelete) {
         var action = type === 'delete_directory' ? 'Deleted directory' : 'Deleted file';
-        return status === 'running' ? runningPrefix + displayInfo : action + ' ' + displayInfo + ' ✓';
+        return status === 'running' ? runningPrefix + displayInfo : action + ' ' + displayInfo + ' ?';
     }
     if (type === 'list_directory') {
         return status === 'running' ? 'Exploring ' + displayInfo : 'Exploring ' + displayInfo;
     }
     if (type === 'run_command') {
-        return runningPrefix + '<code>' + displayInfo + '</code>' + (status === 'complete' ? ' ✓' : '');
+        return runningPrefix + '<code>' + displayInfo + '</code>' + (status === 'complete' ? ' ?' : '');
     }
     if (type === 'search_code') {
         return 'Grepped code <code>' + displayInfo + '</code>';
@@ -2660,7 +2660,7 @@ function formatActivityLabel(type, info, status) {
         return status === 'running' ? 'Getting diff' : 'Diff retrieved';
     }
     if (type === 'thinking') {
-        return 'Thought · ' + displayInfo;
+        return 'Thought - ' + displayInfo;
     }
     return displayInfo;
 }
@@ -2703,11 +2703,11 @@ function renderDirectoryContents(path, contents) {
         item.onmouseover = function() { this.style.background = 'rgba(255,255,255,0.05)'; };
         item.onmouseout = function() { this.style.background = 'transparent'; };
         
-        // Check if it's a folder (ends with / or has 📁 in the line from backend)
-        var isFolder = line.includes('📁') || line.trim().endsWith('/');
+        // Check if it's a folder (ends with / or has ?? in the line from backend)
+        var isFolder = line.includes('??') || line.trim().endsWith('/');
         
         // Extract just the name (remove emoji and size info)
-        var name = line.replace(/[📁📄]/g, '').replace(/\s*\([^)]*\)/g, '').replace(/\s*\d+B$/, '').trim();
+        var name = line.replace(/[????]/g, '').replace(/\s*\([^)]*\)/g, '').replace(/\s*\d+B$/, '').trim();
         
         var icon;
         if (isFolder) {
@@ -2721,7 +2721,7 @@ function renderDirectoryContents(path, contents) {
                 var ext = name.split('.').pop().toLowerCase();
                 icon = getFileExtensionIcon(ext);
             } else {
-                icon = '📄';
+                icon = '??';
             }
         }
         
@@ -2774,7 +2774,7 @@ function showDirectoryContents(path, contents) {
 
 // Test function - can be called from console
 function testDirectoryDisplay() {
-    var testContent = "📁 agents/\n📁 skills/\n📄 plugin.json\n🐍 main.py\n📜 script.js\n🌐 index.html";
+    var testContent = "?? agents/\n?? skills/\n?? plugin.json\n?? main.py\n?? script.js\n?? index.html";
     showDirectoryContents("test_folder", testContent);
     console.log("Test directory display called");
 }
@@ -2896,11 +2896,11 @@ function showThinking() {
         header.innerHTML =
             '<svg class="activity-spinner" viewBox="0 0 24 24" width="16" height="16"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2" opacity="0.2"/><path d="M12 2 A 10 10 0 1 1 2 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>' +
             '<span class="activity-title">Working <span class="activity-mention">@</span></span>' +
-            '<span class="activity-toggle">▾</span>';
+            '<span class="activity-toggle">?</span>';
         header.onclick = function() {
             currentActivitySection.classList.toggle('collapsed');
             var t = header.querySelector('.activity-toggle');
-            if (t) t.textContent = currentActivitySection.classList.contains('collapsed') ? '▸' : '▾';
+            if (t) t.textContent = currentActivitySection.classList.contains('collapsed') ? '?' : '?';
         };
 
         var list = document.createElement('div');
@@ -2917,17 +2917,17 @@ function showThinking() {
     var list = currentActivitySection.querySelector('.activity-list');
     if (!list) return;
 
-    // ── FREEZE any previous thinking item ─────────────────────────────────
+    // -- FREEZE any previous thinking item ---------------------------------
     // Convert ALL existing thinking-indicator elements to static state
     var prevThinking = document.getElementById('thinking-indicator');
     if (prevThinking) {
         prevThinking.removeAttribute('id');          // de-register old id
-        prevThinking.className = 'activity-item';    // removes 'thinking' class → stops blink
+        prevThinking.className = 'activity-item';    // removes 'thinking' class ? stops blink
         var dotsEl = prevThinking.querySelector('.thinking-dots');
-        if (dotsEl) dotsEl.textContent = '•';       // replace '...' with static bullet
+        if (dotsEl) dotsEl.textContent = '.';       // replace '...' with static bullet
     }
 
-    // ── Add new ACTIVE thinking item at the bottom of the list ────────────
+    // -- Add new ACTIVE thinking item at the bottom of the list ------------
     var thinkingItem = document.createElement('div');
     thinkingItem.className = 'activity-item thinking';
     thinkingItem.id = 'thinking-indicator';
@@ -2940,7 +2940,7 @@ function showThinking() {
         var elapsed = Math.floor((Date.now() - activityStartTime) / 1000);
         var item = document.getElementById('thinking-indicator');
         if (item) {
-            item.querySelector('.activity-text').textContent = 'Thinking · ' + elapsed + 's';
+            item.querySelector('.activity-text').textContent = 'Thinking - ' + elapsed + 's';
         }
     }, 1000);
 
@@ -2955,9 +2955,9 @@ function hideThinking() {
     var item = document.getElementById('thinking-indicator');
     if (item) {
         item.removeAttribute('id');             // de-register so no stale id lingers
-        item.className = 'activity-item';       // removes 'thinking' → stops blink
+        item.className = 'activity-item';       // removes 'thinking' ? stops blink
         var dotsEl = item.querySelector('.thinking-dots');
-        if (dotsEl) dotsEl.textContent = '•'; // freeze to static bullet
+        if (dotsEl) dotsEl.textContent = '.'; // freeze to static bullet
     }
 }
 
@@ -2976,7 +2976,7 @@ function updateActivityHeader(count, status) {
     }
     var icon = document.querySelector('.activity-header .activity-icon');
     if (icon) {
-        icon.textContent = status === 'complete' ? '✓' : '↻';
+        icon.textContent = status === 'complete' ? '?' : '?';
         icon.className = 'activity-icon ' + (status === 'complete' ? 'complete' : 'running');
     }
 }
@@ -3024,7 +3024,7 @@ function showCreatedFilesCard(summaryData) {
     var title  = summaryData.title   || 'Task Complete';
     var msg    = summaryData.message || '';
 
-    // ── Build card element ──────────────────────────────────────────────────
+    // -- Build card element --------------------------------------------------
     var card = document.createElement('div');
     card.className = 'created-files-card';
     card.setAttribute('aria-label', 'Files changed by Cortex AI');
@@ -3327,6 +3327,11 @@ function startStreaming() {
 }
 
 function onChunk(chunk) {
+    if (chunk === undefined || chunk === null) {
+        console.warn('[JS] onChunk received undefined/null chunk');
+        return;
+    }
+    chunk = String(chunk);
     console.log('[JS] onChunk received:', chunk.substring(0, 50));
     var container = document.getElementById('chatMessages');
     if (!container) {
@@ -3334,7 +3339,7 @@ function onChunk(chunk) {
         return;
     }
 
-    // ── Set thinking start time on first real content chunk ──────────────
+    // -- Set thinking start time on first real content chunk --------------
     if (!_thinkingStartTime && chunk.trim() && !chunk.startsWith('<')) {
         _thinkingStartTime = Date.now();
     }
@@ -3354,14 +3359,14 @@ function onChunk(chunk) {
     }
 
     // Check if this is an exploration item (tool execution feedback)
-    var explorationMatch = chunk.match(/^(📁|📄|✏️|🔧|⚙️)\s*`?([^`\n]+)`?/);
+    var explorationMatch = chunk.match(/^(READ|WRITE|RUN|SEARCH|INFO)\s*?([^\n]+)?/i);
     if (explorationMatch) {
-        addExplorationItem(explorationMatch[1], explorationMatch[2].trim());
+        addExplorationItem(explorationMatch[1], (explorationMatch[2] || "" ).trim());
         return;
     }
 
     // Check for tool result lines
-    var toolResultMatch = chunk.match(/^(\s*)(→|✓|✏️|🔧|🔍|📊|📋|❌)\s*(.+)$/);
+    var toolResultMatch = chunk.match(/^(\s*)(OK|DONE|ERROR|WARN|INFO|RESULT|OUTPUT)\s*(.+)$/i);
     if (toolResultMatch) {
         addToolResult(toolResultMatch[2], toolResultMatch[3].trim());
         return;
@@ -3375,7 +3380,7 @@ function onChunk(chunk) {
     }
     if (chunk.includes('</exploration>')) return;
 
-    // ── Task Summary: buffer for final card, suppress from stream ────────
+    // -- Task Summary: buffer for final card, suppress from stream --------
     if (chunk.includes('<task_summary>')) _inTaskSummary = true;
     if (_inTaskSummary) {
         _taskSummaryBuffer += chunk;
@@ -3383,7 +3388,7 @@ function onChunk(chunk) {
         return;
     }
 
-    // ── Terminal output streaming: route to terminal card (BATCHED) ───────
+    // -- Terminal output streaming: route to terminal card (BATCHED) -------
     if (chunk.includes('<terminal_output>')) {
         var termMatch = chunk.match(/<terminal_output>(.*?)<\/terminal_output>/);
         if (termMatch) {
@@ -3422,7 +3427,7 @@ function onChunk(chunk) {
         if (emptyState) emptyState.remove();
     }
 
-    // Accumulate raw content (INCLUDING custom tags — stripped at render time)
+    // Accumulate raw content (INCLUDING custom tags - stripped at render time)
     currentContent += chunk;
 
     // Throttled Rendering (200ms debounce - increased to reduce UI freezing during terminal streaming)
@@ -3443,7 +3448,7 @@ function updateStreamingUI() {
     if (!contentDiv) return;
 
     try {
-        // ── 1. Strip ALL custom tags before markdown render ─────────────────
+        // -- 1. Strip ALL custom tags before markdown render -----------------
         var cleanText = currentContent
             .replace(/<file_edited>[\s\S]*?<\/file_edited>/g, '')
             .replace(/<exploration>[\s\S]*?<\/exploration>/g, '')
@@ -3453,7 +3458,7 @@ function updateStreamingUI() {
             .replace(/<permission>[\s\S]*?<\/permission>/g, '')
             .trim();
 
-        // ── 2. Parse markdown ────────────────────────────────────────────
+        // -- 2. Parse markdown --------------------------------------------
         var html = '';
         try {
             if (typeof marked !== 'undefined' && marked.parse) {
@@ -3473,7 +3478,7 @@ function updateStreamingUI() {
         html = highlightFileCreations(html);
         contentDiv.innerHTML = html;
 
-        // ── 3. Syntax highlight (skip already-highlighted blocks) ──────────
+        // -- 3. Syntax highlight (skip already-highlighted blocks) ----------
         if (window.hljs) {
             contentDiv.querySelectorAll('pre code').forEach(function(block) {
                 if (!block.dataset.highlighted) {
@@ -3483,7 +3488,7 @@ function updateStreamingUI() {
             });
         }
 
-        // ── 4. Inject code block headers on new blocks ─────────────────
+        // -- 4. Inject code block headers on new blocks -----------------
         contentDiv.querySelectorAll('pre code').forEach(function(block) {
             injectCodeBlockHeader(block);
         });
@@ -3620,7 +3625,7 @@ function onComplete() {
     }
 
     if (currentAssistantMessage) {
-        // ── Strip all custom tags for display ─────────────────────────────
+        // -- Strip all custom tags for display -----------------------------
         var displayText = currentContent
             .replace(/<task_summary>[\s\S]*?<\/task_summary>/g, '')
             .replace(/<file_edited>[\s\S]*?<\/file_edited>/g, '')
@@ -3633,14 +3638,14 @@ function onComplete() {
         console.log('[CHAT] onComplete: displayText length:', displayText ? displayText.length : 0);
         console.log('[CHAT] onComplete: currentAssistantMessage exists:', !!currentAssistantMessage);
 
-        // ── Save to history (only if content is valid) ─────────────────────
+        // -- Save to history (only if content is valid) ---------------------
         var chat = chats.find(function(c) { return c.id == currentChatId; });
         if (chat && displayText && displayText.trim() !== '' && displayText !== 'undefined') {
             chat.messages.push({ text: displayText, sender: 'assistant', role: 'assistant' });
             saveChats();
         }
 
-        // ── Final markdown render ───────────────────────────────────────
+        // -- Final markdown render ---------------------------------------
         var contentDiv = currentAssistantMessage.querySelector('.message-content');
         console.log('[CHAT] onComplete: contentDiv found:', !!contentDiv);
         
@@ -3661,7 +3666,7 @@ function onComplete() {
             
             console.log('[CHAT] onComplete: contentDiv.innerHTML set, length:', contentDiv.innerHTML.length);
 
-            // ── Code block headers + syntax highlight ───────────────────
+            // -- Code block headers + syntax highlight -------------------
             contentDiv.querySelectorAll('pre code').forEach(function(block) {
                 if (window.hljs) hljs.highlightElement(block);
                 injectCodeBlockHeader(block);
@@ -3670,18 +3675,18 @@ function onComplete() {
             console.error('[CHAT] onComplete: contentDiv NOT FOUND! Message structure may be broken.');
         }
 
-        // ── File edit cards ← KEY FIX ────────────────────────────────
+        // -- File edit cards ? KEY FIX --------------------------------
         // Render cards AFTER ensuring content is visible
         renderCustomTagsInto(currentAssistantMessage, currentContent);
 
-        // ── Thought duration badge ──────────────────────────────────
+        // -- Thought duration badge ----------------------------------
         var secs = getThoughtSeconds();
         if (secs >= 1) {
             currentAssistantMessage.appendChild(buildThoughtBadge(secs));
         }
         _thinkingStartTime = null;
 
-        // ── Task summary card ───────────────────────────────────────
+        // -- Task summary card ---------------------------------------
         var summaryText = _taskSummaryBuffer || currentContent;
         var summaryMatch = summaryText.match(/<task_summary>([\s\S]*?)<\/task_summary>/);
         if (summaryMatch) {
@@ -3698,10 +3703,10 @@ function onComplete() {
         console.warn('[CHAT] onComplete: currentAssistantMessage is null!');
     }
 
-    // ── Show task completion summary ─────────────────────────────────
+    // -- Show task completion summary ---------------------------------
     showTaskCompletionSummary();
 
-    // ── Reset state ────────────────────────────────────────────────
+    // -- Reset state ------------------------------------------------
     currentAssistantMessage = null;
     currentContent          = '';
     _taskSummaryBuffer      = '';
@@ -3712,7 +3717,7 @@ function onComplete() {
     if (sendBtn) sendBtn.style.display = 'flex';
     if (stopBtn) stopBtn.style.display = 'none';
 
-    // ── Trigger queue processing ────────────────────────────────────
+    // -- Trigger queue processing ------------------------------------
     _onGenerationComplete();
 }
 
@@ -3930,7 +3935,7 @@ function renderExplorationBlock(data, isStreaming) {
 }
 
 function renderFileEditedBlock(data, isStreaming) {
-    if (isStreaming) return '<div class="file-edit-inline"><span class="pending">⏳ Editing...</span></div>';
+    if (isStreaming) return '<div class="file-edit-inline"><span class="pending">? Editing...</span></div>';
     
     var lines = data ? data.trim().split('\n') : [''];
     var filePath = lines[0] || (data ? data.trim() : '');
@@ -3952,8 +3957,8 @@ function renderFileEditedBlock(data, isStreaming) {
         '</div>' +
         '<div class="fec-actions">' +
           '<button class="fec-btn fec-diff" data-path="' + escapeHtml(filePath) + '" onclick="event.stopPropagation(); requestFecDiff(this)" title="View diff">Diff</button>' +
-          '<button class="fec-btn fec-accept" onclick="acceptFileEdit(\'' + escapedPath + '\', this)" title="Accept changes">✓</button>' +
-          '<button class="fec-btn fec-reject" onclick="rejectFileEdit(\'' + escapedPath + '\', this)" title="Reject changes">✗</button>' +
+          '<button class="fec-btn fec-accept" onclick="acceptFileEdit(\'' + escapedPath + '\', this)" title="Accept changes">?</button>' +
+          '<button class="fec-btn fec-reject" onclick="rejectFileEdit(\'' + escapedPath + '\', this)" title="Reject changes">?</button>' +
         '</div>' +
     '</div>';
 }
@@ -3969,7 +3974,7 @@ function renderTaskSummary(data) {
         var message = summary.message || '';
         
         var html = '<div class="task-summary-card">';
-        html += '<div class="task-summary-header">✅ ' + escapeHtml(title) + '</div>';
+        html += '<div class="task-summary-header">? ' + escapeHtml(title) + '</div>';
         
         // Removed section
         if (removed.length > 0) {
@@ -3977,7 +3982,7 @@ function renderTaskSummary(data) {
             html += '<div class="task-summary-label">Removed:</div>';
             html += '<ul class="task-summary-list removed">';
             removed.forEach(function(item) {
-                html += '<li><span class="item-icon">🗑️</span>' + escapeHtml(item) + '</li>';
+                html += '<li><span class="item-icon">???</span>' + escapeHtml(item) + '</li>';
             });
             html += '</ul></div>';
         }
@@ -3988,7 +3993,7 @@ function renderTaskSummary(data) {
             html += '<div class="task-summary-label">Kept:</div>';
             html += '<ul class="task-summary-list kept">';
             kept.forEach(function(item) {
-                html += '<li><span class="item-icon">✓</span>' + escapeHtml(item) + '</li>';
+                html += '<li><span class="item-icon">?</span>' + escapeHtml(item) + '</li>';
             });
             html += '</ul></div>';
         }
@@ -3999,7 +4004,7 @@ function renderTaskSummary(data) {
             html += '<div class="task-summary-label">Files:</div>';
             html += '<ul class="task-summary-list files">';
             files.forEach(function(item) {
-                var icon = item.action === 'created' ? '📄' : item.action === 'deleted' ? '🗑️' : '📝';
+                var icon = item.action === 'created' ? '??' : item.action === 'deleted' ? '???' : '??';
                 var status = item.action || 'modified';
                 html += '<li><span class="item-icon">' + icon + '</span><code>' + escapeHtml(item.name) + '</code> <span class="file-action">' + status + '</span></li>';
             });
@@ -4015,7 +4020,7 @@ function renderTaskSummary(data) {
         return html;
     } catch (e) {
         console.error('Task summary parse error:', e);
-        return '<div class="task-summary-card"><div class="task-summary-header">✅ Task Complete</div></div>';
+        return '<div class="task-summary-card"><div class="task-summary-header">? Task Complete</div></div>';
     }
 }
 
@@ -4123,7 +4128,7 @@ function completeTerminalOutput() {
         // Update status text
         var statusSpan = terminalOutput.querySelector('.terminal-status');
         if (statusSpan) {
-            statusSpan.textContent = '✓ Terminal Output Completed';
+            statusSpan.textContent = '? Terminal Output Completed';
         }
         
         console.log('[Terminal] Output marked as complete');
@@ -4308,7 +4313,7 @@ function showImageAttachmentPreview(filename, base64) {
     preview.className = 'image-attachment-preview';
     preview.innerHTML = 
         '<img src="' + base64 + '" alt="' + escapeHtml(filename) + '" />' +
-        '<button class="remove-preview" onclick="removeImageAttachment()">×</button>' +
+        '<button class="remove-preview" onclick="removeImageAttachment()">x</button>' +
         '<span class="preview-filename">' + escapeHtml(filename) + '</span>';
     
     // Insert after input container
@@ -4735,7 +4740,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const escapedId = filePath.replace(/[^a-zA-Z0-9]/g, '-');
         const statusEl = document.getElementById('status-' + escapedId);
         if (statusEl) {
-            statusEl.innerHTML = '<span class="accepted">✅ Changes applied automatically</span>';
+            statusEl.innerHTML = '<span class="accepted">? Changes applied automatically</span>';
         }
     };
 
@@ -4926,7 +4931,15 @@ document.addEventListener('DOMContentLoaded', function() {
     // New method that receives chat data directly from Python
     window.setProjectInfoWithChats = function(name, path, chatsJson) {
         console.log('[CHAT] setProjectInfoWithChats called:', name, path);
-        console.log('[CHAT] Received chat data from Python:', chatsJson ? chatsJson.length + ' chars' : 'null');
+        var chatsInfo = 'null';
+        if (Array.isArray(chatsJson)) {
+            chatsInfo = chatsJson.length + ' items';
+        } else if (typeof chatsJson === 'string') {
+            chatsInfo = chatsJson.length + ' chars';
+        } else if (chatsJson && typeof chatsJson === 'object') {
+            chatsInfo = 'object';
+        }
+        console.log('[CHAT] Received chat data from Python:', chatsInfo);
         
         var indicator = document.getElementById('project-indicator');
         var projectName = document.getElementById('project-name');
@@ -4951,15 +4964,25 @@ document.addEventListener('DOMContentLoaded', function() {
             if (path) {
                 // Set the path first before loading
                 currentProjectPath = path;
-                console.log('[CHAT] ✅ currentProjectPath SET to:', currentProjectPath);
+                console.log('[CHAT] ? currentProjectPath SET to:', currentProjectPath);
                 
                 // Parse the chats METADATA only (lazy loading - no messages yet)
                 var savedChats = []; // This variable is re-declared here, but the one above is for the bridge-ready case.
                                      // The original intent of this line was to initialize for the chatsJson parsing.
                                      // We'll keep it for the chatsJson path.
                 try {
-                    if (chatsJson && chatsJson !== "[]") {
-                        savedChats = JSON.parse(chatsJson);
+                    if (Array.isArray(chatsJson)) {
+                        savedChats = chatsJson;
+                    } else if (typeof chatsJson === 'string') {
+                        if (chatsJson && chatsJson !== "[]") {
+                            savedChats = JSON.parse(chatsJson);
+                        }
+                    } else if (chatsJson && typeof chatsJson === 'object') {
+                        if (typeof chatsJson.length === 'number') {
+                            savedChats = chatsJson;
+                        }
+                    }
+                    if (savedChats.length > 0) {
                         console.log('[CHAT] Parsed', savedChats.length, 'chat metadata from Python data');
                         
                         // Initialize chat list with metadata (sidebar shows titles only)
@@ -4992,7 +5015,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     // If we have existing chats (e.g. from localStorage) but Python says 0, 
                     // it means the DB is empty (e.g. after deletion). 
                     // We should respect the DB and clear our local list.
-                    if (chats.length > 0 && chatsJson === "[]") {
+                    if (chats.length > 0 && ((typeof chatsJson === 'string' && chatsJson === "[]") || (Array.isArray(chatsJson) && chatsJson.length === 0))) {
                         console.log('[CHAT] Clearing local cache as DB is empty');
                         chats = [];
                     }
@@ -5007,7 +5030,13 @@ document.addEventListener('DOMContentLoaded', function() {
             indicator.style.display = 'none';
         }
     };
-    
+
+    if (window._pendingProjectInfoWithChats) {
+        var pendingInfo = window._pendingProjectInfoWithChats;
+        window._pendingProjectInfoWithChats = null;
+        window.setProjectInfoWithChats(pendingInfo.name, pendingInfo.path, pendingInfo.chatsJson);
+    }
+
     // Keep the old method for compatibility
     window.setProjectInfo = function(name, path) {
         console.log('[CHAT] setProjectInfo called:', name, path);
@@ -5046,7 +5075,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     
                     // Set the path first before loading
                     currentProjectPath = path;
-                    console.log('[CHAT] ✅ currentProjectPath SET to:', currentProjectPath);
+                    console.log('[CHAT] ? currentProjectPath SET to:', currentProjectPath);
                     
                     // Load chats for this project
                     var savedChats = loadProjectChats();
@@ -5333,16 +5362,16 @@ function buildFileEditCard(filePath, added, removed, editType, status, original,
     var ext      = fileName ? fileName.split('.').pop().toLowerCase() : 'default';
     var esc      = filePath ? filePath.replace(/'/g, "\\'") : '';
 
-    // ── File type badge (colored, matches Cursor/Qoder) ──────────────────
+    // -- File type badge (colored, matches Cursor/Qoder) ------------------
     var ftBadge = getFileTypeBadge(ext);
 
-    // ── Diff stats ─────────────────────────────────────────────
+    // -- Diff stats ---------------------------------------------
     // For new files (C), always show added count even if 0
     // For modified files (M), show both added and removed
     var addedHtml   = (added > 0 || editType === 'C') ? '<span class="fec-added">+'  + added   + '</span>' : '';
     var removedHtml = removed > 0 ? '<span class="fec-removed">-' + removed + '</span>' : '';
 
-    // ── M/C/D badge ─────────────────────────────────────────────
+    // -- M/C/D badge ---------------------------------------------
     var mClass = { 'M': 'fec-badge-m', 'C': 'fec-badge-c', 'D': 'fec-badge-d' }[editType] || 'fec-badge-m';
 
     var isPending  = status === 'pending';
@@ -5371,7 +5400,7 @@ function buildFileEditCard(filePath, added, removed, editType, status, original,
     card.dataset.original = original || '';
     card.dataset.modified = modified || '';
 
-    // Click card — no diff overlay, just open file in editor
+    // Click card - no diff overlay, just open file in editor
     card.onclick = function(e) {
         if (e.target.tagName === 'BUTTON') return;
         openFileInEditor(filePath);
@@ -5391,7 +5420,7 @@ function buildFileEditCard(filePath, added, removed, editType, status, original,
     return card;
 }
 
-// File type badge — SVG icons
+// File type badge - SVG icons
 function getFileTypeBadge(ext) {
     var badges = {
         'js':   '<svg viewBox="0 0 32 32" width="16" height="16"><rect width="32" height="32" rx="3" fill="#F7DF1E"/><path d="M20.8 24.3c.5.9 1.2 1.5 2.4 1.5 1 0 1.6-.5 1.6-1.2 0-.8-.7-1.1-1.8-1.6l-.6-.3c-1.8-.8-3-1.7-3-3.7 0-1.9 1.4-3.3 3.6-3.3 1.6 0 2.7.5 3.5 1.9l-1.9 1.2c-.4-.8-.9-1.1-1.6-1.1-.7 0-1.2.5-1.2 1.1 0 .8.5 1.1 1.6 1.5l.6.3c2.1.9 3.3 1.8 3.3 3.9 0 2.2-1.7 3.5-4 3.5-2.2 0-3.7-1.1-4.4-2.5l2-.1z" fill="#222"/><path d="M12.2 24.6c.4.6.7 1.2 1.6 1.2.8 0 1.3-.3 1.3-1.5V16h2.4v8.3c0 2.5-1.5 3.7-3.6 3.7-1.9 0-3-1-3.6-2.2l1.9-1.2z" fill="#222"/></svg>',
@@ -5452,7 +5481,7 @@ function renderCustomTagsInto(msgEl, fullText) {
 
     console.log('[DEBUG] renderCustomTagsInto called, fullText length:', fullText.length);
 
-    // ── Find or create cards container ────────────────────────────────
+    // -- Find or create cards container --------------------------------
     // Works with BOTH .message-bubble AND .msg structures
     var cardsEl = msgEl.querySelector('.msg-cards') ||
                   msgEl.querySelector('.fec-cards-container');
@@ -5471,7 +5500,7 @@ function renderCustomTagsInto(msgEl, fullText) {
         console.log('[DEBUG] Created new cards container');
     }
 
-    // ── Parse <file_edited> tags ────────────────────────────────────
+    // -- Parse <file_edited> tags ------------------------------------
     var feRe = /<file_edited>([\s\S]*?)<\/file_edited>/g;
     var m;
     var matchCount = 0;
@@ -5615,10 +5644,10 @@ function buildThoughtBadge(seconds) {
 }
 
 // ================================================================
-// INDUSTRY STANDARD ENHANCEMENTS — CURSOR/QODER PARITY
+// INDUSTRY STANDARD ENHANCEMENTS - CURSOR/QODER PARITY
 // ================================================================
 
-// ── FILE EDIT CARD BRIDGE HANDLERS ──────────────────────────────
+// -- FILE EDIT CARD BRIDGE HANDLERS ------------------------------
 function openFileInEditor(filePath) {
     // Handle relative paths by prepending project path
     if (filePath && currentProjectPath) {
@@ -5736,7 +5765,7 @@ function markFileRejected(filePath) {
     rejectFileEdit(filePath, null);
 }
 
-// ── @ MENTION SYSTEM ────────────────────────────────────────────
+// -- @ MENTION SYSTEM --------------------------------------------
 var _mentionAtIndex = -1;
 
 function showMentionDropdown(query, atIdx) {
@@ -5842,7 +5871,7 @@ function selectActiveMentionItem() {
     if (active) active.click();
 }
 
-// ── TOKEN COUNTER ────────────────────────────────────────────────
+// -- TOKEN COUNTER ------------------------------------------------
 function updateTokenCounter() {
     var input = document.getElementById('chatInput');
     if (!input) return;
@@ -5864,7 +5893,7 @@ function updateTokenCounter() {
     }
 }
 
-// ── SCROLL JUMP BUTTON ───────────────────────────────────────────
+// -- SCROLL JUMP BUTTON -------------------------------------------
 function showScrollJumpBtn() {
     if (document.getElementById('scroll-jump-btn')) return;
     var btn = document.createElement('button');
@@ -5886,7 +5915,7 @@ function hideScrollJumpBtn() {
     if (btn) btn.remove();
 }
 
-// ── LIVE TOOL ACTIVITY (onToolActivity from Python bridge) ───────
+// -- LIVE TOOL ACTIVITY (onToolActivity from Python bridge) -------
 var TOOL_ICONS = {
     'read_file':      '\ud83d\udcc4',
     'write_file':     '\u270f\ufe0f',
@@ -5908,7 +5937,7 @@ function onToolActivity(toolType, info, status) {
     }
 }
 
-// ── INPUT ENHANCEMENTS: @ DETECTION + TOKEN COUNTER ─────────────
+// -- INPUT ENHANCEMENTS: @ DETECTION + TOKEN COUNTER -------------
 (function setupInputEnhancements() {
     function init() {
         var input = document.getElementById('chatInput');
@@ -5955,7 +5984,7 @@ function onToolActivity(toolType, info, status) {
     init();
 })();
 
-// ── SCROLL JUMP BUTTON: show when user scrolls up during streaming ─
+// -- SCROLL JUMP BUTTON: show when user scrolls up during streaming -
 (function setupScrollJump() {
     function init() {
         var msgs = document.getElementById('chatMessages');
@@ -5973,19 +6002,19 @@ function onToolActivity(toolType, info, status) {
 })();
 
 
-// ══════════════════════════════════════════════════════════════
+// --------------------------------------------------------------
 // THREE FEATURES IMPLEMENTATION
-// ══════════════════════════════════════════════════════════════
+// --------------------------------------------------------------
 
-// ── State variables for features ──────────────────────────────
+// -- State variables for features ------------------------------
 var _todoExpanded = false;
 var _msgQueue     = [];
 var _isGenerating = false;
 var _queueIdSeq   = 0;
 
-// ══════════════════════════════════════════════════════════════
-// FEATURE 1 — PROJECT TREE CARD
-// ══════════════════════════════════════════════════════════════
+// --------------------------------------------------------------
+// FEATURE 1 - PROJECT TREE CARD
+// --------------------------------------------------------------
 
 function buildProjectTreeCard(rootPath, items) {
     var card = document.createElement('div');
@@ -6016,7 +6045,7 @@ function buildProjectTreeCard(rootPath, items) {
         row.style.paddingLeft = (depth * 16) + 'px';  // Indent based on depth
 
         // Determine the branch connector
-        var branch = isLast ? '└──' : '├──';
+        var branch = isLast ? '+--' : '+--';
 
         // Use SVG icons instead of emoji
         var icon = item.isDir
@@ -6052,18 +6081,18 @@ function buildProjectTreeCard(rootPath, items) {
 function getFileEmoji(filename) {
     var ext = (filename || '').split('.').pop().toLowerCase();
     var map = {
-        'html': '📄', 'htm': '📄',
-        'js':   '📄', 'ts':  '📄', 'jsx': '📄', 'tsx': '📄',
-        'css':  '📄', 'scss': '📄',
-        'py':   '📄', 'java': '📄', 'go':  '📄', 'rs':  '📄',
-        'json': '📄', 'yaml': '📄', 'yml': '📄',
-        'md':   '📄', 'txt':  '📄',
-        'png':  '🖼️', 'jpg': '🖼️', 'svg': '🖼️',
-        'mp4':  '🎬', 'mp3':  '🎵',
-        'zip':  '📦', 'tar':  '📦',
-        'sh':   '⚙️', 'bat':  '⚙️',
+        'html': '??', 'htm': '??',
+        'js':   '??', 'ts':  '??', 'jsx': '??', 'tsx': '??',
+        'css':  '??', 'scss': '??',
+        'py':   '??', 'java': '??', 'go':  '??', 'rs':  '??',
+        'json': '??', 'yaml': '??', 'yml': '??',
+        'md':   '??', 'txt':  '??',
+        'png':  '???', 'jpg': '???', 'svg': '???',
+        'mp4':  '??', 'mp3':  '??',
+        'zip':  '??', 'tar':  '??',
+        'sh':   '??', 'bat':  '??',
     };
-    return map[ext] || '📄';
+    return map[ext] || '??';
 }
 
 function showProjectTreeCard(rootPath, items) {
@@ -6097,9 +6126,9 @@ window.showDirectoryTree = function(rootPath, items) {
     showProjectTreeCard(rootPath, items);
 };
 
-// ══════════════════════════════════════════════════════════════
-// FEATURE 2 — TERMINAL COMMAND CARD
-// ══════════════════════════════════════════════════════════════
+// --------------------------------------------------------------
+// FEATURE 2 - TERMINAL COMMAND CARD
+// --------------------------------------------------------------
 
 function buildTerminalCard(command, output, status, exitCode, cardId) {
     var card = document.createElement('div');
@@ -6109,10 +6138,10 @@ function buildTerminalCard(command, output, status, exitCode, cardId) {
     card.dataset.status  = status;
 
     var headerIcon = {
-        'running': '▷',
-        'success': '<span style="color:#22c55e">✓</span>',
-        'error':   '<span style="color:#ef4444">⊗</span>'
-    }[status] || '▷';
+        'running': '?',
+        'success': '<span style="color:#22c55e">?</span>',
+        'error':   '<span style="color:#ef4444">?</span>'
+    }[status] || '?';
 
     var exitCodeHtml = (status === 'error' && exitCode !== undefined && exitCode !== null)
         ? '<span class="term-exit-code">Exit Code: ' + exitCode + '</span>'
@@ -6188,7 +6217,7 @@ function toggleTerminalOutput(outputId, btn) {
     var isHidden = output.style.display === 'none';
     output.style.display = isHidden ? 'block' : 'none';
     var chevron = btn.querySelector('.term-chevron');
-    if (chevron) chevron.textContent = isHidden ? '⌄' : '›';
+    if (chevron) chevron.textContent = isHidden ? '?' : '-';
 }
 
 function updateTerminalCard(cardId, status, exitCode, output) {
@@ -6200,8 +6229,8 @@ function updateTerminalCard(cardId, status, exitCode, output) {
 
     var iconEl = card.querySelector('.term-status-icon');
     if (iconEl) {
-        if (status === 'success') iconEl.innerHTML = '<span style="color:#22c55e">✓</span>';
-        if (status === 'error')   iconEl.innerHTML = '<span style="color:#ef4444">⊗</span>';
+        if (status === 'success') iconEl.innerHTML = '<span style="color:#22c55e">?</span>';
+        if (status === 'error')   iconEl.innerHTML = '<span style="color:#ef4444">?</span>';
     }
 
     if (status === 'error' && exitCode !== undefined) {
@@ -6243,9 +6272,9 @@ window.setTerminalOutput = function(cardId, output, exitCode) {
     updateTerminalCard(cardId, status, exitCode, output);
 };
 
-// ══════════════════════════════════════════════════════════════
-// FEATURE 3 — TODO PANEL
-// ══════════════════════════════════════════════════════════════
+// --------------------------------------------------------------
+// FEATURE 3 - TODO PANEL
+// --------------------------------------------------------------
 
 function updateTodos(todos, mainTask) {
     var section   = document.getElementById('todo-section');
@@ -6346,9 +6375,9 @@ function toggleTodoSection() {
 window.updateTodos = updateTodos;
 window.toggleTodoSection = toggleTodoSection;
 
-// ══════════════════════════════════════════════════════════════
-// FEATURE 4 — MESSAGE QUEUE SYSTEM
-// ══════════════════════════════════════════════════════════════
+// --------------------------------------------------------------
+// FEATURE 4 - MESSAGE QUEUE SYSTEM
+// --------------------------------------------------------------
 
 function _sendNow(text) {
     _isGenerating = true;
@@ -6435,7 +6464,7 @@ function _renderQueueBar() {
             '<span class="mq-position">' + (_msgQueue.indexOf(msg) + 1) + '</span>' +
             '<span class="mq-text">' + escapeHtml(preview) + '</span>' +
             '<button class="mq-remove" onclick="_removeFromQueue(' + msg.id + ')" ' +
-                    'title="Remove from queue">×</button>';
+                    'title="Remove from queue">-</button>';
 
         listEl.appendChild(item);
     });
@@ -6560,7 +6589,7 @@ function showPermissionCard(toolName, details, callback) {
 window.showPermissionCard = showPermissionCard;
 
 
-// ── INTERACTIVE QUESTION SUPPORT (STOP-AND-WAIT PIPELINE) ──────────
+// -- INTERACTIVE QUESTION SUPPORT (STOP-AND-WAIT PIPELINE) ----------
 
 /**
  * Shows a premium interaction card in the chat for AI questions.
@@ -6582,11 +6611,11 @@ window.showQuestionCard = function(info) {
             var titleEl = card.querySelector('.tool-badge-name');
             if (titleEl) {
                 var toolName = info.tool_name || 'Action Request';
-                var toolIcon = '🔧';
-                if (toolName.includes('write') || toolName.includes('edit')) toolIcon = '📝';
-                else if (toolName.includes('read')) toolIcon = '📖';
-                else if (toolName.includes('bash') || toolName.includes('command')) toolIcon = '⌨️';
-                else if (toolName.includes('delete')) toolIcon = '🗑️';
+                var toolIcon = '??';
+                if (toolName.includes('write') || toolName.includes('edit')) toolIcon = '??';
+                else if (toolName.includes('read')) toolIcon = '??';
+                else if (toolName.includes('bash') || toolName.includes('command')) toolIcon = '??';
+                else if (toolName.includes('delete')) toolIcon = '???';
                 
                 var iconEl = card.querySelector('.tool-badge-icon');
                 if (iconEl) iconEl.textContent = toolIcon;
@@ -6693,7 +6722,7 @@ window.showQuestionCard = function(info) {
     card.id = 'interaction-' + info.id;
 
     var html = '<div class="interaction-header">' +
-               '<span class="interaction-icon">❓</span>' +
+               '<span class="interaction-icon">?</span>' +
                '<span class="interaction-title">AI Question</span>' +
                '</div>' +
                '<div class="interaction-body">' +
@@ -6775,7 +6804,7 @@ window.submitInteractionAnswer = function(id, answer, scope) {
             
             // Create compact status indicator
             var isApproved = answer === 'allow' || answer === 'always' || answer === 'yes';
-            var statusText = isApproved ? (answer === 'always' ? '✓ Always' : '✓ Allowed') : '✗ Denied';
+            var statusText = isApproved ? (answer === 'always' ? '? Always' : '? Allowed') : '? Denied';
             var statusColor = isApproved ? '#22c55e' : '#ef4444';
             
             var statusDiv = document.createElement('div');
@@ -6968,7 +6997,7 @@ window.grantPermission = function(requestId, remember) {
     }
     
     // Update UI
-    window.disablePermissionCard(requestId, 'Granted ✓');
+    window.disablePermissionCard(requestId, 'Granted ?');
 };
 
 /**
@@ -6984,7 +7013,7 @@ window.grantLimited = function(requestId) {
     }
     
     // Update UI
-    window.disablePermissionCard(requestId, 'Limited Access ✓');
+    window.disablePermissionCard(requestId, 'Limited Access ?');
 };
 
 /**
@@ -7000,7 +7029,7 @@ window.denyPermission = function(requestId) {
     }
     
     // Update UI
-    window.disablePermissionCard(requestId, 'Denied ✗');
+    window.disablePermissionCard(requestId, 'Denied ?');
 };
 
 /**
@@ -7055,7 +7084,7 @@ window.createToolCard = function(toolName, params, status) {
     
     card.innerHTML = `
         <div class="tool-header">
-            <span class="tool-icon">🔧</span>
+            <span class="tool-icon">??</span>
             <span class="tool-name">${toolName}</span>
             <span class="tool-status ${statusClass}">${statusText}</span>
         </div>
@@ -7111,11 +7140,11 @@ window.initQuickActions = function() {
     if (!container) return;
     
     var actions = [
-        { id: 'explain', icon: '📖', label: 'Explain Code' },
-        { id: 'fix', icon: '🔧', label: 'Fix Issues' },
-        { id: 'optimize', icon: '⚡', label: 'Optimize' },
-        { id: 'test', icon: '🧪', label: 'Generate Tests' },
-        { id: 'document', icon: '📝', label: 'Add Docs' }
+        { id: 'explain', icon: '??', label: 'Explain Code' },
+        { id: 'fix', icon: '??', label: 'Fix Issues' },
+        { id: 'optimize', icon: '?', label: 'Optimize' },
+        { id: 'test', icon: '??', label: 'Generate Tests' },
+        { id: 'document', icon: '??', label: 'Add Docs' }
     ];
     
     actions.forEach(function(action) {
@@ -7154,7 +7183,7 @@ document.addEventListener('DOMContentLoaded', function() {
     window.initQuickActions();
 });
 
-// ── TESTING WORKFLOW UI SUPPORT ─────────────────────────────────────
+// -- TESTING WORKFLOW UI SUPPORT -------------------------------------
 
 /**
  * Shows a testing status card in the chat.
@@ -7182,7 +7211,7 @@ function showTestingCard(info) {
     
     card.innerHTML = `
         <div class="testing-card-header">
-            <span class="testing-icon">🧪</span>
+            <span class="testing-icon">??</span>
             <span class="testing-title">Testing Mode</span>
             <span class="testing-priority" style="background: ${priorityColor}20; color: ${priorityColor};">
                 ${info.priority?.toUpperCase() || 'MEDIUM'}
@@ -7222,7 +7251,7 @@ function showTestResults(results) {
         return;
     }
     
-    var statusIcon = results.all_passed ? '✅' : '⚠️';
+    var statusIcon = results.all_passed ? '?' : '??';
     var statusColor = results.all_passed ? '#10b981' : '#f59e0b';
     var statusText = results.all_passed ? 'All Tests Passed!' : 'Tests Completed';
     
@@ -7242,15 +7271,15 @@ function showTestResults(results) {
             <span style="font-weight: 600; color: ${statusColor};">${statusText}</span>
         </div>
         <div style="display: flex; gap: 16px; font-size: 13px;">
-            <span style="color: #10b981;">✓ ${results.passed_count || 0} passed</span>
-            ${results.failed_count > 0 ? `<span style="color: #ef4444;">✗ ${results.failed_count} failed</span>` : ''}
+            <span style="color: #10b981;">? ${results.passed_count || 0} passed</span>
+            ${results.failed_count > 0 ? `<span style="color: #ef4444;">? ${results.failed_count} failed</span>` : ''}
         </div>
         ${results.failures && results.failures.length > 0 ? `
         <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.1);">
             <div style="font-size: 12px; color: #888; margin-bottom: 4px;">Failures:</div>
             ${results.failures.slice(0, 3).map(f => `
                 <div style="font-size: 12px; color: #ef4444; margin: 2px 0;">
-                    • ${f.name}${f.error ? `: ${f.error.substring(0, 50)}...` : ''}
+                    - ${f.name}${f.error ? `: ${f.error.substring(0, 50)}...` : ''}
                 </div>
             `).join('')}
             ${results.failures.length > 3 ? `<div style="font-size: 11px; color: #666;">... and ${results.failures.length - 3} more</div>` : ''}
@@ -7342,19 +7371,19 @@ function createCompletionItem(completion, index) {
     item.dataset.index = index;
     
     // Determine icon based on strategy
-    var icon = '💡';
+    var icon = '??';
     var typeClass = '';
     if (completion.strategy === 'pattern') {
-        icon = '🔧';
+        icon = '??';
         typeClass = 'pattern';
     } else if (completion.strategy === 'ai') {
-        icon = '🤖';
+        icon = '??';
         typeClass = 'ai';
     } else if (completion.strategy === 'syntax') {
-        icon = '⚡';
+        icon = '?';
         typeClass = 'syntax';
     } else if (completion.strategy === 'template') {
-        icon = '📋';
+        icon = '??';
         typeClass = 'template';
     }
     
@@ -7756,7 +7785,7 @@ window.showInlineDiff = function(diffData) {
     header.className = 'inline-diff-header';
     header.innerHTML = `
         <div class="inline-diff-title">
-            <div class="file-icon">📄</div>
+            <div class="file-icon">??</div>
             <span>${escapeHtml(diffData.filePath)}</span>
         </div>
         <div class="inline-diff-stats">
@@ -7839,9 +7868,9 @@ window.showInlineDiff = function(diffData) {
             var actions = document.createElement('div');
             actions.className = 'diff-line-actions';
             actions.innerHTML = `
-                <button class="diff-line-btn accept" title="Accept line" onclick="acceptDiffLine('${diffData.filePath}', ${line.lineNumber.new || line.lineNumber.original || 0})">✓</button>
-                <button class="diff-line-btn reject" title="Reject line" onclick="rejectDiffLine('${diffData.filePath}', ${line.lineNumber.new || line.lineNumber.original || 0})">✗</button>
-                <button class="diff-line-btn comment" title="Add comment" onclick="commentDiffLine('${diffData.filePath}', ${line.lineNumber.new || line.lineNumber.original || 0})">💬</button>
+                <button class="diff-line-btn accept" title="Accept line" onclick="acceptDiffLine('${diffData.filePath}', ${line.lineNumber.new || line.lineNumber.original || 0})">?</button>
+                <button class="diff-line-btn reject" title="Reject line" onclick="rejectDiffLine('${diffData.filePath}', ${line.lineNumber.new || line.lineNumber.original || 0})">?</button>
+                <button class="diff-line-btn comment" title="Add comment" onclick="commentDiffLine('${diffData.filePath}', ${line.lineNumber.new || line.lineNumber.original || 0})">??</button>
             `;
             
             row.appendChild(lineNums);
@@ -7863,15 +7892,15 @@ window.showInlineDiff = function(diffData) {
     footer.innerHTML = `
         <div class="inline-diff-actions">
             <button class="inline-diff-btn accept-all" onclick="acceptAllDiffLines('${diffData.filePath}')">
-                <span>✓</span>
+                <span>?</span>
                 <span>Accept All</span>
             </button>
             <button class="inline-diff-btn reject-all" onclick="rejectAllDiffLines('${diffData.filePath}')">
-                <span>✗</span>
+                <span>?</span>
                 <span>Reject All</span>
             </button>
             <button class="inline-diff-btn view-full" onclick="showFullDiff('${diffData.filePath}')">
-                <span>🔍</span>
+                <span>??</span>
                 <span>View Full Diff</span>
             </button>
         </div>
@@ -7899,17 +7928,17 @@ window.showInlineDiff = function(diffData) {
  */
 function getSemanticIcon(type) {
     var icons = {
-        'bug_fix': '🐛',
-        'feature_add': '✨',
-        'refactor': '♻️',
-        'optimization': '⚡',
-        'security': '🔒',
-        'test': '🧪',
-        'documentation': '📚',
-        'style': '🎨',
-        'other': '📝'
+        'bug_fix': '??',
+        'feature_add': '?',
+        'refactor': '??',
+        'optimization': '?',
+        'security': '??',
+        'test': '??',
+        'documentation': '??',
+        'style': '??',
+        'other': '??'
     };
-    return icons[type] || '📝';
+    return icons[type] || '??';
 }
 
 /**
@@ -7966,7 +7995,7 @@ window.acceptAllDiffLines = function(filePath) {
     var container = document.getElementById('diff-' + filePath.replace(/[^a-zA-Z0-9]/g, '_'));
     if (container) {
         container.style.opacity = '0.5';
-        container.querySelector('.inline-diff-footer').innerHTML = '<div style="padding: 12px; text-align: center; color: #22c55e;">✓ All changes accepted</div>';
+        container.querySelector('.inline-diff-footer').innerHTML = '<div style="padding: 12px; text-align: center; color: #22c55e;">? All changes accepted</div>';
     }
 };
 
@@ -7983,7 +8012,7 @@ window.rejectAllDiffLines = function(filePath) {
     var container = document.getElementById('diff-' + filePath.replace(/[^a-zA-Z0-9]/g, '_'));
     if (container) {
         container.style.opacity = '0.5';
-        container.querySelector('.inline-diff-footer').innerHTML = '<div style="padding: 12px; text-align: center; color: #ef4444;">✗ All changes rejected</div>';
+        container.querySelector('.inline-diff-footer').innerHTML = '<div style="padding: 12px; text-align: center; color: #ef4444;">? All changes rejected</div>';
     }
 };
 
@@ -8005,3 +8034,7 @@ window.commentDiffLine = window.commentDiffLine;
 window.acceptAllDiffLines = window.acceptAllDiffLines;
 window.rejectAllDiffLines = window.rejectAllDiffLines;
 window.showFullDiff = window.showFullDiff;
+
+
+
+

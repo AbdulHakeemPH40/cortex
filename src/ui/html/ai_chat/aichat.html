@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -402,9 +402,7 @@
           white-space: nowrap;
       }
       
-      /* ══════════════════════════════════════════════════════════════
-         CLEAN PERMISSION CARD - Windsurf Style
-         ══════════════════════════════════════════════════════════════ */
+      /* CLEAN PERMISSION CARD - Windsurf Style */
       
       .permission-card {
           background: var(--bg-secondary, #1a1a1a);
@@ -960,9 +958,7 @@
           stroke: #22c55e;
       }
       
-      /* ══════════════════════════════════════════════════════════════
-         SMALL INLINE TERMINAL CARD - Inside Chat
-         ══════════════════════════════════════════════════════════════ */
+      /* CLEAN PERMISSION CARD - Windsurf Style */
       
       .terminal-inline {
           background: var(--bg-secondary, #1a1a1a);
@@ -1020,9 +1016,7 @@
           color: var(--text-secondary, #a3a3a3);
       }
       
-      /* ══════════════════════════════════════════════════════════════
-         MESSAGE LAYOUT - User Right, AI Left
-         ══════════════════════════════════════════════════════════════ */
+      /* CLEAN PERMISSION CARD - Windsurf Style */
       
       .message {
           display: flex;
@@ -1516,9 +1510,7 @@
           color: #f87171;
       }
       
-      /* ══════════════════════════════════════════════════════════════
-         ENHANCED INLINE DIFF VIEWER - OpenCode Style
-         ══════════════════════════════════════════════════════════════ */
+      /* CLEAN PERMISSION CARD - Windsurf Style */
       
       .inline-diff-container {
           background: rgba(17, 17, 17, 0.95);
@@ -1621,12 +1613,12 @@
       }
       
       .diff-hunk-header.collapsed::before {
-          content: '▶';
+          content: '>';
           margin-right: 8px;
       }
       
       .diff-hunk-header:not(.collapsed)::before {
-          content: '▼';
+          content: 'v';
           margin-right: 8px;
       }
       
@@ -2072,19 +2064,18 @@
                 document.body.classList.add('loaded');
             };
             
-            // CRITICAL: Define trySetProjectInfo IMMEDIATELY for Python to call
+                        // CRITICAL: Define trySetProjectInfo IMMEDIATELY for Python to call
             window._pendingProjectInfo = null;
+            window._pendingProjectInfoWithChats = null;
             window.trySetProjectInfo = function(name, path, retryCount) {
                 retryCount = retryCount || 0;
                 console.log('[CHAT] trySetProjectInfo called (attempt', retryCount + 1, '):', name, path);
-                
                 if (retryCount > 10) {
                     console.error('[CHAT] setProjectInfo failed after', retryCount, 'attempts');
                     return;
                 }
-                
                 if (window.setProjectInfo) {
-                    console.log('[CHAT] ✅ Calling setProjectInfo now');
+                    console.log('[CHAT] ? Calling setProjectInfo now');
                     window.setProjectInfo(name, path);
                 } else {
                     console.log('[CHAT] setProjectInfo not ready, retrying in 300ms...');
@@ -2093,7 +2084,30 @@
                     }, 300);
                 }
             };
-            console.log('[CHAT] ✅ window.trySetProjectInfo defined at page load');
+            // CRITICAL: Define trySetProjectInfoWithChats IMMEDIATELY for Python to call
+            window.trySetProjectInfoWithChats = function(name, path, chatsJson, retryCount) {
+                retryCount = retryCount || 0;
+                console.log('[CHAT] trySetProjectInfoWithChats called (attempt', retryCount + 1, '):', name, path);
+                if (retryCount > 10) {
+                    console.error('[CHAT] setProjectInfoWithChats failed after', retryCount, 'attempts');
+                    window._pendingProjectInfoWithChats = { name: name, path: path, chatsJson: chatsJson };
+                    if (window.onPendingProjectInfoWithChats) window.onPendingProjectInfoWithChats();
+                    return;
+                }
+                if (window.setProjectInfoWithChats) {
+                    console.log('[CHAT] ? Calling setProjectInfoWithChats now');
+                    window.setProjectInfoWithChats(name, path, chatsJson);
+                    window._pendingProjectInfoWithChats = null;
+                } else {
+                    window._pendingProjectInfoWithChats = { name: name, path: path, chatsJson: chatsJson };
+                    if (window.onPendingProjectInfoWithChats) window.onPendingProjectInfoWithChats();
+                    console.log('[CHAT] setProjectInfoWithChats not ready, retrying in 300ms...');
+                    setTimeout(function() {
+                        window.trySetProjectInfoWithChats(name, path, chatsJson, retryCount + 1);
+                    }, 300);
+                }
+            };
+            console.log('[CHAT] ? window.trySetProjectInfo defined at page load');
         })();
     </script>
 </head>
@@ -2132,7 +2146,7 @@
         </div>
         <div class="completion-shortcuts">
             <span class="completion-shortcut">
-                <kbd>↑</kbd><kbd>↓</kbd> Navigate
+                <kbd>â†‘</kbd><kbd>â†“</kbd> Navigate
             </span>
             <span class="completion-shortcut">
                 <kbd>Enter</kbd> Accept
@@ -2337,7 +2351,7 @@
             <!-- Context Bar (shows active context like @mentions) -->
             <div id="context-bar" class="context-bar" style="display: none;">
                 <div class="context-items"></div>
-                <button class="context-clear" title="Clear context">×</button>
+                <button class="context-clear" title="Clear context">Ã—</button>
             </div>
             
             <!-- Input Area -->
@@ -2526,7 +2540,7 @@
     <div id="debug-console" style="display:none; position:fixed; bottom:0; left:0; right:0; height:200px; background:#1a1a1a; border-top:2px solid #333; z-index:10000; font-family:monospace; font-size:11px;">
         <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 10px; background:#252525; border-bottom:1px solid #333;">
             <span style="color:#888;">Debug Console</span>
-            <button onclick="document.getElementById('debug-console').style.display='none'" style="background:none; border:none; color:#888; cursor:pointer;">×</button>
+            <button onclick="document.getElementById('debug-console').style.display='none'" style="background:none; border:none; color:#888; cursor:pointer;">Ã—</button>
         </div>
         <div id="debug-console-content" style="padding:10px; overflow-y:auto; height:calc(100% - 35px); color:#aaa;"></div>
     </div>
@@ -2587,7 +2601,7 @@
                 
                 <div class="permission-card-body">
                     <div class="permission-tool-badge">
-                        <span class="tool-badge-icon">⚡</span>
+                        <span class="tool-badge-icon">âš¡</span>
                         <span class="tool-badge-name"></span>
                     </div>
                     
@@ -2678,7 +2692,7 @@
     <template id="code-completion-card-template">
         <div class="code-completion-card">
             <div class="completion-card-header">
-                <div class="completion-card-icon">✨</div>
+                <div class="completion-card-icon">âœ¨</div>
                 <span class="completion-card-title">Code Completion Available</span>
                 <span class="completion-card-badge" id="completion-confidence-badge">90% confidence</span>
             </div>
@@ -2691,7 +2705,7 @@
                 <div class="completion-diff">
                     <div class="completion-diff-header">
                         <span class="diff-removed">Original</span>
-                        <span style="color: #4b5563;">→</span>
+                        <span style="color: #4b5563;">â†’</span>
                         <span class="diff-added">Completed</span>
                     </div>
                     <div class="completion-diff-content" id="completion-diff-content">
@@ -2999,3 +3013,12 @@
 
 </body>
 </html>
+
+
+
+
+
+
+
+
+

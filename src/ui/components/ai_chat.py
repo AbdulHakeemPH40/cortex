@@ -1,4 +1,4 @@
-import os
+﻿import os
 import sys
 import json
 import platform
@@ -73,9 +73,10 @@ class FileSearchWorker(QThread):
 
 class ChatBridge(QObject):
     """Bridge for communication between JS and Python."""
-    def __init__(self, view):
+    def __init__(self, view, parent_widget=None):
         super().__init__()
         self._view = view
+        self._parent_widget = parent_widget  # Reference to AIChatWidget for accessing _current_project_path
     message_submitted = pyqtSignal(str)
     message_with_images = pyqtSignal(str, str)  # text, image_data_json
     clear_chat_requested = pyqtSignal()
@@ -248,7 +249,7 @@ class ChatBridge(QObject):
         log.info(f"Permission card response: {request_id} - approved={approved}, scope={scope}, remember={remember}")
         self.permission_response.emit(request_id, approved, scope, remember)
 
-    # ── CODE COMPLETION SLOTS (OpenCode-style) ───────────────────────
+    # â”€â”€ CODE COMPLETION SLOTS (OpenCode-style) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     
     @pyqtSlot(dict)
     def on_request_code_completion(self, data: dict):
@@ -274,7 +275,7 @@ class ChatBridge(QObject):
         log.info(f"Code completion dismissed: {data.get('requestId', 'unknown')}")
         self.code_completion_dismissed.emit(data)
     
-    # ── INLINE DIFF VIEWER SLOTS (OpenCode-style) ────────────────────
+    # â”€â”€ INLINE DIFF VIEWER SLOTS (OpenCode-style) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     
     @pyqtSlot(dict)
     def on_diff_line_accepted(self, data: dict):
@@ -294,7 +295,7 @@ class ChatBridge(QObject):
         log.info(f"Diff line commented: {data.get('filePath')}:{data.get('lineNumber')}")
         self.diff_line_commented.emit(data)
 
-    # ── ENHANCEMENT GUIDE: Missing Bridge Slots ──────────────────────
+    # â”€â”€ ENHANCEMENT GUIDE: Missing Bridge Slots â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @pyqtSlot(str, bool)
     def on_toggle_todo(self, task_id: str, completed: bool):
@@ -304,7 +305,7 @@ class ChatBridge(QObject):
 
     @pyqtSlot()
     def on_stop_generation(self):
-        """Stop AI generation — called from Escape key or stop button in JS."""
+        """Stop AI generation â€” called from Escape key or stop button in JS."""
         self.stop_requested.emit()
 
     @pyqtSlot(str)
@@ -361,7 +362,7 @@ class ChatBridge(QObject):
 
     @pyqtSlot(str)
     def on_reject_file_edit(self, file_path: str):
-        """User rejected a file edit — optionally restore from pre-edit snapshot."""
+        """User rejected a file edit â€” optionally restore from pre-edit snapshot."""
         log.info(f'File edit rejected: {file_path}')
         # Open file in editor for review and emit reject signal
         self.open_file_requested.emit(file_path)
@@ -421,9 +422,9 @@ class ChatBridge(QObject):
             from src.core.chat_history import get_chat_history
             history = get_chat_history()
             history.delete_conversation(conversation_id)
-            log.info(f"✓ Deleted conversation {conversation_id} from SQLite")
+            log.info(f"âœ“ Deleted conversation {conversation_id} from SQLite")
         except Exception as e:
-            log.error(f"✗ Failed to delete conversation {conversation_id}: {e}")
+            log.error(f"âœ— Failed to delete conversation {conversation_id}: {e}")
 
     @pyqtSlot(str)
     def load_full_chat(self, conversation_id: str):
@@ -435,7 +436,7 @@ class ChatBridge(QObject):
         except Exception as e:
             log.error(f"Failed to request full chat {conversation_id}: {e}")
 
-    # ── THREE FEATURES: Project Tree, Terminal, Todo Bridge Slots ─────
+    # â”€â”€ THREE FEATURES: Project Tree, Terminal, Todo Bridge Slots â”€â”€â”€â”€â”€
 
     @pyqtSlot(str)
     def on_open_folder(self, folder_path: str):
@@ -459,7 +460,7 @@ class ChatBridge(QObject):
         log.info("Open terminal requested from chat")
         self.open_terminal_requested.emit()
 
-    # ── CHAT PERSISTENCE: File-based storage fallback ─────────────────
+    # â”€â”€ CHAT PERSISTENCE: File-based storage fallback â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     
     @pyqtSlot(str, str, result=str)
     def save_single_chat_to_sqlite(self, storage_key: str, json_data: str) -> str:
@@ -475,8 +476,14 @@ class ChatBridge(QObject):
             if not isinstance(chat, dict):
                 return "ERROR: Invalid chat data"
                 
-            conversation_id = chat.get('id', storage_key)
-            project_path = f"project_{storage_key}"
+            conversation_id = str(chat.get('id', storage_key))
+            
+            # Use actual project path from parent widget's _current_project_path
+            if self._parent_widget and hasattr(self._parent_widget, '_current_project_path'):
+                project_path = self._parent_widget._current_project_path or f"project_{storage_key}"
+            else:
+                project_path = f"project_{storage_key}"
+            
             title = chat.get('title', f"Chat {conversation_id[:8]}")
             messages = chat.get('messages', [])
             
@@ -511,11 +518,11 @@ class ChatBridge(QObject):
                     tools_used=msg.get('tools_used', [])
                 )
             
-            log.debug(f'✓ Saved single chat {conversation_id} to SQLite (storage_key: {storage_key})')
+            log.debug(f'âœ“ Saved single chat {conversation_id} to SQLite (storage_key: {storage_key})')
             return "OK"
             
         except Exception as e:
-            log.error(f'✗ Failed to save single chat to SQLite: {e}')
+            log.error(f'âœ— Failed to save single chat to SQLite: {e}')
             return f"ERROR: {str(e)}"
 
     @pyqtSlot(str, str, result=str)
@@ -536,8 +543,14 @@ class ChatBridge(QObject):
                 if not isinstance(chat, dict):
                     continue
                 
-                conversation_id = chat.get('id', storage_key)
-                project_path = f"project_{storage_key}"
+                conversation_id = str(chat.get('id', storage_key))
+                
+                # Use actual project path from parent widget's _current_project_path
+                if self._parent_widget and hasattr(self._parent_widget, '_current_project_path'):
+                    project_path = self._parent_widget._current_project_path or f"project_{storage_key}"
+                else:
+                    project_path = f"project_{storage_key}"
+                
                 title = chat.get('title', f"Chat {conversation_id[:8]}")
                 messages = chat.get('messages', [])
                 
@@ -563,11 +576,11 @@ class ChatBridge(QObject):
                         tools_used=msg.get('tools_used', [])
                     )
             
-            log.debug(f'✓ Saved {len(chats)} chats to SQLite (storage_key: {storage_key})')
+            log.debug(f'âœ“ Saved {len(chats)} chats to SQLite (storage_key: {storage_key})')
             return "OK"
             
         except Exception as e:
-            log.error(f'✗ Failed to save chats to SQLite: {e}')
+            log.error(f'âœ— Failed to save chats to SQLite: {e}')
             return f"ERROR: {str(e)}"
     
     @pyqtSlot(str)
@@ -606,7 +619,7 @@ class ChatBridge(QObject):
             MAX_CHATS_DISPLAY = 50
             if len(conversations) > MAX_CHATS_DISPLAY:
                 conversations = conversations[:MAX_CHATS_DISPLAY]
-                log.info(f'⚡ Limited to {MAX_CHATS_DISPLAY} most recent chats for performance')
+                log.info(f'âš¡ Limited to {MAX_CHATS_DISPLAY} most recent chats for performance')
             
             result = []
             for conv in conversations:
@@ -619,11 +632,11 @@ class ChatBridge(QObject):
                 result.append(chat_data)
             
             json_result = json.dumps(result)
-            log.debug(f'✓ Loaded {len(result)} chat metadata ({len(json_result)} chars)')
+            log.debug(f'âœ“ Loaded {len(result)} chat metadata ({len(json_result)} chars)')
             return json_result
             
         except Exception as e:
-            log.error(f'✗ Failed to load chats from SQLite: {e}')
+            log.error(f'âœ— Failed to load chats from SQLite: {e}')
             return "[]"
     
     @pyqtSlot(str, result=str)
@@ -647,11 +660,11 @@ class ChatBridge(QObject):
             }
             
             json_result = json.dumps(result)
-            log.debug(f'✓ Loaded full chat {conversation_id} ({len(json_result)} chars)')
+            log.debug(f'âœ“ Loaded full chat {conversation_id} ({len(json_result)} chars)')
             return json_result
             
         except Exception as e:
-            log.error(f'✗ Failed to load full chat: {e}')
+            log.error(f'âœ— Failed to load full chat: {e}')
             return "{}"
 
 
@@ -822,7 +835,7 @@ class AIChatWidget(QWidget):
         
         # Setup Channel
         self._channel = QWebChannel()
-        self._bridge = ChatBridge(self._view)
+        self._bridge = ChatBridge(self._view, parent_widget=self)
         self._bridge.message_submitted.connect(self._on_js_message)
         self._bridge.message_with_images.connect(self._on_js_message_with_images)
         self._bridge.clear_chat_requested.connect(self.clear_chat)
@@ -881,6 +894,8 @@ class AIChatWidget(QWidget):
 
         # Apply initial theme once the page has finished loading
         self._view.loadFinished.connect(self._on_page_loaded)
+        self._page_loaded = False
+        self._pending_project_info = None
         layout.addWidget(self._view)
         
     def run_javascript(self, script: str):
@@ -891,8 +906,13 @@ class AIChatWidget(QWidget):
     def _on_page_loaded(self, ok):
         """Apply the current theme immediately after the page finishes loading."""
         if ok:
+            self._page_loaded = True
             js_bool = 'true' if self._is_dark else 'false'
             self._view.page().runJavaScript(f"if(window.setTheme) window.setTheme({js_bool});")
+            # Apply pending project info after page load
+            if self._pending_project_info:
+                name, path, chats_json = self._pending_project_info
+                self._apply_project_info(name, path, chats_json)
 
     def on_chunk(self, chunk):
         """Handle AI streaming chunk - async to prevent UI blocking."""
@@ -1069,9 +1089,9 @@ class AIChatWidget(QWidget):
             js_code = f"if(window.chatFullLoadHandler) window.chatFullLoadHandler({safe_id}, {safe_msgs});"
             
             self._view.page().runJavaScript(js_code)
-            log.info(f"✓ Restored {len(messages)} messages for chat {conversation_id}")
+            log.info(f"âœ“ Restored {len(messages)} messages for chat {conversation_id}")
         except Exception as e:
-            log.error(f"✗ Failed to handle chat load for {conversation_id}: {e}")
+            log.error(f"âœ— Failed to handle chat load for {conversation_id}: {e}")
 
     def _on_search_files(self, query: str):
         """Search for files matching the query for @ citations."""
@@ -1224,26 +1244,84 @@ class AIChatWidget(QWidget):
             f"if(window.showTestResults) window.showTestResults({safe_results});"
         )
 
+    def _apply_project_info(self, name: str, path: str, chats_json: str = "[]"):
+        import json
+        safe_name = json.dumps(name)
+        safe_path = json.dumps(path)
+        log.info(f'?? set_project_info called: name={name}, path={path}, chats_json length={len(chats_json)}')
+        # Ensure chats_json is passed correctly to JS (avoid double-stringified data)
+        try:
+            # Parse it first if it's a string, then JSON-ify properly for the JS call
+            chats_data = json.loads(chats_json) if isinstance(chats_json, str) else chats_json
+            safe_chats = json.dumps(chats_data)
+            log.info(f'? Parsed {len(chats_data) if isinstance(chats_data, list) else 0} chats for JS')
+        except Exception as e:
+            log.warning(f'Failed to parse chats_json: {e}')
+            safe_chats = "[]"
+        js_code = (
+            f"if(window.trySetProjectInfoWithChats) window.trySetProjectInfoWithChats({safe_name}, {safe_path}, {safe_chats}); "
+            f"else if(window.setProjectInfoWithChats) window.setProjectInfoWithChats({safe_name}, {safe_path}, {safe_chats}); "
+            f"else if(window.trySetProjectInfo) window.trySetProjectInfo({safe_name}, {safe_path}); "
+            f"else window._pendingProjectInfoWithChats = {{ name: {safe_name}, path: {safe_path}, chatsJson: {safe_chats} }};"
+        )
+        log.info(f'?? Calling JavaScript: trySetProjectInfoWithChats(...)')
+        self._view.page().runJavaScript(js_code)
+
+        # Retry once after the webview is fully initialized
+        QTimer.singleShot(800, lambda: self._view.page().runJavaScript(js_code))
+
     def clear_chat(self):
         """Clear the chat window."""
         self._view.page().runJavaScript("if(window.clearChat) window.clearChat();")
 
     def set_project_info(self, name: str, path: str, chats_json: str = "[]"):
         """Initialize chat with project details and history."""
-        import json
-        safe_name = json.dumps(name)
-        safe_path = json.dumps(path)
+        # Always remember latest project info in case the page isn't loaded yet
+        self._pending_project_info = (name, path, chats_json)
         self._current_project_path = path
-        
-        # Ensure chats_json is passed correctly to JS (avoid double-stringified data)
+        if not getattr(self, '_page_loaded', False):
+            log.info('Chat page not loaded yet; deferring project info')
+            return
+        self._apply_project_info(name, path, chats_json)
+
+    def load_chats_for_project(self, project_path: str) -> str:
+        """
+        Load all chat metadata for a specific project path.
+        Returns: JSON string array of chat metadata or empty array.
+        """
         try:
-            # Parse it first if it's a string, then JSON-ify properly for the JS call
-            chats_data = json.loads(chats_json) if isinstance(chats_json, str) else chats_json
-            safe_chats = json.dumps(chats_data)
-        except:
-            safe_chats = "[]"
+            from src.core.chat_history import get_chat_history
             
-        self._view.page().runJavaScript(f"if(window.setProjectInfoWithChats) window.setProjectInfoWithChats({safe_name}, {safe_path}, {safe_chats});")
+            history = get_chat_history()
+            conversations = history.get_conversations(project_path)
+            
+            log.info(f'ðŸ“¥ Found {len(conversations) if conversations else 0} conversations for project {project_path}')
+            
+            if not conversations:
+                log.warning(f'No chats found in database for project {project_path}')
+                return "[]"
+            
+            # Convert to format expected by JS
+            result = []
+            for conv in conversations:
+                result.append({
+                    'id': conv.get('conversation_id') or conv.get('id'),
+                    'title': conv.get('title'),
+                    'created_at': conv.get('created_at'),
+                    'message_count': conv.get('message_count', 0),
+                    'messages': [],  # Empty - lazy loaded
+                    'loaded': False
+                })
+            
+            json_result = json.dumps(result)
+            log.info(f'âœ… Loaded {len(result)} chat(s) for project {project_path} ({len(json_result)} chars)')
+            return json_result
+            
+        except Exception as e:
+            log.error(f'âŒ Failed to load chats for project {project_path}: {e}')
+            import traceback
+            log.error(traceback.format_exc())
+            return "[]"
 
     def on_file_edited_diff(self, path: str, original: str, new_content: str):
         """Called when the agent edits a file to show +/- diff line counts."""
@@ -1278,11 +1356,11 @@ class AIChatWidget(QWidget):
             stripped = line.strip()
             if not stripped: continue
 
-            is_dir = stripped.startswith('📁') or stripped.endswith('/')
+            is_dir = stripped.startswith('ðŸ“') or stripped.endswith('/')
             name = stripped
-            for prefix in ['├──', '└──', '│']:
+            for prefix in ['â”œâ”€â”€', 'â””â”€â”€', 'â”‚']:
                 name = name.replace(prefix, '')
-            name = name.lstrip('📁📄').strip()
+            name = name.lstrip('ðŸ“ðŸ“„').strip()
 
             size = ''
             desc = ''
@@ -1353,7 +1431,7 @@ class AIChatWidget(QWidget):
             data = self._terminal_process.readAllStandardOutput().data().decode(errors="replace")
             if data: self._bridge.terminal_output.emit(data)
 
-    # ── CODE COMPLETION HANDLERS (OpenCode-style) ────────────────────
+    # â”€â”€ CODE COMPLETION HANDLERS (OpenCode-style) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     
     def _on_code_completion_requested(self, data: dict):
         """Handle code completion request from bridge."""
@@ -1405,7 +1483,7 @@ class AIChatWidget(QWidget):
         """Hide code completion popup."""
         self._view.page().runJavaScript("window.dismissCodeCompletion && window.dismissCodeCompletion();")
     
-    # ── INLINE DIFF VIEWER HANDLERS (OpenCode-style) ─────────────────
+    # â”€â”€ INLINE DIFF VIEWER HANDLERS (OpenCode-style) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     
     def _on_diff_line_accepted(self, data: dict):
         """Handle diff line acceptance from bridge."""
@@ -1446,3 +1524,14 @@ class AIChatWidget(QWidget):
         if self._terminal_process:
             self._terminal_process.terminate()
         super().closeEvent(event)
+
+
+
+
+
+
+
+
+
+
+
