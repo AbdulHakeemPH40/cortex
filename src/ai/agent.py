@@ -67,6 +67,7 @@ from src.ai.tools.selection import ToolScore
 from src.ai.tool_selector import TaskType
 from src.ai.terminal_optimizer import TerminalOutputBatcher
 from src.ai.context_optimizer import MessageDeduplicator, ContextOptimizer
+from src.ai.adaptive_tool_selector import select_tools_adaptively, get_adaptive_tool_selector
 
 
 def _categorize_error_message(error_msg: str) -> str:
@@ -482,8 +483,10 @@ class AIWorker(QThread):
         self.tool_calls = None  # Final parsed tool calls (list format)
 
     def run(self):
+        """Run the AI API call in background thread with comprehensive error handling."""
         log.info("AIWorker.run() started")
         import time
+        import traceback
         start_time = time.time()
         try:
             self._call_provider()
@@ -491,8 +494,13 @@ class AIWorker(QThread):
             log.info(f"AIWorker.run() completed successfully in {elapsed:.1f}s")
         except Exception as e:
             elapsed = time.time() - start_time
+            error_details = traceback.format_exc()
             log.error(f"AI Worker error after {elapsed:.1f}s: {e}")
-            self.error_occurred.emit(str(e))
+            log.error(f"AI Worker full traceback:\n{error_details}")
+            
+            # Emit detailed error message
+            error_message = f"{str(e)}\n\nTime: {elapsed:.1f}s\nModel: {self.model}\nProvider: {self.provider}"
+            self.error_occurred.emit(error_message)
 
     def _call_provider(self):
         """Call AI provider using the provider registry."""
@@ -595,19 +603,25 @@ class AIWorker(QThread):
             if "kimi" not in self.model.lower():
                 self.chunk_received.emit("Thinking...\n")
             
-            # Simple streaming via OpenAI SDK
+            # Simple streaming via OpenAI SDK with error handling
             log.info(f"[DEBUG] Calling provider.chat_stream with tools={len(self.tools) if self.tools else 0}")
             if self.tools:
                 log.info(f"[DEBUG] First 3 tools: {[t.get('function', {}).get('name', 'unknown') for t in self.tools[:3]]}")
-            stream = provider.chat_stream(
-                messages=chat_messages,
-                model=self.model,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                tools=self.tools
-            )
             
-            log.info(f"[DEBUG] Stream established, type={type(stream)}")
+            try:
+                stream = provider.chat_stream(
+                    messages=chat_messages,
+                    model=self.model,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                    tools=self.tools
+                )
+                log.info(f"[DEBUG] Stream established, type={type(stream)}")
+            except Exception as stream_error:
+                log.error(f"Failed to establish stream: {stream_error}")
+                import traceback
+                log.error(f"Stream error traceback: {traceback.format_exc()}")
+                raise RuntimeError(f"API stream failed: {str(stream_error)}") from stream_error
             
             # Process chunks
             try:
@@ -841,6 +855,19 @@ class AIWorker(QThread):
                 return
             
             # No content AND no tool calls - that's an error
+            # BUT first check if we got any chunks at all
+            if chunk_count == 0:
+                # Check if this might be a rate limit or API issue
+                log.error(f"[AIWorker] Stream returned empty (0 chunks received)")
+                raise Exception("No response from stream - API returned empty or was rate limited")
+            else:
+                # We received some chunks but parsing failed - try to salvage
+                log.warning(f"[AIWorker] Received {chunk_count} chunks but parsing failed")
+                if self._full_response and self._full_response.strip():
+                    log.info(f"[AIWorker] Salvaging partial response: {len(self._full_response)} chars")
+                    self.finished.emit(self._full_response)
+                    return
+            
             raise Exception("No response from stream")
             
         except Exception as e:
@@ -2066,32 +2093,41 @@ Action: run_command(python helloworld.py; python for_loop.py; python while_loop.
                 }
             })
 
-        # EFFICIENCY: Filter out unnecessary tools when AI is in creation mode
-        if self._creation_mode:
-            original_count = len(tools_list)
-            tools_list = [
-                t for t in tools_list
-                if t["function"]["name"] not in self._creation_mode_tool_blocklist
-            ]
-            log.info(f"[CREATION_MODE] Filtered {original_count} → {len(tools_list)} tools (blocked: {self._creation_mode_tool_blocklist})")
+        # ADAPTIVE TOOL SELECTION: Dynamically filter tools based on conversation context
+        # This reduces API payload size and prevents timeouts
+        original_count = len(tools_list)
+        
+        try:
+            # Use adaptive selector to choose relevant tools
+            tools_list = select_tools_adaptively(
+                messages=messages,
+                user_message=user_message,
+                all_tools=tools_list,
+                max_tools=12,  # Reduced from 39 to prevent API timeout
+                creation_mode=self._creation_mode
+            )
             
-            # EFFICIENCY: In creation mode, prioritize essential tools and limit to top 10
-            # This prevents AI from getting lost with too many tool options
-            essential_tools = {
-                "write_file", "edit_file", "smart_edit", "run_command", "bash",
-                "inject_after", "inject_into_placeholder", "add_import", "delete_path",
-                "read_file", "get_file_outline", "list_directory",
-                "search_codebase", "semantic_search", "grep"
-            }
-            if len(tools_list) > 15:
-                # Prioritize essential tools, then add others
-                essential = [t for t in tools_list if t["function"]["name"] in essential_tools]
-                others = [t for t in tools_list if t["function"]["name"] not in essential_tools]
-                tools_list = essential + others[:15 - len(essential)]
-                log.info(f"[CREATION_MODE] Limited tools to {len(tools_list)} (essential first)")
-                
-                # DEBUG: Log tool names being sent
-                log.info(f"[DEBUG] Tools being sent to worker: {[t['function']['name'] for t in tools_list[:5]]}")
+            selected_count = len(tools_list)
+            tool_names = [t['function']['name'] for t in tools_list]
+            
+            log.info(f"[ADAPTIVE_TOOLS] Selected {selected_count}/{original_count} tools based on conversation context")
+            log.info(f"[ADAPTIVE_TOOLS] Tools: {tool_names[:8]}{'...' if len(tool_names) > 8 else ''}")
+            
+            # Track tool usage for learning
+            selector = get_adaptive_tool_selector()
+            phase = selector.analyze_conversation_phase(messages, user_message)
+            log.info(f"[ADAPTIVE_TOOLS] Conversation phase: {phase.value}")
+            
+        except Exception as e:
+            log.warning(f"[ADAPTIVE_TOOLS] Selection failed: {e}, using fallback filtering")
+            # Fallback to old method if adaptive selection fails
+            
+            if self._creation_mode:
+                tools_list = [
+                    t for t in tools_list
+                    if t["function"]["name"] not in self._creation_mode_tool_blocklist
+                ]
+                log.info(f"[CREATION_MODE_FALLBACK] Filtered {original_count} → {len(tools_list)} tools")
 
         # Inject a trigger if it's an automated plan request
         if user_message == "__GENERATE_PLAN__":
@@ -3526,18 +3562,57 @@ Action: run_command(python helloworld.py; python for_loop.py; python while_loop.
         return f"Execute `{name}`"
 
     def _on_error(self, error: str):
+        """Handle AI errors gracefully with user-friendly messages."""
         log.error(f"AI error: {error}")
         category = _categorize_error_message(error)
         self._record_request_end(success=False, error_category=category)
+        
         # Reset flags on error
         self._continue_after_tools_flag = False
+        
         # Stop thinking indicator
         self.thinking_stopped.emit()
+        
         # Clear worker reference on error
         self._worker = None
-        self.request_error.emit(error)
-        # Also emit completion to unlock UI
-        self.response_complete.emit(f"❌ Error: {error}")
+        
+        # Provide user-friendly error message based on category
+        user_friendly_error = error
+        if category == "rate_limit":
+            user_friendly_error = (
+                "⚠️ **API Rate Limit Exceeded**\n\n"
+                "The AI provider has temporarily rate-limited your requests. This happens when too many requests are sent in a short time.\n\n"
+                "**What to do:**\n"
+                "- Wait 30-60 seconds before trying again\n"
+                "- Reduce request frequency\n"
+                "- Check your API plan limits\n\n"
+                "The IDE will remain stable. Please try again shortly."
+            )
+        elif category == "auth":
+            user_friendly_error = (
+                "🔒 **Authentication Error**\n\n"
+                "Your API key is invalid or expired. Please check your API key settings."
+            )
+        elif category == "timeout":
+            user_friendly_error = (
+                "⏱️ **Request Timeout**\n\n"
+                "The AI request took too long to complete. This can happen with very complex tasks.\n\n"
+                "**Try:** Breaking your request into smaller steps."
+            )
+        elif category == "network":
+            user_friendly_error = (
+                "🌐 **Network Error**\n\n"
+                "Unable to connect to the AI provider. Please check your internet connection."
+            )
+        
+        # Emit user-friendly error
+        self.request_error.emit(user_friendly_error)
+        
+        # Also emit completion to unlock UI and prevent crash
+        self.response_complete.emit(f"❌ Error: {user_friendly_error}")
+        
+        # Log technical details for debugging
+        log.error(f"Error category: {category}, Original error: {error}")
 
     def set_always_allowed(self, allowed: bool):
         """Set whether to always allow tool execution without confirmation"""

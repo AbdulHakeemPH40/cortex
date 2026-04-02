@@ -3630,6 +3630,9 @@ function onComplete() {
             .replace(/<permission>[\s\S]*?<\/permission>/g, '')
             .trim();
 
+        console.log('[CHAT] onComplete: displayText length:', displayText ? displayText.length : 0);
+        console.log('[CHAT] onComplete: currentAssistantMessage exists:', !!currentAssistantMessage);
+
         // ── Save to history (only if content is valid) ─────────────────────
         var chat = chats.find(function(c) { return c.id == currentChatId; });
         if (chat && displayText && displayText.trim() !== '' && displayText !== 'undefined') {
@@ -3639,6 +3642,8 @@ function onComplete() {
 
         // ── Final markdown render ───────────────────────────────────────
         var contentDiv = currentAssistantMessage.querySelector('.message-content');
+        console.log('[CHAT] onComplete: contentDiv found:', !!contentDiv);
+        
         if (contentDiv) {
             var finalHtml = '';
             try {
@@ -3648,16 +3653,25 @@ function onComplete() {
             } catch (e) {
                 finalHtml = formatMarkdownFallback(displayText);
             }
-            contentDiv.innerHTML = finalHtml || '';
+            
+            // CRITICAL FIX: Ensure contentDiv is visible and has content
+            contentDiv.innerHTML = finalHtml || displayText || '';
+            contentDiv.style.display = 'block';  // Force visibility
+            contentDiv.style.visibility = 'visible';
+            
+            console.log('[CHAT] onComplete: contentDiv.innerHTML set, length:', contentDiv.innerHTML.length);
 
             // ── Code block headers + syntax highlight ───────────────────
             contentDiv.querySelectorAll('pre code').forEach(function(block) {
                 if (window.hljs) hljs.highlightElement(block);
                 injectCodeBlockHeader(block);
             });
+        } else {
+            console.error('[CHAT] onComplete: contentDiv NOT FOUND! Message structure may be broken.');
         }
 
         // ── File edit cards ← KEY FIX ────────────────────────────────
+        // Render cards AFTER ensuring content is visible
         renderCustomTagsInto(currentAssistantMessage, currentContent);
 
         // ── Thought duration badge ──────────────────────────────────
@@ -3680,6 +3694,8 @@ function onComplete() {
         if (window.MathJax && window.MathJax.typeset) {
             window.MathJax.typeset([currentAssistantMessage]);
         }
+    } else {
+        console.warn('[CHAT] onComplete: currentAssistantMessage is null!');
     }
 
     // ── Show task completion summary ─────────────────────────────────

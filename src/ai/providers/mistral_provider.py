@@ -256,6 +256,24 @@ class MistralProvider:
                 
             except Exception as e:
                 last_error = e
+                error_str = str(e).lower()
+                
+                # SPECIAL HANDLING FOR 429 RATE LIMIT ERRORS
+                if "429" in error_str or "rate limit" in error_str or "too many requests" in error_str:
+                    log.warning(f"[Mistral] Rate limited (attempt {attempt + 1}/{max_retries})")
+                    
+                    # Exponential backoff with longer delays for rate limits
+                    backoff_seconds = min(2 ** (attempt + 2), 30)  # Max 30 seconds
+                    log.info(f"[Mistral] Waiting {backoff_seconds}s before retry due to rate limit...")
+                    
+                    if attempt < max_retries - 1:
+                        time.sleep(backoff_seconds)
+                        continue
+                    else:
+                        # Final attempt failed - provide clear error
+                        raise Exception(f"Mistral API rate limit exceeded. Please wait {backoff_seconds} seconds before trying again. (429 Too Many Requests)")
+                
+                # Standard error handling
                 log.error(f"[Mistral] Attempt {attempt + 1} failed: {e}")
                 if attempt < max_retries - 1:
                     time.sleep(self._retry_delay * (attempt + 1))
@@ -354,10 +372,11 @@ class MistralProvider:
                                         for tc in tool_calls:
                                             tool_name = tc.get('function', {}).get('name', '')
                                             
-                                            # Validate tool name
+                                            # Validate tool name - WARN but don't reject
+                                            # This prevents false positives when AI uses valid tools not in current selection
                                             if tool_name and not self._validate_tool_name(tool_name):
-                                                log.warning(f"[MISTRAL] Rejecting hallucinated tool: {tool_name}")
-                                                continue
+                                                log.warning(f"[MISTRAL] Tool not in allowed list (may be valid): {tool_name}")
+                                                # Still include it - let the agent handle invalid tools downstream
                                             
                                             tc_info = {
                                                 'index': tc.get('index', 0),

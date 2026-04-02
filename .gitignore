@@ -44,4 +44,7 @@ installer_output/
 opencode-dev/
 vscode-main/
 node_modules/
-# claude-code/
+#claude-code/
+Docs/
+
+cortex_setup.iss

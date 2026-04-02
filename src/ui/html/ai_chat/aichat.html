@@ -109,10 +109,18 @@
           position: relative;
           display: flex;
           flex-direction: column;
+          /* CRITICAL FIX: Ensure smooth scrolling and no clipping */
+          overflow-x: hidden;
+          scroll-behavior: smooth;
       }
       
       #chatMessages > * {
           overflow: visible;
+      }
+      
+      /* CRITICAL: Ensure all child messages are visible */
+      #chatMessages > .message-bubble {
+          overflow: visible !important;
       }
       
       /* Indexing status bar */

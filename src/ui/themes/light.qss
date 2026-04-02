@@ -311,11 +311,12 @@ QLineEdit:focus {
 /* --- Text Edit --- */
 QTextEdit, QPlainTextEdit {
     background-color: #ffffff;
-    color: #212529;
     border: none;
     selection-background-color: #cfe2ff;
-    font-family: "Courier New", "Consolas", monospace;
-    font-size: 13px;
+    font-family: "JetBrains Mono", "Cascadia Code", "Fira Code", "Consolas", monospace;
+    font-size: 10px;
+    margin: 0px;
+    padding: 0px;
 }
 
 /* --- Combo Box --- */

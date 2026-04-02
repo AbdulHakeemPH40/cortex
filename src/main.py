@@ -72,7 +72,7 @@ log = get_logger("main")
 
 def main():
     # HiDPI support is automatic in Qt6
-
+    
     app = QApplication(sys.argv)
     app.setApplicationName("Cortex AI Agent")
     app.setApplicationVersion("1.0.0")
@@ -93,6 +93,20 @@ def main():
         font.setPointSize(10)
         app.setFont(font)
 
+    # CRITICAL: Install global exception handler to prevent crashes
+    def handle_exception(exc_type, exc_value, exc_traceback):
+        """Global exception handler to keep IDE running."""
+        import traceback
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+            return
+        error_msg = f"Uncaught exception: {str(exc_value)}\n{''.join(traceback.format_exception(exc_type, exc_value, exc_traceback))}"
+        log.critical(error_msg)
+        print(f"\n❌ {error_msg}\n", file=sys.stderr)
+        # Don't exit - just log and continue running
+    
+    sys.excepthook = handle_exception
+    
     log.info("Starting Cortex AI Agent IDE...")
 
     window = CortexMainWindow()

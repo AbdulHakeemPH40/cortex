@@ -10,6 +10,7 @@ import time
 import shutil
 import html
 import hashlib
+import platform
 from typing import Dict, List, Callable, Any, Optional, Tuple
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1637,6 +1638,12 @@ class ToolRegistry:
             
             instruction_lower = instruction.lower()
             
+            # FALLBACK: If instruction is too long/complex, use edit_file directly
+            # This handles docstring additions and other complex multi-part instructions
+            if len(instruction) > 200 or instruction.count('\n') > 2:
+                log.info(f"[smart_edit] Complex instruction detected ({len(instruction)} chars), using edit_file fallback")
+                return f"ℹ️ Complex instruction detected. Please use `edit_file` tool directly with old_string and new_string for precise editing of: {Path(path).name}"
+            
             # Extract code from inline code blocks (```code``` or `code`)
             code_blocks = []
             for match in re.finditer(r'```[\w]*\n?(.*?)```', instruction, re.DOTALL):
@@ -3202,17 +3209,42 @@ class ToolRegistry:
             def _run_in_thread():
                 """Run subprocess in separate thread, queue output line by line."""
                 try:
-                    proc = subprocess.Popen(
-                        command,
-                        shell=True,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,    # merge stderr into stdout
-                        text=True,
-                        encoding='utf-8',
-                        errors='replace',
-                        cwd=working_dir,
-                        bufsize=1                    # line-buffered
-                    )
+                    # WINDOWS FIX: Explicitly use PowerShell instead of CMD
+                    # This prevents syntax errors with semicolons (;) and ampersands (&)
+                    if platform.system() == "Windows":
+                        # Use PowerShell explicitly - AI generates PowerShell syntax
+                        powershell_path = os.path.join(
+                            os.environ.get('WINDIR', 'C:\\Windows'),
+                            'System32',
+                            'WindowsPowerShell',
+                            'v1.0',
+                            'powershell.exe'
+                        )
+                        proc = subprocess.Popen(
+                            [powershell_path, "-NoProfile", "-Command", command],
+                            shell=False,  # Don't use shell - we're calling PowerShell directly
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,    # merge stderr into stdout
+                            text=True,
+                            encoding='utf-8',
+                            errors='replace',
+                            cwd=working_dir,
+                            bufsize=1                    # line-buffered
+                        )
+                    else:
+                        # Unix/Linux/Mac - use bash
+                        proc = subprocess.Popen(
+                            ['/bin/bash', '-c', command],
+                            shell=False,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            text=True,
+                            encoding='utf-8',
+                            errors='replace',
+                            cwd=working_dir,
+                            bufsize=1
+                        )
+                    
                     process_ref[0] = proc
 
                     for line in proc.stdout:

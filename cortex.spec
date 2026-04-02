@@ -45,6 +45,7 @@ a = Analysis(
         'PyQt6.QtWebEngineCore',
         'PyQt6.sip',
         'src.ai.providers.deepseek_provider',
+        'src.ai.providers.mistral_provider',      # Mistral AI support
         'src.ai.providers.siliconflow_provider',
         'src.core.lsp_manager',
     ],

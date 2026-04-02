@@ -296,11 +296,20 @@ class PreciseEditor:
         # Syntax check
         ok, err = self._syntax.check(path, new_content)
         if not ok:
-            return EditResult(
-                False, path=path,
-                error=f"new_string introduces syntax error: {err}",
-                action="Fix the syntax error in new_string. Check indentation and brackets."
-            )
+            # BYPASS FOR LSP FALSE POSITIVES: Allow edits even if LSP reports "import could not be resolved"
+            # These are often false positives when virtual environment is not properly recognized
+            # Only block actual syntax errors (indentation, brackets, etc.), not LSP import warnings
+            is_lsp_import_warning = "could not be resolved" in err.lower() or "unresolved import" in err.lower()
+            
+            if is_lsp_import_warning:
+                log.warning(f"Bypassing LSP import warning for {path}: {err}")
+                # Continue with edit despite LSP warning
+            else:
+                return EditResult(
+                    False, path=path,
+                    error=f"new_string introduces syntax error: {err}",
+                    action="Fix the syntax error in new_string. Check indentation and brackets."
+                )
         
         # Commit
         self.undo_stack.push(str(full_path), content, f"edit {path}")
@@ -555,7 +564,14 @@ class PreciseEditor:
         
         ok, err = self._syntax.check(path, content)
         if not ok:
-            return EditResult(False, path=path, error=f"Content has syntax error: {err}")
+            # BYPASS FOR LSP FALSE POSITIVES: Allow writes even if LSP reports "import could not be resolved"
+            is_lsp_import_warning = "could not be resolved" in err.lower() or "unresolved import" in err.lower()
+            
+            if is_lsp_import_warning:
+                log.warning(f"Bypassing LSP import warning for write_file {path}: {err}")
+                # Continue with write despite LSP warning
+            else:
+                return EditResult(False, path=path, error=f"Content has syntax error: {err}")
         
         full_path.parent.mkdir(parents=True, exist_ok=True)
         full_path.write_text(content, encoding="utf-8")

@@ -4,33 +4,33 @@
    ================================================ */
 
 :root {
-    /* Clean Professional Dark Theme */
-    --bg-main: #1a1a1a;
-    --bg-secondary: #242424;
-    --bg-tertiary: #2a2a2a;
-    --bg-elevated: #333333;
+    /* Cursor IDE-style Dark Theme - Darker & More Subtle */
+    --bg-main: #1e1e2e;  /* Darker background */
+    --bg-secondary: #252536;  /* Slightly lighter for contrast */
+    --bg-tertiary: #2d2d44;  /* Input backgrounds */
+    --bg-elevated: #353550;  /* Elevated elements */
     
     /* Simple Borders */
-    --border: #3a3a3a;
-    --border-light: #444444;
+    --border: #3e3e5a;
+    --border-light: #4a4a6a;
     
-    /* Accent - Clean Blue */
-    --accent-primary: #3b82f6;
-    --accent-secondary: #60a5fa;
+    /* Accent - Subtle Blue (Cursor-like) */
+    --accent-primary: #45475a;  /* Muted accent */
+    --accent-secondary: #6272a4;
     
     /* Metallic Dark Color (Cursor-like) */
-    --metallic-dark: #27282a;
-    --metallic-dark-light: #27282a;
+    --metallic-dark: #1e1e2e;
+    --metallic-dark-light: #252536;
     
-    /* Semantic Colors */
-    --success: #22c55e;
-    --error: #ef4444;
-    --warning: #f59e0b;
+    /* Semantic Colors - Muted, No Bright Colors */
+    --success: #50fa7b;  /* Muted green */
+    --error: #ff5555;  /* Muted red */
+    --warning: #f1fa8c;  /* Muted yellow */
     
     /* Text Colors */
-    --text: #f5f5f5;
-    --text-secondary: #a3a3a3;
-    --text-muted: #737373;
+    --text: #f8f8f2;
+    --text-secondary: #a3a3b8;
+    --text-muted: #6272a4;
     
     /* Spacing */
     --space-xs: 4px;
@@ -44,8 +44,8 @@
     --radius-lg: 12px;
     
     /* Shadows */
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-    --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.4);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.5);
     
     /* Legacy compatibility */
     --bg-header: var(--bg-secondary);
@@ -54,7 +54,7 @@
     --accent: var(--accent-primary);
     --bubble-assistant: var(--bg-secondary);
     --bubble-user: var(--accent-primary);
-    --hover-bg: rgba(255, 255, 255, 0.05);
+    --hover-bg: rgba(255, 255, 255, 0.03);  /* Very subtle hover */
 }
 
 body.light {
@@ -168,7 +168,6 @@ body.loaded #loading-overlay {
     100% { 
         transform: rotate(360deg) scale(1);
     }
-}
 }
 
 #loading-overlay span {
@@ -476,12 +475,20 @@ body.light #chatMessages {
 .message-bubble.assistant {
     align-self: flex-start;
     width: 100%;
+    /* CRITICAL FIX: Ensure assistant messages never clip content */
+    overflow: visible !important;
+    display: flex;
+    flex-direction: column;
 }
 
 .message-content {
     padding: 0;
     border-radius: 0;
     word-wrap: break-word;
+    /* CRITICAL FIX: Ensure content never gets clipped or hidden */
+    overflow: visible !important;
+    min-height: auto;
+    height: auto;
 }
 
 /* User Message - Metallic Dark (Cursor-like) */
@@ -1829,7 +1836,6 @@ body.light .inline-code {
         opacity: 1;
         text-shadow: 0 0 12px rgba(245, 158, 11, 0.6);
     }
-}
 }
 
 .activity-title {

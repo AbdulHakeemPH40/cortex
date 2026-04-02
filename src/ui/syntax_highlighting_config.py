@@ -156,13 +156,14 @@ FONTS = {
 }
 
 # ==================== MARKDOWN STYLING ====================
-# EXACT colors for markdown as specified
+# EXACT colors for markdown - matching syntax-highlighting.css
 MARKDOWN_COLORS = {
-    'heading': '#0047AB',       # Blue for headings
-    'text': '#ffffff',          # White for text
-    'code': '#50fa7b',          # Green (from string)
+    'heading_main': '#0047AB',    # Deep blue for H1 (main heading)
+    'heading_child': '#4169E1',   # Royal blue for H2-H6 (child headings)
+    'text': '#ffffff',            # White for all body text
+    'code': '#50fa7b',            # Green (from string)
     'code_bg': 'rgba(82, 250, 123, 0.1)',
-    'link': '#ff79c6',          # Pink (from tag)
+    'link': '#ff79c6',            # Pink (from tag)
     'bold': '#ffffff',
     'italic': '#ffffff',
 }
@@ -630,7 +631,7 @@ class UniversalCodeColorizer:
 
 # ==================== MARKDOWN COLORIZER ====================
 class MarkdownColorizer:
-    """Applies Dracula colors to Markdown - Blue headings, White text"""
+    """Applies Dracula colors to Markdown - Blue headings (H1 deep, H2-H6 lighter), White text"""
     
     @staticmethod
     def colorize(markdown_text):
@@ -640,10 +641,18 @@ class MarkdownColorizer:
             
         result = markdown_text
         
-        # Headings - Blue (#0047AB)
+        # Main Heading (H1) - Deep Blue (#0047AB)
         result = re.sub(
-            r'^(#{1,6})\s+(.+)$',
-            f'<span style="color: {MARKDOWN_COLORS["heading"]}; font-weight: 700;">\\1 \\2</span>',
+            r'^#\s+(.+)$',
+            f'<span style="color: {MARKDOWN_COLORS["heading_main"]}; font-weight: 700;"># \\1</span>',
+            result,
+            flags=re.MULTILINE
+        )
+        
+        # Child Headings (H2-H6) - Lighter Royal Blue (#4169E1)
+        result = re.sub(
+            r'^(#{2,6})\s+(.+)$',
+            f'<span style="color: {MARKDOWN_COLORS["heading_child"]}; font-weight: 700;">\\1 \\2</span>',
             result,
             flags=re.MULTILINE
         )
