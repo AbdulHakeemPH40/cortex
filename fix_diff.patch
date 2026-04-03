@@ -1,0 +1,14 @@
+--- a/src/main_window.py
++++ b/src/main_window.py
+@@ -1445,6 +1445,12 @@ class MainWindow(QMainWindow):
+                 log.error(f"Failed to read content: {filepath}")
+                 return
+                 
++            # Store original snapshot for diff generation (even if not edited by AI)
++            if not hasattr(self, '_file_snapshots'):
++                self._file_snapshots = {}
++            self._file_snapshots[filepath] = content
++                
+             log.info(f"Content read ({len(content)} chars). Detecting language...")
+             language = detect_language(filepath)
+             log.info(f"Language detected: {language}. Opening index in tabs...")

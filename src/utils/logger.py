@@ -37,9 +37,8 @@ def get_logger(name: str = "cortex") -> logging.Logger:
         logger.addHandler(file_handler)
         
         # Console handler - show INFO and above (includes model usage logs)
-        # Force UTF-8 encoding to support emoji in Windows console
-        import io
-        console_handler = logging.StreamHandler(io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace'))
+        # Use simple StreamHandler (PyInstaller compatible)
+        console_handler = logging.StreamHandler()
         console_handler.setLevel(logging.INFO)  # Show INFO for model/provider logs
         console_handler.setFormatter(
             logging.Formatter(

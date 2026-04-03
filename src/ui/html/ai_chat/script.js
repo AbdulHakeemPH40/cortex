@@ -6,6 +6,11 @@ var currentProjectPath = ''; // Current project path for isolated chat history
 var bridgeReady = false; // Flag to track if bridge is initialized
 var _terminalBatchBuffer = '';
 var _terminalFlushTimeout = null;
+var _lastUserMessage = null;
+var _lastUserHasImages = false;
+var _lastUserImageData = null;
+var _rateLimitRetryTimer = null;
+var _rateLimitRetryRemaining = 0;
 
 // Initialize batch buffer when DOM is ready
 document.addEventListener('DOMContentLoaded', function() {
@@ -238,7 +243,7 @@ function showTaskCompletionSummary() {
     card.className = 'task-completion-card';
     
     var statusClass = errors > 0 ? 'has-errors' : 'success';
-    var statusIcon = errors > 0 ? '??' : '?';
+    var statusIcon = errors > 0 ? 'WARN' : 'OK';
     var statusText = errors > 0 ? 'Completed with issues' : 'Task completed';
     
     var html = '<div class="tcc-header ' + statusClass + '">' +
@@ -247,9 +252,9 @@ function showTaskCompletionSummary() {
         '<span class="tcc-duration">' + duration + 's</span></div>';
     
     html += '<div class="tcc-stats">';
-    if (filesRead > 0) html += '<span class="tcc-stat">?? ' + filesRead + ' read</span>';
-    if (filesWritten > 0) html += '<span class="tcc-stat">?? ' + filesWritten + ' modified</span>';
-    if (commandsRun > 0) html += '<span class="tcc-stat">?? ' + commandsRun + ' commands</span>';
+    if (filesRead > 0) html += '<span class="tcc-stat">READ ' + filesRead + ' read</span>';
+    if (filesWritten > 0) html += '<span class="tcc-stat">EDIT ' + filesWritten + ' modified</span>';
+    if (commandsRun > 0) html += '<span class="tcc-stat">RUN ' + commandsRun + ' commands</span>';
     html += '</div>';
     
     card.innerHTML = html;
@@ -961,7 +966,7 @@ document.addEventListener('DOMContentLoaded', function () {
             }
             
             if (!supportsVision) {
-                alert('?? Image attachment requires a vision-capable model.\n\n' +
+                alert('NOTE: Image attachment requires a vision-capable model.\n\n' +
                       'Current model: ' + modelText + '\n\n' +
                       'Please switch to a vision model like:\n' +
                       '- Qwen-VL (SiliconFlow)\n' +
@@ -1138,7 +1143,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 });
                 
                 if (isNonVision) {
-                    alert('?? Image paste requires a vision-capable model.\n\n' +
+                    alert('NOTE: Image paste requires a vision-capable model.\n\n' +
                           'Current model: ' + modelText + '\n\n' +
                           'Please switch to a vision model like Qwen-VL.');
                     return;
@@ -2020,13 +2025,13 @@ function renderPermissionBlock(permData) {
 
 function getToolIcon(toolName) {
     var name = (toolName || '').toLowerCase();
-    if (name.includes('read') || name.includes('file')) return '??';
-    if (name.includes('write') || name.includes('edit')) return '??';
-    if (name.includes('run') || name.includes('command') || name.includes('terminal')) return '??';
-    if (name.includes('search') || name.includes('find')) return '??';
-    if (name.includes('list') || name.includes('dir')) return '??';
-    if (name.includes('git')) return '??';
-    return '??';
+    if (name.includes('read') || name.includes('file')) return 'READ';
+    if (name.includes('write') || name.includes('edit')) return 'EDIT';
+    if (name.includes('run') || name.includes('command') || name.includes('terminal')) return 'RUN';
+    if (name.includes('search') || name.includes('find')) return 'FIND';
+    if (name.includes('list') || name.includes('dir')) return 'LIST';
+    if (name.includes('git')) return 'GIT';
+    return 'TOOL';
 }
 
 function handlePermissionAllow() {
@@ -2200,7 +2205,7 @@ function showToolActivity(type, info, status) {
             var ext = fileName ? fileName.split('.').pop().toLowerCase() : 'default';
             var extClass = 'fec-ext-' + (ext || 'default');
             
-            var icon = type === 'read_file' ? '??' : type === 'edit_file' ? '?' : '??';
+            var icon = type === 'read_file' ? 'READ' : type === 'edit_file' ? 'EDIT' : 'NEW';
             var actionText = type === 'read_file' ? 'Reading' : type === 'edit_file' ? 'Editing' : 'Creating';
             
             card.innerHTML = 
@@ -2214,7 +2219,7 @@ function showToolActivity(type, info, status) {
                 '<div class="fec-right">' +
                     (status === 'running' ? 
                         '<span class="fec-status-text fec-status-pending">...</span>' :
-                        '<span class="fec-status-text fec-status-applied">?</span>'
+                        '<span class="fec-status-text fec-status-applied">OK</span>'
                     ) +
                 '</div>';
             
@@ -2398,7 +2403,7 @@ function showToolActivity(type, info, status) {
     if (status === 'complete') {
         var iconEl = currentActivitySection.querySelector('.activity-icon');
         if (iconEl) {
-            iconEl.textContent = '?';
+            iconEl.textContent = 'Done';
             iconEl.className = 'activity-icon complete';
         }
     }
@@ -2441,10 +2446,10 @@ function showToolSummary(summaryData) {
     
     // Build header
     var headerHtml = '<div class="summary-header" onclick="this.parentElement.classList.toggle(\'collapsed\')">';
-    headerHtml += '<span class="summary-icon">??</span>';
+    headerHtml += '<span class="summary-icon">TOOLS</span>';
     headerHtml += '<span class="summary-title">Tool Execution Summary</span>';
     headerHtml += '<span class="summary-count">' + grandTotal + ' action' + (grandTotal > 1 ? 's' : '') + '</span>';
-    headerHtml += '<span class="summary-toggle">?</span>';
+    headerHtml += '<span class="summary-toggle">Details</span>';
     headerHtml += '</div>';
     
     // Build content
@@ -2453,17 +2458,17 @@ function showToolSummary(summaryData) {
     // File writes section
     if (totalWrites > 0) {
         contentHtml += '<div class="summary-section">';
-        contentHtml += '<div class="section-header"><span class="section-icon">??</span>Files Modified (' + totalWrites + ')</div>';
+        contentHtml += '<div class="section-header"><span class="section-icon">EDIT</span>Files Modified (' + totalWrites + ')</div>';
         contentHtml += '<div class="section-items">';
         summaryData.file_writes.forEach(function(item, index) {
             // Icon based on operation type
             var iconMap = {
-                'edit': '??',
-                'create': '?',
-                'delete': '???',
-                'directory': '??'
+                'edit': 'EDIT',
+                'create': 'NEW',
+                'delete': 'DEL',
+                'directory': 'DIR'
             };
-            var icon = iconMap[item.type] || '??';
+            var icon = iconMap[item.type] || 'FILE';
             var fileName = item.path ? item.path.split('/').pop().split('\\').pop() : 'unknown';
             contentHtml += '<div class="summary-item">';
             contentHtml += '<span class="item-icon">' + icon + '</span>';
@@ -2497,12 +2502,12 @@ function showToolSummary(summaryData) {
     // File reads section
     if (totalReads > 0) {
         contentHtml += '<div class="summary-section">';
-        contentHtml += '<div class="section-header"><span class="section-icon">??</span>Files Read (' + totalReads + ')</div>';
+        contentHtml += '<div class="section-header"><span class="section-icon">READ</span>Files Read (' + totalReads + ')</div>';
         contentHtml += '<div class="section-items">';
         summaryData.file_reads.forEach(function(item) {
             var fileName = item.path ? item.path.split('/').pop().split('\\').pop() : 'unknown';
             contentHtml += '<div class="summary-item">';
-            contentHtml += '<span class="item-icon">??</span>';
+            contentHtml += '<span class="item-icon">READ</span>';
             contentHtml += '<span class="item-name">' + escapeHtml(fileName) + '</span>';
             contentHtml += '</div>';
         });
@@ -2512,11 +2517,11 @@ function showToolSummary(summaryData) {
     // Commands section
     if (totalCommands > 0) {
         contentHtml += '<div class="summary-section">';
-        contentHtml += '<div class="section-header"><span class="section-icon">??</span>Commands (' + totalCommands + ')</div>';
+        contentHtml += '<div class="section-header"><span class="section-icon">RUN</span>Commands (' + totalCommands + ')</div>';
         contentHtml += '<div class="section-items">';
         summaryData.commands.forEach(function(item) {
             contentHtml += '<div class="summary-item">';
-            contentHtml += '<span class="item-icon">??</span>';
+            contentHtml += '<span class="item-icon">RUN</span>';
             contentHtml += '<span class="item-name">' + escapeHtml(item.command || item.name) + '</span>';
             contentHtml += '</div>';
         });
@@ -2526,11 +2531,11 @@ function showToolSummary(summaryData) {
     // Errors section
     if (totalErrors > 0) {
         contentHtml += '<div class="summary-section error">';
-        contentHtml += '<div class="section-header"><span class="section-icon">?</span>Errors (' + totalErrors + ')</div>';
+        contentHtml += '<div class="section-header"><span class="section-icon">ERR</span>Errors (' + totalErrors + ')</div>';
         contentHtml += '<div class="section-items">';
         summaryData.errors.forEach(function(item) {
             contentHtml += '<div class="summary-item error">';
-            contentHtml += '<span class="item-icon">??</span>';
+            contentHtml += '<span class="item-icon">ERR</span>';
             contentHtml += '<span class="item-name">' + escapeHtml(item.name) + '</span>';
             contentHtml += '<span class="item-error">' + escapeHtml(item.error.substring(0, 100)) + '</span>';
             contentHtml += '</div>';
@@ -2541,11 +2546,11 @@ function showToolSummary(summaryData) {
     // Other operations
     if (totalOther > 0) {
         contentHtml += '<div class="summary-section">';
-        contentHtml += '<div class="section-header"><span class="section-icon">??</span>Other (' + totalOther + ')</div>';
+        contentHtml += '<div class="section-header"><span class="section-icon">INFO</span>Other (' + totalOther + ')</div>';
         contentHtml += '<div class="section-items">';
         summaryData.other.forEach(function(item) {
             contentHtml += '<div class="summary-item">';
-            contentHtml += '<span class="item-icon">?</span>';
+            contentHtml += '<span class="item-icon">INFO</span>';
             contentHtml += '<span class="item-name">' + escapeHtml(item.name) + '</span>';
             contentHtml += '</div>';
         });
@@ -2568,14 +2573,14 @@ function getFileIcon(type, info) {
         var opType = type.replace('terminal_', '');
         var icons = {
             'create': '<span class="file-icon terminal">+</span>',
-            'create_dir': '<span class="file-icon folder">??</span>',
-            'delete': '<span class="file-icon delete">???</span>',
-            'delete_dir': '<span class="file-icon delete">???</span>',
+            'create_dir': '<span class="file-icon folder">DIR</span>',
+            'delete': '<span class="file-icon delete">DEL</span>',
+            'delete_dir': '<span class="file-icon delete">DEL</span>',
             'move': '<span class="file-icon move">?</span>',
-            'copy': '<span class="file-icon copy">??</span>',
+            'copy': '<span class=\"file-icon copy\">COPY</span>',
             'rename': '<span class="file-icon rename">?</span>'
         };
-        return icons[opType] || '<span class="file-icon terminal">?</span>';
+        return icons[opType] || '<span class="file-icon terminal">RUN</span>';
     }
     
     if (type === 'read_file' || type === 'write_file' || type === 'edit_file' || type === 'inject_after' || type === 'add_import' || type === 'create_file') {
@@ -2600,15 +2605,15 @@ function getFileIcon(type, info) {
         };
         return icons[ext] || '<span class="file-icon">FILE</span>';
     }
-    if (type === 'list_directory') return '<span class="file-icon folder">??</span>';
-    if (type === 'create_directory') return '<span class="file-icon folder">??+</span>';
-    if (type === 'delete_file') return '<span class="file-icon delete">???</span>';
-    if (type === 'delete_directory') return '<span class="file-icon delete">???</span>';
-    if (type === 'run_command') return '<span class="file-icon terminal">?</span>';
-    if (type === 'search_code') return '<span class="file-icon search">??</span>';
+    if (type === 'list_directory') return '<span class="file-icon folder">DIR</span>';
+    if (type === 'create_directory') return '<span class="file-icon folder">DIR+</span>';
+    if (type === 'delete_file') return '<span class="file-icon delete">DEL</span>';
+    if (type === 'delete_directory') return '<span class="file-icon delete">DEL</span>';
+    if (type === 'run_command') return '<span class="file-icon terminal">RUN</span>';
+    if (type === 'search_code') return '<span class="file-icon search">FIND</span>';
     if (type === 'git_status' || type === 'git_diff') return '<span class="file-icon git">GIT</span>';
-    if (type === 'thinking') return '<span class="file-icon think">??</span>';
-    return '<span class="file-icon">??</span>';
+    if (type === 'thinking') return '<span class="file-icon think">THINK</span>';
+    return '<span class="file-icon">FILE</span>';
 }
 
 function formatActivityLabel(type, info, status) {
@@ -2633,16 +2638,16 @@ function formatActivityLabel(type, info, status) {
         return status === 'running' ? runningPrefix + displayInfo : displayInfo;
     }
     if (isEdit) {
-        var checkmark = (status === 'complete' && !diffMatch) ? ' ?' : '';
+        var checkmark = (status === 'complete' && !diffMatch) ? ' Done' : '';
         return status === 'running' ? runningPrefix + displayInfo : displayInfo + checkmark;
     }
     if (isCreate) {
         var action = type === 'create_directory' ? 'Created directory' : 'Created file';
-        return status === 'running' ? runningPrefix + displayInfo : action + ' ' + displayInfo + ' ?';
+        return status === 'running' ? runningPrefix + displayInfo : action + ' ' + displayInfo + ' Done';
     }
     if (isDelete) {
         var action = type === 'delete_directory' ? 'Deleted directory' : 'Deleted file';
-        return status === 'running' ? runningPrefix + displayInfo : action + ' ' + displayInfo + ' ?';
+        return status === 'running' ? runningPrefix + displayInfo : action + ' ' + displayInfo + ' Done';
     }
     if (type === 'list_directory') {
         return status === 'running' ? 'Exploring ' + displayInfo : 'Exploring ' + displayInfo;
@@ -2721,7 +2726,7 @@ function renderDirectoryContents(path, contents) {
                 var ext = name.split('.').pop().toLowerCase();
                 icon = getFileExtensionIcon(ext);
             } else {
-                icon = '??';
+                icon = 'PAT';
             }
         }
         
@@ -2774,7 +2779,7 @@ function showDirectoryContents(path, contents) {
 
 // Test function - can be called from console
 function testDirectoryDisplay() {
-    var testContent = "?? agents/\n?? skills/\n?? plugin.json\n?? main.py\n?? script.js\n?? index.html";
+    var testContent = "DIR agents/\nDIR skills/\nFILE plugin.json\nFILE main.py\nFILE script.js\nFILE index.html";
     showDirectoryContents("test_folder", testContent);
     console.log("Test directory display called");
 }
@@ -3722,6 +3727,74 @@ function onComplete() {
 }
 
 
+
+function _startRateLimitRetry(seconds) {
+    if (!_lastUserMessage || _isGenerating) return;
+    if (_rateLimitRetryTimer) {
+        clearInterval(_rateLimitRetryTimer);
+        _rateLimitRetryTimer = null;
+    }
+    _rateLimitRetryRemaining = Math.max(1, seconds || 10);
+
+    // Show waiting UI
+    showThinkingIndicator();
+    updateThinkingText('Rate limited. Retrying in ' + _rateLimitRetryRemaining + 's');
+    var statusEl = document.getElementById('thinking-status');
+    if (statusEl) statusEl.textContent = 'Waiting for provider rate limit...';
+
+    _rateLimitRetryTimer = setInterval(function() {
+        _rateLimitRetryRemaining -= 1;
+        if (_rateLimitRetryRemaining <= 0) {
+            clearInterval(_rateLimitRetryTimer);
+            _rateLimitRetryTimer = null;
+            // Retry without duplicating the user bubble
+            _isGenerating = true;
+            var sendBtn = document.getElementById('sendBtn');
+            var stopBtn = document.getElementById('stopBtn');
+            if (sendBtn) sendBtn.style.display = 'none';
+            if (stopBtn) stopBtn.style.display = 'flex';
+            showThinkingIndicator();
+            if (_lastUserHasImages && _lastUserImageData) {
+                bridge.on_message_with_images(_lastUserMessage, _lastUserImageData);
+            } else {
+                bridge.on_message_submitted(_lastUserMessage);
+            }
+            return;
+        }
+        updateThinkingText('Rate limited. Retrying in ' + _rateLimitRetryRemaining + 's');
+    }, 1000);
+}
+
+function onError(errorMessage) {
+    console.error('[CHAT] onError:', errorMessage);
+    removeThinkingIndicator();
+    hideThinking();
+    clearActivitySection();
+
+    // Show error in chat
+    try {
+        appendMessage(errorMessage || 'An error occurred.', 'system', true);
+    } catch (e) {}
+
+    // Reset UI state
+    var sendBtn = document.getElementById('sendBtn');
+    var stopBtn = document.getElementById('stopBtn');
+    if (sendBtn) sendBtn.style.display = 'flex';
+    if (stopBtn) stopBtn.style.display = 'none';
+
+    _isGenerating = false;
+
+    // Auto-retry for rate limits with countdown
+    if (errorMessage && /rate limit|429/i.test(errorMessage)) {
+        var m = errorMessage.match(/wait\s+(\d+)\s*seconds/i);
+        var seconds = m ? parseInt(m[1], 10) : 15;
+        _startRateLimitRetry(seconds);
+        return;
+    }
+
+    _onGenerationComplete();
+}
+
 function handlePostRenderSpecialTags(container) {
     // Handle interactive blocks that need to stay in chat
     // Permission tag removed - backend no longer requires confirmation
@@ -3974,7 +4047,7 @@ function renderTaskSummary(data) {
         var message = summary.message || '';
         
         var html = '<div class="task-summary-card">';
-        html += '<div class="task-summary-header">? ' + escapeHtml(title) + '</div>';
+        html += '<div class="task-summary-header">DONE ' + escapeHtml(title) + '</div>';
         
         // Removed section
         if (removed.length > 0) {
@@ -3982,7 +4055,7 @@ function renderTaskSummary(data) {
             html += '<div class="task-summary-label">Removed:</div>';
             html += '<ul class="task-summary-list removed">';
             removed.forEach(function(item) {
-                html += '<li><span class="item-icon">???</span>' + escapeHtml(item) + '</li>';
+                html += '<li><span class="item-icon">DEL</span>' + escapeHtml(item) + '</li>';
             });
             html += '</ul></div>';
         }
@@ -3993,7 +4066,7 @@ function renderTaskSummary(data) {
             html += '<div class="task-summary-label">Kept:</div>';
             html += '<ul class="task-summary-list kept">';
             kept.forEach(function(item) {
-                html += '<li><span class="item-icon">?</span>' + escapeHtml(item) + '</li>';
+                html += '<li><span class="item-icon">INFO</span>' + escapeHtml(item) + '</li>';
             });
             html += '</ul></div>';
         }
@@ -4004,7 +4077,7 @@ function renderTaskSummary(data) {
             html += '<div class="task-summary-label">Files:</div>';
             html += '<ul class="task-summary-list files">';
             files.forEach(function(item) {
-                var icon = item.action === 'created' ? '??' : item.action === 'deleted' ? '???' : '??';
+                var icon = item.action === 'created' ? 'NEW' : item.action === 'deleted' ? 'DEL' : 'EDIT';
                 var status = item.action || 'modified';
                 html += '<li><span class="item-icon">' + icon + '</span><code>' + escapeHtml(item.name) + '</code> <span class="file-action">' + status + '</span></li>';
             });
@@ -4020,7 +4093,7 @@ function renderTaskSummary(data) {
         return html;
     } catch (e) {
         console.error('Task summary parse error:', e);
-        return '<div class="task-summary-card"><div class="task-summary-header">? Task Complete</div></div>';
+        return '<div class="task-summary-card"><div class="task-summary-header">DONE Task Complete</div></div>';
     }
 }
 
@@ -4642,6 +4715,7 @@ document.addEventListener('DOMContentLoaded', function() {
     window.showToolSummary = showToolSummary;
     window.showThinking = showThinking;
     window.hideThinking = hideThinking;
+    window.onError = onError;
     window.updateActivityHeader = updateActivityHeader;
     
     // TODO Functions
@@ -6081,18 +6155,18 @@ function buildProjectTreeCard(rootPath, items) {
 function getFileEmoji(filename) {
     var ext = (filename || '').split('.').pop().toLowerCase();
     var map = {
-        'html': '??', 'htm': '??',
-        'js':   '??', 'ts':  '??', 'jsx': '??', 'tsx': '??',
-        'css':  '??', 'scss': '??',
-        'py':   '??', 'java': '??', 'go':  '??', 'rs':  '??',
-        'json': '??', 'yaml': '??', 'yml': '??',
-        'md':   '??', 'txt':  '??',
-        'png':  '???', 'jpg': '???', 'svg': '???',
-        'mp4':  '??', 'mp3':  '??',
-        'zip':  '??', 'tar':  '??',
-        'sh':   '??', 'bat':  '??',
+        'html': 'HTML', 'htm': 'HTML',
+        'js':   'JS', 'ts':  'TS', 'jsx': 'JSX', 'tsx': 'TSX',
+        'css':  'CSS', 'scss': 'SCSS',
+        'py':   'PY', 'java': 'JAVA', 'go':  'GO', 'rs':  'RS',
+        'json': 'JSON', 'yaml': 'YAML', 'yml': 'YML',
+        'md':   'MD', 'txt':  'TXT',
+        'png':  'PNG', 'jpg': 'JPG', 'svg': 'SVG',
+        'mp4':  'MP4', 'mp3':  'MP3',
+        'zip':  'ZIP', 'tar':  'TAR',
+        'sh':   'SH', 'bat':  'BAT',
     };
-    return map[ext] || '??';
+    return map[ext] || 'FILE';
 }
 
 function showProjectTreeCard(rootPath, items) {
@@ -6404,6 +6478,11 @@ function _sendNow(text) {
     if (sendBtn) sendBtn.style.display = 'none';
     if (stopBtn) stopBtn.style.display = 'flex';
 
+    // Remember last user message for retry
+    _lastUserMessage = text;
+    _lastUserHasImages = hasImages;
+    _lastUserImageData = imageData;
+
     // Send message with image data if present
     if (hasImages) {
         bridge.on_message_with_images(text, imageData);
@@ -6611,11 +6690,11 @@ window.showQuestionCard = function(info) {
             var titleEl = card.querySelector('.tool-badge-name');
             if (titleEl) {
                 var toolName = info.tool_name || 'Action Request';
-                var toolIcon = '??';
-                if (toolName.includes('write') || toolName.includes('edit')) toolIcon = '??';
-                else if (toolName.includes('read')) toolIcon = '??';
-                else if (toolName.includes('bash') || toolName.includes('command')) toolIcon = '??';
-                else if (toolName.includes('delete')) toolIcon = '???';
+                var toolIcon = 'TOOL';
+                if (toolName.includes('write') || toolName.includes('edit')) toolIcon = 'EDIT';
+                else if (toolName.includes('read')) toolIcon = 'READ';
+                else if (toolName.includes('bash') || toolName.includes('command')) toolIcon = 'RUN';
+                else if (toolName.includes('delete')) toolIcon = 'DEL';
                 
                 var iconEl = card.querySelector('.tool-badge-icon');
                 if (iconEl) iconEl.textContent = toolIcon;
@@ -7084,7 +7163,7 @@ window.createToolCard = function(toolName, params, status) {
     
     card.innerHTML = `
         <div class="tool-header">
-            <span class="tool-icon">??</span>
+            <span class="tool-icon">TOOL</span>
             <span class="tool-name">${toolName}</span>
             <span class="tool-status ${statusClass}">${statusText}</span>
         </div>
@@ -7140,11 +7219,11 @@ window.initQuickActions = function() {
     if (!container) return;
     
     var actions = [
-        { id: 'explain', icon: '??', label: 'Explain Code' },
-        { id: 'fix', icon: '??', label: 'Fix Issues' },
-        { id: 'optimize', icon: '?', label: 'Optimize' },
-        { id: 'test', icon: '??', label: 'Generate Tests' },
-        { id: 'document', icon: '??', label: 'Add Docs' }
+        { id: 'explain', icon: 'EXP', label: 'Explain Code' },
+        { id: 'fix', icon: 'FIX', label: 'Fix Issues' },
+        { id: 'optimize', icon: 'OPT', label: 'Optimize' },
+        { id: 'test', icon: 'TEST', label: 'Generate Tests' },
+        { id: 'document', icon: 'DOC', label: 'Add Docs' }
     ];
     
     actions.forEach(function(action) {
@@ -7211,7 +7290,7 @@ function showTestingCard(info) {
     
     card.innerHTML = `
         <div class="testing-card-header">
-            <span class="testing-icon">??</span>
+            <span class="testing-icon">TEST</span>
             <span class="testing-title">Testing Mode</span>
             <span class="testing-priority" style="background: ${priorityColor}20; color: ${priorityColor};">
                 ${info.priority?.toUpperCase() || 'MEDIUM'}
@@ -7251,7 +7330,7 @@ function showTestResults(results) {
         return;
     }
     
-    var statusIcon = results.all_passed ? '?' : '??';
+    var statusIcon = results.all_passed ? 'PASS' : 'WARN';
     var statusColor = results.all_passed ? '#10b981' : '#f59e0b';
     var statusText = results.all_passed ? 'All Tests Passed!' : 'Tests Completed';
     
@@ -7271,8 +7350,8 @@ function showTestResults(results) {
             <span style="font-weight: 600; color: ${statusColor};">${statusText}</span>
         </div>
         <div style="display: flex; gap: 16px; font-size: 13px;">
-            <span style="color: #10b981;">? ${results.passed_count || 0} passed</span>
-            ${results.failed_count > 0 ? `<span style="color: #ef4444;">? ${results.failed_count} failed</span>` : ''}
+            <span style="color: #10b981;">PASS ${results.passed_count || 0} passed</span>
+            ${results.failed_count > 0 ? `<span style="color: #ef4444;">FAIL ${results.failed_count} failed</span>` : ''}
         </div>
         ${results.failures && results.failures.length > 0 ? `
         <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.1);">
@@ -7371,19 +7450,19 @@ function createCompletionItem(completion, index) {
     item.dataset.index = index;
     
     // Determine icon based on strategy
-    var icon = '??';
+    var icon = 'AUTO';
     var typeClass = '';
     if (completion.strategy === 'pattern') {
-        icon = '??';
+        icon = 'AI';
         typeClass = 'pattern';
     } else if (completion.strategy === 'ai') {
-        icon = '??';
+        icon = 'TPL';
         typeClass = 'ai';
     } else if (completion.strategy === 'syntax') {
-        icon = '?';
+        icon = 'SYN';
         typeClass = 'syntax';
     } else if (completion.strategy === 'template') {
-        icon = '??';
+        icon = 'FILE';
         typeClass = 'template';
     }
     
@@ -7785,7 +7864,7 @@ window.showInlineDiff = function(diffData) {
     header.className = 'inline-diff-header';
     header.innerHTML = `
         <div class="inline-diff-title">
-            <div class="file-icon">??</div>
+            <div class="file-icon">FILE</div>
             <span>${escapeHtml(diffData.filePath)}</span>
         </div>
         <div class="inline-diff-stats">
@@ -7868,9 +7947,9 @@ window.showInlineDiff = function(diffData) {
             var actions = document.createElement('div');
             actions.className = 'diff-line-actions';
             actions.innerHTML = `
-                <button class="diff-line-btn accept" title="Accept line" onclick="acceptDiffLine('${diffData.filePath}', ${line.lineNumber.new || line.lineNumber.original || 0})">?</button>
-                <button class="diff-line-btn reject" title="Reject line" onclick="rejectDiffLine('${diffData.filePath}', ${line.lineNumber.new || line.lineNumber.original || 0})">?</button>
-                <button class="diff-line-btn comment" title="Add comment" onclick="commentDiffLine('${diffData.filePath}', ${line.lineNumber.new || line.lineNumber.original || 0})">??</button>
+                <button class="diff-line-btn accept" title="Accept line" onclick="acceptDiffLine('${diffData.filePath}', ${line.lineNumber.new || line.lineNumber.original || 0})">OK</button>
+                <button class="diff-line-btn reject" title="Reject line" onclick="rejectDiffLine('${diffData.filePath}', ${line.lineNumber.new || line.lineNumber.original || 0})">NO</button>
+                <button class="diff-line-btn comment" title="Add comment" onclick="commentDiffLine('${diffData.filePath}', ${line.lineNumber.new || line.lineNumber.original || 0})">CMT</button>
             `;
             
             row.appendChild(lineNums);
@@ -7892,15 +7971,15 @@ window.showInlineDiff = function(diffData) {
     footer.innerHTML = `
         <div class="inline-diff-actions">
             <button class="inline-diff-btn accept-all" onclick="acceptAllDiffLines('${diffData.filePath}')">
-                <span>?</span>
+                <span>OK</span>
                 <span>Accept All</span>
             </button>
             <button class="inline-diff-btn reject-all" onclick="rejectAllDiffLines('${diffData.filePath}')">
-                <span>?</span>
+                <span>NO</span>
                 <span>Reject All</span>
             </button>
             <button class="inline-diff-btn view-full" onclick="showFullDiff('${diffData.filePath}')">
-                <span>??</span>
+                <span>DIFF</span>
                 <span>View Full Diff</span>
             </button>
         </div>
@@ -7928,17 +8007,17 @@ window.showInlineDiff = function(diffData) {
  */
 function getSemanticIcon(type) {
     var icons = {
-        'bug_fix': '??',
-        'feature_add': '?',
-        'refactor': '??',
-        'optimization': '?',
-        'security': '??',
-        'test': '??',
-        'documentation': '??',
-        'style': '??',
-        'other': '??'
+        'bug_fix': 'FIX',
+        'feature_add': 'FEAT',
+        'refactor': 'REF',
+        'optimization': 'OPT',
+        'security': 'SEC',
+        'test': 'TEST',
+        'documentation': 'DOC',
+        'style': 'STYLE',
+        'other': 'INFO'
     };
-    return icons[type] || '??';
+    return icons[type] || 'INFO';
 }
 
 /**

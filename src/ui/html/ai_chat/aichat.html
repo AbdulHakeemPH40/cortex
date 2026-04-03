@@ -342,6 +342,35 @@
       .section-icon {
           font-size: 14px;
       }
+
+      @keyframes badgePulse {
+          0%, 100% {
+              transform: translateY(0);
+              opacity: 0.85;
+          }
+          50% {
+              transform: translateY(-1px);
+              opacity: 1;
+          }
+      }
+
+      .section-icon,
+      .item-icon,
+      .tcc-stat,
+      .tool-icon,
+      .tool-badge-icon {
+          animation: badgePulse 2.6s ease-in-out infinite;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+          .section-icon,
+          .item-icon,
+          .tcc-stat,
+          .tool-icon,
+          .tool-badge-icon {
+              animation: none;
+          }
+      }
       
       .section-items {
           display: flex;
@@ -2146,7 +2175,7 @@
         </div>
         <div class="completion-shortcuts">
             <span class="completion-shortcut">
-                <kbd>â†‘</kbd><kbd>â†“</kbd> Navigate
+                <kbd>Up</kbd><kbd>Down</kbd> Navigate
             </span>
             <span class="completion-shortcut">
                 <kbd>Enter</kbd> Accept
@@ -2351,7 +2380,7 @@
             <!-- Context Bar (shows active context like @mentions) -->
             <div id="context-bar" class="context-bar" style="display: none;">
                 <div class="context-items"></div>
-                <button class="context-clear" title="Clear context">Ã—</button>
+                <button class="context-clear" title="Clear context">X</button>
             </div>
             
             <!-- Input Area -->
@@ -2540,7 +2569,7 @@
     <div id="debug-console" style="display:none; position:fixed; bottom:0; left:0; right:0; height:200px; background:#1a1a1a; border-top:2px solid #333; z-index:10000; font-family:monospace; font-size:11px;">
         <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 10px; background:#252525; border-bottom:1px solid #333;">
             <span style="color:#888;">Debug Console</span>
-            <button onclick="document.getElementById('debug-console').style.display='none'" style="background:none; border:none; color:#888; cursor:pointer;">Ã—</button>
+            <button onclick="document.getElementById('debug-console').style.display='none'" style="background:none; border:none; color:#888; cursor:pointer;">X</button>
         </div>
         <div id="debug-console-content" style="padding:10px; overflow-y:auto; height:calc(100% - 35px); color:#aaa;"></div>
     </div>
@@ -2601,7 +2630,7 @@
                 
                 <div class="permission-card-body">
                     <div class="permission-tool-badge">
-                        <span class="tool-badge-icon">âš¡</span>
+                        <span class="tool-badge-icon">TOOL</span>
                         <span class="tool-badge-name"></span>
                     </div>
                     
@@ -2692,7 +2721,7 @@
     <template id="code-completion-card-template">
         <div class="code-completion-card">
             <div class="completion-card-header">
-                <div class="completion-card-icon">âœ¨</div>
+                <div class="completion-card-icon">AUTO</div>
                 <span class="completion-card-title">Code Completion Available</span>
                 <span class="completion-card-badge" id="completion-confidence-badge">90% confidence</span>
             </div>
@@ -2705,7 +2734,7 @@
                 <div class="completion-diff">
                     <div class="completion-diff-header">
                         <span class="diff-removed">Original</span>
-                        <span style="color: #4b5563;">â†’</span>
+                        <span style="color: #4b5563;">-></span>
                         <span class="diff-added">Completed</span>
                     </div>
                     <div class="completion-diff-content" id="completion-diff-content">

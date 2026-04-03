@@ -77,7 +77,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='src/assets/logo/app.ico',
+    icon='src/assets/logo/logo.ico',
 )
 
 coll = COLLECT(

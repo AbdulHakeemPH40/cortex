@@ -624,6 +624,7 @@ class AIWorker(QThread):
                 raise RuntimeError(f"API stream failed: {str(stream_error)}") from stream_error
             
             # Process chunks
+            last_stream_error = None
             try:
                 # STATEFUL STREAM CLEANING (Fixes stagnation and junk output)
                 state = {
@@ -707,6 +708,7 @@ class AIWorker(QThread):
                         self.chunk_received.emit(cleaned_chunk)
             except Exception as e:
                 log.error(f"Stream processing error: {e}")
+                last_stream_error = e
                 # Continue to process what we have
             
             log.info(f"Stream completed: {chunk_count} chunks, full_response={len(self._full_response)} chars, tool_calls={len(tool_call_buffer)}")
@@ -859,7 +861,12 @@ class AIWorker(QThread):
             if chunk_count == 0:
                 # Check if this might be a rate limit or API issue
                 log.error(f"[AIWorker] Stream returned empty (0 chunks received)")
-                raise Exception("No response from stream - API returned empty or was rate limited")
+                if last_stream_error is not None:
+                    msg = str(last_stream_error)
+                    if 'rate limit' in msg.lower() or '429' in msg:
+                        raise Exception("Rate limit from provider. Please wait and retry. Details: " + msg)
+                    raise Exception(msg)
+                raise Exception("No response from stream - API returned empty")
             else:
                 # We received some chunks but parsing failed - try to salvage
                 log.warning(f"[AIWorker] Received {chunk_count} chunks but parsing failed")
@@ -2712,9 +2719,15 @@ Action: run_command(python helloworld.py; python for_loop.py; python while_loop.
         log.info(f"Executing tool: {name} with args: {args}")
         self._metrics["tool_calls_total"] += 1
         display_path = ""
-        if "path" in args:
-            path = str(args["path"])
+        path = str(args.get("path") or args.get("file_path") or args.get("target") or "")
+        if path:
             display_path = path.split('\\')[-1] or path.split('/')[-1] or path
+
+        resolved_path = path
+        if not resolved_path and getattr(result, "metadata", None):
+            meta_path = result.metadata.get("file_path") if result.metadata else ""
+            if meta_path:
+                resolved_path = str(meta_path)
 
         edit_tools = {
             "write_file",
@@ -2728,8 +2741,7 @@ Action: run_command(python helloworld.py; python for_loop.py; python while_loop.
         lint_tools = {"check_syntax", "get_problems"}
         
         # Capture pre-edit snapshot for diff support
-        if name in ["write_file", "edit_file", "inject_after", "add_import"]:
-            path = str(args.get("path", ""))
+        if name in edit_tools and name != "delete_path":
             if path:
                 canonical_path = self._normalize_path(path)
                 if os.path.exists(canonical_path):
@@ -2757,8 +2769,12 @@ Action: run_command(python helloworld.py; python for_loop.py; python while_loop.
     def _on_tool_completed(self, name, args, result):
         """Called when a single tool finishes in background."""
         display_path = ""
-        if "path" in args:
-            path = str(args["path"])
+        path = str(args.get("path") or args.get("file_path") or args.get("target") or "")
+        if not path and getattr(result, "metadata", None):
+            meta_path = result.metadata.get("file_path") if result.metadata else ""
+            if meta_path:
+                path = str(meta_path)
+        if path:
             display_path = path.split('\\')[-1] or path.split('/')[-1] or path
 
         edit_tools = {
@@ -2778,7 +2794,6 @@ Action: run_command(python helloworld.py; python for_loop.py; python while_loop.
                 self._metrics["edit_calls"] += 1
                 self._metrics["edit_success"] += 1
                 if name != "delete_path":
-                    path = str(args.get("path", ""))
                     if path:
                         resolved_path = path
                         if self._project_root and not os.path.isabs(path):
@@ -2811,7 +2826,7 @@ Action: run_command(python helloworld.py; python for_loop.py; python while_loop.
                 content = str(result.result)
                 line_count = content.count('\n') + 1 if content else 0
                 self.tool_activity.emit("read_file", f"{display_path} ({line_count} lines)", "complete")
-            elif name in ["write_file", "edit_file", "inject_after", "add_import"]:
+            elif name in edit_tools and name != "delete_path":
                 try:
                     res_obj = json.loads(result.result) if isinstance(result.result, str) else result.result
                     added = res_obj.get("added_lines", 0)
@@ -2822,6 +2837,10 @@ Action: run_command(python helloworld.py; python for_loop.py; python while_loop.
                 # ── Robust canonical path resolution for editing tools ──
                 from pathlib import Path as _Path
                 canonical_path = self._normalize_path(path)
+                if not canonical_path and getattr(result, "metadata", None):
+                    meta_path = result.metadata.get("file_path") if result.metadata else ""
+                    if meta_path:
+                        canonical_path = self._normalize_path(str(meta_path))
                 
                 # ── Get original content using canonical key ──
                 original_content = self._pre_edit_snapshots.get(canonical_path, '')
@@ -2829,7 +2848,7 @@ Action: run_command(python helloworld.py; python for_loop.py; python while_loop.
                 
                 # ── Get new file content (from args first, then disk) ─────────
                 new_file_content = str(args.get("content", "") or "")
-                if not new_file_content and os.path.exists(canonical_path):
+                if not new_file_content and canonical_path and os.path.exists(canonical_path):
                     try:
                         new_file_content = _Path(canonical_path).read_text(encoding="utf-8", errors="replace")
                     except Exception:
@@ -2869,7 +2888,7 @@ Action: run_command(python helloworld.py; python for_loop.py; python while_loop.
 
                 # Emit file_edited_diff signal using canonical path
                 try:
-                    if new_file_content and hasattr(self, 'file_edited_diff'):
+                    if hasattr(self, 'file_edited_diff') and canonical_path:
                         original_snap = self._pre_edit_snapshots.pop(canonical_path, '')
                         self.file_edited_diff.emit(canonical_path, original_snap, new_file_content)
                         log.info(f"[Diff-Debug] Emitted signal for canonical path: {canonical_path}")

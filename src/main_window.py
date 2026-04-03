@@ -1434,6 +1434,10 @@ class CortexMainWindow(QMainWindow):
             self._open_office_file(filepath)
             return
             
+        # Initialize file snapshots dict for diff generation
+        if not hasattr(self, '_file_snapshots'):
+            self._file_snapshots = {}
+        
         if self._file_manager.is_binary(filepath):
             log.info(f"File skip (binary): {filepath}")
             QMessageBox.information(self, "Binary File",
@@ -1445,6 +1449,14 @@ class CortexMainWindow(QMainWindow):
             if content is None:
                 log.error(f"Failed to read content: {filepath}")
                 return
+            
+            # Store original snapshot for diff generation (only if not already stored)
+            # This preserves the FIRST version opened, allowing multiple diffs
+            if filepath not in self._file_snapshots:
+                self._file_snapshots[filepath] = content
+                log.info(f"[Snapshot] Stored initial snapshot: {filepath} ({len(content)} chars)")
+            else:
+                log.info(f"[Snapshot] Keeping existing snapshot for: {filepath}")
                 
             log.info(f"Content read ({len(content)} chars). Detecting language...")
             language = detect_language(filepath)
@@ -1770,6 +1782,38 @@ class CortexMainWindow(QMainWindow):
             log.error(f"Error opening Office file {filepath}: {e}", exc_info=True)
             QMessageBox.warning(self, "Error", f"Could not open document: {e}")
 
+
+    def _diff_cache_path(self):
+        try:
+            from pathlib import Path
+            return Path.home() / ".cortex" / "diff_cache.json"
+        except Exception:
+            return None
+
+    def _load_diff_cache(self):
+        if hasattr(self, '_diff_cache'):
+            return self._diff_cache
+        self._diff_cache = {}
+        try:
+            cache_path = self._diff_cache_path()
+            if cache_path and cache_path.exists():
+                import json
+                self._diff_cache = json.loads(cache_path.read_text(encoding='utf-8')) or {}
+        except Exception:
+            self._diff_cache = {}
+        return self._diff_cache
+
+    def _save_diff_cache(self):
+        try:
+            cache_path = self._diff_cache_path()
+            if not cache_path:
+                return
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            import json
+            cache_path.write_text(json.dumps(self._diff_cache), encoding='utf-8')
+        except Exception:
+            pass
+
     def _on_show_diff(self, file_path: str):
         """Show diff in Qt dialog window — triggered by Diff button click in chat."""
         log.info(f"[Diff] _on_show_diff called with: {file_path}")
@@ -1777,6 +1821,8 @@ class CortexMainWindow(QMainWindow):
 
         # 1. Try the Python diff data store (most reliable)
         import os
+        import subprocess
+        from pathlib import Path
         normalized_requested = os.path.normcase(os.path.normpath(file_path))
         
         if hasattr(self, '_diff_data_store'):
@@ -1793,6 +1839,23 @@ class CortexMainWindow(QMainWindow):
                         log.info(f"[Diff] Found in _diff_data_store (normalized): {k}")
                         break
 
+        # 2b. Fallback to persisted diff cache
+        if not modified:
+            cache = self._load_diff_cache()
+            cached = None
+            if cache:
+                norm = os.path.normcase(os.path.normpath(file_path))
+                cached = cache.get(file_path) or cache.get(norm)
+                if not cached:
+                    # try to find by normalized keys
+                    for k, v in cache.items():
+                        if os.path.normcase(os.path.normpath(k)) == norm:
+                            cached = v
+                            break
+            if cached:
+                original = cached.get('original', '')
+                modified = cached.get('modified', '')
+                log.info(f"[Diff] Found in diff cache: {file_path}")
         # 3. Fallback to file_tracker
         if not modified:
             edit_info = self._file_tracker.get_edit(file_path)
@@ -1800,6 +1863,50 @@ class CortexMainWindow(QMainWindow):
                 original = edit_info.original_content if edit_info.edit_type != 'C' else ''
                 modified = edit_info.new_content
                 log.info(f"[Diff] Found in file_tracker: {file_path}")
+
+        if not modified:
+            # Fallback: try Git diff against HEAD if repository available
+            try:
+                project_root = getattr(self, '_project_manager', None).root if hasattr(self, '_project_manager') else None
+                if project_root and os.path.isdir(os.path.join(project_root, '.git')) and os.path.exists(file_path):
+                    rel_path = os.path.relpath(file_path, project_root)
+                    # Try to load original from HEAD (tracked files)
+                    git_show = subprocess.run(
+                        ['git', '-C', project_root, 'show', f'HEAD:{rel_path}'],
+                        capture_output=True, text=True
+                    )
+                    if git_show.returncode == 0:
+                        original = git_show.stdout
+                        modified = Path(file_path).read_text(encoding='utf-8', errors='replace')
+                        log.info(f"[Diff] Loaded diff via git for: {file_path}")
+                    else:
+                        # If untracked, treat original as empty
+                        git_ls = subprocess.run(
+                            ['git', '-C', project_root, 'ls-files', '--error-unmatch', rel_path],
+                            capture_output=True, text=True
+                        )
+                        if git_ls.returncode != 0:
+                            original = ''
+                            modified = Path(file_path).read_text(encoding='utf-8', errors='replace')
+                            log.info(f"[Diff] Loaded diff for untracked file: {file_path}")
+            except Exception as _ge:
+                log.debug(f"[Diff] Git fallback failed: {_ge}")
+
+        # Final fallback: Use file snapshot taken when opened
+        if not modified and hasattr(self, '_file_snapshots') and file_path in self._file_snapshots:
+            original = self._file_snapshots[file_path]
+            try:
+                modified = Path(file_path).read_text(encoding='utf-8', errors='replace')
+                if original != modified:
+                    log.info(f"[Diff] Using file snapshot for diff: {file_path}")
+                else:
+                    log.info(f"[Diff] File unchanged since opened: {file_path}")
+                    original = ''
+                    modified = ''
+            except Exception as e:
+                log.warning(f"[Diff] Failed to read current file content: {e}")
+                original = ''
+                modified = ''
 
         if not modified:
             log.warning(f"[Diff] No diff data found for {file_path}")
@@ -1930,7 +2037,23 @@ class CortexMainWindow(QMainWindow):
         """Store diff data in Python dict for the Qt dialog viewer."""
         if not hasattr(self, '_diff_data_store'):
             self._diff_data_store = {}
+        norm_path = os.path.normcase(os.path.normpath(file_path))
         self._diff_data_store[file_path] = (original, new_content)
+        self._diff_data_store[norm_path] = (original, new_content)
+        # Persist to diff cache for cross-session diff viewing
+        cache = self._load_diff_cache()
+        cache[file_path] = {
+            'original': original,
+            'modified': new_content,
+            'ts': int(__import__('time').time())
+        }
+        # Prune cache to last 100 entries
+        if len(cache) > 100:
+            items = sorted(cache.items(), key=lambda kv: kv[1].get('ts', 0), reverse=True)
+            self._diff_cache = dict(items[:100])
+        else:
+            self._diff_cache = cache
+        self._save_diff_cache()
         log.info(f"[Diff] Stored diff data for: {file_path} (original: {len(original)} chars, new: {len(new_content)} chars)")
         log.debug(f"[Diff] _diff_data_store now has {len(self._diff_data_store)} entries")
 
@@ -3552,11 +3675,67 @@ class CortexMainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Project & Events
     # ------------------------------------------------------------------
+
+    def _cleanup_old_project(self):
+        """Clean up all state from the old project before opening a new one."""
+        # Only cleanup if we have a previous project loaded
+        if not hasattr(self, '_current_project_path') or not self._current_project_path:
+            log.info("🆕 First project load - skipping cleanup")
+            return
+            
+        log.info("🧹 Cleaning up old project state...")
+        
+        # 1. Close all editor tabs
+        self._editor_tabs.close_all_tabs()
+        log.info("   ✓ Closed all editor tabs")
+        
+        # 2. Clear file snapshots (diff data)
+        if hasattr(self, '_file_snapshots'):
+            self._file_snapshots.clear()
+            log.info("   ✓ Cleared file snapshots")
+        
+        # 3. Clear diff cache
+        if hasattr(self, '_diff_data_store'):
+            self._diff_data_store.clear()
+            log.info("   ✓ Cleared diff data store")
+        
+        # 4. Clear file tracker
+        if hasattr(self, '_file_tracker'):
+            if hasattr(self._file_tracker, '_edits'):
+                self._file_tracker._edits.clear()
+            log.info("   ✓ Cleared file edit history")
+        
+        # 5. Clear AI agent context
+        self._ai_agent.clear_active_file()
+        log.info("   ✓ Cleared AI agent active file")
+        
+        # 6. Clear codebase index
+        self._codebase_index = None
+        log.info("   ✓ Cleared codebase index")
+        
+        # 7. Prepare terminals for new project (will set CWD after cleanup)
+        log.info("   ✓ Prepared terminals for new project")
+        
+        # 8. Todo list is session-based, no need to clear
+        # Todos are tied to chat sessions, not projects
+        log.info("   ✓ Skipped todo cleanup (session-based)")
+        
+        # 9. Clear search results
+        if hasattr(self, '_search_results'):
+            self._search_results.clear()
+            log.info("   ✓ Cleared search results")
+        
+        log.info("✅ Old project cleanup complete!")
+    
     def _on_project_opened(self, folder_path: str):
         log.info(f"Project opened: {folder_path}")
         
+        # Clean up old project state BEFORE loading new one (only if switching)
+        self._cleanup_old_project()
+        
         # Set project root FIRST (this loads project-specific context)
         self._ai_agent.set_project_root(folder_path)
+        self._current_project_path = folder_path  # Track current project
         
         # Reset codebase index for new project
         self._codebase_index = None

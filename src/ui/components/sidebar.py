@@ -756,14 +756,24 @@ class FileExplorerPanel(QWidget):
 
     # ── Public ────────────────────────────────────────────────────────────────
     def set_project(self, folder_path: str):
-        self._root_path = folder_path
-        name = Path(folder_path).name.upper()
+        # Normalize path (convert to absolute, fix slashes)
+        normalized_path = os.path.normpath(os.path.abspath(folder_path))
+        log.info(f"📁 Setting project root: {normalized_path}")
+        
+        self._root_path = normalized_path
+        name = Path(normalized_path).name.upper()
         self._folder_name.setText(name)
         self._folder_arrow.setText("▼")
         self._tree_collapsed = False
-        idx = self._model.setRootPath(folder_path)
+        
+        # Set model root and tree root index
+        idx = self._model.setRootPath(normalized_path)
+        log.info(f"   ✓ Model root index: {idx.row()}, {idx.column()}")
+        log.info(f"   ✓ Model root path: {self._model.filePath(idx)}")
+        
         self._tree.setRootIndex(idx)
         self._tree.setVisible(True)
+        log.info(f"   ✓ Tree root set successfully")
         # NO auto-expand — user expands manually; call restore_expanded_paths() after
 
     def get_expanded_paths(self) -> list[str]:
