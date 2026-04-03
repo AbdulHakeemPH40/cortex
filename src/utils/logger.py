@@ -37,7 +37,8 @@ def get_logger(name: str = "cortex") -> logging.Logger:
         logger.addHandler(file_handler)
         
         # Console handler - show INFO and above (includes model usage logs)
-        console_handler = logging.StreamHandler(sys.stdout)
+        # Use simple StreamHandler (PyInstaller compatible)
+        console_handler = logging.StreamHandler()
         console_handler.setLevel(logging.INFO)  # Show INFO for model/provider logs
         console_handler.setFormatter(
             logging.Formatter(

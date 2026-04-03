@@ -12,7 +12,7 @@ from src.ai.session import Session, ToolCall
 from src.ai.session_manager import get_session_manager
 from src.ai.streaming import get_streaming_emitter
 from src.ai.providers import get_provider_registry, ProviderType, ChatMessage
-from src.ai.tools import get_tool_registry
+from src.ai._tools_monolithic import ToolRegistry
 from src.utils.logger import get_logger
 
 log = get_logger("agent_v2")
@@ -27,7 +27,7 @@ class AIWorkerV2(QThread):
         self.model = model
         self.provider = provider
         self.emitter = get_streaming_emitter()
-        self._tool_registry = get_tool_registry()
+        self._tool_registry = ToolRegistry()  # Use monolithic registry
         self._full_response = ""
         self._tool_calls_buffer: Dict[int, Dict] = {}
     
@@ -250,7 +250,7 @@ class AIAgentV2(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._worker: Optional[AIWorkerV2] = None
-        self._model = "deepseek-chat"
+        self._model = "deepseek-reasoner"
         self._provider = "deepseek"
         self._session_manager = get_session_manager()
         self._streaming_emitter = get_streaming_emitter()

@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cortex AI - CSS Components Showcase</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="features.css">
+    <style>
+        * { box-sizing: border-box; }
+        /* CRITICAL: Override style.css body constraints */
+        body { 
+            padding: 24px; 
+            background: var(--bg-main) !important;
+            color: var(--text) !important;
+            font-family: 'Inter', sans-serif !important;
+            overflow-x: hidden !important;
+            overflow-y: auto !important;
+            height: auto !important;
+            min-height: 100vh !important;
+            width: 100% !important;
+            max-width: 100% !important;
+        }
+        /* CRITICAL: Fix all sections to display */
+        .showcase-section { 
+            margin: 40px 0 !important; 
+            padding: 24px !important; 
+            border: 1px solid var(--border) !important; 
+            border-radius: 12px !important;
+            overflow: visible !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            display: block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+        }
+        .section-title { 
+            font-size: 18px !important; 
+            font-weight: 700 !important; 
+            margin-bottom: 16px !important; 
+            color: var(--accent) !important; 
+        }
+        .section-subtitle { 
+            font-size: 12px !important; 
+            color: var(--text-muted) !important; 
+            margin-bottom: 12px !important; 
+            text-transform: uppercase !important; 
+            letter-spacing: 1px !important; 
+        }
+        /* Fix overflow for card bodies */
+        .card-body-modern { 
+            max-height: auto !important; 
+            overflow: visible !important; 
+            padding: 12px !important;
+        }
+        .card-modern.collapsed .card-body-modern { 
+            max-height: none !important; 
+            overflow: visible !important; 
+        }
+        /* Fix permission modal display */
+        .permission-modal-modern { 
+            height: auto !important;
+            max-height: none !important;
+            overflow: visible !important;
+            position: relative !important;
+            right: 0 !important;
+            box-shadow: 0 0 0 1px var(--border);
+        }
+        .permission-modal-content {
+            max-height: none !important;
+            overflow-y: visible !important;
+        }
+        /* Fix content containers */
+        .code-container-modern,
+        .reasoning-modern,
+        .tree-container-modern,
+        .terminal-container-modern,
+        .result-container-modern {
+            overflow: visible !important;
+            white-space: normal;
+            word-wrap: break-word;
+        }
+        /* Ensure all containers are visible */
+        .term-output-body {
+            max-height: none !important;
+        }
+        .term-output-text {
+            max-height: none !important;
+            overflow: visible !important;
+        }
+        .todo-body {
+            max-height: none !important;
+            overflow: visible !important;
+        }
+        .mq-list {
+            max-height: none !important;
+            overflow: visible !important;
+        }
+        /* Ensure Permission Cards Display */
+        .permission-card {
+            display: block !important;
+            opacity: 1 !important;
+            visibility: visible !important;
+            background: var(--bg-secondary) !important;
+            border: 1px solid var(--border) !important;
+        }
+        .permission-card-header {
+            display: flex !important;
+        }
+        .permission-card-body {
+            display: block !important;
+        }
+        .permission-card-details {
+            display: block !important;
+        }
+        .permission-card-actions {
+            display: flex !important;
+        }
+        .permission-btn {
+            display: inline-flex !important;
+        }
+        /* Modal permissions visibility */
+        .permission-modal-modern {
+            display: block !important;
+            opacity: 1 !important;
+        }
+        .permission-modal-header {
+            display: block !important;
+        }
+        .permission-modal-content {
+            display: block !important;
+        }
+        .permission-item {
+            display: block !important;
+        }
+        .permission-item-type {
+            display: inline-block !important;
+        }
+        .permission-item-path {
+            display: block !important;
+        }
+        .permission-actions-modern {
+            display: grid !important;
+        }
+        /* Force all components to display */
+        .ptree-card { display: block !important; }
+        .term-card { display: block !important; }
+        .todo-section { display: flex !important; }
+        .msg-queue-bar { display: flex !important; }
+        .interaction-card { display: block !important; }
+        .card-modern { display: block !important; }
+    </style>
+</head>
+<body>
+
+<!-- ====================================================================
+     FEATURE 1: PROJECT TREE CARD
+     ==================================================================== -->
+<div class="showcase-section">
+    <div class="section-title">📁 Feature 1: Project Tree Card</div>
+    <div class="section-subtitle">Parent folder with expandable file list</div>
+    
+    <div class="ptree-card">
+        <div class="ptree-root">📂 my-project</div>
+        <ul class="ptree-list">
+            <li class="ptree-item">
+                <span class="ptree-branch">├─</span>
+                <span class="ptree-icon">📄</span>
+                <button class="ptree-filename">package.json</button>
+                <span class="ptree-size">1.2 KB</span>
+            </li>
+            <li class="ptree-item">
+                <span class="ptree-branch">├─</span>
+                <span class="ptree-icon">📂</span>
+                <button class="ptree-filename">src/</button>
+                <span class="ptree-size">DIR</span>
+            </li>
+            <li class="ptree-item">
+                <span class="ptree-branch">├─</span>
+                <span class="ptree-icon">📄</span>
+                <button class="ptree-filename">README.md</button>
+                <span class="ptree-size">2.5 KB</span>
+            </li>
+            <li class="ptree-item">
+                <span class="ptree-branch">└─</span>
+                <span class="ptree-icon">📄</span>
+                <button class="ptree-filename">.gitignore</button>
+                <span class="ptree-size">456 B</span>
+            </li>
+        </ul>
+    </div>
+</div>
+
+<!-- ====================================================================
+     FEATURE 2: TERMINAL COMMAND CARD
+     ==================================================================== -->
+<div class="showcase-section">
+    <div class="section-title">⚡ Feature 2: Terminal Card - Running State</div>
+    <div class="section-subtitle">Command execution with real-time status</div>
+    
+    <div class="term-card term-running">
+        <div class="term-header">
+            <span class="term-status-icon">▪ • ▪</span>
+            <span class="term-title">Building project...</span>
+            <span class="term-exit-code">Running</span>
+        </div>
+        <div class="term-body">
+            <p class="term-command">
+                $ npm run build<br>
+                <span class="term-path">~/project</span>
+            </p>
+        </div>
+        <div class="term-footer">
+            <button class="term-output-toggle">
+                <span class="term-chevron">▼</span>
+                <span>Output (45 lines)</span>
+            </button>
+            <button class="term-view-btn">
+                <span>View Full →</span>
+            </button>
+        </div>
+        <div class="term-output-body">
+            <p class="term-output-text">
+> webpack --mode production<br>
+Hash: a1b2c3d4e5f6<br>
+Version: 5.88.0<br>
+Time: 2.5s<br>
+Built at: 04/01/2026 3:45 PM
+            </p>
+        </div>
+    </div>
+</div>
+
+<!-- ====================================================================
+     FEATURE 2b: TERMINAL CARD - SUCCESS
+     ==================================================================== -->
+<div class="showcase-section">
+    <div class="section-title">✅ Feature 2b: Terminal Card - Success State</div>
+    
+    <div class="term-card term-success">
+        <div class="term-header">
+            <span class="term-status-icon">✓</span>
+            <span class="term-title">Command completed</span>
+        </div>
+        <div class="term-body">
+            <p class="term-command">
+                $ npm install<br>
+                <span class="term-path">~/project</span>
+            </p>
+        </div>
+        <div class="term-footer">
+            <button class="term-output-toggle">
+                <span class="term-chevron">▼</span>
+                <span>Output (8 lines)</span>
+            </button>
+        </div>
+        <div class="term-output-body">
+            <p class="term-output-text">
+added 127 packages in 3.2s
+            </p>
+        </div>
+    </div>
+</div>
+
+<!-- ====================================================================
+     FEATURE 3: TODO PANEL
+     ==================================================================== -->
+<div class="showcase-section">
+    <div class="section-title">✓ Feature 3: Todo List Panel</div>
+    <div class="section-subtitle">Collapsible task tracking section</div>
+    
+    <div class="todo-section expanded">
+        <div class="todo-header">
+            <div class="todo-header-left">
+                <span class="todo-chevron">▶</span>
+                <span class="todo-label">TASKS</span>
+                <span class="todo-preview">Setup database connection...</span>
+            </div>
+            <span class="todo-count">3/5</span>
+        </div>
+        <div class="todo-body">
+            <ul class="todo-list">
+                <li class="todo-item todo-complete">
+                    <div class="todo-icon todo-icon-done">✓</div>
+                    <span class="todo-text">Setup project structure</span>
+                </li>
+                <li class="todo-item todo-inprogress">
+                    <div class="todo-icon todo-icon-progress">•</div>
+                    <span class="todo-text">Connect database</span>
+                </li>
+                <li class="todo-item">
+                    <div class="todo-icon todo-icon-pending"></div>
+                    <span class="todo-text">Write unit tests</span>
+                </li>
+                <li class="todo-item">
+                    <div class="todo-icon todo-icon-pending"></div>
+                    <span class="todo-text">Deploy to production</span>
+                </li>
+                <li class="todo-item todo-cancelled">
+                    <div class="todo-icon todo-icon-cancelled"></div>
+                    <span class="todo-text">Legacy API support (Cancelled)</span>
+                </li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<!-- ====================================================================
+     FEATURE 4: MESSAGE QUEUE BAR
+     ==================================================================== -->
+<div class="showcase-section">
+    <div class="section-title">📬 Feature 4: Message Queue Bar</div>
+    <div class="section-subtitle">Messages waiting to be processed</div>
+    
+    <div class="msg-queue-bar">
+        <div class="mq-header">
+            <span class="mq-label">Queue</span>
+            <span class="mq-count">3</span>
+        </div>
+        <div class="mq-list">
+            <div class="mq-item">
+                <div class="mq-position">1</div>
+                <span class="mq-text">Analyze project structure</span>
+                <button class="mq-remove">✕</button>
+            </div>
+            <div class="mq-item">
+                <div class="mq-position">2</div>
+                <span class="mq-text">Generate documentation</span>
+                <button class="mq-remove">✕</button>
+            </div>
+            <div class="mq-item">
+                <div class="mq-position">3</div>
+                <span class="mq-text">Create test suite</span>
+                <button class="mq-remove">✕</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ====================================================================
+     FEATURE 5: INTERACTION CARD (Question/Confirmation)
+     ==================================================================== -->
+<div class="showcase-section">
+    <div class="section-title">❓ Feature 5: Interaction Card</div>
+    <div class="section-subtitle">Stop-and-wait UI for AI-human interaction</div>
+    
+    <div class="interaction-card">
+        <div class="interaction-header">
+            <span class="interaction-icon">⚠️</span>
+            <span class="interaction-title">CONFIRM ACTION</span>
+        </div>
+        <div class="interaction-body">
+            <p class="interaction-text">
+                This will delete all test files in the <code>/tests</code> directory. This action cannot be undone.
+            </p>
+            <div class="interaction-actions">
+                <button class="interaction-btn approve">✓ Delete</button>
+                <button class="interaction-btn deny">✕ Keep</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ====================================================================
+     FEATURE 6: PERMISSION CARD
+     ==================================================================== -->
+<div class="showcase-section">
+    <div class="section-title">🔐 Feature 6: Permission Card</div>
+    <div class="section-subtitle">Request to execute file operations</div>
+    
+    <div class="permission-card">
+        <div class="permission-card-header">
+            <div class="permission-card-icon write">✎</div>
+            <div>
+                <div class="permission-card-title">File Write Permission</div>
+                <div class="permission-card-subtitle">Tool: Code Editor</div>
+            </div>
+        </div>
+        <div class="permission-card-body">
+            <div class="permission-tool-name">Edit: package.json</div>
+            <div class="permission-card-description">
+                The AI wants to modify dependencies in your package.json file
+            </div>
+            <div class="permission-card-details">
+<pre>{
+  "dependencies": {
+    "react": "^18.2.0",
+    "lodash": "^4.17.21"
+  }
+}</pre>
+            </div>
+            <div class="permission-card-actions">
+                <button class="permission-btn" style="background: #10b981; color: white;">Allow</button>
+                <button class="permission-btn" style="background: rgba(239,68,68,0.1); color: #ef4444;">Deny</button>
+                <button class="permission-btn" style="background: rgba(255,255,255,0.1); color: #9ca3af;">Ask Later</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ====================================================================
+     FEATURE 7: MODERN PERMISSION MODAL (SIDEBAR)
+     ==================================================================== -->
+<div class="showcase-section">
+    <div class="section-title">🔒 Feature 7: Modern Permission Modal</div>
+    <div class="section-subtitle">Right-side slide panel for permission management</div>
+    
+    <div style="width: 100%; overflow: visible; border: 1px dashed var(--border); border-radius: 8px; padding: 16px;">
+        <div class="permission-modal-modern visible" style="position: static; right: auto; width: 100%; border-left: none; box-shadow: none;">
+            <div class="permission-modal-header">
+                <div class="permission-modal-title">
+                    <span>🔐</span>
+                    <span>Recent Permissions</span>
+                </div>
+            </div>
+            <div class="permission-modal-content">
+                <div class="permission-item">
+                    <span class="permission-item-type">Write</span>
+                    <div class="permission-item-path">/src/config.json</div>
+                    <div class="permission-actions-modern">
+                        <button class="permission-btn-modern allow">✓ Allowed</button>
+                        <button class="permission-btn-modern deny" style="cursor: not-allowed;">Revoke</button>
+                    </div>
+                </div>
+                
+                <div class="permission-item">
+                    <span class="permission-item-type">Read</span>
+                    <div class="permission-item-path">/docs/README.md</div>
+                    <div class="permission-actions-modern">
+                        <button class="permission-btn-modern allow">✓ Allowed</button>
+                        <button class="permission-btn-modern deny">Revoke</button>
+                    </div>
+                </div>
+                
+                <div class="permission-item">
+                    <span class="permission-item-type">Delete</span>
+                    <div class="permission-item-path">/tmp/cache</div>
+                    <div class="permission-actions-modern">
+                        <button class="permission-btn-modern deny">Deny</button>
+                        <button class="permission-btn-modern allow">Allow</button>
+                    </div>
+                </div>
+            </div>
+            <div class="permission-modal-footer">
+                <label class="permission-remember">
+                    <input type="checkbox" checked>
+                    <span>Remember these choices</span>
+                </label>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ====================================================================
+     FEATURE 8: MODERN CARD SYSTEM
+     ==================================================================== -->
+<div class="showcase-section">
+    <div class="section-title">🎴 Feature 8: Modern Card System</div>
+    <div class="section-subtitle">Collapsible cards with headers and badges</div>
+    
+    <div class="card-modern">
+        <div class="card-header-modern">
+            <div class="card-toggle">▼</div>
+            <span class="card-icon">📊</span>
+            <span class="card-title-modern">Project Analysis</span>
+            <span class="card-badge">5 files</span>
+        </div>
+        <div class="card-body-modern" style="padding: 12px;">
+            <p style="color: #d1d5db; font-size: 12px; margin: 0;">
+                Analyzed 5 TypeScript files, found 23 potential improvements and 2 critical issues.
+            </p>
+        </div>
+    </div>
+
+    <div class="card-modern">
+        <div class="card-header-modern">
+            <div class="card-toggle" style="transform: rotate(-90deg);">▼</div>
+            <span class="card-icon">🔧</span>
+            <span class="card-title-modern">Configuration</span>
+            <span class="card-badge">8 settings</span>
+        </div>
+        <div class="card-body-modern" style="padding: 12px;">
+            <p style="color: #d1d5db; font-size: 12px; margin: 0;">
+                8 configuration options available: Theme, Language, Notifications, Performance, Security, Integrations, Keyboard Shortcuts, and Dark Mode.
+            </p>
+        </div>
+    </div>
+</div>
+
+<!-- ====================================================================
+     FEATURE 9: CONTENT CONTAINERS (COLOR-CODED)
+     ==================================================================== -->
+<div class="showcase-section">
+    <div class="section-title">🎨 Feature 9: Content Containers</div>
+    <div class="section-subtitle">Type-specific containers with color-coding</div>
+    
+    <!-- Code Container (Blue) -->
+    <div style="margin-bottom: 16px;">
+        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px;">📘 Code Container (Blue)</div>
+        <div class="code-container-modern">const greet = (name) => {
+  console.log(`Hello, ${name}!`);
+};
+
+greet('AI');
+        </div>
+    </div>
+
+    <!-- Reasoning Container (Purple) -->
+    <div style="margin-bottom: 16px;">
+        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px;">💭 Reasoning Container (Purple)</div>
+        <div class="reasoning-modern">
+            <div class="reasoning-section-title">🤔 Analysis Steps:</div>
+            <div class="reasoning-content">
+1. First, I examined the user's requirements<br>
+2. Then, I analyzed the existing codebase<br>
+3. Finally, I proposed a solution
+            </div>
+        </div>
+    </div>
+
+    <!-- Tree Container (Cyan) -->
+    <div style="margin-bottom: 16px;">
+        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px;">🌳 Tree Container (Cyan)</div>
+        <div class="tree-container-modern">
+<span class="tree-item folder">src/</span>
+<span class="tree-item file">├─ components/</span>
+<span class="tree-item file">├─ utils/</span>
+<span class="tree-item file">└─ index.js</span>
+        </div>
+    </div>
+
+    <!-- Terminal Container (Pink) -->
+    <div style="margin-bottom: 16px;">
+        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px;">🖥️ Terminal Container (Pink)</div>
+        <div class="terminal-container-modern">
+$ npm run build
+<span class="terminal-warning">[WARN]</span> Skipping source maps
+<span class="terminal-info">[INFO]</span> Building for production
+<span class="terminal-error">[ERR ]</span> Module not found: './config'
+        </div>
+    </div>
+
+    <!-- Result Container (Green) -->
+    <div>
+        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px;">✅ Result Container (Green)</div>
+        <div class="result-container-modern">
+            <div class="result-status">✓ Task Completed Successfully</div>
+            <div class="result-content">
+All files have been processed and saved. The update is ready for deployment.
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ====================================================================
+     MESSAGE BUBBLES (from style.css)
+     ==================================================================== -->
+<div class="showcase-section">
+    <div class="section-title">💬 Message Bubbles</div>
+    <div class="section-subtitle">User and AI message styling</div>
+    
+    <div style="display: flex; flex-direction: column; gap: 12px;">
+        <div class="message-bubble user">
+            <div class="message-content">
+                Can you help me optimize this function?
+            </div>
+        </div>
+
+        <div class="message-bubble assistant">
+            <div class="message-content">
+                <strong>Sure! Here's an optimized version:</strong>
+                <p>I've reduced the time complexity from O(n²) to O(n log n) by using a hash map to track seen elements.</p>
+                <code>function unique(arr) { return [...new Set(arr)]; }</code>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ====================================================================
+     THINKING MESSAGE
+     ==================================================================== -->
+<div class="showcase-section">
+    <div class="section-title">🧠 Thinking Message</div>
+    <div class="section-subtitle">AI reasoning indicator</div>
+    
+    <div class="thinking-message">
+        <div class="thinking-orb">
+            <div class="thinking-orb-core"></div>
+            <div class="thinking-orb-ring"></div>
+            <div class="thinking-orb-ring"></div>
+        </div>
+        <div class="thinking-content">
+            <div class="thinking-title">Analyzing your code...</div>
+            <div class="thinking-subtitle">Finding optimization opportunities</div>
+        </div>
+    </div>
+</div>
+
+</body>
+</html>

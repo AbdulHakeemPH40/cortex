@@ -2,20 +2,35 @@
 Code Editor Component — QPlainTextEdit with line numbers, syntax highlighting,
 current-line highlight, and auto-indent.
 """
+import ast
+import os
+import sys
+from typing import cast, List, Dict, Optional, Tuple, Any
 
 from PyQt6.QtWidgets import (
     QPlainTextEdit, QWidget, QTextEdit, QApplication,
-    QFrame, QLabel, QPushButton, QVBoxLayout, QHBoxLayout
+    QFrame, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
+    QToolTip, QListWidget
 )
-from PyQt6.QtCore import Qt, QRect, QSize, pyqtSignal, QSignalBlocker, QPoint
+from PyQt6.QtCore import (
+    Qt, QRect, QSize, pyqtSignal, QSignalBlocker, QPoint, QTimer,
+    QEvent
+)
 from PyQt6.QtGui import (
     QColor, QPainter, QTextFormat, QFont, QSyntaxHighlighter,
-    QTextCharFormat, QKeyEvent, QFontMetrics, QTextOption, QPen, QPalette, QTextCursor
+    QTextCharFormat, QKeyEvent, QFontMetrics, QTextOption, QPen, QPalette, 
+    QTextCursor, QHelpEvent
 )
 from pygments import lex
 from pygments.lexers import get_lexer_by_name, TextLexer
 from pygments.token import Token
 from src.config.settings import get_settings
+from src.core.syntax_checker import get_syntax_checker, DiagnosticError
+from src.core.lsp_manager import get_lsp_manager
+from src.utils.logger import get_logger
+
+
+log = get_logger("editor")
 
 
 # ---------------------------------------------------------------------------
@@ -65,167 +80,166 @@ def get_preferred_programming_font() -> str:
 
 
 class PygmentsSyntaxHighlighter(QSyntaxHighlighter):
-    # VS Code Dark+ Exact Clone - Industry Standard Theme
-    # Matches VS Code's "Dark+ (default dark)" theme exactly
-    # Based on official VS Code color tokens
+    # DRACULA THEME - Industry Standard Dark Theme
+    # Matches ai_chat.html syntax highlighting exactly
     # Works perfectly with: Python, JS/TS, HTML, CSS, Java, C/C++, Rust, Go, SQL, etc.
     DARK_COLORS = {
         # ============================================
-        # VS CODE DARK+ EXACT COLORS
-        # Background: #1E1E1E, Foreground: #D4D4D4
+        # DRACULA THEME - EXACT COLORS FROM syntax_highlighting_config.py
+        # Background: #282a36, Foreground: #f8f8f2
+        # EVERY ELEMENT COLORED - NO WHITE TEXT ALLOWED
         # ============================================
         
-        # Keywords - VS Code Blue (#569CD6)
-        Token.Keyword:            ("#569CD6", False, False),     # Blue - def, class, if, for
-        Token.Keyword.Constant:   ("#569CD6", False, False),     # Blue - True, False, None
-        Token.Keyword.Declaration:("#569CD6", False, False),     # Blue - declarations
-        Token.Keyword.Namespace:  ("#569CD6", False, False),     # Blue - import, export, package
-        Token.Keyword.Reserved:   ("#569CD6", False, False),     # Blue - reserved words
-        Token.Keyword.Type:       ("#569CD6", False, False),     # Blue - int, void, string, bool
+        # Keywords - Dracula Purple (#bd93f9)
+        Token.Keyword:            ("#bd93f9", False, False),     # Purple - def, class, if, for, return
+        Token.Keyword.Constant:   ("#bd93f9", False, False),     # Purple - True, False, None
+        Token.Keyword.Declaration:("#bd93f9", False, False),     # Purple - declarations
+        Token.Keyword.Namespace:  ("#bd93f9", False, False),     # Purple - import, export, package
+        Token.Keyword.Reserved:   ("#bd93f9", False, False),     # Purple - reserved words
+        Token.Keyword.Type:       ("#bd93f9", False, False),     # Purple - int, void, string, bool
         
-        # Variables - VS Code Light Blue (#9CDCFE)
-        Token.Name:               ("#9CDCFE", False, False),     # Light Blue - variables
-        Token.Name.Builtin:       ("#4EC9B0", False, False),     # Teal - built-ins (len, print)
-        Token.Name.Builtin.Pseudo:("#9CDCFE", False, False),     # Light Blue - self, this
-        Token.Name.Class:         ("#4EC9B0", False, False),     # Teal - class names
-        Token.Name.Decorator:     ("#DCDCAA", False, False),     # Yellow - @decorators
-        Token.Name.Entity:        ("#CE9178", False, False),     # Orange - entities
-        Token.Name.Exception:     ("#F44747", False, False),     # Red - exceptions
-        Token.Name.Function:      ("#DCDCAA", False, False),     # Yellow - function calls
-        Token.Name.Function.Magic:("#DCDCAA", False, False),     # Yellow - __magic__
-        Token.Name.Label:         ("#569CD6", False, False),     # Blue - labels
-        Token.Name.Namespace:     ("#4EC9B0", False, False),     # Teal - namespaces
-        Token.Name.Tag:           ("#569CD6", False, False),     # Blue - HTML/XML tags
-        Token.Name.Variable:      ("#9CDCFE", False, False),     # Light Blue - variables
-        Token.Name.Variable.Class:("#9CDCFE", False, False),     # Light Blue - class vars
-        Token.Name.Variable.Global:("#9CDCFE", False, False),    # Light Blue - global vars
-        Token.Name.Variable.Instance:("#9CDCFE", False, False),  # Light Blue - instance vars
-        Token.Name.Constant:      ("#569CD6", False, False),     # Blue - constants
-        Token.Name.Attribute:     ("#9CDCFE", False, False),     # Light Blue - attributes
+        # Variables & Names - Dracula Colors (NO WHITE)
+        Token.Name:               ("#f1fa8c", False, False),     # Yellow - variables (NOT white)
+        Token.Name.Builtin:       ("#8be9fd", False, False),     # Cyan - built-ins (len, print, console)
+        Token.Name.Builtin.Pseudo:("#ff5555", False, False),     # Red - self, this, super
+        Token.Name.Class:         ("#8be9fd", False, False),     # Cyan - class names
+        Token.Name.Decorator:     ("#ffb86c", False, False),     # Orange - @decorators
+        Token.Name.Entity:        ("#ffb86c", False, False),     # Orange - entities
+        Token.Name.Exception:     ("#ff5555", False, False),     # Red - exceptions
+        Token.Name.Function:      ("#ffb86c", False, False),     # Orange - function definitions/calls
+        Token.Name.Function.Magic:("#ffb86c", False, False),     # Orange - __magic__ methods
+        Token.Name.Label:         ("#bd93f9", False, False),     # Purple - labels
+        Token.Name.Namespace:     ("#8be9fd", False, False),     # Cyan - namespaces
+        Token.Name.Tag:           ("#ff79c6", False, False),     # Pink - HTML/XML tags
+        Token.Name.Variable:      ("#ff5555", False, False),     # Red - variable names
+        Token.Name.Variable.Class:("#f1fa8c", False, False),     # Yellow - class vars (NOT white)
+        Token.Name.Variable.Global:("#f1fa8c", False, False),    # Yellow - global vars (NOT white)
+        Token.Name.Variable.Instance:("#f1fa8c", False, False),  # Yellow - instance vars (NOT white)
+        Token.Name.Constant:      ("#f1fa8c", False, False),     # Yellow - constants
+        Token.Name.Attribute:     ("#50fa7b", False, False),     # Green - attributes/properties
         
-        # Strings - VS Code Orange (#CE9178)
-        Token.String:             ("#CE9178", False, False),     # Orange - all strings
-        Token.String.Affix:       ("#CE9178", False, False),     # Orange - f"", r"", b""
-        Token.String.Backtick:    ("#CE9178", False, False),     # Orange - `template`
-        Token.String.Char:        ("#CE9178", False, False),     # Orange - char literals
-        Token.String.Delimiter:   ("#CE9178", False, False),     # Orange - quotes
-        Token.String.Doc:         ("#6A9955", True, True),       # Green ITALIC - docstrings
-        Token.String.Double:      ("#CE9178", False, False),     # Orange - "strings"
-        Token.String.Escape:      ("#D7BA7D", False, False),     # Light Orange - \n, \t
-        Token.String.Heredoc:     ("#CE9178", False, False),     # Orange - heredocs
-        Token.String.Interpol:    ("#CE9178", False, False),     # Orange - ${expr}
-        Token.String.Other:       ("#CE9178", False, False),     # Orange - other strings
-        Token.String.Regex:       ("#D16969", False, False),     # Red-Orange - regex
-        Token.String.Single:      ("#CE9178", False, False),     # Orange - 'strings'
-        Token.String.Symbol:      ("#569CD6", False, False),     # Blue - symbols
+        # Strings - Dracula Green (#50fa7b)
+        Token.String:             ("#50fa7b", False, False),     # Green - all strings
+        Token.String.Affix:       ("#50fa7b", False, False),     # Green - f"", r"", b"" prefixes
+        Token.String.Backtick:    ("#50fa7b", False, False),     # Green - `template literals`
+        Token.String.Char:        ("#50fa7b", False, False),     # Green - char literals
+        Token.String.Delimiter:   ("#50fa7b", False, False),     # Green - quote marks
+        Token.String.Doc:         ("#6272a4", False, True),      # Blue-gray ITALIC - docstrings
+        Token.String.Double:      ("#50fa7b", False, False),     # Green - "double quoted"
+        Token.String.Escape:      ("#f1fa8c", False, False),     # Yellow - \n, \t, \\
+        Token.String.Heredoc:     ("#50fa7b", False, False),     # Green - heredocs
+        Token.String.Interpol:    ("#50fa7b", False, False),     # Green - ${expr} interpolations
+        Token.String.Other:       ("#50fa7b", False, False),     # Green - other strings
+        Token.String.Regex:       ("#ff5555", False, False),     # Red - /regex/ patterns
+        Token.String.Single:      ("#50fa7b", False, False),     # Green - 'single quoted'
+        Token.String.Symbol:      ("#bd93f9", False, False),     # Purple - symbols
         
-        # Numbers - VS Code Light Green (#B5CEA8)
-        Token.Number:             ("#B5CEA8", False, False),     # Light Green - all numbers
-        Token.Number.Bin:         ("#B5CEA8", False, False),     # Light Green - 0b1010
-        Token.Number.Float:       ("#B5CEA8", False, False),     # Light Green - 3.14
-        Token.Number.Hex:         ("#B5CEA8", False, False),     # Light Green - 0xFF
-        Token.Number.Integer:     ("#B5CEA8", False, False),     # Light Green - 42
-        Token.Number.Integer.Long:("#B5CEA8", False, False),     # Light Green - long ints
-        Token.Number.Oct:         ("#B5CEA8", False, False),     # Light Green - 0o777
+        # Numbers - Dracula Purple (#bd93f9)
+        Token.Number:             ("#bd93f9", False, False),     # Purple - all numbers
+        Token.Number.Bin:         ("#bd93f9", False, False),     # Purple - 0b1010
+        Token.Number.Float:       ("#bd93f9", False, False),     # Purple - 3.14
+        Token.Number.Hex:         ("#bd93f9", False, False),     # Purple - 0xFF
+        Token.Number.Integer:     ("#bd93f9", False, False),     # Purple - 42
+        Token.Number.Integer.Long:("#bd93f9", False, False),     # Purple - long ints
+        Token.Number.Oct:         ("#bd93f9", False, False),     # Purple - 0o777
         
-        # Operators - VS Code White (#D4D4D4)
-        Token.Operator:           ("#D4D4D4", False, False),     # White - + - * / %
-        Token.Operator.Word:      ("#569CD6", False, False),     # Blue - and, or, not
+        # Operators - Dracula Purple (#bd93f9) - NOT WHITE
+        Token.Operator:           ("#bd93f9", False, False),     # Purple - + - * / % operators
+        Token.Operator.Word:      ("#bd93f9", False, False),     # Purple - and, or, not
         
-        # Punctuation - VS Code White (#D4D4D4)
-        Token.Punctuation:        ("#D4D4D4", False, False),     # White - brackets, parens
-        Token.Punctuation.Marker: ("#D4D4D4", False, False),     # White - semicolons, commas
+        # Punctuation - Dracula Cyan (#8be9fd) - NOT WHITE
+        Token.Punctuation:        ("#8be9fd", False, False),     # Cyan - brackets [], parens (), braces {}
+        Token.Punctuation.Marker: ("#8be9fd", False, False),     # Cyan - semicolons, commas
         
-        # Comments - VS Code Green (#6A9955)
-        Token.Comment:            ("#6A9955", False, True),      # Green ITALIC - comments
-        Token.Comment.Hashbang:   ("#6A9955", False, True),      # Green ITALIC - shebang
-        Token.Comment.Multiline:  ("#6A9955", False, True),      # Green ITALIC - /* */
-        Token.Comment.Preproc:    ("#6A9955", False, True),      # Green ITALIC - #pragma
-        Token.Comment.PreprocFile:("#6A9955", False, True),      # Green ITALIC - includes
-        Token.Comment.Single:     ("#6A9955", False, True),      # Green ITALIC - // or #
-        Token.Comment.Special:    ("#6A9955", False, True),      # Green ITALIC - special
+        # Comments - Dracula Blue-gray (#6272a4)
+        Token.Comment:            ("#6272a4", False, True),      # Blue-gray ITALIC - comments
+        Token.Comment.Hashbang:   ("#6272a4", False, True),      # Blue-gray ITALIC - shebang
+        Token.Comment.Multiline:  ("#6272a4", False, True),      # Blue-gray ITALIC - /* */
+        Token.Comment.Preproc:    ("#6272a4", False, True),      # Blue-gray ITALIC - #pragma
+        Token.Comment.PreprocFile:("#6272a4", False, True),      # Blue-gray ITALIC - includes
+        Token.Comment.Single:     ("#6272a4", False, True),      # Blue-gray ITALIC - // or #
+        Token.Comment.Special:    ("#6272a4", False, True),      # Blue-gray ITALIC - special
         
-        # Errors - VS Code Red (#F44747)
-        Token.Error:              ("#F44747", False, False),     # Red - syntax errors
+        # Errors - Dracula Red (#ff5555)
+        Token.Error:              ("#ff5555", False, False),     # Red - syntax errors
         
-        # Types/Classes - VS Code Teal (#4EC9B0)
-        Token.Name.Class:         ("#4EC9B0", False, False),     # Teal - class names
-        Token.Name.Decorator:     ("#DCDCAA", False, False),     # Yellow - decorators
+        # Types/Classes - Dracula Cyan (#8be9fd)
+        Token.Type:               ("#8be9fd", False, False),     # Cyan - type names
         
-        # Functions - VS Code Yellow (#DCDCAA)
-        Token.Name.Function:      ("#DCDCAA", False, False),     # Yellow - function definitions
-        Token.Name.Function.Magic:("#DCDCAA", False, False),     # Yellow - magic methods
+        # Functions - Dracula Orange (#ffb86c)
+        Token.Name.Function:      ("#ffb86c", False, False),     # Orange - function definitions
+        Token.Name.Function.Magic:("#ffb86c", False, False),     # Orange - magic methods
         
-        # Markup - For HTML/XML/Markdown
-        Token.Generic:            ("#D4D4D4", False, False),     # White - generic markup
-        Token.Generic.Deleted:    ("#F44747", False, False),     # Red - deleted text
-        Token.Generic.Emph:       ("#CE9178", False, True),      # Orange ITALIC - emphasis
-        Token.Generic.Error:      ("#F44747", False, False),     # Red - errors
-        Token.Generic.Heading:    ("#4EC9B0", False, False),     # Teal - headings
-        Token.Generic.Inserted:   ("#4EC9B0", False, False),     # Teal - inserted text
-        Token.Generic.Output:     ("#6A9955", False, False),     # Green - program output
-        Token.Generic.Prompt:     ("#569CD6", False, False),     # Blue - shell prompt
-        Token.Generic.Strong:     ("#D4D4D4", True, False),      # White BOLD - strong
-        Token.Generic.Subheading: ("#569CD6", False, False),     # Blue - subheadings
-        Token.Generic.Traceback:  ("#F44747", False, False),     # Red - tracebacks
+        # Markup - For HTML/XML/Markdown - ALL COLORED
+        Token.Generic:            ("#f1fa8c", False, False),     # Yellow - generic markup (NOT white)
+        Token.Generic.Deleted:    ("#ff5555", False, False),     # Red - deleted text
+        Token.Generic.Emph:       ("#50fa7b", False, True),      # Green ITALIC - emphasis
+        Token.Generic.Error:      ("#ff5555", False, False),     # Red - errors
+        Token.Generic.Heading:    ("#8be9fd", False, False),     # Cyan - headings
+        Token.Generic.Inserted:   ("#50fa7b", False, False),     # Green - inserted text
+        Token.Generic.Output:     ("#6272a4", False, False),     # Blue-gray - program output
+        Token.Generic.Prompt:     ("#bd93f9", False, False),     # Purple - shell prompt
+        Token.Generic.Strong:     ("#f1fa8c", False, True),      # Yellow BOLD - strong (NOT white)
+        Token.Generic.Subheading: ("#bd93f9", False, False),     # Purple - subheadings
+        Token.Generic.Traceback:  ("#ff5555", False, False),     # Red - tracebacks
         
         # Literals
-        Token.Literal:            ("#569CD6", False, False),     # Blue - literal values
-        Token.Literal.Date:       ("#4EC9B0", False, True),      # Teal ITALIC - dates
-        Token.Literal.Number:     ("#B5CEA8", False, False),     # Light Green - numbers
-        Token.Literal.String:     ("#CE9178", False, False),     # Orange - strings
+        Token.Literal:            ("#bd93f9", False, False),     # Purple - literal values
+        Token.Literal.Date:       ("#8be9fd", False, True),      # Cyan ITALIC - dates
+        Token.Literal.Number:     ("#bd93f9", False, False),     # Purple - numbers
+        Token.Literal.String:     ("#50fa7b", False, False),     # Green - strings
         
-        # Text
-        Token.Text:               ("#D4D4D4", False, False),     # White - plain text
-        Token.Text.Whitespace:    ("#D4D4D4", False, False),     # White - whitespace
+        # Text - Yellow (NOT WHITE)
+        Token.Text:               ("#f1fa8c", False, False),     # Yellow - plain text (NOT white)
+        Token.Text.Whitespace:    ("#6272a4", False, False),     # Blue-gray - whitespace (NOT white)
         
-        # HTML SPECIFIC - VS Code Colors
-        Token.Name.Doctype:       ("#569CD6", False, False),     # Blue - <!DOCTYPE html>
-        Token.Name.Entity:        ("#569CD6", False, False),     # Blue - &nbsp; &amp;
+        # HTML SPECIFIC - Dracula Colors
+        Token.Name.Doctype:       ("#bd93f9", False, False),     # Purple - <!DOCTYPE html>
+        Token.Name.Entity:        ("#bd93f9", False, False),     # Purple - &nbsp; &amp;
         
-        # CSS INSIDE <style> - VS Code Colors (Embedded CSS)
-        Token.Name.Builtin:       ("#9CDCFE", False, False),     # Light Blue - CSS properties
-        Token.Name.Class:         ("#D7BA7D", False, False),     # Yellow-Orange - .class selectors
-        Token.Name.Constant:      ("#569CD6", False, False),     # Blue - #id selectors
-        Token.Name.Decorator:     ("#D7BA7D", False, False),     # Yellow-Orange - :pseudo-classes
-        Token.Name.Function:      ("#DCDCAA", False, False),     # Yellow - calc(), var()
-        Token.String:             ("#CE9178", False, False),     # Orange - CSS strings
-        Token.String.Other:       ("#CE9178", False, False),     # Orange - url() strings
-        Token.Number:             ("#B5CEA8", False, False),     # Light Green - CSS numbers
-        Token.Number.Integer:     ("#B5CEA8", False, False),     # Light Green - CSS integers
-        Token.Number.Float:       ("#B5CEA8", False, False),     # Light Green - CSS floats
-        Token.Operator:           ("#D4D4D4", False, False),     # White - CSS operators
-        Token.Punctuation:        ("#D4D4D4", False, False),     # White - CSS punctuation
+        # CSS INSIDE <style> - Dracula Colors (Embedded CSS)
+        Token.Name.Builtin:       ("#f1fa8c", False, False),     # Yellow - CSS properties
+        Token.Name.Class:         ("#ffb86c", False, False),     # Orange - .class selectors
+        Token.Name.Constant:      ("#bd93f9", False, False),     # Purple - #id selectors
+        Token.Name.Decorator:     ("#ffb86c", False, False),     # Orange - :pseudo-classes
+        Token.Name.Function:      ("#ffb86c", False, False),     # Orange - calc(), var()
+        Token.String:             ("#50fa7b", False, False),     # Green - CSS strings
+        Token.String.Other:       ("#50fa7b", False, False),     # Green - url() strings
+        Token.Number:             ("#bd93f9", False, False),     # Purple - CSS numbers
+        Token.Number.Integer:     ("#bd93f9", False, False),     # Purple - CSS integers
+        Token.Number.Float:       ("#bd93f9", False, False),     # Purple - CSS floats
+        Token.Operator:           ("#bd93f9", False, False),     # Purple - CSS operators
+        Token.Punctuation:        ("#8be9fd", False, False),     # Cyan - CSS punctuation
         
-        # JAVASCRIPT INSIDE <script> - VS Code Colors (Embedded JS)
-        Token.Name.Builtin:       ("#4EC9B0", False, False),     # Teal - console, window, document
-        Token.Name.Function:      ("#DCDCAA", False, False),     # Yellow - function calls
-        Token.Name.Variable:      ("#9CDCFE", False, False),     # Light Blue - variables
-        Token.String:             ("#CE9178", False, False),     # Orange - JS strings
-        Token.String.Regex:       ("#D16969", False, False),     # Red-Orange - /regex/
-        Token.Number:             ("#B5CEA8", False, False),     # Light Green - JS numbers
-        Token.Number.Integer:     ("#B5CEA8", False, False),     # Light Green - JS integers
-        Token.Number.Float:       ("#B5CEA8", False, False),     # Light Green - JS floats
-        Token.Operator:           ("#D4D4D4", False, False),     # White - JS operators
-        Token.Punctuation:        ("#D4D4D4", False, False),     # White - JS punctuation
-        Token.Keyword:            ("#569CD6", False, False),     # Blue - var, let, const, function
-        Token.Keyword.Declaration:("#569CD6", False, False),     # Blue - var, let, const
-        Token.Keyword.Reserved:   ("#569CD6", False, False),     # Blue - reserved words
+        # JAVASCRIPT INSIDE <script> - Dracula Colors (Embedded JS)
+        Token.Name.Builtin:       ("#8be9fd", False, False),     # Cyan - console, window, document
+        Token.Name.Function:      ("#ffb86c", False, False),     # Orange - function calls
+        Token.Name.Variable:      ("#ff5555", False, False),     # Red - variables
+        Token.String:             ("#50fa7b", False, False),     # Green - JS strings
+        Token.String.Regex:       ("#ff5555", False, False),     # Red - /regex/
+        Token.Number:             ("#bd93f9", False, False),     # Purple - JS numbers
+        Token.Number.Integer:     ("#bd93f9", False, False),     # Purple - JS integers
+        Token.Number.Float:       ("#bd93f9", False, False),     # Purple - JS floats
+        Token.Operator:           ("#bd93f9", False, False),     # Purple - JS operators
+        Token.Punctuation:        ("#8be9fd", False, False),     # Cyan - JS punctuation
+        Token.Keyword:            ("#bd93f9", False, False),     # Purple - var, let, const, function
+        Token.Keyword.Declaration:("#bd93f9", False, False),     # Purple - var, let, const
+        Token.Keyword.Reserved:   ("#bd93f9", False, False),     # Purple - reserved words
         
         # Additional embedded language support
-        Token.Name.Exception:     ("#F44747", False, False),     # Red - Error objects (JS)
-        Token.Name.Label:         ("#569CD6", False, False),     # Blue - statement labels
-        Token.Literal.String.Other: ("#CE9178", False, False),   # Orange - other strings
-        Token.Comment:            ("#6A9955", False, True),      # Green Italic - comments
-        Token.Comment.Single:     ("#6A9955", False, True),      # Green Italic - single line
-        Token.Comment.Multiline:  ("#6A9955", False, True),      # Green Italic - multi-line
+        Token.Name.Exception:     ("#ff5555", False, False),     # Red - Error objects (JS)
+        Token.Name.Label:         ("#bd93f9", False, False),     # Purple - statement labels
+        Token.Literal.String.Other: ("#50fa7b", False, False),   # Green - other strings
+        Token.Comment:            ("#6272a4", False, True),      # Blue-gray Italic - comments
+        Token.Comment.Single:     ("#6272a4", False, True),      # Blue-gray Italic - single line
+        Token.Comment.Multiline:  ("#6272a4", False, True),      # Blue-gray Italic - multi-line
         
-        # FALLBACK MAPPINGS - Catch-all for any unmapped tokens
-        Token.Name.Attribute:     ("#9CDCFE", False, False),     # Light Blue - attributes/properties
-        Token.Name.Namespace:     ("#4EC9B0", False, False),     # Teal - namespaces
-        Token.Name.Entity:        ("#DCDCAA", False, False),     # Yellow - entities
-        Token.Operator.Word:      ("#569CD6", False, False),     # Blue - word operators (and, or)
-        Token.Punctuation.Marker: ("#D4D4D4", False, False),     # White - punctuation markers
+        # FALLBACK MAPPINGS - Catch-all for any unmapped tokens - ALL COLORED
+        Token.Name.Attribute:     ("#50fa7b", False, False),     # Green - attributes/properties
+        Token.Name.Namespace:     ("#8be9fd", False, False),     # Cyan - namespaces
+        Token.Name.Entity:        ("#ffb86c", False, False),     # Orange - entities
+        Token.Operator.Word:      ("#bd93f9", False, False),     # Purple - word operators (and, or)
+        Token.Punctuation.Marker: ("#8be9fd", False, False),     # Cyan - punctuation markers
     }
     
     # Light theme (VS Code Light+)
@@ -293,14 +307,10 @@ class PygmentsSyntaxHighlighter(QSyntaxHighlighter):
         palette = self.DARK_COLORS if self._is_dark else self.LIGHT_COLORS
         self._formats.clear()
         
-        # DEBUG: Print how many formats we're building
-        print(f"[Highlighter] Building {len(palette)} format rules for {'dark' if self._is_dark else 'light'} theme")
-        
         # Get base font format if available
         base_format = getattr(self, '_base_format', None)
         if base_format:
             base_font = base_format.font()
-            print(f"[DEBUG] Base font: {base_font.family()}, size {base_font.pointSize()}")
         
         for token_type, (color, bold, italic) in palette.items():
             fmt = QTextCharFormat()
@@ -318,25 +328,7 @@ class PygmentsSyntaxHighlighter(QSyntaxHighlighter):
             if italic:
                 fmt.setFontItalic(True)
             
-            # DEBUG: Verify color was set correctly
-            if token_type == Token.Keyword:
-                print(f"[DEBUG] Keyword format: color={color}, actual_foreground={fmt.foreground().color().name()}, font={fmt.font().family()}")
-            
             self._formats[token_type] = fmt
-        
-        # DEBUG: Verify formats were created
-        print(f"[Highlighter] Created formats for {len(self._formats)} token types")
-        
-        # DEBUG: Show sample of created formats
-        if Token.Keyword in self._formats:
-            kw_fmt = self._formats[Token.Keyword]
-            print(f"[DEBUG] Keyword format stored: {kw_fmt.foreground().color().name()}, font: {kw_fmt.font().family()}")
-        if Token.String in self._formats:
-            str_fmt = self._formats[Token.String]
-            print(f"[DEBUG] String format stored: {str_fmt.foreground().color().name()}, font: {str_fmt.font().family()}")
-        
-        if len(self._formats) == 0:
-            print("[ERROR] No formats created! Check DARK_COLORS dictionary!")
 
     def set_language(self, language: str):
         """Set language with optimized re-highlighting."""
@@ -367,35 +359,15 @@ class PygmentsSyntaxHighlighter(QSyntaxHighlighter):
             
         combined = self.previousBlockState()
         
-        # DEBUG: First time only - print lexer info
-        if not hasattr(self, '_debug_printed'):
-            print(f"\n[Highlighter] === FIRST BLOCK HIGHLIGHTING ===")
-            print(f"[Highlighter] Using lexer: {self._lexer.__class__.__name__}")
-            print(f"[Highlighter] Language: {self._language}")
-            print(f"[Highlighter] Formats available: {len(self._formats)}")
-            
-            # Show first few token mappings
-            print("[DEBUG] Sample token mappings:")
-            for i, (tok, fmt) in enumerate(list(self._formats.items())[:3]):
-                fg = fmt.foreground()
-                color = fg.color().name() if fg else "NO COLOR"
-                print(f"  {tok} -> {color}")
-            
-            self._debug_printed = True
-        
         # Performance optimization: cache lexer results
         try:
             tokens = list(lex(text, self._lexer))
-            if len(tokens) > 0 and len(text.strip()) > 0:
-                print(f"[Highlighter] Tokenized '{text[:40]}...' -> {len(tokens)} tokens")
         except Exception as e:
             # Fallback to plain text if lexing fails
-            print(f"[Highlighter] Lex error: {e}")
             return
         
         pos = 0
         tokens_applied = 0
-        formats_used = set()
         
         for token_type, value in tokens:
             length = len(value)
@@ -411,41 +383,9 @@ class PygmentsSyntaxHighlighter(QSyntaxHighlighter):
                     t = t.parent if hasattr(t, 'parent') else Token
             
             if fmt:
-                # CRITICAL DEBUG: Verify format before applying
-                fg = fmt.foreground()
-                if not fg or not fg.color():
-                    print(f"[ERROR] Format for {token_type} has NO foreground color!")
-                else:
-                    fg_color = fg.color().name()
-                    block_count = getattr(self, '_debug_block_count', 0)
-                    if block_count < 3 and token_type == Token.Keyword:
-                        print(f"[DEBUG] Applying format: {token_type} -> {fg_color} to text: '{value}'")
-                
-                # Check if format has font set
-                if not fmt.font().family():
-                    print(f"[WARNING] Format for {token_type} has no font family!")
-                
                 self.setFormat(pos, length, fmt)
                 tokens_applied += 1
-                if fg and fg.color():
-                    formats_used.add(fg.color().name())
-                else:
-                    formats_used.add("NO COLOR")
             pos += length
-        
-        # DEBUG: Print stats on first few blocks
-        if hasattr(self, '_debug_block_count'):
-            self._debug_block_count += 1
-        else:
-            self._debug_block_count = 0
-        
-        if self._debug_block_count < 10 and len(text.strip()) > 0:
-            if tokens_applied == 0:
-                print(f"[WARNING] Block {self._debug_block_count}: 0 tokens applied to '{text[:50]}...'")
-            else:
-                print(f"[DEBUG] Block {self._debug_block_count}: Applied {tokens_applied} tokens, {len(formats_used)} unique colors")
-                if self._debug_block_count < 3:
-                    print(f"  Colors used: {list(formats_used)[:5]}")
         
         self.setCurrentBlockState(0)
 
@@ -570,6 +510,56 @@ class InlineEditOverlay(QFrame):
 
 
 # ---------------------------------------------------------------------------
+# Autocomplete Sidebar/Overlay
+# ---------------------------------------------------------------------------
+class CompletionWidget(QWidget):
+    """A floating autocomplete selection widget (VS Code Style)."""
+    item_selected = pyqtSignal(dict)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.list = QListWidget()
+        self.list.setStyleSheet("""
+            QListWidget {
+                background-color: #252526;
+                color: #cccccc;
+                border: 1px solid #454545;
+                font-family: 'Consolas', monospace;
+                font-size: 11px;
+            }
+            QListWidget::item:selected {
+                background-color: #094771;
+                color: white;
+            }
+        """)
+        layout.addWidget(self.list)
+        self.setFixedSize(250, 150)
+        self.list.itemActivated.connect(self._on_activated)
+
+    def set_items(self, items: List[Dict]):
+        self.list.clear()
+        self._raw_items = items
+        for item in items:
+            label = item.get("label", "")
+            # Add icon based on kind
+            kind = item.get("kind", 1)
+            icons = {1: "📝", 2: "🔧", 3: "📦", 5: "🏷️", 6: "🎨"}
+            self.list.addItem(f"{icons.get(kind, '🔹')} {label}")
+        self.list.setCurrentRow(0)
+
+    def _on_activated(self, item):
+        idx = self.list.row(item)
+        if 0 <= idx < len(self._raw_items):
+            self.item_selected.emit(self._raw_items[idx])
+            self.hide()
+
+# ---------------------------------------------------------------------------
 # Main Code Editor
 # ---------------------------------------------------------------------------
 class CodeEditor(QPlainTextEdit):
@@ -631,21 +621,21 @@ class CodeEditor(QPlainTextEdit):
         print(f"[Editor] ✅ Applied dark theme: bg={bg_color.name()}, fg={fg_color.name()}")
         print(f"[Editor] Palette Base: {palette.color(QPalette.ColorRole.Base).name()}")
         print(f"[Editor] Palette Text: {palette.color(QPalette.ColorRole.Text).name()}")
-        
-        # DEBUG: Check if viewport has correct colors
-        if hasattr(self, 'viewport'):
-            vp = self.viewport()
-            print(f"[Editor] Viewport Base: {vp.palette().color(QPalette.ColorRole.Base).name()}")
-            print(f"[Editor] Viewport Text: {vp.palette().color(QPalette.ColorRole.Text).name()}")
 
     def __init__(self, parent=None, language: str = "python"):
         super().__init__(parent)
         self._settings = get_settings()
         self._language = language
+        self._file_path = ""
         self._is_dark = True
+        self._syntax_checker = get_syntax_checker()
         
         # CRITICAL: Apply dark theme FIRST before any other setup
         self._apply_editor_theme()
+
+        # Enable mouse tracking for tooltips
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
 
         # Font - Premium programming fonts (Dracula theme style)
         font_family = self._get_preferred_programming_font()
@@ -677,18 +667,9 @@ class CodeEditor(QPlainTextEdit):
         self._highlighter = PygmentsSyntaxHighlighter(
             self.document(), language=language, is_dark=True
         )
-        
-        # DEBUG: Verify highlighter is active
-        print(f"[Editor] Highlighter created: {self._highlighter is not None}")
-        print(f"[Editor] Highlighter document: {self._highlighter.document() is not None}")
-        print(f"[Editor] Document blocks: {self.document().blockCount()}")
 
         # Line wrap off
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        
-        # DEBUG: Verify colors are actually visible
-        print(f"[Editor] After init - Background: {self.palette().color(self.palette().ColorRole.Base).name()}")
-        print(f"[Editor] After init - Text: {self.palette().color(self.palette().ColorRole.Text).name()}")
 
         # Inline edit overlay
         self._inline_overlay = InlineEditOverlay(self.viewport())
@@ -698,9 +679,35 @@ class CodeEditor(QPlainTextEdit):
         self._inline_overlay.diff_requested.connect(self.inline_diff_requested.emit)
         self._inline_selection_text = ""
         self._inline_selection_range = (0, 0)
+        
+        # Syntax Error Detection
+        self._syntax_errors: List[DiagnosticError] = []
+        self._lint_timer = QTimer(self)
+        self._lint_timer.setSingleShot(True)
+        self._lint_timer.timeout.connect(self._run_linting)
+        self.document().contentsChanged.connect(lambda: self._lint_timer.start(350))
 
-    def set_content(self, text: str, language: str = None):
-        """Set editor content without triggering modification signal."""
+        # REACTIVE: Diagnostic Hover Timer (Fast Tooltips)
+        self._hover_timer = QTimer(self)
+        self._hover_timer.setSingleShot(True)
+        self._hover_timer.timeout.connect(self._show_hover_diagnostic)
+        self._last_hover_pos = QPoint(-1, -1)
+
+        # REACTIVE: Dynamic response to LSP background results
+        get_lsp_manager().diagnostics_updated.connect(self._handle_lsp_update)
+
+        # Completion Widget & Debounce Timer
+        self._completion_timer = QTimer(self)
+        self._completion_timer.setSingleShot(True)
+        self._completion_timer.timeout.connect(self._trigger_completion)
+        self._completion_widget = CompletionWidget(self.viewport())
+        self._completion_widget.hide()
+        self._completion_widget.item_selected.connect(self._insert_completion)
+
+    def set_content(self, text: str, language: str = None, file_path: str = ""):
+        """Set editor content and file context."""
+        if file_path:
+            self._file_path = file_path
         if language:
             self._language = language
             # Only set highlighter language if it exists (during init, it doesn't)
@@ -731,6 +738,9 @@ class CodeEditor(QPlainTextEdit):
         # Trigger syntax highlighting via rehighlight() - this is the proper Qt way
         if hasattr(self, '_highlighter'):
             self._highlighter.rehighlight()
+            
+        # Initial Diagnostic check (No delay needed on load)
+        QTimer.singleShot(500, self._run_linting)
 
     def set_theme(self, is_dark: bool):
         """Set theme and refresh font family."""
@@ -769,11 +779,8 @@ class CodeEditor(QPlainTextEdit):
         self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)
 
     def _update_line_number_area(self, rect, dy):
-        if dy:
-            self._line_number_area.scroll(0, dy)
-        else:
-            self._line_number_area.update(0, rect.y(),
-                                          self._line_number_area.width(), rect.height())
+        # Fix scrolling drift: using update() instead of scroll() for better sync
+        self._line_number_area.update()
         if rect.contains(self.viewport().rect()):
             self._update_line_number_area_width(0)
 
@@ -800,23 +807,144 @@ class CodeEditor(QPlainTextEdit):
 
         while block.isValid() and top <= event.rect().bottom():
             if block.isVisible() and bottom >= event.rect().top():
-                num = str(block.blockNumber() + 1)
-                if block.blockNumber() == current_line:
+                line_idx = block.blockNumber()
+                num = str(line_idx + 1)
+                if line_idx == current_line:
                     painter.setPen(cur_color)
                 else:
                     painter.setPen(num_color)
                 painter.drawText(
                     0, top,
-                    self._line_number_area.width() - 6,
+                    self._line_number_area.width() - 8,
                     self.fontMetrics().height(),
                     Qt.AlignmentFlag.AlignRight, num
                 )
+                
+                # Draw Syntax Error Marker (Gutter Dot)
+                line_errs = [e for e in self._syntax_errors if e.line == line_idx + 1]
+                if line_errs:
+                    # Pick highest severity color
+                    if any(e.severity == "error" for e in line_errs):
+                        color = QColor("#f44747") # Error Red
+                    elif any(e.severity == "warning" for e in line_errs):
+                        color = QColor("#cca700") # Warning Gold
+                    else:
+                        color = QColor("#75beff") # Info Blue
+                        
+                    painter.setPen(QPen(color, 5))
+                    # Center the dot in the gutter area left of the line numbers
+                    painter.drawPoint(8, top + (self.fontMetrics().height() // 2))
+
             block = block.next()
             top = bottom
             bottom = top + round(self.blockBoundingRect(block).height())
 
+    def _run_linting(self):
+        """Request a fresh syntax check from the engine."""
+        if not self._syntax_checker: return
+        
+        path = self._file_path or f"virtual_file.{self._language or 'py'}"
+        content = self.toPlainText()
+        
+        # Notify LSP of the latest content change
+        get_lsp_manager().notify_changed(path, content, self._language)
+        
+        # Run core syntax checker (Hybrid: LSP + Local)
+        # Note: Local errors appear immediately, LSP ones usually arrive via signal
+        result = self._syntax_checker.check_file(path, content)
+        self._render_diagnostics(result.errors)
+
+    def _render_diagnostics(self, errors: List[DiagnosticError]):
+        """Pure visual rendering of provided diagnostic errors."""
+        self._syntax_errors = errors
+        
+        # 1. Clear old lint markers but keep other selections (like current line highlight)
+        sels = [s for s in self.extraSelections() if not getattr(s, '_lint', False)]
+        
+        # 2. Create precise squiggles
+        new_sels = []
+        for err in self._syntax_errors:
+            s = QTextEdit.ExtraSelection()
+            s._lint = True
+            fmt = QTextCharFormat()
+            
+            # Map severity to color
+            color = QColor("#f44747") # Default error red
+            if err.severity == "warning": color = QColor("#cca700")
+            elif err.severity == "info": color = QColor("#75beff")
+                
+            fmt.setUnderlineColor(color)
+            fmt.setUnderlineStyle(QTextCharFormat.UnderlineStyle.WaveUnderline)
+            s.format = fmt
+            
+            # Use Precise Word Positioning
+            block = self.document().findBlockByNumber(max(0, err.line - 1))
+            if block.isValid():
+                cur = QTextCursor(block)
+                # Ensure we don't move past the end of the block
+                start_col = min(block.length() - 1, max(0, err.column - 1))
+                cur.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.MoveAnchor, start_col)
+                
+                # Highlight length
+                length = (err.end_column - err.column) if (err.end_column > err.column) else 0
+                if length > 0:
+                    cur.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, length)
+                # Smart selection: try word, but fallback to single char to avoid line overflows
+                cur.select(QTextCursor.SelectionType.WordUnderCursor)
+                # If word selection is empty or spans multiple blocks, fallback
+                if cur.selectedText().strip() == "" or cur.blockNumber() != block.blockNumber():
+                    cur.setPosition(block.position() + start_col)
+                    cur.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, 1)
+                
+                # Enhancing visibility with a subtle background tint
+                bg_color = QColor(color)
+                bg_color.setAlpha(35) # Very subtle (max 255)
+                fmt.setBackground(bg_color)
+                
+                s.cursor = cur
+                new_sels.append(s)
+        
+        # Combine with non-lint selections (like current line highlight)
+        self.setExtraSelections(sels + new_sels)
+        
+        # Forced update of gutter and viewport for instant feedback
+        if hasattr(self, '_line_number_area'):
+            self._line_number_area.update()
+        self.viewport().update()
+
+    def _handle_lsp_update(self, file_path: str, raw_diagnostics: List[Dict]):
+        """Reactive handler for LSP background results."""
+        if not self._file_path: return
+        
+        # Only process if it matches our file
+        # Use normpath to ensure cross-platform match (LSP might send / vs \)
+        my_path = os.path.normcase(os.path.normpath(self._file_path))
+        inc_path = os.path.normcase(os.path.normpath(file_path))
+        
+        if my_path != inc_path:
+            return
+            
+        # Convert raw LSP dicts to DiagnosticError objects
+        processed_errors = []
+        for d in raw_diagnostics:
+            processed_errors.append(DiagnosticError(
+                file_path=file_path,
+                message=d.get("message", ""),
+                line=d.get("range", {}).get("start", {}).get("line", 0) + 1,
+                column=d.get("range", {}).get("start", {}).get("character", 0) + 1,
+                severity=d.get("severity_label", "error").lower(),
+                source="LSP",
+                code=str(d.get("code", "")),
+                end_column=d.get("range", {}).get("end", {}).get("character", 0) + 1
+            ))
+            
+        # Render ONLY. Do NOT call _run_linting here to avoid infinite loops.
+        self._render_diagnostics(processed_errors)
+
     def _highlight_current_line(self):
-        extra = []
+        # Keep existing lint selections
+        extra = [s for s in self.extraSelections() if getattr(s, '_lint', False)]
+        
         if not self.isReadOnly():
             sel = QTextEdit.ExtraSelection()
             color = QColor("#2a2d2e") if self._is_dark else QColor("#f1f3f4")
@@ -825,6 +953,7 @@ class CodeEditor(QPlainTextEdit):
             sel.cursor = self.textCursor()
             sel.cursor.clearSelection()
             extra.append(sel)
+            
         self.setExtraSelections(extra)
     
     def paintEvent(self, event):
@@ -838,41 +967,37 @@ class CodeEditor(QPlainTextEdit):
         """Draw vertical indentation guide lines like VS Code."""
         painter = QPainter(self.viewport())
         
-        # Guide line color (subtle gray)
-        guide_color = QColor("#808080") if self._is_dark else QColor("#cccccc")
-        painter.setPen(QPen(guide_color, 1, Qt.PenStyle.SolidLine))
+        # Guide line color (very subtle gray)
+        guide_color = QColor("#3a3a3a") if self._is_dark else QColor("#e0e0e0")
+        painter.setPen(QPen(guide_color, 1, Qt.PenStyle.DotLine))
         
-        # Get tab width in pixels
-        tab_width = self.fontMetrics().horizontalAdvance(' ' * 4)  # Default 4 spaces
+        # Get horizontal offset and char width
+        offset_x = self.horizontalScrollBar().value()
+        char_w = self.fontMetrics().horizontalAdvance(' ')
+        # VS Code style: draw lines at 4, 8, 12... spaces
+        indent_char_count = 4 
         
         block = self.firstVisibleBlock()
         while block.isValid():
-            # Get block geometry
             top = int(self.blockBoundingGeometry(block).translated(self.contentOffset()).top())
             bottom = top + int(self.blockBoundingRect(block).height())
             
-            # Only draw if visible
-            if block.isVisible() and bottom >= 0 and top <= self.height():
+            if block.isVisible() and bottom >= 0 and top <= self.viewport().height():
                 text = block.text()
-                
-                # Calculate indent level
                 indent = 0
                 for char in text:
-                    if char == ' ':
-                        indent += 1
-                    elif char == '\t':
-                        indent += 4
-                    else:
-                        break
+                    if char == ' ': indent += 1
+                    elif char == '\t': indent += 4
+                    else: break
                 
-                # Draw guide lines for each indent level
-                if indent > 0:
-                    for i in range(0, indent, 4):  # Every 4 spaces
-                        x = i * self.fontMetrics().horizontalAdvance(' ')
-                        if x < self.width():  # Don't draw if outside viewport
+                if indent >= indent_char_count:
+                    for i in range(indent_char_count, indent + 1, indent_char_count):
+                        x = (i * char_w) - offset_x
+                        if 0 <= x < self.viewport().width():
                             painter.drawLine(x, top, x, bottom)
             
             block = block.next()
+            if top > self.viewport().height(): break
         
         painter.end()
 
@@ -886,7 +1011,27 @@ class CodeEditor(QPlainTextEdit):
         key = event.key()
         modifiers = event.modifiers()
 
-        # Inline edit (Ctrl/Cmd + K)
+        # 1. IntelliSense Navigation (Up/Down/Enter/Tab)
+        if self._completion_widget.isVisible():
+            if key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+                row = self._completion_widget.list.currentRow()
+                count = self._completion_widget.list.count()
+                if count > 0:
+                    if key == Qt.Key.Key_Up:
+                        self._completion_widget.list.setCurrentRow((row - 1) % count)
+                    else:
+                        self._completion_widget.list.setCurrentRow((row + 1) % count)
+                return
+            elif key in (Qt.Key.Key_Enter, Qt.Key.Key_Return, Qt.Key.Key_Tab):
+                current = self._completion_widget.list.currentItem()
+                if current:
+                    self._completion_widget._on_activated(current)
+                return
+            elif key == Qt.Key.Key_Escape:
+                self._completion_widget.hide()
+                return
+
+        # 2. Inline edit (Ctrl/Cmd + K)
         if key == Qt.Key.Key_K and (modifiers & Qt.KeyboardModifier.ControlModifier or
                                     modifiers & Qt.KeyboardModifier.MetaModifier):
             self._show_inline_overlay()
@@ -894,8 +1039,8 @@ class CodeEditor(QPlainTextEdit):
         if key == Qt.Key.Key_Escape and self._inline_overlay.isVisible():
             self._hide_inline_overlay()
             return
-        
-        # Auto-indent on Enter
+
+        # 3. Auto-indent on Enter
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             cursor = self.textCursor()
             block = cursor.block()
@@ -912,27 +1057,74 @@ class CodeEditor(QPlainTextEdit):
             super().keyPressEvent(event)
             self.insertPlainText(indent)
             return
-        
-        # Tab handling - VS Code style
+
+        # 4. Tab handling - VS Code style
         if key == Qt.Key.Key_Tab:
             tab_size = self._settings.get("editor", "tab_size") or 4
-            
-            # Shift+Tab - Outdent
             if modifiers == Qt.KeyboardModifier.ShiftModifier:
                 self._outdent_selection(tab_size)
                 return
-            
-            # Tab with selection - Indent multiple lines
             cursor = self.textCursor()
             if cursor.hasSelection():
                 self._indent_selection(tab_size)
                 return
-            
-            # No selection - Insert tab as spaces
             self.insertPlainText(" " * tab_size)
             return
-        
+
+        # 5. Default edit + IntelliSense trigger (Debounced)
         super().keyPressEvent(event)
+        if event.text().isalnum() or event.text() in (".", "_"):
+            self._completion_timer.start(100) # 100ms delay to prevent flood
+
+    def mouseMoveEvent(self, event):
+        """Track mouse for instant diagnostic tooltips."""
+        super().mouseMoveEvent(event)
+        
+        pos = event.pos()
+        if pos == self._last_hover_pos:
+            return
+        self._last_hover_pos = pos
+        
+        # Check if mouse is over an error
+        cursor = self.cursorForPosition(pos)
+        line = cursor.blockNumber() + 1
+        col = cursor.columnNumber() + 1
+        
+        found_err = False
+        for err in self._syntax_errors:
+            if err.line == line:
+                # Small 2-char buffer for visibility
+                end = err.end_column if err.end_column > err.column else err.column + 2
+                if err.column <= col <= end:
+                    found_err = True
+                    break
+        
+        if found_err:
+            self._hover_timer.start(200) # Fast 200ms hover detection
+        else:
+            self._hover_timer.stop()
+            QToolTip.hideText()
+
+    def _show_hover_diagnostic(self):
+        """Triggered by _hover_timer to show tooltip near mouse."""
+        pos = self._last_hover_pos
+        cursor = self.cursorForPosition(pos)
+        line = cursor.blockNumber() + 1
+        col = cursor.columnNumber() + 1
+        
+        for err in self._syntax_errors:
+            if err.line == line:
+                end = err.end_column if err.end_column > err.column else err.column + 2
+                if err.column <= col <= end:
+                    icon = "❌" if err.severity == "error" else "⚠️"
+                    text = f"<div style='background-color:#1e1e1e; color:#cccccc; border:1px solid #3c3c3c; padding:5px;'>"
+                    text += f"<b style='color:#f44747'>{icon} {err.severity.capitalize()}</b>: {err.message}"
+                    if err.code:
+                        text += f"<br/><i style='color:#888'>({err.source}: {err.code})</i>"
+                    text += "</div>"
+                    
+                    QToolTip.showText(self.viewport().mapToGlobal(pos), text, self.viewport())
+                    return
     
     def _indent_selection(self, tab_size: int):
         """Indent selected lines (VS Code style)."""
@@ -1018,6 +1210,59 @@ class CodeEditor(QPlainTextEdit):
         self._inline_overlay.show()
         self._inline_overlay.raise_()
         self._inline_overlay.focus_prompt()
+
+
+    def _trigger_completion(self):
+        """Request completions from LSP Manager."""
+        cursor = self.textCursor()
+        line = cursor.blockNumber() + 1
+        col = cursor.columnNumber() + 1
+        
+        def on_results(res, err):
+            if err or not res: return
+            items = res.get("items", []) if isinstance(res, dict) else res
+            if not items: return
+            
+            # Show on main thread
+            QTimer.singleShot(0, lambda: self._show_completions(items))
+            
+        get_lsp_manager().get_completions(self._file_path, line, col, self._language, on_results)
+
+    def _show_completions(self, items: List[Dict]):
+        """Display the completion widget near the cursor with boundary checks."""
+        if not items:
+            self._completion_widget.hide()
+            return
+            
+        self._completion_widget.set_items(items[:50]) # Limit to top 50
+        
+        # Calculate position
+        cursor_rect = self.cursorRect()
+        global_pos = self.viewport().mapToGlobal(cursor_rect.bottomLeft())
+        
+        # Boundary Check: Keep on screen
+        screen = QApplication.primaryScreen().geometry()
+        widget_height = self._completion_widget.height()
+        
+        # If it goes off the bottom, flip to top
+        if global_pos.y() + widget_height > screen.height():
+            global_pos = self.viewport().mapToGlobal(cursor_rect.topLeft())
+            global_pos -= QPoint(0, widget_height + 5)
+        else:
+            global_pos += QPoint(0, 5)
+            
+        self._completion_widget.move(global_pos)
+        self._completion_widget.show()
+        self._completion_widget.raise_()
+
+    def _insert_completion(self, item: Dict):
+        """Insert the selected completion text into the editor."""
+        text = item.get("insertText") or item.get("label")
+        cursor = self.textCursor()
+        # Backtrack to the start of the word
+        cursor.movePosition(QTextCursor.MoveOperation.StartOfWord, QTextCursor.MoveMode.KeepAnchor)
+        cursor.insertText(text)
+        self.setFocus()
 
     def _hide_inline_overlay(self):
         if self._inline_overlay.isVisible():

@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cursor AI Agent - Final Replica</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Fira+Code:wght@400;500&display=swap');
+
+        :root {
+            --bg-main: #0b0b0b;
+            --bg-sidebar: #121212;
+            --bg-card: #1c1c1c;
+            --border: #2d2d2d;
+            --text-muted: #8e8e8e;
+            --text-main: #cccccc;
+            --accent: #3b82f6;
+            --green: #2ea043;
+            --green-bright: #4ade80;
+            --yellow: #eab308;
+            --red: #f87171;
+            --code-bg: #000000;
+        }
+
+        body {
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            height: 100vh;
+            display: flex;
+            overflow: hidden;
+        }
+
+        .workspace-blank {
+            flex: 1;
+            background-color: #050505;
+        }
+
+        /* Agent Side Panel */
+        .cursor-panel {
+            width: 480px;
+            background-color: var(--bg-sidebar);
+            border-left: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+
+        .panel-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            background: rgba(255,255,255,0.01);
+        }
+
+        .header-icons {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .header-icon {
+            width: 14px;
+            height: 14px;
+            opacity: 0.5;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        .header-icon:hover {
+            opacity: 1;
+        }
+
+        /* Scrollable Chat History */
+        .chat-scroll {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            scrollbar-width: thin;
+            scrollbar-color: #333 transparent;
+        }
+
+        .chat-scroll::-webkit-scrollbar { width: 4px; }
+        .chat-scroll::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
+
+        /* --- Action Cards --- */
+        .card-container {
+            background: #1a1a1a;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 16px;
+            overflow: hidden;
+            font-size: 13px;
+        }
+
+        .card-header {
+            padding: 10px 14px;
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+            background: rgba(255,255,255,0.02);
+            transition: background 0.15s;
+        }
+
+        .card-header:hover { background: rgba(255,255,255,0.05); }
+
+        .chevron {
+            width: 14px;
+            height: 14px;
+            margin-right: 10px;
+            transition: transform 0.2s;
+            opacity: 0.4;
+        }
+
+        .expanded .chevron { transform: rotate(90deg); }
+        .card-body { display: none; border-top: 1px solid var(--border); background: #141414; }
+        .expanded .card-body { display: block; }
+
+        /* --- Todo Specific Styling --- */
+        .todo-circle {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            border: 1.5px solid #333;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 12px;
+            flex-shrink: 0;
+            position: relative;
+        }
+
+        .todo-circle.completed {
+            background-color: var(--green);
+            border-color: var(--green);
+        }
+
+        .todo-circle.completed svg {
+            width: 10px;
+            height: 10px;
+            color: #000;
+        }
+
+        .todo-circle.active {
+            border-color: var(--accent);
+        }
+
+        /* Spinner Animation inside active circle */
+        .todo-spinner {
+            width: 10px;
+            height: 10px;
+            border: 1.5px solid transparent;
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        /* Status Icons & Tags */
+        .status-tag { font-size: 10px; font-weight: 700; text-transform: uppercase; margin-left: auto; }
+        .text-mod { color: var(--yellow); }
+        .text-add { color: var(--green-bright); }
+        .text-del { color: var(--red); }
+        
+        .pulse-timer { animation: pulse-opacity 1.5s infinite; color: var(--accent); }
+        @keyframes pulse-opacity { 0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; } }
+
+        /* Permission Actions */
+        .btn-group { display: flex; gap: 8px; margin-left: auto; }
+        .btn-accept { background: #ffffff; color: #000; padding: 4px 12px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+        .btn-reject { background: #333333; color: #dddddd; padding: 4px 12px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+
+        /* List Styling */
+        .list-row {
+            padding: 10px 16px;
+            display: flex;
+            align-items: center;
+            border-bottom: 1px solid #222;
+        }
+        .list-row:last-child { border-bottom: none; }
+
+        .step-log {
+            font-size: 12px;
+            color: #777;
+            margin-bottom: 10px;
+            padding-left: 10px;
+            border-left: 2px solid #222;
+            font-family: 'Fira Code', monospace;
+        }
+
+        .terminal-viewport {
+            background: #000;
+            padding: 14px;
+            font-family: 'Fira Code', monospace;
+            font-size: 11px;
+            color: #ddd;
+            line-height: 1.6;
+            white-space: pre-wrap;
+        }
+
+        /* Composer Input */
+        .composer-wrapper {
+            padding: 20px;
+            background: var(--bg-sidebar);
+            border-top: 1px solid var(--border);
+        }
+
+        .composer-box {
+            background: #212121;
+            border: 1px solid #3d3d3d;
+            border-radius: 12px;
+            padding: 14px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+        }
+
+        textarea {
+            width: 100%;
+            background: transparent;
+            border: none;
+            color: white;
+            resize: none;
+            outline: none;
+            font-size: 14px;
+            min-height: 80px;
+            font-family: inherit;
+        }
+
+        .submit-btn {
+            background: #333;
+            color: #fff;
+            padding: 6px 16px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="workspace-blank"></div>
+
+    <div class="cursor-panel">
+        <div class="panel-header">
+            <span>Composer (Agent Mode)</span>
+            <div class="header-icons">
+                <!-- Recent/History Icon -->
+                <svg class="header-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+                <!-- New Chat Icon -->
+                <svg class="header-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"></path>
+                </svg>
+                <div class="flex gap-2 items-center ml-1">
+                    <span class="opacity-50">Lite</span>
+                    <span class="opacity-20 text-[10px]">⌘ L</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="chat-scroll" id="scrollContainer">
+            
+            <div class="mb-4 text-[14px] leading-relaxed">
+                Perfect! I've converted the core logic. Now let me merge the systematic Python conversion and clean up the directory.
+            </div>
+
+            <!-- CARD: To-dos -->
+            <div class="card-container expanded">
+                <div class="card-header" onclick="toggleCard(this)">
+                    <svg class="chevron" fill="currentColor" viewBox="0 0 20 20"><path d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"/></svg>
+                    <span>To-dos</span>
+                    <span class="ml-auto text-xs text-gray-600">2/3 done</span>
+                </div>
+                <div class="card-body">
+                    <div class="list-row opacity-50">
+                        <div class="todo-circle completed">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4"><path d="M20 6L9 17L4 12"/></svg>
+                        </div>
+                        <span class="line-through text-gray-500">Convert core logic blocks</span>
+                    </div>
+                    <div class="list-row opacity-50">
+                        <div class="todo-circle completed">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4"><path d="M20 6L9 17L4 12"/></svg>
+                        </div>
+                        <span class="line-through text-gray-500">Merge part files</span>
+                    </div>
+                    <div class="list-row">
+                        <div class="todo-circle active">
+                            <div class="todo-spinner"></div>
+                        </div>
+                        <span class="text-white">Final directory structure check</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CARD: Terminal -->
+            <div class="card-container expanded">
+                <div class="card-header" onclick="toggleCard(this)">
+                    <svg class="chevron" fill="currentColor" viewBox="0 0 20 20"><path d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"/></svg>
+                    <span>Run in terminal</span>
+                    <span class="ml-auto text-[10px] opacity-40">View Output ↗</span>
+                </div>
+                <div class="card-body">
+                    <div class="terminal-viewport">
+$ ls src/tools/AgentTool
+Directory: C:\Users\Hakeem\Desktop\Cortex_Ai_Agent
+
+Mode      LastWriteTime     Length Name
+----      -------------     ------ ----
+d----     4/3/2026  4:52 PM        built-in
+-a---     4/3/2026  7:15 PM   1154 FileReaderTool.py
+                    </div>
+                </div>
+            </div>
+
+            <!-- STEP: Exploring/Grep Logs -->
+            <div class="step-log">
+                Grepped code <span class="opacity-60">FileReaderTool|convert|permission 0 results</span><br>
+                Grepped code <span class="opacity-60">accept|reject|permission 25 results</span>
+            </div>
+
+            <!-- CARD: Creating File -->
+            <div class="card-container" id="creatingCard">
+                <div class="flex items-center p-3 gap-3">
+                    <svg class="w-4 h-4 text-blue-500 pulse-timer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    <span class="text-gray-400">Create file</span>
+                </div>
+            </div>
+
+            <!-- CARD: Delete Permission -->
+            <div class="card-container expanded" id="deletePermissionCard">
+                <div class="card-header">
+                    <svg class="chevron" fill="currentColor" viewBox="0 0 20 20"><path d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"/></svg>
+                    <span class="flex items-center gap-2">
+                        <svg class="w-3.5 h-3.5 text-red-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                        Delete temporary parts?
+                    </span>
+                    <div class="btn-group">
+                        <button class="btn-reject" onclick="handlePermission('deletePermissionCard', false)">Reject</button>
+                        <button class="btn-accept" onclick="handlePermission('deletePermissionCard', true)">Accept</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="list-row"><span>📄 FileReader_part1.py</span> <span class="status-tag text-del">D Deleted</span></div>
+                    <div class="list-row"><span>📄 FileReader_part2.py</span> <span class="status-tag text-del">D Deleted</span></div>
+                </div>
+            </div>
+
+            <!-- CARD: Changed Files -->
+            <div class="card-container expanded" id="changedFilesCard">
+                <div class="card-header">
+                    <svg class="chevron" fill="currentColor" viewBox="0 0 20 20"><path d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"/></svg>
+                    <span>23 Changed Files</span>
+                    <div class="btn-group">
+                        <button class="btn-reject" onclick="handlePermission('changedFilesCard', false)">Reject</button>
+                        <button class="btn-accept" onclick="handlePermission('changedFilesCard', true)">Accept</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="list-row"><span>🐍 FileReaderTool.py</span> <span class="status-tag text-add">A Created</span></div>
+                    <div class="list-row"><span>🐍 constants.py</span> <span class="status-tag text-mod">M Modified</span></div>
+                </div>
+            </div>
+
+            <div id="dynamicFlow"></div>
+        </div>
+
+        <!-- FIXED COMPOSER INPUT -->
+        <div class="composer-wrapper">
+            <div class="composer-box">
+                <textarea id="composerInput" placeholder="Plan and build, @ for context, / for commands"></textarea>
+                <div class="flex justify-between items-center mt-3">
+                    <div class="flex gap-4 opacity-40">
+                        <span>📎</span><span>📷</span><span>🎙️</span>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <span class="text-[10px] font-bold text-gray-600 tracking-widest">AGENT v LITE</span>
+                        <button onclick="handleSend()" class="submit-btn">Submit ↵</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function toggleCard(header) {
+            header.parentElement.classList.toggle('expanded');
+        }
+
+        function handlePermission(cardId, accepted) {
+            const card = document.getElementById(cardId);
+            const btnGroup = card.querySelector('.btn-group');
+            if(accepted) {
+                btnGroup.innerHTML = `<span class="text-green-500 text-[11px] font-bold">✓ ACCEPTED</span>`;
+                setTimeout(() => { card.classList.remove('expanded'); }, 800);
+            } else {
+                btnGroup.innerHTML = `<span class="text-red-500 text-[11px] font-bold">✕ REJECTED</span>`;
+                setTimeout(() => { card.style.opacity = '0.5'; }, 500);
+            }
+        }
+
+        function handleSend() {
+            const input = document.getElementById('composerInput');
+            const flow = document.getElementById('dynamicFlow');
+            const scroll = document.getElementById('scrollContainer');
+            if (input.value.trim()) {
+                const userMsg = document.createElement('div');
+                userMsg.className = 'my-8 text-sm pl-4 border-l-2 border-blue-500';
+                userMsg.innerHTML = `<span class="text-[10px] text-gray-600 block mb-1 font-bold">YOU</span> ${input.value}`;
+                flow.appendChild(userMsg);
+                scroll.scrollTop = scroll.scrollHeight;
+                input.value = '';
+            }
+        }
+
+        document.getElementById('composerInput').addEventListener('keydown', (e) => {
+            if(e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSend();
+            }
+        });
+    </script>
+</body>
+</html>

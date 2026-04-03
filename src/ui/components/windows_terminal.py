@@ -200,13 +200,22 @@ class WindowsTerminalWidget(QWidget):
                 }
                 QTextEdit QScrollBar:vertical {
                     background: transparent;
-                    width: 10px;
-                    margin: 0px;
+                    width: 6px;
+                    margin: 2px 1px;
                 }
                 QTextEdit QScrollBar::handle:vertical {
-                    background: #424242;
-                    border-radius: 5px;
-                    min-height: 30px;
+                    background: rgba(255, 255, 255, 0.15);
+                    border-radius: 3px;
+                    min-height: 20px;
+                }
+                QTextEdit QScrollBar::handle:vertical:hover {
+                    background: rgba(255, 255, 255, 0.25);
+                }
+                QTextEdit QScrollBar::add-line:vertical, QTextEdit QScrollBar::sub-line:vertical {
+                    height: 0px;
+                }
+                QTextEdit QScrollBar::add-page:vertical, QTextEdit QScrollBar::sub-page:vertical {
+                    background: none;
                 }
             """)
             self._input_row.setStyleSheet("""
