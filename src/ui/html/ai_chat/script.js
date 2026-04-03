@@ -281,7 +281,10 @@ function smartScroll(container) {
 // Track user scroll
 function initScrollTracking() {
     var container = document.getElementById('chatMessages');
-    if (!container) return;
+    if (!container) {
+        console.warn('[SCROLL] chatMessages element not found, skipping scroll tracking');
+        return;
+    }
     
     container.addEventListener('scroll', function() {
         // Check if user scrolled up (not at bottom)
@@ -929,13 +932,34 @@ window.trySetProjectInfo = function(name, path, retryCount, callback) {
 };
 
 document.addEventListener('DOMContentLoaded', function () {
-    initMarked();
-    // Terminal is initialized lazily when first shown
-    initBridge();
-    initScrollTracking(); // Initialize scroll tracking
+    console.log('[INIT] DOMContentLoaded fired');
     
-    // Mark as ready when everything is loaded
-    if (window.markReady) window.markReady();
+    try {
+        console.log('[INIT] Starting initMarked()...');
+        initMarked();
+        
+        console.log('[INIT] Starting initBridge()...');
+        // Terminal is initialized lazily when first shown
+        initBridge();
+        
+        console.log('[INIT] Starting initScrollTracking()...');
+        initScrollTracking(); // Initialize scroll tracking
+        
+        console.log('[INIT] All initialization complete, marking ready');
+    } catch (error) {
+        console.error('[INIT] Error during initialization:', error);
+        console.error('[INIT] Error stack:', error.stack);
+    } finally {
+        // Always mark as ready even if there were errors
+        console.log('[INIT] Entering finally block, checking markReady...');
+        if (window.markReady) {
+            console.log('[INIT] Calling window.markReady()');
+            window.markReady();
+            console.log('[INIT] Page marked as ready - body classes:', document.body.className);
+        } else {
+            console.error('[INIT] ERROR: window.markReady is not defined!');
+        }
+    }
 
     // Image attachment handling
     var attachImageBtn = document.querySelector('[title="Attach Image"]');
@@ -1725,21 +1749,13 @@ function appendMessage(text, sender, shouldSave) {
         textWrap.className = 'user-text-wrap';
         textWrap.appendChild(content);
 
-        // Hover copy button (floats above bubble on hover)
-        var ub = document.createElement('button');
-        ub.className = 'user-copy-btn';
-        ub.title = 'Copy message';
-        ub.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg> Copy';
-        ub.onclick = function(e) { e.stopPropagation(); copyMessage(text, ub); };
-        textWrap.appendChild(ub);
-
-        // User avatar
+        // User avatar - append FIRST so it appears on right with inline-block
         var av = document.createElement('div');
         av.className = 'user-avatar';
         av.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>';
 
-        row.appendChild(textWrap);
-        row.appendChild(av);
+        row.appendChild(av); // Avatar first (appears on right due to text-align: right)
+        row.appendChild(textWrap); // Text second (appears on left)
         bubble.appendChild(row);
     } else {
         var parsedHtml = '';
@@ -1756,16 +1772,6 @@ function appendMessage(text, sender, shouldSave) {
         // Ensure we never set undefined
         content.innerHTML = parsedHtml || text || '';
 
-        // Copy button for assistant messages
-        var copyBtn = document.createElement('button');
-        copyBtn.className = 'copy-msg-btn';
-        copyBtn.title = 'Copy Message';
-        copyBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>';
-        copyBtn.onclick = function(e) {
-            e.stopPropagation();
-            copyMessage(text, copyBtn);
-        };
-        bubble.appendChild(copyBtn);
         bubble.appendChild(content);
     }
 
@@ -3147,6 +3153,11 @@ function getCfcFileIcon(ext) {
 
 var currentTodoList = [];
 
+/**
+ * Update todos using NEW Cursor IDE card design
+ * @param {Array} todos - Array of todo objects {id, content, status}
+ * @param {string} mainTask - Optional main task description
+ */
 function updateTodos(todos, mainTask) {
     console.log('[TODO] updateTodos called, todos count:', todos ? todos.length : 0);
     if (!todos || !Array.isArray(todos)) {
@@ -3154,25 +3165,15 @@ function updateTodos(todos, mainTask) {
         return;
     }
 
-    var section  = document.getElementById('todo-section');
-    var list     = document.getElementById('todo-list');
-    var previewEl = document.getElementById('todo-preview-text');
-    var countEl  = document.getElementById('todo-progress-count');
-
-    if (!section || !list) {
-        console.log('[TODO] section or list not found, section:', !!section, 'list:', !!list);
-        return;
-    }
-
-    // If empty todos received, don't clear existing ones - persist until completed
+    // If empty todos received, don't clear existing ones
     if (todos.length === 0) {
         console.log('[TODO] Empty todos received');
-        // Only hide if there are no existing todos
         if (currentTodoList.length === 0) {
-            section.style.display = 'none';
-            list.innerHTML = '';
-            if (previewEl) previewEl.textContent = '';
-            if (countEl)   countEl.textContent   = '0/0';
+            // Remove any existing todo card
+            var existingCard = document.getElementById('todo-card-container');
+            if (existingCard) {
+                existingCard.remove();
+            }
         }
         return;
     }
@@ -3194,66 +3195,39 @@ function updateTodos(todos, mainTask) {
     
     // Add new todos
     currentTodoList = currentTodoList.concat(newTodos);
-    section.style.display = 'flex';
     
-    // CRITICAL: Show the todo-body so todos are visible
-    var todoBody = document.getElementById('todo-body');
-    if (todoBody) {
-        todoBody.style.display = 'block';
-        section.classList.add('expanded');
-        _todoExpanded = true;
-    }
-
-    // Calculate stats from currentTodoList (merged list)
-    var total     = currentTodoList.length;
-    var completed = currentTodoList.filter(function(t) { return t.status === 'COMPLETE'; }).length;
-
-    if (countEl) countEl.textContent = completed + '/' + total;
-
-    // Header preview: first incomplete task text
-    if (previewEl) {
-        var firstIncomplete = null;
-        for (var i = 0; i < currentTodoList.length; i++) {
-            if (currentTodoList[i].status !== 'COMPLETE' && currentTodoList[i].status !== 'CANCELLED') {
-                firstIncomplete = currentTodoList[i];
-                break;
-            }
-        }
-        previewEl.textContent = (firstIncomplete || currentTodoList[0]).content;
-    }
-
-    list.innerHTML = '';
-    currentTodoList.forEach(function(todo) {
-        var item = document.createElement('div');
-        var statusLow = todo.status.toLowerCase().replace('_', '');
-        item.className = 'todo-item todo-' + statusLow;
-        item.dataset.id = todo.id;
-
-        var iconHtml = '';
-        var newStatus = todo.status === 'COMPLETE' ? false : true;
-        switch (todo.status) {
-            case 'COMPLETE':
-                iconHtml = '<div class="todo-icon todo-icon-done"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><polyline points="20 6 9 17 4 12"/></svg></div>';
-                break;
-            case 'IN_PROGRESS':
-                iconHtml = '<div class="todo-icon todo-icon-progress"><svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="5"/></svg></div>';
-                break;
-            case 'CANCELLED':
-                iconHtml = '<div class="todo-icon todo-icon-cancelled"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></div>';
-                break;
-            default:
-                iconHtml = '<div class="todo-icon todo-icon-pending"></div>';
-        }
-
-        item.innerHTML = iconHtml + '<span class="todo-text">' + escapeHtml(todo.content) + '</span>';
-        item.style.cursor = 'pointer';
-        item.addEventListener('click', function() {
-            if (window.bridge && window.bridge.on_toggle_todo) {
-                window.bridge.on_toggle_todo(todo.id, newStatus);
-            }
-        });
-        list.appendChild(item);
+    // Convert to new card format
+    var cardTodos = currentTodoList.map(function(todo) {
+        return {
+            text: todo.content,
+            status: (todo.status === 'COMPLETE' || todo.status === 'CANCELLED') ? 'completed' : 'active'
+        };
     });
+    
+    // Check if todo card already exists
+    var existingCard = document.getElementById('todo-card-container');
+    if (existingCard) {
+        // Update existing card
+        existingCard.remove();
+    }
+    
+    // Create new todo card
+    var card = window.createTodoCard(cardTodos);
+    card.id = 'todo-card-container';
+    
+    // Append or prepend to chat (todos should appear near the top)
+    var chatMessages = document.getElementById('chatMessages');
+    if (chatMessages) {
+        // Insert after empty state but before other messages
+        var emptyState = document.getElementById('empty-state');
+        if (emptyState && emptyState.nextSibling) {
+            chatMessages.insertBefore(card, emptyState.nextSibling);
+        } else {
+            chatMessages.insertBefore(card, chatMessages.firstChild);
+        }
+    }
+    
+    console.log('[TODO] Card rendered with', cardTodos.length, 'items');
 }
 
 function getStatusClass(status) {
@@ -4128,84 +4102,55 @@ function renderDiffBlock(data, isStreaming) {
     }
 }
 
-// --- Terminal Output Display in Chat ---
+// --- Terminal Output Display in Chat (NEW Cursor IDE Card Design) ---
 function showTerminalOutputInChat(command, output, isRunning) {
-    var container = document.getElementById('chatMessages');
-    if (!container) return;
+    console.log('[TERMINAL] Showing output in card:', command);
     
-    // Remove existing terminal output if any
-    var existingOutput = document.getElementById('inline-terminal-output');
-    if (existingOutput) {
-        existingOutput.remove();
-    }
+    // Create terminal card using new card system
+    var card = window.createTerminalCard(command, output || '');
     
-    var html = '<div id="inline-terminal-output" class="terminal-output-block' + (isRunning ? ' running' : '') + '">';
-    html += '<div class="terminal-output-header">';
-    html += '<span class="terminal-status"><i class="fas fa-terminal"></i> ' + (isRunning ? 'Running in terminal' : 'Terminal Output') + '</span>';
+    // If running, add a pulse animation indicator
     if (isRunning) {
-        html += '<span class="terminal-actions">';
-        html += '<button class="terminal-action-btn" onclick="window.showTerminal()">Run in the background</button>';
-        html += '<button class="terminal-action-btn cancel" onclick="stopGeneration()">Cancel</button>';
-        html += '</span>';
-    } else {
-        html += '<button class="terminal-action-btn" onclick="window.showTerminal()"><i class="fas fa-external-link-alt"></i> View in terminal</button>';
-    }
-    html += '</div>';
-    
-    // Command display
-    html += '<div class="terminal-command">';
-    html += '<span class="prompt">$</span> ' + escapeHtml(command);
-    html += '</div>';
-    
-    // Output display
-    if (output) {
-        html += '<div class="terminal-content">';
-        html += '<pre>' + escapeHtml(output) + '</pre>';
-        html += '</div>';
+        var header = card.querySelector('.card-header');
+        if (header) {
+            var statusSpan = document.createElement('span');
+            statusSpan.className = 'ml-auto text-[10px] opacity-40 pulse-timer';
+            statusSpan.textContent = 'Running...';
+            header.appendChild(statusSpan);
+        }
     }
     
-    html += '</div>';
-    
-    // Insert before the current assistant message or append to container
-    if (currentAssistantMessage) {
-        currentAssistantMessage.insertAdjacentHTML('beforebegin', html);
-    } else {
-        container.insertAdjacentHTML('beforeend', html);
-    }
-    
-    smartScroll(container);
+    // Append card to chat
+    window.appendCardToChat(card);
 }
 
 /**
- * Mark terminal output as complete and hide the stop button
+ * Mark terminal output as complete (NEW design)
  * Called from Python when terminal command finishes
  */
 function completeTerminalOutput() {
-    var terminalOutput = document.getElementById('inline-terminal-output');
-    if (terminalOutput) {
-        // Remove running class
-        terminalOutput.classList.remove('running');
-        
-        // Hide the Cancel button
-        var cancelBtn = terminalOutput.querySelector('.terminal-action-btn.cancel');
-        if (cancelBtn) {
-            cancelBtn.style.display = 'none';
+    console.log('[TERMINAL] Output complete');
+    
+    // Find the last terminal card and update it
+    var terminalCards = document.querySelectorAll('.card-container');
+    terminalCards.forEach(function(card) {
+        var header = card.querySelector('.card-header');
+        if (header && header.textContent.includes('Run in terminal')) {
+            // Remove any "Running..." indicators
+            var runningIndicator = card.querySelector('.pulse-timer');
+            if (runningIndicator) {
+                runningIndicator.remove();
+            }
+            
+            // Update header to show completion
+            var viewLink = header.querySelector('.text-\\[10px\\]');
+            if (viewLink) {
+                viewLink.textContent = 'Completed ✓';
+                viewLink.classList.remove('opacity-40');
+                viewLink.style.color = 'var(--green-bright)';
+            }
         }
-        
-        // Show the View in terminal button instead
-        var actionSpan = terminalOutput.querySelector('.terminal-actions');
-        if (actionSpan) {
-            actionSpan.innerHTML = '<button class="terminal-action-btn" onclick="window.showTerminal()"><i class="fas fa-external-link-alt"></i> View in terminal</button>';
-        }
-        
-        // Update status text
-        var statusSpan = terminalOutput.querySelector('.terminal-status');
-        if (statusSpan) {
-            statusSpan.textContent = '? Terminal Output Completed';
-        }
-        
-        console.log('[Terminal] Output marked as complete');
-    }
+    });
 }
 
 // --- File Reference Display ---
@@ -5110,6 +5055,39 @@ document.addEventListener('DOMContentLoaded', function() {
         window._pendingProjectInfoWithChats = null;
         window.setProjectInfoWithChats(pendingInfo.name, pendingInfo.path, pendingInfo.chatsJson);
     }
+
+    // ============================================
+    // THEME TOGGLE FUNCTION
+    // ============================================
+    window.setTheme = function(theme) {
+        console.log('[THEME] Setting theme to:', theme);
+        
+        if (theme === 'light') {
+            document.body.classList.add('light-mode');
+            document.body.classList.remove('dark');
+            localStorage.setItem('cortex_theme', 'light');
+        } else {
+            // Default to dark
+            document.body.classList.remove('light-mode');
+            document.body.classList.add('dark');
+            localStorage.setItem('cortex_theme', 'dark');
+        }
+        
+        console.log('[THEME] Theme applied - body classes:', document.body.className);
+    };
+    
+    // Load saved theme on startup
+    (function loadSavedTheme() {
+        var savedTheme = localStorage.getItem('cortex_theme');
+        if (savedTheme) {
+            console.log('[THEME] Loading saved theme:', savedTheme);
+            window.setTheme(savedTheme);
+        } else {
+            // Default to dark mode
+            document.body.classList.add('dark');
+            console.log('[THEME] Using default dark theme');
+        }
+    })();
 
     // Keep the old method for compatibility
     window.setProjectInfo = function(name, path) {
@@ -6597,71 +6575,52 @@ window.hideIndexingStatus = hideIndexingStatus;
 // ================================================
 
 /**
- * Show permission card inside chat messages area
+ * Show permission card using NEW Cursor IDE card design
  * @param {string} toolName - Name of the tool requesting permission
- * @param {string} details - HTML content showing what will be changed
- * @param {function} callback - Function to call with (approved, remember) when user responds
+ * @param {Object} details - Permission details {action, files, type}
+ * @param {function} callback - Function to call with (approved) when user responds
  */
 function showPermissionCard(toolName, details, callback) {
     console.log('[PERMISSION] Showing card for:', toolName);
     
-    // Get chat messages container
-    var chatMessages = document.getElementById('chatMessages');
-    if (!chatMessages) {
-        console.error('[PERMISSION] Chat messages container not found!');
-        return;
-    }
+    // Extract action and files from details
+    var action = details.action || details.text || 'Permission required';
+    var files = details.files || [];
+    var cardId = 'permission-' + Date.now();
     
-    // Create permission card from template
-    var template = document.getElementById('permission-card-template');
-    if (!template) {
-        console.error('[PERMISSION] Template not found!');
-        return;
-    }
+    // Create permission card using new card system
+    var card = window.createPermissionCard(action, files, cardId);
     
-    var card = template.content.cloneNode(true);
-    
-    // Populate card content
-    card.querySelector('.permission-tool-name').textContent = toolName;
-    card.querySelector('.permission-card-details').innerHTML = details;
-    
-    // Store callback on card element
+    // Store callback for bridge communication
     card._permissionCallback = callback;
     
-    // Add to chat messages
-    chatMessages.appendChild(card);
-    
-    // Scroll to bottom to show card
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-    
-    // Setup button handlers
-    var approveBtn = card.querySelector('.permission-btn-approve');
-    var denyBtn = card.querySelector('.permission-btn-deny');
-    var rememberCheckbox = card.querySelector('.permission-remember-checkbox');
-    
-    if (approveBtn) {
-        approveBtn.addEventListener('click', function() {
-            var remember = rememberCheckbox ? rememberCheckbox.checked : false;
-            console.log('[PERMISSION] User approved');
+    // Override handlePermission to use our callback
+    var originalHandlePermission = window.handlePermission;
+    window.handlePermission = function(id, accepted) {
+        if (id === cardId) {
+            console.log('[PERMISSION] User response:', accepted ? 'ACCEPTED' : 'REJECTED');
+            
+            // Call the stored callback
             if (card._permissionCallback) {
-                card._permissionCallback(true, remember);
+                card._permissionCallback(accepted, false);
             }
-            // Remove card after response
-            card.remove();
-        });
-    }
+            
+            // Notify Python bridge
+            if (window.bridge && window.bridge.on_permission_response) {
+                window.bridge.on_permission_response({
+                    id: id,
+                    accepted: accepted,
+                    tool: toolName
+                });
+            }
+            
+            // Use visual feedback from new design
+            originalHandlePermission(id, accepted);
+        }
+    };
     
-    if (denyBtn) {
-        denyBtn.addEventListener('click', function() {
-            var remember = rememberCheckbox ? rememberCheckbox.checked : false;
-            console.log('[PERMISSION] User denied');
-            if (card._permissionCallback) {
-                card._permissionCallback(false, remember);
-            }
-            // Remove card after response
-            card.remove();
-        });
-    }
+    // Append card to chat
+    window.appendCardToChat(card);
 }
 
 // Expose to Python bridge
@@ -8114,6 +8073,280 @@ window.acceptAllDiffLines = window.acceptAllDiffLines;
 window.rejectAllDiffLines = window.rejectAllDiffLines;
 window.showFullDiff = window.showFullDiff;
 
+
+/* ================================================
+   CURSOR IDE CARD COMPONENTS - DYNAMIC RENDERING
+   Transforms tool execution into modern card-based UI
+   ================================================ */
+
+/**
+ * Toggle card expansion (from new_aichat.html)
+ * @param {HTMLElement} header - The card header element
+ */
+window.toggleCard = function(header) {
+    header.parentElement.classList.toggle('expanded');
+};
+
+/**
+ * Handle permission accept/reject (from new_aichat.html)
+ * @param {string} cardId - The card ID
+ * @param {boolean} accepted - Whether permission was accepted
+ */
+window.handlePermission = function(cardId, accepted) {
+    const card = document.getElementById(cardId);
+    if (!card) return;
+    
+    const btnGroup = card.querySelector('.btn-group');
+    if (!btnGroup) return;
+    
+    if (accepted) {
+        btnGroup.innerHTML = `<span class="text-green-500 text-[11px] font-bold">✓ ACCEPTED</span>`;
+        setTimeout(() => { 
+            card.classList.remove('expanded'); 
+        }, 800);
+        
+        // Notify bridge if available
+        if (window.bridge && window.bridge.on_permission_response) {
+            window.bridge.on_permission_response({ id: cardId, accepted: true });
+        }
+    } else {
+        btnGroup.innerHTML = `<span class="text-red-500 text-[11px] font-bold">✕ REJECTED</span>`;
+        setTimeout(() => { 
+            card.style.opacity = '0.5'; 
+        }, 500);
+        
+        // Notify bridge if available
+        if (window.bridge && window.bridge.on_permission_response) {
+            window.bridge.on_permission_response({ id: cardId, accepted: false });
+        }
+    }
+};
+
+/**
+ * Create a todo card with collapsible items
+ * @param {Array} todos - Array of todo objects {text, status: 'completed'|'active'}
+ * @returns {HTMLElement}
+ */
+window.createTodoCard = function(todos) {
+    const completedCount = todos.filter(t => t.status === 'completed').length;
+    const totalCount = todos.length;
+    
+    const card = document.createElement('div');
+    card.className = 'card-container expanded';
+    
+    let todoItemsHTML = '';
+    todos.forEach(todo => {
+        const isCompleted = todo.status === 'completed';
+        todoItemsHTML += `
+            <div class="list-row ${isCompleted ? 'opacity-50' : ''}">
+                <div class="todo-circle ${isCompleted ? 'completed' : 'active'}">
+                    ${isCompleted ? 
+                        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4"><path d="M20 6L9 17L4 12"/></svg>' :
+                        '<div class="todo-spinner"></div>'
+                    }
+                </div>
+                <span class="${isCompleted ? 'line-through text-gray-500' : 'text-white'}">${todo.text}</span>
+            </div>
+        `;
+    });
+    
+    card.innerHTML = `
+        <div class="card-header" onclick="toggleCard(this)">
+            <svg class="card-chevron" fill="currentColor" viewBox="0 0 20 20"><path d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"/></svg>
+            <span>To-dos</span>
+            <span class="ml-auto text-xs text-gray-600">${completedCount}/${totalCount} done</span>
+        </div>
+        <div class="card-body">
+            ${todoItemsHTML}
+        </div>
+    `;
+    
+    return card;
+};
+
+/**
+ * Create a terminal output card
+ * @param {string} command - The command that was run
+ * @param {string} output - Terminal output text
+ * @returns {HTMLElement}
+ */
+window.createTerminalCard = function(command, output) {
+    const card = document.createElement('div');
+    card.className = 'card-container expanded';
+    
+    card.innerHTML = `
+        <div class="card-header" onclick="toggleCard(this)">
+            <svg class="card-chevron" fill="currentColor" viewBox="0 0 20 20"><path d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"/></svg>
+            <span>Run in terminal</span>
+            <span class="ml-auto text-[10px] opacity-40">View Output ↗</span>
+        </div>
+        <div class="card-body">
+            <div class="terminal-viewport">$ ${command}\n${output}</div>
+        </div>
+    `;
+    
+    return card;
+};
+
+/**
+ * Create a permission request card
+ * @param {string} action - Action description (e.g., "Delete temporary parts?")
+ * @param {Array} files - Array of file objects {name, status: 'A'|'M'|'D'}
+ * @param {string} cardId - Unique ID for this permission card
+ * @returns {HTMLElement}
+ */
+window.createPermissionCard = function(action, files, cardId) {
+    const card = document.createElement('div');
+    card.className = 'card-container expanded';
+    card.id = cardId || 'permission-' + Date.now();
+    
+    // Determine icon based on action
+    let iconSVG = '<svg class="w-3.5 h-3.5 text-blue-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>';
+    if (action.toLowerCase().includes('delete')) {
+        iconSVG = '<svg class="w-3.5 h-3.5 text-red-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>';
+    } else if (action.toLowerCase().includes('create') || action.toLowerCase().includes('add')) {
+        iconSVG = '<svg class="w-3.5 h-3.5 text-green-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>';
+    }
+    
+    let filesHTML = '';
+    files.forEach(file => {
+        let statusClass = '';
+        let statusText = '';
+        let icon = '📄';
+        
+        switch(file.status) {
+            case 'A':
+                statusClass = 'text-add';
+                statusText = 'A Created';
+                icon = '🐍';
+                break;
+            case 'M':
+                statusClass = 'text-mod';
+                statusText = 'M Modified';
+                icon = '🐍';
+                break;
+            case 'D':
+                statusClass = 'text-del';
+                statusText = 'D Deleted';
+                icon = '📄';
+                break;
+        }
+        
+        filesHTML += `<div class="list-row"><span>${icon} ${file.name}</span> <span class="status-tag ${statusClass}">${statusText}</span></div>`;
+    });
+    
+    card.innerHTML = `
+        <div class="card-header">
+            <svg class="card-chevron" fill="currentColor" viewBox="0 0 20 20"><path d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"/></svg>
+            <span class="flex items-center gap-2">
+                ${iconSVG}
+                ${action}
+            </span>
+            <div class="btn-group">
+                <button class="btn-reject" onclick="handlePermission('${card.id}', false)">Reject</button>
+                <button class="btn-accept" onclick="handlePermission('${card.id}', true)">Accept</button>
+            </div>
+        </div>
+        <div class="card-body">
+            ${filesHTML}
+        </div>
+    `;
+    
+    return card;
+};
+
+/**
+ * Create a step log entry
+ * @param {string} message - Log message
+ * @param {string} detail - Optional detail text
+ * @returns {HTMLElement}
+ */
+window.createStepLog = function(message, detail) {
+    const log = document.createElement('div');
+    log.className = 'step-log';
+    log.innerHTML = `${message}${detail ? ` <span class="opacity-60">${detail}</span>` : ''}`;
+    return log;
+};
+
+/**
+ * Create a "creating file" progress indicator
+ * @param {string} fileName - Name of file being created
+ * @returns {HTMLElement}
+ */
+window.createCreatingFileCard = function(fileName) {
+    const card = document.createElement('div');
+    card.className = 'card-container';
+    card.id = 'creating-file-card';
+    
+    card.innerHTML = `
+        <div class="flex items-center p-3 gap-3">
+            <svg class="w-4 h-4 text-blue-500 pulse-timer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <span class="text-gray-400">Create file</span>
+            <span class="text-gray-500 ml-auto">${fileName}</span>
+        </div>
+    `;
+    
+    return card;
+};
+
+/**
+ * Append a card component to the chat container
+ * @param {HTMLElement} card - The card element to append
+ */
+window.appendCardToChat = function(card) {
+    const container = document.getElementById('chatMessages');
+    if (!container) {
+        console.warn('[CardUI] Chat container not found');
+        return;
+    }
+    
+    // Hide empty state if visible
+    const emptyState = document.getElementById('empty-state');
+    if (emptyState) emptyState.style.display = 'none';
+    
+    container.appendChild(card);
+    
+    // Auto-scroll to show new card
+    container.scrollTop = container.scrollHeight;
+};
+
+/**
+ * Render tool execution as a card (wrapper for backward compatibility)
+ * @param {Object} toolData - Tool execution data from bridge
+ */
+window.renderToolAsCard = function(toolData) {
+    console.log('[CardUI] Rendering tool as card:', toolData);
+    
+    let card = null;
+    
+    switch(toolData.type) {
+        case 'todo':
+            card = window.createTodoCard(toolData.todos || []);
+            break;
+        case 'terminal':
+            card = window.createTerminalCard(toolData.command || '', toolData.output || '');
+            break;
+        case 'permission':
+            card = window.createPermissionCard(
+                toolData.action || 'Permission required',
+                toolData.files || [],
+                toolData.cardId || 'permission-' + Date.now()
+            );
+            break;
+        case 'creating_file':
+            card = window.createCreatingFileCard(toolData.fileName || 'unknown');
+            break;
+        default:
+            console.warn('[CardUI] Unknown tool type:', toolData.type);
+            return;
+    }
+    
+    if (card) {
+        window.appendCardToChat(card);
+    }
+};
+
+console.log('[CardUI] Cursor IDE card components initialized');
 
 
 
