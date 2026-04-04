@@ -113,16 +113,23 @@ class KeyManager:
             
         return False
     
-    def get_key(self, provider: str) -> Optional[str]:
+    def get_key(self, provider: str, force_refresh: bool = False) -> Optional[str]:
         """
         Retrieve an API key.
         
         Args:
             provider: The LLM provider
+            force_refresh: If True, bypass cache and reload from sources
             
         Returns:
             The API key if found, None otherwise
         """
+        # Clear cache if force refresh requested
+        if force_refresh and provider in self._cache:
+            log.debug(f"Forcing refresh of {provider} key, clearing cache")
+            del self._cache[provider]
+            del self._cache_ttl[provider]
+        
         # Check cache first
         if provider in self._cache:
             if datetime.now() - self._cache_ttl[provider] < self._CACHE_DURATION:
@@ -199,6 +206,23 @@ class KeyManager:
             log.error(f"Failed to delete key for {provider}: {e}")
         
         return False
+    
+    def clear_cache(self, provider: Optional[str] = None):
+        """Clear cached API keys.
+        
+        Args:
+            provider: Specific provider to clear, or None to clear all
+        """
+        if provider:
+            if provider in self._cache:
+                log.info(f"Cleared cache for {provider}")
+                del self._cache[provider]
+                del self._cache_ttl[provider]
+        else:
+            count = len(self._cache)
+            self._cache.clear()
+            self._cache_ttl.clear()
+            log.info(f"Cleared all {count} cached API keys")
     
     def list_stored_providers(self) -> List[str]:
         """List all providers with stored keys."""

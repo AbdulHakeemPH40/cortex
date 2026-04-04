@@ -5,18 +5,64 @@ Run with: python src/main.py
 
 import sys
 import os
+from pathlib import Path
 
-# Force Windows platform
+# CRITICAL: Load .env FIRST before ANY other imports!
+try:
+    from dotenv import load_dotenv
+    
+    # Resolve correct root path for PyInstaller
+    if getattr(sys, 'frozen', False):
+        # Running as compiled executable
+        if hasattr(sys, '_MEIPASS'):
+            # PyInstaller bundled app - .env is in _MEIPASS temp folder
+            app_root = Path(sys._MEIPASS)
+        else:
+            # Nuitka or other compiler - next to executable
+            app_root = Path(sys.executable).parent
+    else:
+        # Development mode
+        app_root = Path(__file__).parent.parent
+        
+    env_paths = [
+        app_root / ".env",
+        Path.cwd() / ".env",
+        # Fallback: user's home directory
+        Path.home() / ".cortex" / ".env",
+    ]
+    
+    for env_path in env_paths:
+        if env_path.exists():
+            load_dotenv(env_path)
+            print(f"[MAIN] Loaded .env from: {env_path}")
+            break
+    else:
+        print("[MAIN] WARNING: No .env file found!")
+except ImportError:
+    print("[MAIN] WARNING: python-dotenv not installed")
+
+# HiDPI + Windows platform setup (BEFORE QApplication)
+os.environ['QT_ENABLE_HIGHDPI_SCALING'] = '1'
+os.environ['QT_SCALE_FACTOR_ROUNDING_POLICY'] = 'PassThrough'
 if sys.platform == 'win32':
     os.environ['QT_QPA_PLATFORM'] = 'windows'
-    os.environ['QT_OPENGL'] = 'software'
+    # Do NOT set QT_OPENGL=software — it disables hardware acceleration and blurs everything
 
 # Add project root to path so 'src' imports work
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Set AppUserModelID for Windows Taskbar Taskbar icon fix
+if sys.platform == 'win32':
+    import ctypes
+    try:
+        myappid = 'cortex.ai.agent.ide.v1'
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+    except Exception:
+        pass
+
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QIcon
 
 from src.main_window import CortexMainWindow
 from src.utils.logger import get_logger
@@ -26,11 +72,16 @@ log = get_logger("main")
 
 def main():
     # HiDPI support is automatic in Qt6
-
+    
     app = QApplication(sys.argv)
     app.setApplicationName("Cortex AI Agent")
     app.setApplicationVersion("1.0.0")
     app.setOrganizationName("Cortex")
+
+    # Set Application Icon (Taskbar/Alt+Tab) - Using focused logo-only version
+    icon_path = os.path.join(os.path.dirname(__file__), "assets", "logo", "taskbar.ico")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
 
     # Global font - try Segoe UI first, fall back to system font
     try:
@@ -42,6 +93,20 @@ def main():
         font.setPointSize(10)
         app.setFont(font)
 
+    # CRITICAL: Install global exception handler to prevent crashes
+    def handle_exception(exc_type, exc_value, exc_traceback):
+        """Global exception handler to keep IDE running."""
+        import traceback
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+            return
+        error_msg = f"Uncaught exception: {str(exc_value)}\n{''.join(traceback.format_exception(exc_type, exc_value, exc_traceback))}"
+        log.critical(error_msg)
+        print(f"\n❌ {error_msg}\n", file=sys.stderr)
+        # Don't exit - just log and continue running
+    
+    sys.excepthook = handle_exception
+    
     log.info("Starting Cortex AI Agent IDE...")
 
     window = CortexMainWindow()

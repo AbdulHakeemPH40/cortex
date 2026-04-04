@@ -23,18 +23,92 @@
             padding: 4px;
             box-sizing: border-box;
         }
+
+        
+        /* Enhanced Scrollbar - Smaller, liquid feel, always visible */
         .xterm-viewport::-webkit-scrollbar {
-            width: 10px;
+            width: 8px;
+            height: 8px;
         }
+        
         .xterm-viewport::-webkit-scrollbar-track {
+            background: rgba(30, 30, 30, 0.5);
+            border-radius: 4px;
+            margin: 2px;
+        }
+        
+        .xterm-viewport::-webkit-scrollbar-thumb {
+            background: linear-gradient(180deg, #5a5a5a 0%, #4a4a4a 100%);
+            border-radius: 4px;
+            border: 1px solid rgba(0, 0, 0, 0.2);
+            min-height: 40px;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        .xterm-viewport::-webkit-scrollbar-thumb:hover {
+            background: linear-gradient(180deg, #6a6a6a 0%, #5a5a5a 100%);
+            border-radius: 4px;
+            transform: scaleX(1.1);
+        }
+        
+        .xterm-viewport::-webkit-scrollbar-thumb:active {
+            background: linear-gradient(180deg, #7a7a7a 0%, #6a6a6a 100%);
+            border-radius: 4px;
+        }
+        
+        /* Firefox scrollbar */
+        .xterm-viewport {
+            scrollbar-width: thin;
+            scrollbar-color: #5a5a5a #1e1e1e;
+        }
+        
+        /* Ensure scrollbar is always visible */
+        .xterm-viewport::-webkit-scrollbar-corner {
             background: transparent;
         }
-        .xterm-viewport::-webkit-scrollbar-thumb {
-            background: #424242;
-            border-radius: 5px;
+        
+        /* URL Link Styling - Underline and hover highlighting */
+        .xterm-decoration-container .xterm-decoration {
+            pointer-events: auto;
+            cursor: pointer;
         }
-        .xterm-viewport::-webkit-scrollbar-thumb:hover {
-            background: #4f4f4f;
+        
+        .xterm-decoration-container .xterm-decoration:hover {
+            text-decoration: underline;
+            background-color: rgba(0, 120, 212, 0.3) !important;
+        }
+        
+        /* Link styling in dark mode */
+        .xterm .xterm-decoration {
+            pointer-events: auto;
+            cursor: pointer;
+        }
+        
+        .xterm .xterm-decoration:hover {
+            text-decoration: underline;
+            background-color: rgba(0, 120, 212, 0.3);
+        }
+        
+        /* Light mode scrollbar styles */
+        body.light-mode .xterm-viewport::-webkit-scrollbar-track {
+            background: rgba(240, 240, 240, 0.8);
+        }
+        
+        body.light-mode .xterm-viewport::-webkit-scrollbar-thumb {
+            background: linear-gradient(180deg, #c0c0c0 0%, #a0a0a0 100%);
+            border: 1px solid rgba(0, 0, 0, 0.1);
+        }
+        
+        body.light-mode .xterm-viewport::-webkit-scrollbar-thumb:hover {
+            background: linear-gradient(180deg, #b0b0b0 0%, #909090 100%);
+        }
+        
+        body.light-mode .xterm-viewport::-webkit-scrollbar-thumb:active {
+            background: linear-gradient(180deg, #a0a0a0 0%, #808080 100%);
+        }
+        
+        body.light-mode .xterm-viewport {
+            scrollbar-color: #a0a0a0 #f0f0f0;
         }
     </style>
 </head>
@@ -103,6 +177,8 @@
             // PERFORMANCE: Disable features we don't need
             allowTransparency: false,
             fastScrollModifier: 'alt',
+            // Padding on both sides (20px left + 8px scrollbar + 12px right = 20px effective right padding)
+            padding: { left: 20, right: 20 },
             theme: {
                 background: '#0c0c0c',
                 foreground: '#cccccc',
@@ -211,24 +287,65 @@
             }, 50);
         }
 
+        // Track paste operation to prevent double handling
+        let _isPasting = false;
+        let _pasteTimer = null;
+        
+        // Handle paste events - prevent browser default and use Python clipboard
         function _handlePasteEvent(e) {
             if (!window.pyTerminal) {
                 return;
             }
             e.preventDefault();
             e.stopPropagation();
+            
+            // Clear any existing paste timer
+            if (_pasteTimer) {
+                clearTimeout(_pasteTimer);
+            }
+            
+            // Mark that we're pasting
+            _isPasting = true;
             _startIgnoreOnData();
-            window.pyTerminal.paste_from_clipboard();
+            
+            // Get clipboard data directly
+            const clipboardData = e.clipboardData || window.clipboardData;
+            const pastedText = clipboardData.getData('text');
+            
+            if (pastedText && window.pyTerminal) {
+                // Send directly to Python without going through xterm
+                window.pyTerminal.receive_input(pastedText);
+            }
+            
+            // Reset paste flag after a short delay
+            _pasteTimer = setTimeout(() => { 
+                _isPasting = false; 
+                _pasteTimer = null;
+            }, 100);
         }
+        
+        // Cleanup function for page unload
+        window.addEventListener('beforeunload', () => {
+            if (_ignoreTimer) clearTimeout(_ignoreTimer);
+            if (_pasteTimer) clearTimeout(_pasteTimer);
+            if (_resizeTimer) clearTimeout(_resizeTimer);
+            if (_inputTimer) clearTimeout(_inputTimer);
+            if (_contextMenuTimer) clearTimeout(_contextMenuTimer);
+            if (_rafId) cancelAnimationFrame(_rafId);
+        });
 
+        // Add paste listener to textarea
         if (term.textarea) {
-            term.textarea.addEventListener('paste', _handlePasteEvent);
+            term.textarea.addEventListener('paste', _handlePasteEvent, true);
         }
-        document.getElementById('terminal-container').addEventListener('paste', _handlePasteEvent, true);
 
-        // Handle custom keyboard shortcuts (Copy & Paste)
+        // Flag to track if we sent from key handler
+        let _sentFromKeyHandler = false;
+        
+        // Block local echo for printable chars, send from key handler
         term.attachCustomKeyEventHandler(e => {
             if (e.type === 'keydown') {
+                // Copy
                 if (e.ctrlKey && e.code === 'KeyC') {
                     if (term.hasSelection()) {
                         if (window.pyTerminal) {
@@ -237,27 +354,57 @@
                         term.clearSelection();
                         return false; 
                     }
-                } else if (e.ctrlKey && e.code === 'KeyV') {
-                    if (window.pyTerminal) {
-                        _startIgnoreOnData();
-                        window.pyTerminal.paste_from_clipboard();
-                        return false;
-                    }
                     return true;
+                }
+                // Paste - let the paste event handle it
+                if (e.ctrlKey && e.code === 'KeyV') {
+                    // The paste event will handle this
+                    return false;
+                }
+                // Select All
+                if (e.ctrlKey && e.code === 'KeyA') {
+                    term.selectAll();
+                    return false;
+                }
+                
+                // For printable chars: send from here, block local display
+                if (!e.ctrlKey && !e.altKey && !e.metaKey && e.key.length === 1) {
+                    if (window.pyTerminal) {
+                        _sentFromKeyHandler = true;
+                        window.pyTerminal.receive_input(e.key);
+                    }
+                    return false;  // Block local display
                 }
             }
             return true;
         });
 
         // Handle right-click (Copy if selection exists, Paste otherwise)
-        document.getElementById('terminal-container').addEventListener('contextmenu', (e) => {
+        let _contextMenuTimer = null;
+        document.getElementById('terminal-container').addEventListener('contextmenu', async (e) => {
             e.preventDefault();
             if (window.pyTerminal) {
                 if (term.hasSelection()) {
                     window.pyTerminal.copy_to_clipboard(term.getSelection());
                     term.clearSelection();
                 } else {
-                    window.pyTerminal.paste_from_clipboard();
+                    // Paste from clipboard using navigator API
+                    try {
+                        const text = await navigator.clipboard.readText();
+                        if (text && window.pyTerminal) {
+                            // Clear any existing timer
+                            if (_contextMenuTimer) clearTimeout(_contextMenuTimer);
+                            _isPasting = true;
+                            _startIgnoreOnData();
+                            window.pyTerminal.receive_input(text);
+                            _contextMenuTimer = setTimeout(() => { 
+                                _isPasting = false; 
+                                _contextMenuTimer = null;
+                            }, 100);
+                        }
+                    } catch (err) {
+                        console.error('[TERMINAL] Failed to read clipboard:', err);
+                    }
                 }
             }
         });
@@ -280,12 +427,22 @@
             // Initial resize event to Python
             window.pyTerminal.resize(term.cols, term.rows);
 
-            // When user types in xterm, send to Python (batched)
+            // Send input to Python - skip if already sent from key handler or pasting
             term.onData(data => {
+                // Skip during paste operations
+                if (_isPasting) {
+                    return;
+                }
                 if (_ignoreOnData) {
                     _startIgnoreOnData();
                     return;
                 }
+                // Skip if we already sent this from the key handler
+                if (_sentFromKeyHandler && data.length === 1) {
+                    _sentFromKeyHandler = false;
+                    return;
+                }
+                _sentFromKeyHandler = false;
                 sendInput(data);
             });
             
@@ -294,10 +451,49 @@
                 writeToTerm(text);
             });
             
+            // URL Link Handler - Make URLs clickable with hover underline
+            const URL_REGEX = /https?:\/\/[^\s"'<>]+/g;
+            
+            term.registerLinkProvider({
+                provideLinks(bufferLineNumber, callback) {
+                    const line = term.buffer.active.getLine(bufferLineNumber - 1);
+                    if (!line) {
+                        callback([]);
+                        return;
+                    }
+                    
+                    const text = line.translateToString(true);
+                    const links = [];
+                    let match;
+                    
+                    while ((match = URL_REGEX.exec(text)) !== null) {
+                        const url = match[0];
+                        const startX = match.index + 1;
+                        const endX = match.index + url.length;
+                        
+                        links.push({
+                            text: url,
+                            range: {
+                                start: { x: startX, y: bufferLineNumber },
+                                end: { x: endX, y: bufferLineNumber }
+                            },
+                            activate: function(event, url) {
+                                if (window.pyTerminal) {
+                                    window.pyTerminal.open_external_url(url);
+                                }
+                            }
+                        });
+                    }
+                    
+                    callback(links);
+                }
+            });
+            
             // Connect Python -> JS (theme update)
             window.pyTerminal.update_theme.connect(function(is_dark) {
                 if (is_dark) {
                     document.body.style.backgroundColor = '#0c0c0c';
+                    document.body.classList.remove('light-mode');
                     term.options.theme = {
                         background: '#0c0c0c',
                         foreground: '#cccccc',
@@ -305,6 +501,7 @@
                     };
                 } else {
                     document.body.style.backgroundColor = '#ffffff';
+                    document.body.classList.add('light-mode');
                     term.options.theme = {
                         background: '#ffffff',
                         foreground: '#0c0c0c',

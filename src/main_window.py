@@ -10,9 +10,10 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSplitter,
     QTabWidget, QLabel, QPushButton, QStatusBar, QFileDialog,
     QToolBar, QMenuBar, QMessageBox, QInputDialog, QTabBar,
-    QFrame, QSizePolicy
+    QFrame, QSizePolicy, QApplication
 )
-from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtSlot, QTimer, QRect, QProcessEnvironment, QSignalBlocker
+from PyQt6.QtWebEngineCore import QWebEnginePage
+from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtSlot, QTimer, QRect, QProcessEnvironment, QSignalBlocker, QEventLoop
 from PyQt6.QtGui import (QAction, QKeySequence, QIcon, QFont, QPainter, QColor, 
                          QMouseEvent, QCloseEvent, QPixmap)
 
@@ -22,9 +23,11 @@ from src.core.project_manager import ProjectManager
 from src.core.file_manager import FileManager
 from src.core.session_manager import SessionManager
 from src.core.codebase_index import get_codebase_index
-from src.ai.agent import AIAgent
-from src.ai.code_analyzer import CodeAnalyzer
-from src.ai.file_edit_tracker import FileEditTracker
+# TEMPORARILY COMMENTED - Will be replaced with OpenHands SDK integration
+# from src.ai.agent import AIAgent
+from src.ai.stub_agent import get_stub_agent as AIAgent  # Temporary stub
+# from src.ai.code_analyzer import CodeAnalyzer
+# from src.ai.file_edit_tracker import FileEditTracker
 from src.ui.components.sidebar import SidebarWidget
 from src.ui.components.editor import CodeEditor
 from src.ui.components.ai_chat import AIChatWidget
@@ -34,6 +37,19 @@ from src.ui.dialogs.diff_viewer import DiffWindow
 from src.utils.icons import make_icon
 from src.utils.helpers import detect_language, shorten_path
 from src.utils.logger import get_logger
+from src.utils.notifications import show_task_complete_notification
+
+try:
+    from src.ui.syntax_highlighting_config import (
+        UniversalCodeColorizer,
+        MarkdownColorizer, 
+        DRACULA_COLORS,
+        FONTS
+    )
+    HAS_SYNTAX_HIGHLIGHTING = True
+except ImportError:
+    HAS_SYNTAX_HIGHLIGHTING = False
+    log.warning("Syntax highlighting module not available")
 
 log = get_logger("main_window")
 
@@ -308,7 +324,7 @@ class EditorTabWidget(QTabWidget):
                     if current_content != content:
                         # Content changed, reload it
                         with QSignalBlocker(editor.document()):
-                            editor.set_content(content, language)
+                            editor.set_content(content, language, filepath)
                         print(f"[EditorTabs] Updated content for already-open file: {filepath}")
                     else:
                         print(f"[EditorTabs] File already open with same content: {filepath}")
@@ -324,7 +340,7 @@ class EditorTabWidget(QTabWidget):
         # Disconnect the internal document→editor connection temporarily
         # Use blockSignals instead of disconnect to avoid errors
         with QSignalBlocker(editor.document()):
-            editor.set_content(content, language)
+            editor.set_content(content, language, filepath)
         
         # NOW connect OUR handler - anything after this is a user edit
         editor.content_modified.connect(lambda: self._mark_modified(filepath))
@@ -518,8 +534,36 @@ class CortexMainWindow(QMainWindow):
         self._project_manager = ProjectManager()
         self._file_manager = FileManager()
         self._session_manager = SessionManager()
-        self._ai_agent = AIAgent()
-        self._file_tracker = FileEditTracker(self)
+        
+        # TEMPORARY: Using stub agent until OpenHands SDK integration
+        self._ai_agent = AIAgent(file_manager=self._file_manager)
+        log.info("[AGENT] Stub agent initialized - awaiting OpenHands SDK")
+        
+        # Phase 1, 2, 3 Integration: TEMPORARILY DISABLED
+        # log.info("[INIT] Initializing Phase 1, 2, 3 components...")
+        # self._title_generator = get_title_generator(self._ai_agent)
+        # self._session_db = get_session_schema_manager()
+        # log.info("[OK] Phase 1, 2, 3 components initialized")
+        
+        # Phase 4 Integration: TEMPORARILY DISABLED
+        # log.info("[INIT] Initializing Phase 4 components...")
+        # self._todo_manager = get_todo_manager()
+        # self._permission_evaluator = get_permission_evaluator()
+        # self._github_agent = get_github_agent()
+        # log.info("[OK] Phase 4 components initialized")
+        
+        # NEW: OpenCode Enhancement Integration - TEMPORARILY DISABLED
+        # log.info("[INIT] Initializing OpenCode Enhancement Integration...")
+        # self._ai_integration = get_ai_integration_layer()
+        # log.info("[OK] OpenCode Enhancement Integration initialized")
+        
+        log.info("[INIT] Legacy AI components disabled - awaiting OpenHands SDK")
+        
+        # TEMPORARILY DISABLED - FileEditTracker was part of deleted agentic code
+        # self._file_tracker = FileEditTracker(self)
+        self._file_tracker = None
+        
+        # Keep diff window (it's UI, not agentic)
         self._diff_window = DiffWindow(self)
         self._codebase_index = None
         self._inline_edit_context = None
@@ -568,6 +612,11 @@ class CortexMainWindow(QMainWindow):
         else:
             self.show()
 
+        # Set Window Icon (Title Bar) - Using focused logo-only version
+        logo_path = os.path.join(os.getcwd(), "src", "assets", "logo", "taskbar.ico")
+        if os.path.exists(logo_path):
+            self.setWindowIcon(QIcon(logo_path))
+
     # ------------------------------------------------------------------
     # UI Construction
     # ------------------------------------------------------------------
@@ -584,15 +633,15 @@ class CortexMainWindow(QMainWindow):
         self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # --- Left Sidebar ---
-        self._sidebar = SidebarWidget()
+        self._sidebar = SidebarWidget(self._file_manager)
         self._sidebar.setMinimumWidth(44)
-        self._sidebar.setMaximumWidth(320)
+        self._sidebar.setMaximumWidth(700)
         self._main_splitter.addWidget(self._sidebar)
 
         # --- Center: Editor + Terminal stacked vertically ---
         center_widget = QWidget()
         center_layout = QVBoxLayout(center_widget)
-        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.setContentsMargins(0, 0, 0, 2)  # 2px bottom gap above status bar
         center_layout.setSpacing(0)
 
         self._center_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -613,8 +662,8 @@ class CortexMainWindow(QMainWindow):
         self._terminal_tabs.setMinimumHeight(150)
         self._terminal_tabs.tabCloseRequested.connect(self._close_terminal_tab)
         
-        # Add a placeholder/first terminal
-        self._new_terminal()
+        # Add a single placeholder/first terminal (HIDDEN initially)
+        self._new_terminal(show_panel=False)
         
         self._center_splitter.addWidget(self._terminal_tabs)
 
@@ -637,6 +686,8 @@ class CortexMainWindow(QMainWindow):
         self._ai_chat.reject_file_edit_requested.connect(self._on_reject_file_edit)
         self._ai_chat.open_terminal_requested.connect(self._show_terminal_panel)
         self._ai_chat.set_code_context_callback(self._get_code_context)
+        # load_full_chat_requested is handled internally by AIChatWidget now
+        self._ai_chat.toggle_autogen_requested.connect(self._on_toggle_autogen)
         right_layout.addWidget(self._ai_chat)
         self._main_splitter.addWidget(self._right_panel)
         
@@ -647,15 +698,16 @@ class CortexMainWindow(QMainWindow):
         self._find_replace_dialog.replace_all_requested.connect(self._on_replace_all_requested)
 
         # Splitter sizes for 3 panels: sidebar | editor | AI chat
-        sidebar_w = self._settings.get("window", "sidebar_width") or 220
-        right_w = self._settings.get("window", "right_panel_width") or 350
+        # Always start with compact defaults as per user request
+        sidebar_w = 200 
+        right_w = 300 
         total_w = (self._settings.get("window", "width") or 1400)
         center_w = max(400, total_w - sidebar_w - right_w)
         self._main_splitter.setSizes([sidebar_w, center_w, right_w])
         self._main_splitter.setHandleWidth(1)
         
-        # Limit AI chat panel max width to prevent it from getting too wide
-        self._right_panel.setMaximumWidth(480)
+        # Limit AI chat panel max width — much more flexible now
+        self._right_panel.setMaximumWidth(1200)
 
         root_layout.addWidget(self._main_splitter, 1)
 
@@ -829,8 +881,8 @@ class CortexMainWindow(QMainWindow):
 
         # Edit
         edit_menu = mb.addMenu("Edit")
-        self._add_action(edit_menu, "Undo", lambda: self._current_editor_action("undo"), "Ctrl+Z")
-        self._add_action(edit_menu, "Redo", lambda: self._current_editor_action("redo"), "Ctrl+Y")
+        self._add_action(edit_menu, "Undo", self._undo, "Ctrl+Z")
+        self._add_action(edit_menu, "Redo", self._redo, "Ctrl+Y")
         edit_menu.addSeparator()
         self._add_action(edit_menu, "Cut", lambda: self._current_editor_action("cut"), "Ctrl+X")
         self._add_action(edit_menu, "Copy", lambda: self._current_editor_action("copy"), "Ctrl+C")
@@ -887,6 +939,31 @@ class CortexMainWindow(QMainWindow):
         self._add_action(ai_menu, "Write Tests", lambda: self._ai_action("tests"), "Ctrl+Shift+U")
         self._add_action(ai_menu, "Debug Help", lambda: self._ai_action("debug"), "Ctrl+Shift+D")
         ai_menu.addSeparator()
+        
+        # Phase 1, 2, 3 Integration: Agent Mode submenu
+        mode_menu = ai_menu.addMenu("Agent Mode")
+        self._add_action(mode_menu, "Build Mode", lambda: self._set_agent_mode("build"), "")
+        self._add_action(mode_menu, "Explore Mode", lambda: self._set_agent_mode("explore"), "")
+        self._add_action(mode_menu, "Debug Mode", lambda: self._set_agent_mode("debug"), "")
+        self._add_action(mode_menu, "Plan Mode", lambda: self._set_agent_mode("plan"), "")
+        ai_menu.addSeparator()
+        
+        # Phase 3 Integration: Skills and MCP
+        self._add_action(ai_menu, "Browse Skills...", self._show_skills_browser, "")
+        self._add_action(ai_menu, "MCP Connections...", self._show_mcp_connections, "")
+        ai_menu.addSeparator()
+        
+        # Phase 4 Integration: TODO, Permission, and GitHub
+        todo_menu = ai_menu.addMenu("Tasks & TODOs")
+        self._add_action(todo_menu, "View Tasks...", self._show_todo_manager, "")
+        self._add_action(todo_menu, "Add Task...", self._add_todo_task, "")
+        todo_menu.addSeparator()
+        self._add_action(todo_menu, "Complete Task", self._complete_todo_task, "")
+        
+        self._add_action(ai_menu, "Permission Settings...", self._show_permission_settings, "")
+        self._add_action(ai_menu, "GitHub Integration...", self._show_github_integration, "")
+        ai_menu.addSeparator()
+        
         self._add_action(ai_menu, "AI Chat Focus", self._focus_ai_chat, "Ctrl+Shift+A")
         
         # Command Palette
@@ -896,7 +973,7 @@ class CortexMainWindow(QMainWindow):
 
         # Terminal
         term_menu = mb.addMenu("Terminal")
-        self._add_action(term_menu, "New Terminal", self._new_terminal, "Ctrl+Shift+`")
+        self._add_action(term_menu, "New Terminal", lambda: self._new_terminal(show_panel=True), "Ctrl+Shift+`")
         self._add_action(term_menu, "Kill Terminal", self._kill_current_terminal, "")
         term_menu.addSeparator()
         self._add_action(term_menu, "Toggle Terminal Panel", self._toggle_terminal, "Ctrl+`")
@@ -936,27 +1013,48 @@ class CortexMainWindow(QMainWindow):
 
         self._toolbar_btns = []
 
+        # 1. File / Build Controls
         actions = [
             ("📂", "Open Folder\nCtrl+O",   self._open_folder_dialog),
             ("💾", "Save File\nCtrl+S",     self._save_current),
             ("▶️", "Run Current File",      self._run_file),
-            ("➕", "New Terminal",          self._new_terminal),
-            ("⚡", "Show/Hide Terminal\nCtrl+`", self._toggle_terminal),
+            ("➕", "New Terminal",          lambda: self._new_terminal(show_panel=True)),
         ]
         for icon, tip, slot in actions:
             btn = QPushButton(icon)
             btn.setToolTip(tip)
-            btn.setFixedSize(44, 40)
+            btn.setFixedSize(40, 40)
             btn.clicked.connect(slot)
             self._toolbar_btns.append(btn)
             tb.addWidget(btn)
 
         tb.addWidget(self._make_spacer())
 
-        # Theme toggle button
+        # 2. Layout Toggle Controls (VS Code Style) - On the right side
+        layout_actions = [
+            ("◧", "Toggle Left Sidebar\nCtrl+B", self._toggle_sidebar),
+            ("⬒", "Toggle Bottom Panel\nCtrl+`", self._toggle_terminal),
+            ("◨", "Toggle AI Chat", self._toggle_ai_chat),
+        ]
+        for icon, tip, slot in layout_actions:
+            btn = QPushButton(icon)
+            btn.setToolTip(tip)
+            btn.setFixedSize(40, 40)
+            btn.clicked.connect(slot)
+            # Custom font size for layout icons to make them clear
+            btn.setObjectName("layout_btn")
+            self._toolbar_btns.append(btn)
+            tb.addWidget(btn)
+
+        self._toolbar_sep2 = QFrame()
+        self._toolbar_sep2.setFrameShape(QFrame.Shape.VLine)
+        self._toolbar_sep2.setFixedHeight(30)
+        tb.addWidget(self._toolbar_sep2)
+
+        # 3. Theme toggle button
         self._theme_btn = QPushButton("🌙")
         self._theme_btn.setToolTip("Toggle Theme\nCtrl+Shift+T")
-        self._theme_btn.setFixedSize(44, 40)
+        self._theme_btn.setFixedSize(40, 40)
         self._theme_btn.clicked.connect(self._toggle_theme)
         self._toolbar_btns.append(self._theme_btn)
         tb.addWidget(self._theme_btn)
@@ -977,10 +1075,14 @@ class CortexMainWindow(QMainWindow):
             }}
         """)
         self._toolbar_sep.setStyleSheet(f"color:{border_color};")
+        self._toolbar_sep2.setStyleSheet(f"color:{border_color};")
+        
+        fg_color = "#dcdcdc" if is_dark else "#1a1a1a"
         
         btn_style = f"""
             QPushButton {{
                 font-size: 22px;
+                color: {fg_color};
                 border-radius: 6px;
                 background: transparent;
                 border: none;
@@ -994,7 +1096,10 @@ class CortexMainWindow(QMainWindow):
             }}
         """
         for btn in self._toolbar_btns:
-            btn.setStyleSheet(btn_style)
+            style = btn_style
+            if btn.objectName() == "layout_btn":
+                style += f" QPushButton {{ font-size: 24px; color: {fg_color}; }}"
+            btn.setStyleSheet(style)
 
 
     def _make_spacer(self) -> QWidget:
@@ -1015,7 +1120,7 @@ class CortexMainWindow(QMainWindow):
         for lbl in [self._status_file, self._status_cursor, self._status_lang, self._status_ai]:
             sb.addWidget(lbl)
 
-        sb.addPermanentWidget(QLabel("  Cortex AI Agent v1.0  "))
+        sb.addPermanentWidget(QLabel("  Cortex AI Agent v1.0.7  "))
 
     def _update_status_cursor(self, line: int, col: int):
         self._status_cursor.setText(f"Ln {line}, Col {col}")
@@ -1044,6 +1149,84 @@ class CortexMainWindow(QMainWindow):
         # Theme button label
         if hasattr(self, '_theme_btn') and self._theme_btn:
             self._theme_btn.setText("☀️" if not is_dark else "🌙")
+        
+        # Apply global syntax highlighting fonts and colors
+        self._apply_syntax_highlighting_fonts()
+
+    def _apply_syntax_highlighting_fonts(self):
+        """Apply Dracula-themed fonts and colors globally to code displays."""
+        if not HAS_SYNTAX_HIGHLIGHTING:
+            return
+        
+        try:
+            # Initialize global code colorizer
+            self._code_colorizer = UniversalCodeColorizer()
+            
+            # Apply monospace font (for code editors, terminal)
+            mono_fonts = FONTS['mono']
+            
+            # Apply sans-serif font (for UI elements)
+            sans_fonts = FONTS['sans']
+            
+            # Apply to all code editors
+            if hasattr(self, '_code_editor') and self._code_editor:
+                code_font = QFont()
+                code_font.setFamily(mono_fonts[0])  # Use first preferred monospace font
+                code_font.setPointSize(10)
+                code_font.setFixedPitch(True)
+                self._code_editor.setFont(code_font)
+                log.info(f"[FONTS] Applied monospace font to editor: {mono_fonts[0]}")
+            
+            # Apply to terminal if available
+            if hasattr(self, '_terminal') and self._terminal:
+                term_font = QFont()
+                term_font.setFamily(mono_fonts[0])
+                term_font.setPointSize(9)
+                term_font.setFixedPitch(True)
+                self._terminal.setFont(term_font)
+                log.info(f"[FONTS] Applied terminal font: {mono_fonts[0]}")
+            
+            # Log Dracula theme application
+            log.info(f"[COLORS] Dracula theme applied with {len(DRACULA_COLORS)} color definitions")
+            log.info(f"[LANGUAGES] 100+ programming languages supported")
+            log.info(f"[FRAMEWORKS] React, Vue, Angular, Django, Flask, FastAPI, and 20+ frameworks")
+            log.info(f"[MARKDOWN] Blue headings (#0047AB), White text (#ffffff)")
+            
+            # Display font stack information
+            mono_stack = " -> ".join(mono_fonts)
+            sans_stack = " -> ".join(sans_fonts)
+            log.info(f"[FONT_STACK_MONO] {mono_stack}")
+            log.info(f"[FONT_STACK_SANS] {sans_stack}")
+            
+        except Exception as e:
+            log.warning(f"Error applying syntax highlighting fonts: {e}")
+    
+    def colorize_code(self, code, language='plaintext'):
+        """
+        Public method to colorize code with Dracula theme.
+        Every language gets colors - NO white text fallback.
+        """
+        if not HAS_SYNTAX_HIGHLIGHTING or not hasattr(self, '_code_colorizer'):
+            return code
+        
+        try:
+            return self._code_colorizer.colorize(code, language)
+        except Exception as e:
+            log.warning(f"Error colorizing code for language '{language}': {e}")
+            return code
+    
+    def colorize_markdown(self, markdown_text):
+        """
+        Public method to colorize Markdown with blue headings and white text.
+        """
+        if not HAS_SYNTAX_HIGHLIGHTING:
+            return markdown_text
+        
+        try:
+            return MarkdownColorizer.colorize(markdown_text)
+        except Exception as e:
+            log.warning(f"Error colorizing markdown: {e}")
+            return markdown_text
 
     # ------------------------------------------------------------------
     # Signal Connections
@@ -1054,6 +1237,7 @@ class CortexMainWindow(QMainWindow):
         self._sidebar.file_search_opened.connect(self._open_file_at_line)
         self._sidebar.ai_action_requested.connect(self._ai_action)
         self._sidebar.file_renamed.connect(self._on_sidebar_file_renamed)
+        self._sidebar.file_deleted.connect(self._on_sidebar_file_deleted)
         
         # Changed files panel signals
         self._sidebar.file_accepted.connect(self._on_accept_file_edit)
@@ -1068,15 +1252,22 @@ class CortexMainWindow(QMainWindow):
 
         # Editor tab changes
         self._editor_tabs.currentChanged.connect(self._on_tab_changed)
+        
+        # File manager undo/redo signals
+        if hasattr(self, '_file_manager'):
+            self._file_manager.file_deleted.connect(self._on_file_deleted_for_undo)
+            self._file_manager.file_restored.connect(self._on_file_restored_for_redo)
 
         # AI chat - ONLY connect signals here to avoid duplicates
         self._ai_chat.message_sent.connect(self._on_ai_chat_message)
         self._ai_chat.model_changed.connect(self._on_model_changed)
         self._ai_agent.response_chunk.connect(self._ai_chat.on_chunk)
         self._ai_agent.response_complete.connect(self._ai_chat.on_complete)
+        self._ai_agent.response_complete.connect(self._on_ai_task_complete)
         self._ai_agent.request_error.connect(self._ai_chat.on_error)
         self._ai_agent.file_generated.connect(self._open_file)
-        self._ai_agent.file_edited_diff.connect(self._file_tracker.add_edit)
+        # TEMPORARILY DISABLED - file_tracker was part of deleted agentic code
+        # self._ai_agent.file_edited_diff.connect(self._file_tracker.add_edit)
         self._ai_agent.file_edited_diff.connect(self._on_file_edited_diff_for_js)
         self._ai_agent.file_edited_diff.connect(self._on_inline_edit_diff)
         self._ai_agent.tool_activity.connect(self._ai_chat.show_tool_activity)
@@ -1085,17 +1276,61 @@ class CortexMainWindow(QMainWindow):
         self._ai_agent.thinking_started.connect(self._ai_chat.show_thinking)
         self._ai_agent.thinking_stopped.connect(self._ai_chat.hide_thinking)
         self._ai_agent.todos_updated.connect(self._ai_chat.update_todos)
+        self._ai_agent.tool_summary_ready.connect(self._ai_chat.show_tool_summary)
+        
+        # Phase 4: TEMPORARILY DISABLED - todo_manager, title_generator were deleted
+        # self._todo_manager.task_added.connect(self._on_todo_task_added)
+        # self._todo_manager.task_completed.connect(self._on_todo_task_completed)
+        # self._todo_manager.task_updated.connect(self._on_todo_task_updated)
+        
+        # Phase 4: TEMPORARILY DISABLED - title_generator was deleted
+        # self._title_generator.title_generated.connect(self._on_title_generated)
         
         # New interaction signals
         self._ai_chat.generate_plan_requested.connect(self._on_generate_plan)
-        self._ai_chat.mode_changed.connect(self._ai_agent.set_interaction_mode)
+        # TEMPORARILY DISABLED - set_interaction_mode doesn't exist on stub agent
+        # self._ai_chat.mode_changed.connect(self._ai_agent.set_interaction_mode)
         self._ai_chat.open_file_requested.connect(self._open_file)
         self._ai_chat.open_file_at_line_requested.connect(self._open_file_at_line)
+        log.info(f"[Diff-Debug] Connecting show_diff_requested to _on_show_diff. Signal exists: {hasattr(self._ai_chat, 'show_diff_requested')}")
         self._ai_chat.show_diff_requested.connect(self._on_show_diff)
+        self._ai_chat.answer_question_requested.connect(self._ai_agent.user_responded)
         self._ai_chat.smart_paste_check_requested.connect(self._on_smart_paste_check)
+        # TEMPORARILY DISABLED - set_always_allowed doesn't exist on stub agent
+        # self._ai_chat.always_allow_changed.connect(self._ai_agent.set_always_allowed)
+        
+        # NEW: TEMPORARILY DISABLED - AI Integration Layer was deleted
+        # self._ai_integration.intent_classified.connect(self._on_intent_classified)
+        # self._ai_integration.agent_selected.connect(self._on_agent_selected)
+        # self._ai_integration.tools_selected.connect(self._on_tools_selected)
+        # self._ai_integration.permission_requested.connect(self._on_permission_requested)
+        # self._ai_integration.permission_granted.connect(self._on_permission_granted)
+        # self._ai_integration.permission_denied.connect(self._on_permission_denied)
+        # self._ai_integration.user_denied_workflow.connect(self._on_user_denied_workflow)
+        
+        # NEW: TEMPORARILY DISABLED - Testing Workflow was deleted
+        # self._ai_integration.testing_decision.connect(self._on_testing_decision)
+        # self._ai_integration.test_tools_selected.connect(self._on_test_tools_selected)
+        # self._ai_integration.test_execution_started.connect(self._on_test_execution_started)
+        # self._ai_integration.test_execution_completed.connect(self._on_test_execution_completed)
+        # self._ai_integration.test_analysis_ready.connect(self._on_test_analysis_ready)
+        
+        # NEW: Connect AI Chat permission response signals
+        self._ai_chat.permission_response.connect(self._on_chat_permission_response)
+        
+        # NEW: Connect Todo toggle from UI to TodoManager
+        self._ai_chat.toggle_todo_requested.connect(self._on_toggle_todo)
+        
+        # Connect AI Agent back to UI for interactive questions
+        self._ai_agent.user_question_requested.connect(self._on_ai_question_requested)
 
         # Terminal tab changes
         self._terminal_tabs.currentChanged.connect(self._on_terminal_tab_changed)
+        
+        # ========== PERMISSION SYSTEM CONNECTION (NEW) ==========
+        # Connect AI agent to UI for permission dialogs
+        self._ai_agent.set_ui_parent(self)
+        log.info("Permission system initialized and connected to main window")
 
     # ------------------------------------------------------------------
     # Actions
@@ -1173,7 +1408,31 @@ class CortexMainWindow(QMainWindow):
             else:
                 log.warning(f"File skip (not found or dir): {filepath}")
                 return
+        
+        # Check file extension for images and documents
+        file_ext = path.suffix.lower()
+        
+        # Handle image files
+        image_extensions = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp', '.ico', '.tiff', '.tif'}
+        if file_ext in image_extensions:
+            self._open_image_file(filepath)
+            return
+        
+        # Handle PDF files
+        if file_ext == '.pdf':
+            self._open_pdf_file(filepath)
+            return
+        
+        # Handle Office documents
+        office_extensions = {'.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx'}
+        if file_ext in office_extensions:
+            self._open_office_file(filepath)
+            return
             
+        # Initialize file snapshots dict for diff generation
+        if not hasattr(self, '_file_snapshots'):
+            self._file_snapshots = {}
+        
         if self._file_manager.is_binary(filepath):
             log.info(f"File skip (binary): {filepath}")
             QMessageBox.information(self, "Binary File",
@@ -1185,6 +1444,14 @@ class CortexMainWindow(QMainWindow):
             if content is None:
                 log.error(f"Failed to read content: {filepath}")
                 return
+            
+            # Store original snapshot for diff generation (only if not already stored)
+            # This preserves the FIRST version opened, allowing multiple diffs
+            if filepath not in self._file_snapshots:
+                self._file_snapshots[filepath] = content
+                log.info(f"[Snapshot] Stored initial snapshot: {filepath} ({len(content)} chars)")
+            else:
+                log.info(f"[Snapshot] Keeping existing snapshot for: {filepath}")
                 
             log.info(f"Content read ({len(content)} chars). Detecting language...")
             language = detect_language(filepath)
@@ -1213,33 +1480,439 @@ class CortexMainWindow(QMainWindow):
         except Exception as e:
             log.error(f"Error opening file {filepath}: {e}", exc_info=True)
 
+    def _open_image_file(self, filepath: str):
+        """Open an image file in a viewer tab, scaled to fit window."""
+        from PyQt6.QtWidgets import QLabel, QScrollArea
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtGui import QPixmap
+        
+        try:
+            log.info(f"Opening image file: {filepath}")
+            path = Path(filepath)
+            
+            # Load image
+            pixmap = QPixmap(filepath)
+            
+            if pixmap.isNull():
+                log.error(f"Failed to load image: {filepath}")
+                QMessageBox.warning(self, "Error", f"Could not load image: {path.name}")
+                return
+            
+            # Get available size (tab widget size minus some padding)
+            tab_size = self._editor_tabs.size()
+            max_width = max(tab_size.width() - 40, 400)  # Min 400px width
+            max_height = max(tab_size.height() - 80, 300)  # Min 300px height
+            
+            # Scale image to fit while maintaining aspect ratio
+            scaled_pixmap = pixmap.scaled(
+                max_width, 
+                max_height,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            
+            # Create label with scaled image
+            image_label = QLabel()
+            image_label.setPixmap(scaled_pixmap)
+            image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            
+            # Create scroll area
+            scroll_area = QScrollArea()
+            scroll_area.setWidgetResizable(True)
+            scroll_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            scroll_area.setWidget(image_label)
+            
+            # Add to tabs
+            idx = self._editor_tabs.addTab(scroll_area, path.name)
+            self._editor_tabs.setTabToolTip(idx, filepath)
+            self._editor_tabs.setCurrentIndex(idx)
+            
+            self._update_status_file(filepath)
+            log.info(f"Image file opened successfully: {filepath} (scaled to {scaled_pixmap.width()}x{scaled_pixmap.height()})")
+            
+        except Exception as e:
+            log.error(f"Error opening image file {filepath}: {e}", exc_info=True)
+            QMessageBox.warning(self, "Error", f"Could not open image: {e}")
+
+    def _open_pdf_file(self, filepath: str):
+        """Open a PDF file by rendering pages as images."""
+        from PyQt6.QtWidgets import QLabel, QScrollArea, QVBoxLayout, QWidget
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtGui import QPixmap, QImage
+        import fitz  # PyMuPDF
+        
+        try:
+            log.info(f"Opening PDF file: {filepath}")
+            path = Path(filepath)
+            
+            # Open PDF with PyMuPDF
+            doc = fitz.open(filepath)
+            
+            # Store page count immediately
+            total_pages = doc.page_count
+            
+            if total_pages == 0:
+                QMessageBox.warning(self, "Error", "PDF has no pages")
+                return
+            
+            # Create scrollable container for all pages
+            container = QWidget()
+            layout = QVBoxLayout(container)
+            layout.setSpacing(10)
+            layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            
+            # Get available width
+            tab_width = self._editor_tabs.width() - 60
+            
+            # Render each page as an image
+            for page_num in range(min(total_pages, 50)):  # Limit to 50 pages
+                page = doc[page_num]
+                
+                # Calculate zoom to fit width
+                zoom = tab_width / page.rect.width
+                mat = fitz.Matrix(zoom, zoom)
+                
+                # Render page to pixmap
+                pix = page.get_pixmap(matrix=mat)
+                
+                # Convert to QImage
+                img = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888)
+                pixmap = QPixmap.fromImage(img)
+                
+                # Create label for page
+                label = QLabel()
+                label.setPixmap(pixmap)
+                label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                label.setStyleSheet("background-color: white; border: 1px solid #ccc;")
+                
+                layout.addWidget(label)
+            
+            doc.close()
+            
+            # Create scroll area
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setWidget(container)
+            scroll.setStyleSheet("background-color: #f0f0f0;")
+            
+            # Add to tabs
+            idx = self._editor_tabs.addTab(scroll, path.name)
+            self._editor_tabs.setTabToolTip(idx, f"{filepath} ({total_pages} pages)")
+            self._editor_tabs.setCurrentIndex(idx)
+            
+            self._update_status_file(filepath)
+            log.info(f"PDF file opened successfully: {filepath} ({total_pages} pages)")
+            
+        except ImportError:
+            log.error("PyMuPDF (fitz) not installed")
+            QMessageBox.warning(self, "Error", "PyMuPDF not installed. Run: pip install PyMuPDF")
+        except Exception as e:
+            log.error(f"Error opening PDF file {filepath}: {e}", exc_info=True)
+            QMessageBox.warning(self, "Error", f"Could not open PDF: {e}")
+
+    def _open_office_file(self, filepath: str):
+        """Open Office documents (Word, Excel, PowerPoint) inside the IDE as formatted text."""
+        from PyQt6.QtWidgets import QTextEdit
+        from PyQt6.QtCore import Qt
+        
+        try:
+            log.info(f"Opening Office file: {filepath}")
+            path = Path(filepath)
+            file_ext = path.suffix.lower()
+            
+            # Create text viewer
+            text_viewer = QTextEdit()
+            text_viewer.setReadOnly(True)
+            text_viewer.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+            
+            content_html = ""
+            
+            if file_ext in ['.docx']:
+                # Read Word document
+                try:
+                    from docx import Document
+                    doc = Document(filepath)
+                    
+                    content_html = f"<h2>{path.name}</h2><hr>"
+                    
+                    for para in doc.paragraphs:
+                        if para.text.strip():
+                            # Check if it's a heading based on style
+                            if para.style.name.startswith('Heading'):
+                                content_html += f"<h3>{para.text}</h3>"
+                            else:
+                                content_html += f"<p>{para.text}</p>"
+                    
+                    # Add tables
+                    for table in doc.tables:
+                        content_html += "<table border='1' cellpadding='5'>"
+                        for row in table.rows:
+                            content_html += "<tr>"
+                            for cell in row.cells:
+                                content_html += f"<td>{cell.text}</td>"
+                            content_html += "</tr>"
+                        content_html += "</table><br>"
+                    
+                except ImportError:
+                    content_html = f"<p style='color:red'>Error: python-docx library not installed.<br>Install with: pip install python-docx</p>"
+                    log.error("python-docx library not installed")
+                except Exception as e:
+                    content_html = f"<p style='color:red'>Error reading document: {e}</p>"
+                    log.error(f"Error reading docx: {e}")
+            
+            elif file_ext in ['.xlsx', '.xls']:
+                # Read Excel document
+                try:
+                    if file_ext == '.xlsx':
+                        import openpyxl
+                        wb = openpyxl.load_workbook(filepath, data_only=True)
+                        sheetnames = wb.sheetnames
+                        
+                        content_html = f"<h2>{path.name}</h2><hr>"
+                        
+                        for sheet_name in sheetnames:
+                            sheet = wb[sheet_name]
+                            content_html += f"<h3>Sheet: {sheet_name}</h3>"
+                            content_html += "<table border='1' cellpadding='5' style='border-collapse:collapse'>"
+                            
+                            # Read first 100 rows max
+                            row_count = 0
+                            for row in sheet.iter_rows(max_row=100):
+                                content_html += "<tr>"
+                                for cell in row:
+                                    value = cell.value if cell.value is not None else ""
+                                    content_html += f"<td>{value}</td>"
+                                content_html += "</tr>"
+                                row_count += 1
+                                if row_count >= 100:
+                                    content_html += "<tr><td colspan='100'>... (showing first 100 rows)</td></tr>"
+                                    break
+                            
+                            content_html += "</table><br>"
+                    
+                    elif file_ext == '.xls':
+                        import xlrd
+                        wb = xlrd.open_workbook(filepath)
+                        
+                        content_html = f"<h2>{path.name}</h2><hr>"
+                        
+                        for sheet_idx in range(wb.nsheets):
+                            sheet = wb.sheet_by_index(sheet_idx)
+                            content_html += f"<h3>Sheet: {sheet.name}</h3>"
+                            content_html += "<table border='1' cellpadding='5' style='border-collapse:collapse'>"
+                            
+                            # Read first 100 rows max
+                            for row_idx in range(min(sheet.nrows, 100)):
+                                content_html += "<tr>"
+                                for col_idx in range(sheet.ncols):
+                                    value = sheet.cell_value(row_idx, col_idx)
+                                    content_html += f"<td>{value}</td>"
+                                content_html += "</tr>"
+                            
+                            if sheet.nrows > 100:
+                                content_html += "<tr><td colspan='100'>... (showing first 100 rows)</td></tr>"
+                            
+                            content_html += "</table><br>"
+                    
+                except ImportError as e:
+                    content_html = f"<p style='color:red'>Error: Required library not installed.<br>Install with: pip install openpyxl xlrd</p>"
+                    log.error(f"Library not installed: {e}")
+                except Exception as e:
+                    content_html = f"<p style='color:red'>Error reading spreadsheet: {e}</p>"
+                    log.error(f"Error reading xlsx/xls: {e}")
+            
+            elif file_ext == '.doc':
+                # Old Word format - try to extract text
+                try:
+                    # Try using textract if available
+                    import textract
+                    text = textract.process(filepath).decode('utf-8', errors='ignore')
+                    content_html = f"<h2>{path.name}</h2><hr>"
+                    content_html += f"<pre style='white-space:pre-wrap;font-family:Arial,sans-serif'>{text}</pre>"
+                except ImportError:
+                    content_html = f"""<p style='color:orange'>
+                        <b>Old Word Format (.doc)</b><br><br>
+                        This file uses the older .doc format which requires additional libraries.<br><br>
+                        <b>Options:</b><br>
+                        1. Convert to .docx format (open in Word and Save As .docx)<br>
+                        2. Install textract: <code>pip install textract</code><br>
+                        3. Open externally with Microsoft Word
+                    </p>"""
+                    log.warning(f"Old .doc format not supported without textract: {filepath}")
+                except Exception as e:
+                    content_html = f"<p style='color:red'>Error reading .doc file: {e}</p>"
+                    log.error(f"Error reading doc: {e}")
+            
+            else:
+                content_html = f"<p>File type '{file_ext}' is not supported for internal viewing.</p>"
+            
+            # Set content with styling
+            text_viewer.setHtml(f"""
+            <html>
+            <head>
+                <style>
+                    body {{ font-family: Arial, sans-serif; padding: 20px; line-height: 1.6; }}
+                    h2 {{ color: #333; border-bottom: 2px solid #0078d4; padding-bottom: 10px; }}
+                    h3 {{ color: #555; margin-top: 20px; }}
+                    table {{ margin: 10px 0; border: 1px solid #ddd; }}
+                    td {{ padding: 8px; border: 1px solid #ddd; }}
+                    p {{ margin: 10px 0; }}
+                </style>
+            </head>
+            <body>
+                {content_html}
+            </body>
+            </html>
+            """)
+            
+            # Add to tabs
+            idx = self._editor_tabs.addTab(text_viewer, path.name)
+            self._editor_tabs.setTabToolTip(idx, filepath)
+            self._editor_tabs.setCurrentIndex(idx)
+            
+            self._update_status_file(filepath)
+            log.info(f"Office file opened internally: {filepath}")
+            
+        except Exception as e:
+            log.error(f"Error opening Office file {filepath}: {e}", exc_info=True)
+            QMessageBox.warning(self, "Error", f"Could not open document: {e}")
+
+
+    def _diff_cache_path(self):
+        try:
+            from pathlib import Path
+            return Path.home() / ".cortex" / "diff_cache.json"
+        except Exception:
+            return None
+
+    def _load_diff_cache(self):
+        if hasattr(self, '_diff_cache'):
+            return self._diff_cache
+        self._diff_cache = {}
+        try:
+            cache_path = self._diff_cache_path()
+            if cache_path and cache_path.exists():
+                import json
+                self._diff_cache = json.loads(cache_path.read_text(encoding='utf-8')) or {}
+        except Exception:
+            self._diff_cache = {}
+        return self._diff_cache
+
+    def _save_diff_cache(self):
+        try:
+            cache_path = self._diff_cache_path()
+            if not cache_path:
+                return
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            import json
+            cache_path.write_text(json.dumps(self._diff_cache), encoding='utf-8')
+        except Exception:
+            pass
+
     def _on_show_diff(self, file_path: str):
         """Show diff in Qt dialog window — triggered by Diff button click in chat."""
+        log.info(f"[Diff] _on_show_diff called with: {file_path}")
         original, modified = '', ''
 
         # 1. Try the Python diff data store (most reliable)
-        if hasattr(self, '_diff_data_store') and file_path in self._diff_data_store:
-            original, modified = self._diff_data_store[file_path]
-        else:
-            # 2. Normalize path and try again (Windows backslash vs forward slash)
-            norm = file_path.replace('\\', '/')
-            if hasattr(self, '_diff_data_store'):
+        import os
+        import subprocess
+        from pathlib import Path
+        normalized_requested = os.path.normcase(os.path.normpath(file_path))
+        
+        if hasattr(self, '_diff_data_store'):
+            # Direct check
+            if file_path in self._diff_data_store:
+                original, modified = self._diff_data_store[file_path]
+                log.info(f"[Diff] Found in _diff_data_store (direct): {file_path}")
+            else:
+                # Iterative normalized check
+                log.debug(f"[Diff] Checking normalized path for: {normalized_requested}")
                 for k, v in self._diff_data_store.items():
-                    if k.replace('\\', '/') == norm:
+                    if os.path.normcase(os.path.normpath(k)) == normalized_requested:
                         original, modified = v
+                        log.info(f"[Diff] Found in _diff_data_store (normalized): {k}")
                         break
 
+        # 2b. Fallback to persisted diff cache
+        if not modified:
+            cache = self._load_diff_cache()
+            cached = None
+            if cache:
+                norm = os.path.normcase(os.path.normpath(file_path))
+                cached = cache.get(file_path) or cache.get(norm)
+                if not cached:
+                    # try to find by normalized keys
+                    for k, v in cache.items():
+                        if os.path.normcase(os.path.normpath(k)) == norm:
+                            cached = v
+                            break
+            if cached:
+                original = cached.get('original', '')
+                modified = cached.get('modified', '')
+                log.info(f"[Diff] Found in diff cache: {file_path}")
         # 3. Fallback to file_tracker
         if not modified:
             edit_info = self._file_tracker.get_edit(file_path)
             if edit_info:
                 original = edit_info.original_content if edit_info.edit_type != 'C' else ''
                 modified = edit_info.new_content
+                log.info(f"[Diff] Found in file_tracker: {file_path}")
 
         if not modified:
-            log.warning(f"No diff data found for {file_path}")
+            # Fallback: try Git diff against HEAD if repository available
+            try:
+                project_root = getattr(self, '_project_manager', None).root if hasattr(self, '_project_manager') else None
+                if project_root and os.path.isdir(os.path.join(project_root, '.git')) and os.path.exists(file_path):
+                    rel_path = os.path.relpath(file_path, project_root)
+                    # Try to load original from HEAD (tracked files)
+                    git_show = subprocess.run(
+                        ['git', '-C', project_root, 'show', f'HEAD:{rel_path}'],
+                        capture_output=True, text=True
+                    )
+                    if git_show.returncode == 0:
+                        original = git_show.stdout
+                        modified = Path(file_path).read_text(encoding='utf-8', errors='replace')
+                        log.info(f"[Diff] Loaded diff via git for: {file_path}")
+                    else:
+                        # If untracked, treat original as empty
+                        git_ls = subprocess.run(
+                            ['git', '-C', project_root, 'ls-files', '--error-unmatch', rel_path],
+                            capture_output=True, text=True
+                        )
+                        if git_ls.returncode != 0:
+                            original = ''
+                            modified = Path(file_path).read_text(encoding='utf-8', errors='replace')
+                            log.info(f"[Diff] Loaded diff for untracked file: {file_path}")
+            except Exception as _ge:
+                log.debug(f"[Diff] Git fallback failed: {_ge}")
+
+        # Final fallback: Use file snapshot taken when opened
+        if not modified and hasattr(self, '_file_snapshots') and file_path in self._file_snapshots:
+            original = self._file_snapshots[file_path]
+            try:
+                modified = Path(file_path).read_text(encoding='utf-8', errors='replace')
+                if original != modified:
+                    log.info(f"[Diff] Using file snapshot for diff: {file_path}")
+                else:
+                    log.info(f"[Diff] File unchanged since opened: {file_path}")
+                    original = ''
+                    modified = ''
+            except Exception as e:
+                log.warning(f"[Diff] Failed to read current file content: {e}")
+                original = ''
+                modified = ''
+
+        if not modified:
+            log.warning(f"[Diff] No diff data found for {file_path}")
+            log.debug(f"[Diff] _diff_data_store keys: {list(getattr(self, '_diff_data_store', {}).keys())}")
+            if hasattr(self, '_ai_chat'):
+                import os
+                filename = os.path.basename(file_path)
+                self._ai_chat.add_system_message(f"⚠️ No diff data available for {filename}. It was not edited in this session.")
             return
 
+        log.info(f"[Diff] Opening diff tab for {file_path} (+{len(modified)} chars)")
         is_dark = self._theme_manager.is_dark
         self._editor_tabs.open_diff_tab(file_path, original, modified, is_dark)
 
@@ -1359,8 +2032,25 @@ class CortexMainWindow(QMainWindow):
         """Store diff data in Python dict for the Qt dialog viewer."""
         if not hasattr(self, '_diff_data_store'):
             self._diff_data_store = {}
+        norm_path = os.path.normcase(os.path.normpath(file_path))
         self._diff_data_store[file_path] = (original, new_content)
-        log.debug(f"Stored diff data for: {file_path}")
+        self._diff_data_store[norm_path] = (original, new_content)
+        # Persist to diff cache for cross-session diff viewing
+        cache = self._load_diff_cache()
+        cache[file_path] = {
+            'original': original,
+            'modified': new_content,
+            'ts': int(__import__('time').time())
+        }
+        # Prune cache to last 100 entries
+        if len(cache) > 100:
+            items = sorted(cache.items(), key=lambda kv: kv[1].get('ts', 0), reverse=True)
+            self._diff_cache = dict(items[:100])
+        else:
+            self._diff_cache = cache
+        self._save_diff_cache()
+        log.info(f"[Diff] Stored diff data for: {file_path} (original: {len(original)} chars, new: {len(new_content)} chars)")
+        log.debug(f"[Diff] _diff_data_store now has {len(self._diff_data_store)} entries")
 
         # Update sidebar changed files panel
         try:
@@ -1368,6 +2058,23 @@ class CortexMainWindow(QMainWindow):
             self._sidebar.add_changed_file(file_path, edit_type)
         except Exception as e:
             log.debug(f"Sidebar update skipped: {e}")
+
+    def _on_ai_question_requested(self, tool_call_id: str, question: str, metadata: dict):
+        """Handle AI asking a question that requires user response in chat."""
+        log.info(f"AI requested user input: {question[:50]}...")
+        # Structuring the question info for the JS UI
+        # CRITICAL: Use permission_request_id if available (for permission cards),
+        # otherwise fall back to tool_call_id (for general questions)
+        request_id = metadata.get("permission_request_id", tool_call_id)
+        info = {
+            "id": request_id,
+            "text": question,
+            "type": metadata.get("type", "text"),
+            "choices": metadata.get("choices", []),
+            "default": metadata.get("default", ""),
+            "details": metadata.get("details", "")
+        }
+        self._ai_chat.show_question(info)
 
     def _open_file_at_line(self, file_path: str, line_number: int):
         """Open file and navigate to specific line."""
@@ -1428,6 +2135,32 @@ class CortexMainWindow(QMainWindow):
         self.statusBar().showMessage(f"✗ Rejected changes to {Path(file_path).name} - review file", 5000)
         # Remove from sidebar panel
         self._sidebar.remove_changed_file(file_path)
+    
+    def _on_load_full_chat_requested(self, conversation_id: str):
+        """Load full chat messages from SQLite database."""
+        log.info(f"Loading full chat: {conversation_id}")
+        
+        try:
+            # Load from SQLite via bridge
+            full_chat_json_str = self._ai_chat.load_full_chat_from_sqlite(conversation_id)
+            
+            if full_chat_json_str and full_chat_json_str != "[]":
+                log.info(f"Loaded {len(full_chat_json_str)} chars of chat data")
+                # Send back to JavaScript
+                self._ai_chat._view.page().runJavaScript(
+                    f"window.handleFullChatLoad('{conversation_id}', {full_chat_json_str});"
+                )
+                self.statusBar().showMessage(f"✓ Loaded chat history", 2000)
+            else:
+                log.warning(f"No chat data found for: {conversation_id}")
+                self._ai_chat._view.page().runJavaScript(
+                    f"window.handleFullChatLoad('{conversation_id}', null);"
+                )
+        except Exception as e:
+            log.error(f"Failed to load full chat: {e}")
+            self._ai_chat._view.page().runJavaScript(
+                f"window.handleFullChatLoad('{conversation_id}, null);"
+            )
 
     def _on_accept_all_files(self):
         """Handle user accepting all pending file edits."""
@@ -1511,6 +2244,192 @@ class CortexMainWindow(QMainWindow):
             # On error, paste normally
             self._ai_chat._view.page().runJavaScript(
                 f"handleSmartPasteResult({{isMatch: false}});"
+            )
+
+    # ============================================================================
+    # NEW: OpenCode Enhancement Integration Handlers
+    # ============================================================================
+    
+    def _on_intent_classified(self, message: str, intent: str, confidence: float):
+        """Handle intent classification from AI Integration Layer."""
+        log.info(f"[Intent] {intent} (confidence: {confidence:.2f}): {message[:50]}...")
+        # Could update UI to show detected intent
+        
+    def _on_agent_selected(self, agent_type: str, reason: str, confidence: float):
+        """Handle agent selection from AI Integration Layer."""
+        log.info(f"[Agent] Selected {agent_type} (confidence: {confidence:.2f}): {reason}")
+        # Could show agent indicator in UI
+        
+    def _on_tools_selected(self, tool_names: list):
+        """Handle tool selection from AI Integration Layer."""
+        log.info(f"[Tools] Selected: {', '.join(tool_names)}")
+        # Could show tool indicators in UI
+        
+    def _on_permission_requested(self, request_id: str, html_card: str):
+        """Handle permission request - show permission card in chat."""
+        log.info(f"[Permission] Request {request_id} - showing permission card")
+        
+        # Show permission card in AI chat
+        if hasattr(self._ai_chat, 'show_permission_card'):
+            self._ai_chat.show_permission_card(request_id, html_card)
+        else:
+            # Fallback: add as system message
+            self._ai_chat.add_system_message("🔒 Permission required. Please check the chat interface.")
+            
+    def _on_permission_granted(self, request_id: str, scope: str):
+        """Handle permission grant."""
+        log.info(f"[Permission] Granted {request_id} with scope {scope}")
+        
+        # Retry the AI processing now that permission is granted
+        # Get the last user message and retry
+        if hasattr(self._ai_chat, '_last_user_message'):
+            message = self._ai_chat._last_user_message
+            context = []
+            
+            if self._project_manager.root:
+                context.append(f"Project path: {self._project_manager.root}")
+            
+            editor = self._editor_tabs.current_editor()
+            if editor:
+                fp = self._editor_tabs.current_filepath()
+                if fp:
+                    name = Path(fp).name
+                    content = editor.get_all_text()
+                    if len(content) > 5000:
+                        content = content[:5000] + "... (truncated)"
+                    context.append(f"Current file ({name}):\n```\n{content}\n```")
+            
+            full_context = "\n\n".join(context)
+            
+            # NEW: Check if we have enhancement data stored
+            enhancement_data = self._ai_agent.get_last_enhancement_data()
+            if enhancement_data.get("intent"):
+                log.info("Retrying with chat_with_enhancement after permission grant")
+                self._ai_agent.chat_with_enhancement(
+                    message,
+                    intent=enhancement_data["intent"],
+                    route=enhancement_data["route"],
+                    tools=enhancement_data["tools"],
+                    code_context=full_context
+                )
+            else:
+                self._ai_agent.chat(message, full_context)
+            
+    def _on_permission_denied(self, request_id: str, reason: str):
+        """Handle permission denial."""
+        log.info(f"[Permission] Denied {request_id}: {reason}")
+        self._ai_chat.add_system_message(f"❌ Permission denied: {reason}")
+        
+    def _on_chat_permission_response(self, request_id: str, approved: bool, scope: str = "session", remember: bool = False):
+        """Handle permission response from chat UI."""
+        log.info(f"Chat permission response: {request_id}, approved={approved}, scope={scope}, remember={remember}")
+        
+        # Convert permission_request_id to tool_call_id format for agent.user_responded
+        # The request_id from permission card is actually the permission_request_id (UUID)
+        # But agent.user_responded expects tool_call_id
+        # We need to find which pending tool this belongs to by searching _pending_tool_results
+        tool_call_id_match = None
+        if hasattr(self._ai_agent, '_pending_tool_results'):
+            for res in self._ai_agent._pending_tool_results:
+                # Check if this result's metadata has the matching permission_request_id
+                metadata = res.get("metadata", {})
+                if metadata.get("permission_request_id") == request_id:
+                    tool_call_id_match = res.get("tool_call_id")
+                    log.info(f"Matched permission {request_id} to tool_call_id {tool_call_id_match}")
+                    break
+        
+        if approved:
+            self._ai_integration.grant_permission(request_id, scope, remember)
+            
+            # If we found the matching tool_call_id, trigger user_responded with "allow"
+            if tool_call_id_match:
+                response_str = f"allow:{scope}" if scope else "allow"
+                if remember:
+                    response_str = f"always:{scope}" if scope else "always"
+                log.info(f"Auto-responding to pending tool: {tool_call_id_match} with {response_str}")
+                self._ai_agent.user_responded(tool_call_id_match, response_str)
+        else:
+            self._ai_integration.deny_permission(request_id, "User denied via UI")
+            
+            # If we found the matching tool_call_id, trigger user_responded with "deny"
+            if tool_call_id_match:
+                log.info(f"Auto-responding to pending tool: {tool_call_id_match} with deny")
+                self._ai_agent.user_responded(tool_call_id_match, "deny")
+    
+    def _on_user_denied_workflow(self, tool_name: str):
+        """Handle user denying workflow twice - stop AI agent."""
+        log.warning(f"User denied {tool_name} twice - stopping AI agent")
+        
+        # Stop the AI agent immediately
+        self._ai_agent.stop()
+        
+        # Add system message explaining what happened
+        self._ai_chat.add_system_message(
+            f"⏹️ **Workflow Stopped**\n\n"
+            f"You denied `{tool_name}` twice. The AI agent has stopped its current work.\n\n"
+            f"If you'd like to continue with a different approach, please send a new message."
+        )
+        
+        # Hide thinking indicator
+        self._ai_chat.hide_thinking()
+        
+        # Reset UI - show send button again
+        self._view.page().runJavaScript("if(window._onGenerationComplete) window._onGenerationComplete();")
+
+    # ========== TESTING WORKFLOW HANDLERS (NEW) ==========
+    
+    def _on_testing_decision(self, decision: str, priority: str, trigger: str):
+        """Handle testing decision signal."""
+        log.info(f"[Testing] Decision: {decision} (priority: {priority}, trigger: {trigger})")
+        
+        # Show UI notification based on decision
+        if decision == 'write_tests':
+            self._ai_chat.add_system_message(
+                f"🧪 **Testing Mode Activated**\n"
+                f"Priority: {priority.upper()} | Trigger: {trigger}\n"
+                f"The AI will analyze your code and suggest appropriate tests."
+            )
+        elif decision == 'skip_tests':
+            log.debug("Testing skipped - no triggers detected")
+    
+    def _on_test_tools_selected(self, tools: list):
+        """Handle test tools selection signal."""
+        log.info(f"[Testing] Tools selected: {tools}")
+        
+        if tools:
+            self._ai_chat.add_system_message(
+                f"🔧 **Test Framework:** {', '.join(tools)}"
+            )
+    
+    def _on_test_execution_started(self, test_type: str):
+        """Handle test execution start signal."""
+        log.info(f"[Testing] Execution started: {test_type}")
+        self._ai_chat.add_system_message(f"▶️ Running {test_type} tests...")
+    
+    def _on_test_execution_completed(self, all_passed: bool, passed_count: int, failed_count: int):
+        """Handle test execution completion signal."""
+        log.info(f"[Testing] Execution completed: {passed_count} passed, {failed_count} failed")
+        
+        if all_passed:
+            self._ai_chat.add_system_message(
+                f"✅ **All Tests Passed!** ({passed_count} tests)"
+            )
+        else:
+            self._ai_chat.add_system_message(
+                f"⚠️ **Tests Completed:** {passed_count} passed, {failed_count} failed"
+            )
+    
+    def _on_test_analysis_ready(self, analysis: dict):
+        """Handle test analysis results signal."""
+        log.info(f"[Testing] Analysis ready: {analysis.get('all_passed', False)}")
+        
+        # Display failure patterns if any
+        patterns = analysis.get('patterns', [])
+        if patterns:
+            pattern_text = '\n'.join([f"- {p.get('type', 'unknown')}: {p.get('description', '')}" 
+                                     for p in patterns[:3]])
+            self._ai_chat.add_system_message(
+                f"📊 **Failure Analysis:**\n{pattern_text}"
             )
 
     def _open_file_at_line_duplicate(self, filepath: str, line: int):
@@ -1623,7 +2542,11 @@ class CortexMainWindow(QMainWindow):
             return f'{mkdir_cmd}; {compile_cmd}; if ($LASTEXITCODE -eq 0) {{ {run_cmd} }}' if is_windows else f'{mkdir_cmd} && {compile_cmd} && {run_cmd}'
         return None
 
-    def _new_terminal(self) -> XTermWidget:
+    def _new_terminal(self, show_panel: bool = True) -> XTermWidget:
+        # If call comes from a signal (like clicked), show_panel might be the 'checked' state (False usually)
+        # So we force it to True if it's not explicitly False from our internal calls
+        if not isinstance(show_panel, bool): show_panel = True
+        
         term = XTermWidget()
         term.set_theme(self._theme_manager.is_dark)
         
@@ -1634,9 +2557,15 @@ class CortexMainWindow(QMainWindow):
         idx = self._terminal_tabs.addTab(term, f"Terminal {self._terminal_tabs.count() + 1}")
         self._terminal_tabs.setCurrentIndex(idx)
         
-        # Link to AI Agent immediately
-        self._ai_agent.set_terminal(term)
+        if show_panel:
+            self._terminal_tabs.setVisible(True)
+            term.setFocus()
+            
+        # Hook up "New Terminal" button from within the terminal
+        term.new_terminal_requested.connect(lambda: self._new_terminal(show_panel=True))
         
+       
+       
         # Connect file operations to AI chat
         term.file_operation_detected.connect(self._on_terminal_file_operation)
         
@@ -1727,17 +2656,57 @@ class CortexMainWindow(QMainWindow):
             term.setFocus()
 
     def _toggle_terminal(self):
-        self._terminal_tabs.setVisible(not self._terminal_tabs.isVisible())
+        visible = self._terminal_tabs.isVisible()
+        sizes = self._center_splitter.sizes()
+        # If already visible but dragged to be hidden (tiny size), just restore the size
+        if visible and len(sizes) > 1 and sizes[1] < 40:
+            self._center_splitter.setSizes([sizes[0], 200])
+            self._terminal_tabs.setFocus()
+            return
+            
+        self._terminal_tabs.setVisible(not visible)
         if self._terminal_tabs.isVisible():
             if self._terminal_tabs.count() == 0:
                 self._new_terminal()
+            
+            # Ensure it has a non-zero height if it was collapsed
+            new_sizes = self._center_splitter.sizes()
+            if len(new_sizes) > 1 and new_sizes[1] < 40:
+                self._center_splitter.setSizes([max(100, new_sizes[0]), 200])
+                
             term = self._current_terminal()
             if term:
                 term.setFocus()
 
     def _toggle_sidebar(self):
         visible = self._sidebar.isVisible()
+        sizes = self._main_splitter.sizes()
+        # If visible but tiny (dragged hidden), restore size instead of toggling 
+        if visible and sizes[0] < 40:
+            self._main_splitter.setSizes([260, sizes[1], sizes[2]])
+            self._sidebar.setFocus()
+            return
+            
         self._sidebar.setVisible(not visible)
+        if self._sidebar.isVisible():
+            new_sizes = self._main_splitter.sizes()
+            if new_sizes[0] < 40:
+                 self._main_splitter.setSizes([200, new_sizes[1], new_sizes[2]])
+            self._sidebar.setFocus()
+
+    def _toggle_ai_chat(self):
+        visible = self._right_panel.isVisible()
+        sizes = self._main_splitter.sizes()
+        # If visible but tiny (dragged hidden), restore size
+        if visible and len(sizes) > 2 and sizes[2] < 40:
+            self._main_splitter.setSizes([sizes[0], sizes[1], 300])
+            return
+            
+        self._right_panel.setVisible(not visible)
+        if self._right_panel.isVisible():
+            new_sizes = self._main_splitter.sizes()
+            if len(new_sizes) > 2 and new_sizes[2] < 40:
+                 self._main_splitter.setSizes([new_sizes[0], new_sizes[1], 300])
 
     def _zoom_in(self):
         """Zoom in (Ctrl+=)."""
@@ -1792,9 +2761,80 @@ class CortexMainWindow(QMainWindow):
             # TODO: Implement full command palette
 
     def _current_editor_action(self, action: str):
+        """Focus-aware edit action handler (supports Editor, AI Chat, and Terminal)."""
+        focused = QApplication.focusWidget()
+        log.debug(f"Action {action} requested. Current focus: {focused}")
+
+        # Map generic action strings to QWebEnginePage.WebAction enums
+        web_action_map = {
+            "copy": QWebEnginePage.WebAction.Copy,
+            "paste": QWebEnginePage.WebAction.Paste,
+            "cut": QWebEnginePage.WebAction.Cut,
+            "selectAll": QWebEnginePage.WebAction.SelectAll,
+            "undo": QWebEnginePage.WebAction.Undo,
+            "redo": QWebEnginePage.WebAction.Redo
+        }
+
+        # Determine which "logical" component has focus
+        logical_focused = None
+        widget = focused
+        max_depth = 10
+        while widget and max_depth > 0:
+            if hasattr(self, '_ai_chat') and (widget == self._ai_chat or widget == self._ai_chat._view):
+                logical_focused = "ai_chat"
+                break
+            
+            # Check if this widget belongs to a terminal tab
+            term = self._current_terminal()
+            if term and (widget == term or widget == term._webview):
+                logical_focused = "terminal"
+                break
+            
+            widget = widget.parentWidget()
+            max_depth -= 1
+
+        # 1. Route to AI Chat
+        if logical_focused == "ai_chat":
+            if action in web_action_map:
+                log.debug(f"Routing {action} to AI Chat WebEngineView")
+                self._ai_chat._view.page().triggerAction(web_action_map[action])
+                return
+
+        # 2. Route to Terminal
+        if logical_focused == "terminal":
+            term = self._current_terminal()
+            if action == "copy":
+                term.copy()
+                return
+            elif action == "paste":
+                term.paste()
+                return
+            elif action == "selectAll":
+                term.select_all()
+                return
+            elif action == "cut":
+                term.cut()
+                return
+            
+            if action in web_action_map:
+                term._webview.page().triggerAction(web_action_map[action])
+                return
+
+        # 3. Route to Sidebar explicitly (if focused)
+        if hasattr(self, '_sidebar') and self._sidebar.is_explorer_focused():
+            log.debug(f"Action {action} ignored globally: Sidebar handles it locally")
+            return
+
+        # 4. Fallback to Editor (current tab)
         editor = self._editor_tabs.current_editor()
-        if editor and hasattr(editor, action):
-            getattr(editor, action)()
+        if editor:
+            log.debug(f"Routing {action} to Code Editor")
+            if action == "selectAll":
+                if hasattr(editor, "selectAll"): editor.selectAll()
+                elif hasattr(editor, "select_all"): editor.select_all()
+                return
+            if hasattr(editor, action):
+                getattr(editor, action)()
 
     # ------------------------------------------------------------------
     # VS Code Style Keyboard Shortcuts
@@ -1893,6 +2933,69 @@ class CortexMainWindow(QMainWindow):
 
         if updated:
             log.info(f"Updated open tabs for rename: {old_norm} -> {new_norm}")
+    
+    def _on_sidebar_file_deleted(self, path: str):
+        """Handle file/folder deletion from sidebar."""
+        import os
+        from pathlib import Path
+        
+        norm_path = os.path.normpath(path)
+        
+        # Close tab if file is open
+        for idx, fp in list(self._editor_tabs._files.items()):
+            if os.path.normcase(fp) == os.path.normcase(norm_path):
+                self._editor_tabs._close_tab(idx)
+                break
+        
+        # Refresh sidebar to reflect deletion
+        self._sidebar.refresh()
+        
+        # Refresh project context for AI agent
+        if hasattr(self, '_ai_agent') and self._ai_agent:
+            project_root = str(self._project_manager.root) if self._project_manager.root else None
+            if project_root:
+                self._ai_agent.set_project_root(project_root)
+        
+        log.info(f"File deleted: {path}")
+    
+    def _on_file_deleted_for_undo(self, original_path: str):
+        """Track file deletion for undo functionality."""
+        log.debug(f"Undo tracking: File moved to trash: {original_path}")
+    
+    def _on_file_restored_for_redo(self, restored_path: str):
+        """Track file restoration for redo functionality."""
+        log.debug(f"Redo tracking: File restored: {restored_path}")
+        # Refresh sidebar to show restored file
+        QTimer.singleShot(100, self._sidebar.refresh)
+    
+    def _undo(self):
+        """Handle undo - prioritize editor undo, then file restore."""
+        # Try editor undo first
+        editor = self._editor_tabs.current_editor()
+        if editor and editor.document().isUndoAvailable():
+            editor.undo()
+            return
+        
+        # If no editor or no undo available, try file restore
+        if hasattr(self, '_file_manager') and self._file_manager.can_undo():
+            restored_path = self._file_manager.undo_operation()
+            if restored_path:
+                log.info(f"Restored file: {restored_path}")
+                self.statusBar().showMessage(f"Restored: {Path(restored_path).name}", 3000)
+    
+    def _redo(self):
+        """Handle redo - prioritize editor redo, then file re-delete."""
+        # Try editor redo first
+        editor = self._editor_tabs.current_editor()
+        if editor and editor.document().isRedoAvailable():
+            editor.redo()
+            return
+        
+        if hasattr(self, '_file_manager') and self._file_manager.can_redo():
+            deleted_path = self._file_manager.redo_operation()
+            if deleted_path:
+                log.info(f"Re-deleted file: {deleted_path}")
+                self.statusBar().showMessage(f"Deleted: {Path(deleted_path).name}", 3000)
 
     def _find_in_files(self):
         """Find in files (Ctrl+Shift+F)."""
@@ -2381,6 +3484,28 @@ class CortexMainWindow(QMainWindow):
 
     def _on_ai_chat_message(self, message: str):
         """Handle user message from AI chat with project context."""
+        # FAST PATH: Check if this is a simple query that doesn't need AIIntegrationLayer
+        simple_patterns = [
+            r'^hi$', r'^hello$', r'^hey$', r'^greetings$', r'^sup$', r'^yo$',
+            r'^how are you', r'^what.*your name', r'^what can you do',
+            r'^thanks?$', r'^thank you$', r'^ok$', r'^okay$', r'^got it$',
+            r'^bye$', r'^goodbye$', r'^see you$'
+        ]
+        
+        stripped = message.strip().lower()
+        is_simple = any(__import__('re').match(pattern, stripped) for pattern in simple_patterns)
+        
+        if is_simple:
+            # Fast path: Skip AIIntegrationLayer, go directly to AI agent
+            log.info(f"Fast path: Simple query '{message}' - skipping AIIntegrationLayer")
+            context = []
+            if self._project_manager.root:
+                context.append(f"Project path: {self._project_manager.root}")
+            full_context = "\n\n".join(context)
+            self._ai_agent.chat(message, full_context)
+            return
+        
+        # NORMAL PATH: Full processing for complex queries
         context = []
 
         # 1. Project Root Info
@@ -2400,17 +3525,90 @@ class CortexMainWindow(QMainWindow):
                 context.append(f"Current file ({name}):\n```\n{content}\n```")
 
         full_context = "\n\n".join(context)
-        self._ai_agent.chat(message, full_context)
+        
+        # NEW: Set session for AI Integration Layer
+        session_id = getattr(self._ai_chat, '_current_conversation_id', 'default-session')
+        self._ai_integration.set_session(
+            session_id=session_id,
+            workspace_path=self._project_manager.root
+        )
+        
+        # Start AI processing immediately for responsiveness
+        # But wait - we need to see if enhancement layer (Intent/Routing) is fast enough
+        # Optimization: start AI chat, and if enhancement layer finds a special tool/route, 
+        # we can inject that context later or stop/restart. 
+        # For now, let's just fix the DUPLICATE problem by only calling it ONCE.
+        
+        conv_id = getattr(self._ai_chat, '_current_conversation_id', None) if hasattr(self._ai_chat, '_current_conversation_id') else None
+        
+        if conv_id and not self._title_generator.get_cached_title(conv_id):
+            title = self._ai_agent.generate_chat_title(message, conv_id)
+            if title:
+                log.info(f"Generated chat title: {title}")
+                if hasattr(self._ai_chat, 'update_conversation_title'):
+                    self._ai_chat.update_conversation_title(conv_id, title)
+        
+        if conv_id:
+            try:
+                sessions = self._session_db.list_sessions(self._project_manager.root, limit=1)
+                if not sessions:
+                    title = self._title_generator.get_cached_title(conv_id) or "New Chat"
+                    self._session_db.create_session(
+                        conv_id, 
+                        title, 
+                        self._project_manager.root or "", 
+                        self._ai_agent._settings.get("ai", "model", default="deepseek-chat")
+                    )
+                import uuid
+                self._session_db.add_message(
+                    conv_id,
+                    str(uuid.uuid4()),
+                    "user",
+                    message,
+                    len(message) // 4
+                )
+            except Exception as e:
+                log.debug(f"Could not store message in database: {e}")
+        
+        # FIX: Initialize enhancement_result to None (not yet implemented in async flow)
+        enhancement_result = None
+        if enhancement_result and enhancement_result.get("intent"):
+            if enhancement_result.get("testing_decision") and \
+               enhancement_result["testing_decision"].decision == 'write_tests':
+                log.info("Using chat_with_testing with testing workflow")
+                self._ai_agent.chat_with_testing(
+                    message,
+                    code_changes=[],
+                    code_context=full_context
+                )
+            else:
+                log.info("Using chat_with_enhancement with intent classification data")
+                self._ai_agent.chat_with_enhancement(
+                    message, 
+                    intent=enhancement_result["intent"],
+                    route=enhancement_result["route"],
+                    tools=enhancement_result["tools"],
+                    code_context=full_context
+                )
+        else:
+            self._ai_agent.chat(message, full_context)
 
     def _on_model_changed(self, model_id: str, perf: str, cost: str):
         """Handle model selection change from AI chat."""
         # Determine provider from model_id
-        if model_id.startswith("openai/") or model_id.startswith("llama-") or model_id.startswith("mixtral-") or model_id.startswith("gemma"):
-            provider = "groq"
-        elif model_id.startswith("deepseek-"):
+        log.info(f"[MainWindow] DEBUG: model_id='{model_id}', starts_with_mistral={model_id.startswith('mistral-')}, starts_with_codestral={model_id.startswith('codestral-')}")
+        
+        if model_id.startswith("deepseek-") and "/" not in model_id:
+            # Native DeepSeek models (without /)
             provider = "deepseek"
+        elif model_id.startswith("mistral-") or model_id.startswith("codestral-"):
+            # Mistral AI models
+            provider = "mistral"
+        elif "/" in model_id:
+            # Vendor models via SiliconFlow
+            provider = "siliconflow"
         else:
-            provider = "groq"  # Default
+            provider = "deepseek"  # Default to DeepSeek
         
         log.info(f"[MainWindow] Model changed to: {model_id} (provider: {provider})")
         self._ai_agent.update_settings(provider, model_id)
@@ -2418,6 +3616,18 @@ class CortexMainWindow(QMainWindow):
     def _on_ai_stop_requested(self):
         """Handle stop request from AI (via web bridge)."""
         self._ai_agent.stop()
+    
+    def _on_toggle_autogen(self):
+        """Toggle AutoGen multi-agent mode."""
+        # Get current status
+        status = self._ai_agent.get_autogen_status()
+        current_enabled = status.get('enabled', False)
+        
+        # Toggle
+        new_state = not current_enabled
+        self._ai_agent.enable_autogen(new_state)
+        
+        log.info(f"AutoGen {'enabled' if new_state else 'disabled'} via UI toggle")
 
     def _on_generate_plan(self):
         log.info("MainWindow: Automated plan generation triggered")
@@ -2459,11 +3669,67 @@ class CortexMainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Project & Events
     # ------------------------------------------------------------------
+
+    def _cleanup_old_project(self):
+        """Clean up all state from the old project before opening a new one."""
+        # Only cleanup if we have a previous project loaded
+        if not hasattr(self, '_current_project_path') or not self._current_project_path:
+            log.info("🆕 First project load - skipping cleanup")
+            return
+            
+        log.info("🧹 Cleaning up old project state...")
+        
+        # 1. Close all editor tabs
+        self._editor_tabs.close_all_tabs()
+        log.info("   ✓ Closed all editor tabs")
+        
+        # 2. Clear file snapshots (diff data)
+        if hasattr(self, '_file_snapshots'):
+            self._file_snapshots.clear()
+            log.info("   ✓ Cleared file snapshots")
+        
+        # 3. Clear diff cache
+        if hasattr(self, '_diff_data_store'):
+            self._diff_data_store.clear()
+            log.info("   ✓ Cleared diff data store")
+        
+        # 4. Clear file tracker
+        if hasattr(self, '_file_tracker'):
+            if hasattr(self._file_tracker, '_edits'):
+                self._file_tracker._edits.clear()
+            log.info("   ✓ Cleared file edit history")
+        
+        # 5. Clear AI agent context
+        self._ai_agent.clear_active_file()
+        log.info("   ✓ Cleared AI agent active file")
+        
+        # 6. Clear codebase index
+        self._codebase_index = None
+        log.info("   ✓ Cleared codebase index")
+        
+        # 7. Prepare terminals for new project (will set CWD after cleanup)
+        log.info("   ✓ Prepared terminals for new project")
+        
+        # 8. Todo list is session-based, no need to clear
+        # Todos are tied to chat sessions, not projects
+        log.info("   ✓ Skipped todo cleanup (session-based)")
+        
+        # 9. Clear search results
+        if hasattr(self, '_search_results'):
+            self._search_results.clear()
+            log.info("   ✓ Cleared search results")
+        
+        log.info("✅ Old project cleanup complete!")
+    
     def _on_project_opened(self, folder_path: str):
         log.info(f"Project opened: {folder_path}")
         
+        # Clean up old project state BEFORE loading new one (only if switching)
+        self._cleanup_old_project()
+        
         # Set project root FIRST (this loads project-specific context)
         self._ai_agent.set_project_root(folder_path)
+        self._current_project_path = folder_path  # Track current project
         
         # Reset codebase index for new project
         self._codebase_index = None
@@ -2483,8 +3749,15 @@ class CortexMainWindow(QMainWindow):
         self.setWindowTitle(f"Cortex AI Agent — {project_name}")
         self._ai_chat.add_system_message(f"📂 Opened: {folder_path}")
         
+        # Load existing chats for this project from SQLite BEFORE setting project info
+        try:
+            chats_json = self._ai_chat.load_chats_for_project(folder_path)
+        except Exception as e:
+            log.warning(f"Failed to load chats for project {folder_path}: {e}")
+            chats_json = "[]"
+        
         # Update project indicator in AI chat (this triggers project-specific chat loading)
-        self._ai_chat.set_project_info(project_name, folder_path)
+        self._ai_chat.set_project_info(project_name, folder_path, chats_json)
         
         # Update welcome tab if it exists
         self._update_welcome_project_info()
@@ -2828,26 +4101,97 @@ class CortexMainWindow(QMainWindow):
         dialog.exec()
 
     def closeEvent(self, event: QCloseEvent):
-        """Save session on close and kill terminal process cleanly."""
+        """Save session on close, prompt for unsaved files, and kill terminals."""
+        # 1. Check for unsaved files
+        modified_files = self._editor_tabs._modified
+        if modified_files:
+            from PyQt6.QtWidgets import QMessageBox
+            file_names = [os.path.basename(f) for f in modified_files]
+            files_str = ", ".join(file_names[:3]) + ("..." if len(file_names) > 3 else "")
+            
+            reply = QMessageBox.question(
+                self,
+                "Unsaved Changes",
+                f"You have unsaved changes in: {files_str}\n\nDo you want to save them before closing?",
+                QMessageBox.StandardButton.SaveAll | 
+                QMessageBox.StandardButton.Discard | 
+                QMessageBox.StandardButton.Cancel
+            )
+            
+            if reply == QMessageBox.StandardButton.Cancel:
+                event.ignore()
+                return
+            elif reply == QMessageBox.StandardButton.SaveAll:
+                # Save all modified files
+                for filepath in list(modified_files):
+                    idx = -1
+                    for i, fp in self._editor_tabs._files.items():
+                        if fp == filepath:
+                            idx = i
+                            break
+                    
+                    if idx >= 0:
+                        editor = self._editor_tabs.widget(idx)
+                        if isinstance(editor, CodeEditor):
+                            content = editor.toPlainText()
+                            try:
+                                with open(filepath, 'w', encoding='utf-8') as f:
+                                    f.write(content)
+                                self._editor_tabs._mark_saved(filepath)
+                            except Exception as e:
+                                log.error(f"Failed to auto-save {filepath}: {e}")
+        
+        # 2. Force AI Chat persistence
+        if hasattr(self, '_ai_chat') and self._ai_chat:
+            log.info("Persisting AI chat history before close...")
+            # Create a localized event loop to wait for the chat persistence to finish
+            loop = QEventLoop()
+            save_success = [False]
+            
+            def on_save_done(status):
+                log.info(f"AI chat persistence finished with status: {status}")
+                save_success[0] = (status == "OK")
+                loop.quit()
+                
+            # Connect the bridge response signal
+            self._ai_chat.save_finished.connect(on_save_done)
+            
+            # Start timer for timeout (3s max)
+            QTimer.singleShot(3000, loop.quit)
+            
+            # Trigger JS to save its logic to SQLite
+            self._ai_chat.run_javascript("if(window.saveProjectChats) saveProjectChats(window.chats);")
+            
+            # Wait for save or timeout
+            loop.exec()
+            
+            if not save_success[0]:
+                log.warning("AI chat persistence timed out or failed before close.")
+            else:
+                log.info("AI chat persistence confirmed.")
+        
+        # 3. Save IDE UI state
         fps = self._editor_tabs.get_open_files()
         active = self._editor_tabs.current_filepath()
-        # Collect expanded folder paths from the file tree
         expanded = self._sidebar.get_expanded_paths()
         self._session_manager.save(fps, active, {"expanded_paths": expanded})
         self._settings.set("window", "maximized", self.isMaximized())
         if not self.isMaximized():
             self._settings.set("window", "width", self.width())
             self._settings.set("window", "height", self.height())
-        # Save splitter panel widths so they restore correctly on next open
+        
+        # Save splitter panel widths
         sizes = self._main_splitter.sizes()
         if len(sizes) == 3:
             self._settings.set("window", "sidebar_width", sizes[0])
             self._settings.set("window", "right_panel_width", sizes[2])
-        # Kill all terminal shells before Qt destroys the widgets
+            
+        # 4. Clean up terminals
         for i in range(self._terminal_tabs.count()):
             term = self._terminal_tabs.widget(i)
             if isinstance(term, XTermWidget):
                 term._kill_process()
+                
         event.accept()
 
     def resizeEvent(self, event):
@@ -2855,6 +4199,365 @@ class CortexMainWindow(QMainWindow):
         super().resizeEvent(event)
         if hasattr(self, '_welcome_widget') and self._welcome_widget is not None:
             self._apply_welcome_theme(self._theme_manager.is_dark)
+
+    # Phase 1, 2, 3 Integration Methods
+    def _set_agent_mode(self, mode: str):
+        """
+        Set AI agent mode (Phase 1 Integration).
+        
+        Args:
+            mode: One of 'build', 'explore', 'debug', 'plan'
+        """
+        self._ai_agent.set_mode(mode)
+        mode_names = {
+            'build': '🏗️ Build',
+            'explore': '🔍 Explore', 
+            'debug': '🐛 Debug',
+            'plan': '📋 Plan'
+        }
+        self._statusbar.showMessage(f"Agent mode: {mode_names.get(mode, mode)}", 3000)
+        log.info(f"Agent mode switched to: {mode}")
+    
+    def _show_skills_browser(self):
+        """Show skills browser dialog (Phase 3 Integration)."""
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QListWidget, QLabel, QPushButton, QTextEdit
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Skills Browser")
+        dialog.setMinimumSize(600, 400)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Title
+        title = QLabel("<h2>🛠️ Available Skills</h2>")
+        layout.addWidget(title)
+        
+        # Skills list
+        skills_list = QListWidget()
+        skills = self._ai_agent.get_available_skills()
+        
+        for skill in skills:
+            item_text = f"{skill['name']} ({skill['id']})"
+            skills_list.addItem(item_text)
+        
+        layout.addWidget(skills_list)
+        
+        # Description
+        desc_label = QLabel("Select a skill to view capabilities")
+        layout.addWidget(desc_label)
+        
+        # Capability display
+        capability_text = QTextEdit()
+        capability_text.setReadOnly(True)
+        capability_text.setPlaceholderText("Skill capabilities will appear here...")
+        layout.addWidget(capability_text)
+        
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.close)
+        layout.addWidget(close_btn)
+        
+        dialog.exec()
+        log.info("Skills browser opened")
+    
+    def _show_mcp_connections(self):
+        """Show MCP connections dialog (Phase 3 Integration)."""
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QLineEdit, QListWidget
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("MCP Connections")
+        dialog.setMinimumSize(500, 300)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Title
+        title = QLabel("<h2>🔗 MCP Server Connections</h2>")
+        layout.addWidget(title)
+        
+        # Connected servers
+        servers_label = QLabel("Connected Servers:")
+        layout.addWidget(servers_label)
+        
+        servers_list = QListWidget()
+        servers = self._ai_agent._mcp_manager.list_servers()
+        if servers:
+            for server in servers:
+                servers_list.addItem(server)
+        else:
+            servers_list.addItem("No servers connected")
+        
+        layout.addWidget(servers_list)
+        
+        # Connect new server section
+        layout.addWidget(QLabel("Connect New Server:"))
+        
+        name_input = QLineEdit()
+        name_input.setPlaceholderText("Server name (e.g., github)")
+        layout.addWidget(name_input)
+        
+        url_input = QLineEdit()
+        url_input.setPlaceholderText("Server URL (e.g., https://mcp.github.com)")
+        layout.addWidget(url_input)
+        
+        def connect_server():
+            name = name_input.text().strip()
+            url = url_input.text().strip()
+            if name and url:
+                success = self._ai_agent.connect_mcp_server(name, url)
+                if success:
+                    servers_list.addItem(name)
+                    name_input.clear()
+                    url_input.clear()
+        
+        connect_btn = QPushButton("Connect")
+        connect_btn.clicked.connect(connect_server)
+        layout.addWidget(connect_btn)
+        
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.close)
+        layout.addWidget(close_btn)
+        
+        dialog.exec()
+        log.info("MCP connections dialog opened")
+
+    # Phase 4 Integration Methods
+    def _show_todo_manager(self):
+        """Show TODO manager dialog (Phase 4 Integration)."""
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QListWidget, QInputDialog
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Tasks & TODOs")
+        dialog.setMinimumSize(600, 400)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Title
+        title = QLabel("<h2>✅ Task Manager</h2>")
+        layout.addWidget(title)
+        
+        # Get current session ID
+        session_id = getattr(self._ai_chat, '_current_conversation_id', 'default')
+        
+        # Tasks list
+        tasks_label = QLabel("Current Tasks:")
+        layout.addWidget(tasks_label)
+        
+        tasks_list = QListWidget()
+        tasks = self._todo_manager.get_session_tasks(session_id)
+        
+        if tasks:
+            for task in tasks:
+                status_icon = "✓" if task.status.value == "completed" else "○"
+                priority_icon = "🔴" if task.priority == 1 else "🟡" if task.priority == 2 else "🟢"
+                item_text = f"{status_icon} {priority_icon} {task.description[:50]}"
+                tasks_list.addItem(item_text)
+        else:
+            tasks_list.addItem("No tasks yet")
+        
+        layout.addWidget(tasks_list)
+        
+        # Stats
+        stats = self._todo_manager.get_task_stats(session_id)
+        stats_text = f"Pending: {stats.get('pending', 0)} | In Progress: {stats.get('in_progress', 0)} | Completed: {stats.get('completed', 0)}"
+        stats_label = QLabel(stats_text)
+        layout.addWidget(stats_label)
+        
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.close)
+        layout.addWidget(close_btn)
+        
+        dialog.exec()
+        log.info("TODO manager dialog opened")
+    
+    def _add_todo_task(self):
+        """Add a new TODO task."""
+        from PyQt6.QtWidgets import QInputDialog
+        
+        text, ok = QInputDialog.getText(self, "Add Task", "Task description:")
+        if ok and text:
+            session_id = getattr(self._ai_chat, '_current_conversation_id', 'default')
+            task_id = self._todo_manager.add_task(session_id, text)
+            self._statusbar.showMessage(f"Task added: {text[:30]}...", 3000)
+            log.info(f"Added todo task: {text}")
+    
+    def _complete_todo_task(self):
+        """Complete a TODO task."""
+        from PyQt6.QtWidgets import QInputDialog
+        
+        session_id = getattr(self._ai_chat, '_current_conversation_id', 'default')
+        tasks = self._todo_manager.get_pending_tasks(session_id)
+        
+        if not tasks:
+            self._statusbar.showMessage("No pending tasks", 3000)
+            return
+        
+        task_descriptions = [f"{i+1}. {t.description[:40]}" for i, t in enumerate(tasks)]
+        text, ok = QInputDialog.getItem(self, "Complete Task", "Select task:", task_descriptions, 0, False)
+        
+        if ok and text:
+            idx = int(text.split(".")[0]) - 1
+            if 0 <= idx < len(tasks):
+                task_id = tasks[idx].id
+                self._todo_manager.complete_task(task_id)
+                self._statusbar.showMessage("Task completed!", 3000)
+    
+    def _show_permission_settings(self):
+        """Show permission settings dialog (Phase 4 Integration)."""
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Permission Settings")
+        dialog.setMinimumSize(500, 300)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Title
+        title = QLabel("<h2>🔒 Permission System</h2>")
+        layout.addWidget(title)
+        
+        # Info
+        info = QLabel("Permission system is active and monitoring tool usage.")
+        layout.addWidget(info)
+        
+        # Cache info
+        cache_size = len(self._permission_evaluator._permission_cache)
+        cache_label = QLabel(f"Cached decisions: {cache_size}")
+        layout.addWidget(cache_label)
+        
+        # Clear cache button
+        def clear_cache():
+            self._permission_evaluator.clear_cache()
+            cache_label.setText("Cached decisions: 0")
+        
+        clear_btn = QPushButton("Clear Permission Cache")
+        clear_btn.clicked.connect(clear_cache)
+        layout.addWidget(clear_btn)
+        
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.close)
+        layout.addWidget(close_btn)
+        
+        dialog.exec()
+        log.info("Permission settings dialog opened")
+    
+    def _show_github_integration(self):
+        """Show GitHub integration dialog (Phase 4 Integration)."""
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QLineEdit, QInputDialog
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("GitHub Integration")
+        dialog.setMinimumSize(500, 300)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Title
+        title = QLabel("<h2>🐙 GitHub Automation</h2>")
+        layout.addWidget(title)
+        
+        # Repository info
+        if self._github_agent.repo_owner and self._github_agent.repo_name:
+            repo_text = f"Repository: {self._github_agent.repo_owner}/{self._github_agent.repo_name}"
+        else:
+            repo_text = "No repository configured"
+        repo_label = QLabel(repo_text)
+        layout.addWidget(repo_label)
+        
+        # Set repository button
+        def set_repo():
+            owner, ok1 = QInputDialog.getText(self, "GitHub Repository", "Repository owner:")
+            if ok1 and owner:
+                repo, ok2 = QInputDialog.getText(self, "GitHub Repository", "Repository name:")
+                if ok2 and repo:
+                    self._github_agent.set_repository(owner, repo)
+                    repo_label.setText(f"Repository: {owner}/{repo}")
+        
+        set_repo_btn = QPushButton("Set Repository")
+        set_repo_btn.clicked.connect(set_repo)
+        layout.addWidget(set_repo_btn)
+        
+        # Analyze PR button
+        def analyze_pr():
+            pr_number, ok = QInputDialog.getInt(self, "Analyze PR", "PR number:")
+            if ok:
+                result = self._github_agent.analyze_pr(pr_number)
+                if result:
+                    msg = f"PR Analysis: {result.get('summary', {}).get('files_changed', 0)} files changed"
+                    self._statusbar.showMessage(msg, 5000)
+        
+        analyze_btn = QPushButton("Analyze PR...")
+        analyze_btn.clicked.connect(analyze_pr)
+        layout.addWidget(analyze_btn)
+        
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.close)
+        layout.addWidget(close_btn)
+        
+        dialog.exec()
+        log.info("GitHub integration dialog opened")
+
+    # Phase 4: Real-time UI Update Handlers
+    def _on_todo_task_added(self, task_id: str):
+        """Handle new todo task - update chat UI in real-time."""
+        task = self._todo_manager.get_task(task_id)
+        if task and hasattr(self, '_ai_chat'):
+            # Convert to dict and update chat UI
+            task_dict = task.to_dict()
+            self._ai_chat.update_todos([task_dict])
+            log.info(f"Todo task added to UI: {task.description[:30]}")
+
+    def _on_toggle_todo(self, task_id: str, completed: bool):
+        """Handle todo toggle from UI - complete or reopen a task."""
+        if completed:
+            self._todo_manager.complete_task(task_id)
+            log.info(f"Todo completed via UI: {task_id}")
+        else:
+            self._todo_manager.start_task(task_id)
+            log.info(f"Todo reopened via UI: {task_id}")
+
+    def _on_todo_task_completed(self, task_id: str):
+        """Handle completed todo - update chat UI."""
+        task = self._todo_manager.get_task(task_id)
+        if task and hasattr(self, '_ai_chat'):
+            # Update the todo status in chat UI
+            task_dict = task.to_dict()
+            self._ai_chat.update_todos([task_dict])
+            log.info(f"Todo task completed in UI: {task.description[:30]}")
+
+    def _on_todo_task_updated(self, task_id: str):
+        """Handle updated todo - refresh chat UI."""
+        session_id = getattr(self._ai_chat, '_current_conversation_id', 'default')
+        tasks = self._todo_manager.get_session_tasks(session_id)
+        if hasattr(self, '_ai_chat'):
+            # Refresh all todos in chat UI
+            tasks_list = [t.to_dict() for t in tasks]
+            self._ai_chat.update_todos(tasks_list)
+
+    def _on_ai_task_complete(self, response: str):
+        """Show Windows toast notification when AI task completes."""
+        try:
+            if response and len(response) > 10:
+                summary = response[:150].replace('\n', ' ').strip()
+                show_task_complete_notification(summary)
+        except Exception:
+            pass
+
+    def _on_title_generated(self, conversation_id: str, title: str):
+        """Handle auto-generated title - update chat tab and UI."""
+        # Update the chat tab title via JavaScript bridge
+        if hasattr(self, '_ai_chat') and hasattr(self._ai_chat, '_view'):
+            safe_title = title.replace('"', '\\"').replace("'", "\\'")
+            js_code = f"if(window.updateChatTitle) window.updateChatTitle('{conversation_id}', '{safe_title}');"
+            self._ai_chat._view.page().runJavaScript(js_code)
+            log.info(f"Chat title updated in UI: {title}")
+        
+        # Also update window title if this is current chat
+        current_id = getattr(self._ai_chat, '_current_conversation_id', None)
+        if current_id == conversation_id and title:
+            self.setWindowTitle(f"Cortex - {title}")
 
 
 def QApplication_instance():

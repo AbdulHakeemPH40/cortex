@@ -1,0 +1,476 @@
+/* ================================================================
+   UNIVERSAL SYNTAX HIGHLIGHTING - DRACULA THEME
+   Applied to ALL Programming Languages & Frameworks
+   Python, JavaScript, TypeScript, Java, C++, C, CSS, HTML, etc.
+   ================================================================ */
+
+/* ========== GLOBAL FONT CONFIGURATION ========== */
+:root {
+    --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    --font-sans: 'Inter', 'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+/* ========== APPLY FONT TO ALL CODE ELEMENTS ========== */
+/* Ensure JetBrains Mono font is applied to ALL code blocks in chat */
+.markdown-body pre,
+.markdown-body code,
+.md-content pre,
+.md-content code,
+.code-block-container,
+.code-block,
+.code-snippet,
+pre code,
+pre,
+code,
+.hljs,
+[class*="language-"] {
+    font-family: var(--font-mono) !important;
+}
+
+/* ========== DRACULA THEME COLOR PALETTE ========== */
+:root {
+    /* Background Colors */
+    --dracula-bg: #282a36;
+    --dracula-bg-light: #44475a;
+    
+    /* Text Colors */
+    --dracula-text: #f8f8f2;
+    --dracula-text-faded: #6272a4;
+    
+    /* Syntax Colors - EXACT DRACULA */
+    --dracula-keyword: #bd93f9;      /* Purple - keywords, operators */
+    --dracula-string: #50fa7b;       /* Green - strings, text */
+    --dracula-number: #bd93f9;       /* Purple - numbers, literals */
+    --dracula-comment: #6272a4;      /* Blue-gray - comments */
+    --dracula-function: #ffb86c;     /* Orange - function names */
+    --dracula-tag: #ff79c6;          /* Pink - tags, attributes */
+    --dracula-variable: #ff5555;     /* Red - variables, deletion */
+    --dracula-class: #8be9fd;        /* Cyan - class names */
+    --dracula-const: #f1fa8c;        /* Yellow - constants */
+    --dracula-import: #ff79c6;       /* Pink - imports, exports */
+    --dracula-builtin: #8be9fd;      /* Cyan - built-in functions */
+}
+
+/* ========== MARKDOWN STYLING - MAXIMUM SPECIFICITY ========== */
+/* CRITICAL: Override ALL other stylesheets including highlight.js dracula */
+
+/* Level 1: Base container - HIGHEST PRIORITY */
+html body .markdown-body,
+html body .md-content {
+    font-family: var(--font-sans) !important;
+    color: #ffffff !important;  /* WHITE - OVERRIDE everything */
+    background: var(--dracula-bg) !important;
+}
+
+/* Level 2: Force inheritance on ALL descendants */
+html body .markdown-body *,
+html body .md-content * {
+    color: inherit !important;
+}
+
+/* Level 3: Exception for code blocks (keep Dracula syntax colors) */
+html body .markdown-body .hljs,
+html body .markdown-body pre code,
+html body .markdown-body [class*="language-"] {
+    color: revert-layer !important;  /* Revert to Dracula theme */
+}
+
+/* Level 4: Specific element overrides - MAXIMUM SPECIFICITY */
+html body .markdown-body p,
+html body .markdown-body li,
+html body .markdown-body td,
+html body .markdown-body th,
+html body .markdown-body blockquote,
+html body .markdown-body span:not(.hljs):not([class*="language-"]),
+html body .markdown-body div:not(.code-block):not(pre),
+html body .markdown-body strong,
+html body .markdown-body em,
+html body .markdown-body b,
+html body .markdown-body i {
+    color: #ffffff !important;  /* PURE WHITE - cannot be overridden */
+    font-family: var(--font-sans) !important;
+}
+
+/* Markdown Main Heading (H1) - Deep Blue */
+html body .markdown-body h1,
+html body .md-h1 {
+    color: #0047AB !important;  /* Deep blue for main heading */
+    font-weight: 700 !important;
+    font-family: var(--font-sans) !important;
+}
+
+/* Markdown Child Headings (H2-H6) - Lighter Blue */
+html body .markdown-body h2,
+html body .markdown-body h3,
+html body .markdown-body h4,
+html body .markdown-body h5,
+html body .markdown-body h6,
+html body .md-h2,
+html body .md-h3,
+html body .md-h4,
+html body .md-h5,
+html body .md-h6 {
+    color: #4169E1 !important;  /* Royal blue (lighter) for child headings */
+    font-weight: 700 !important;
+    font-family: var(--font-sans) !important;
+}
+
+/* Markdown Code in text - String color */
+.markdown-body code:not(pre code),
+.md-inline-code {
+    color: var(--dracula-string);
+    background: rgba(82, 250, 123, 0.1);
+    border: 1px solid rgba(82, 250, 123, 0.2);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: var(--font-mono);
+}
+
+/* Markdown Links */
+.markdown-body a,
+.md-link {
+    color: var(--dracula-tag);
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+    transition: border-color 0.2s;
+}
+
+.markdown-body a:hover,
+.md-link:hover {
+    border-bottom-color: var(--dracula-tag);
+}
+
+/* ========== UNIVERSAL CODE BLOCK STYLING ========== */
+.code-block-container,
+pre, code,
+.hljs,
+.code-block,
+.code-snippet {
+    background: var(--dracula-bg) !important;
+    color: var(--dracula-text) !important;
+    font-family: var(--font-mono) !important;
+    font-size: 10px;
+    line-height: 1.6;
+    padding: 0;
+    margin: 0;
+}
+
+/* ========== DRACULA THEME - ALL LANGUAGES ========== */
+
+/* Base */
+.hljs {
+    color: var(--dracula-text);
+    background: var(--dracula-bg);
+}
+
+/* Comments - Blue-gray */
+.hljs-comment,
+.hljs-quote,
+.hljs-doctag,
+.hljs-formula {
+    color: var(--dracula-comment);
+    font-style: italic;
+}
+
+/* Strings & Text - Green */
+.hljs-string,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition {
+    color: var(--dracula-string);
+}
+
+/* Keywords & Reserved Words - Purple */
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-literal,
+.hljs-type,
+.hljs-params,
+.hljs-regexp {
+    color: var(--dracula-keyword);
+}
+
+/* Function & Method Names - Orange */
+.hljs-title,
+.hljs-section,
+.hljs-meta,
+.hljs-function {
+    color: var(--dracula-function);
+    font-weight: 600;
+}
+
+/* Tags & Attributes - Pink */
+.hljs-tag,
+.hljs-attr,
+.hljs-name,
+.hljs-attribute {
+    color: var(--dracula-tag);
+}
+
+/* Numbers & Literals - Purple */
+.hljs-number,
+.hljs-literal,
+.hljs-type,
+.hljs-params,
+.hljs-regexp {
+    color: var(--dracula-number);
+}
+
+/* Variables & Deletion - Red */
+.hljs-deletion,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-link {
+    color: var(--dracula-variable);
+}
+
+/* Emphasis */
+.hljs-emphasis {
+    font-style: italic;
+}
+
+.hljs-strong {
+    font-weight: bold;
+}
+
+/* ========== LANGUAGE-SPECIFIC STYLING ========== */
+
+/* PYTHON - Dracula Colors */
+.language-python .hljs-string { color: var(--dracula-string); }
+.language-python .hljs-keyword { color: var(--dracula-keyword); }
+.language-python .hljs-number { color: var(--dracula-number); }
+.language-python .hljs-built_in { color: var(--dracula-builtin); }
+.language-python .hljs-function { color: var(--dracula-function); }
+.language-python .hljs-title.function_ { color: var(--dracula-function); }
+.language-python .hljs-class { color: var(--dracula-class); }
+.language-python .hljs-decorator { color: var(--dracula-function); }
+
+/* JAVASCRIPT / TYPESCRIPT - Dracula Colors */
+.language-javascript .hljs-string { color: var(--dracula-string); }
+.language-javascript .hljs-keyword { color: var(--dracula-keyword); }
+.language-javascript .hljs-number { color: var(--dracula-number); }
+.language-javascript .hljs-title.function_ { color: var(--dracula-function); }
+.language-javascript .hljs-attr { color: var(--dracula-tag); }
+.language-javascript .hljs-variable { color: var(--dracula-variable); }
+.language-javascript .hljs-built_in { color: var(--dracula-builtin); }
+.language-typescript .hljs-string { color: var(--dracula-string); }
+.language-typescript .hljs-keyword { color: var(--dracula-keyword); }
+.language-typescript .hljs-built_in { color: var(--dracula-builtin); }
+.language-typescript .hljs-title.class_ { color: var(--dracula-class); }
+
+/* JSX / TSX - Dracula Colors */
+.language-jsx .hljs-tag { color: var(--dracula-tag); }
+.language-jsx .hljs-attr { color: var(--dracula-tag); }
+.language-jsx .hljs-string { color: var(--dracula-string); }
+.language-jsx .hljs-name { color: var(--dracula-tag); }
+.language-tsx .hljs-tag { color: var(--dracula-tag); }
+.language-tsx .hljs-attr { color: var(--dracula-tag); }
+.language-tsx .hljs-string { color: var(--dracula-string); }
+.language-tsx .hljs-name { color: var(--dracula-tag); }
+
+/* HTML - Dracula Colors */
+.language-html .hljs-tag { color: var(--dracula-tag); }
+.language-html .hljs-attr { color: var(--dracula-tag); }
+.language-html .hljs-string { color: var(--dracula-string); }
+.language-html .hljs-name { color: var(--dracula-tag); }
+.language-html .hljs-title { color: var(--dracula-tag); }
+
+/* CSS / SCSS / LESS - Dracula Colors */
+.language-css .hljs-selector-class { color: var(--dracula-function); }
+.language-css .hljs-selector-id { color: var(--dracula-variable); }
+.language-css .hljs-attr { color: var(--dracula-tag); }
+.language-css .hljs-number { color: var(--dracula-number); }
+.language-css .hljs-string { color: var(--dracula-string); }
+.language-css .hljs-selector-tag { color: var(--dracula-function); }
+.language-scss .hljs-attr { color: var(--dracula-tag); }
+.language-scss .hljs-string { color: var(--dracula-string); }
+.language-scss .hljs-variable { color: var(--dracula-variable); }
+.language-less .hljs-attr { color: var(--dracula-tag); }
+.language-less .hljs-string { color: var(--dracula-string); }
+
+/* JAVA - Dracula Colors */
+.language-java .hljs-keyword { color: var(--dracula-keyword); }
+.language-java .hljs-title.class_ { color: var(--dracula-class); }
+.language-java .hljs-string { color: var(--dracula-string); }
+.language-java .hljs-number { color: var(--dracula-number); }
+.language-java .hljs-built_in { color: var(--dracula-builtin); }
+
+/* C++ / C# / C - Dracula Colors */
+.language-cpp .hljs-keyword { color: var(--dracula-keyword); }
+.language-cpp .hljs-string { color: var(--dracula-string); }
+.language-cpp .hljs-number { color: var(--dracula-number); }
+.language-cpp .hljs-title.function_ { color: var(--dracula-function); }
+.language-c .hljs-keyword { color: var(--dracula-keyword); }
+.language-c .hljs-string { color: var(--dracula-string); }
+.language-c .hljs-number { color: var(--dracula-number); }
+.language-csharp .hljs-keyword { color: var(--dracula-keyword); }
+.language-csharp .hljs-string { color: var(--dracula-string); }
+.language-csharp .hljs-title.class_ { color: var(--dracula-class); }
+
+/* GO / RUST / PHP - Dracula Colors */
+.language-go .hljs-keyword { color: var(--dracula-keyword); }
+.language-go .hljs-string { color: var(--dracula-string); }
+.language-go .hljs-function { color: var(--dracula-function); }
+.language-rust .hljs-keyword { color: var(--dracula-keyword); }
+.language-rust .hljs-string { color: var(--dracula-string); }
+.language-php .hljs-keyword { color: var(--dracula-keyword); }
+.language-php .hljs-string { color: var(--dracula-string); }
+.language-php .hljs-variable { color: var(--dracula-variable); }
+
+/* SQL - Dracula Colors */
+.language-sql .hljs-keyword { color: var(--dracula-keyword); }
+.language-sql .hljs-string { color: var(--dracula-string); }
+.language-sql .hljs-number { color: var(--dracula-number); }
+.language-sql .hljs-title { color: var(--dracula-function); }
+
+/* JSON / YAML - Dracula Colors */
+.language-json .hljs-attr { color: var(--dracula-tag); }
+.language-json .hljs-string { color: var(--dracula-string); }
+.language-json .hljs-number { color: var(--dracula-number); }
+.language-yaml .hljs-attr { color: var(--dracula-tag); }
+.language-yaml .hljs-string { color: var(--dracula-string); }
+
+/* SHELL / BASH - Dracula Colors */
+.language-bash .hljs-keyword { color: var(--dracula-keyword); }
+.language-bash .hljs-string { color: var(--dracula-string); }
+.language-bash .hljs-number { color: var(--dracula-number); }
+.language-shell .hljs-keyword { color: var(--dracula-keyword); }
+.language-shell .hljs-string { color: var(--dracula-string); }
+
+/* FRAMEWORKS - React/Vue/Angular - Dracula Colors */
+.language-jsx .hljs-keyword { color: var(--dracula-keyword); }
+.language-tsx .hljs-keyword { color: var(--dracula-keyword); }
+.language-vue .hljs-tag { color: var(--dracula-tag); }
+.language-vue .hljs-attr { color: var(--dracula-tag); }
+.language-vue .hljs-string { color: var(--dracula-string); }
+.language-typescript .hljs-title.class_ { color: var(--dracula-class); }
+
+/* Django / Flask / FastAPI - Dracula Colors */
+.language-python .hljs-title.function_ { color: var(--dracula-function); }
+.language-python .hljs-decorator { color: var(--dracula-function); }
+
+/* ========== CODE HEADER STYLING ========== */
+.code-header {
+    background: var(--dracula-bg-light);
+    padding: 8px 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+    color: var(--dracula-text-faded);
+    border-bottom: 1px solid var(--dracula-keyword);
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.code-header .lang-label {
+    font-weight: 700;
+    color: var(--dracula-string);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+/* ========== COPY/RUN BUTTONS ========== */
+.copy-btn,
+.run-btn,
+.code-copy-btn,
+.code-insert-btn,
+.code-run-btn {
+    background: var(--dracula-keyword);
+    border: 1px solid var(--dracula-keyword);
+    color: var(--dracula-bg);
+    cursor: pointer;
+    font-size: 11px;
+    padding: 5px 10px;
+    border-radius: 3px;
+    transition: all 0.2s;
+    font-family: var(--font-mono);
+    font-weight: 600;
+}
+
+.copy-btn:hover,
+.run-btn:hover,
+.code-copy-btn:hover,
+.code-insert-btn:hover,
+.code-run-btn:hover {
+    background: var(--dracula-string);
+    border-color: var(--dracula-string);
+    color: var(--dracula-bg);
+}
+
+/* ========== LINE NUMBERS ========== */
+.hljs-ln-line {
+    background: transparent;
+}
+
+.hljs-ln-numbers {
+    text-align: right;
+    color: var(--dracula-comment);
+    user-select: none;
+    padding-right: 12px;
+    border-right: 1px solid var(--dracula-bg-light);
+}
+
+.hljs-ln-code {
+    padding-left: 12px;
+}
+
+/* ========== SELECTION & HIGHLIGHT ========== */
+.hljs::selection,
+.hljs *::selection {
+    background: rgba(189, 147, 249, 0.3);
+}
+
+/* ========== SCROLLBAR STYLING ========== */
+pre::-webkit-scrollbar {
+    height: 8px;
+}
+
+pre::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+pre::-webkit-scrollbar-thumb {
+    background: var(--dracula-comment);
+    border-radius: 4px;
+}
+
+pre::-webkit-scrollbar-thumb:hover {
+    background: var(--dracula-string);
+}
+
+/* ========== LIGHT MODE OVERRIDES ========== */
+body.light .code-block-container,
+body.light pre,
+body.light code,
+body.light .hljs {
+    background: #f5f5f5 !important;
+    color: #1e1e1e !important;
+}
+
+body.light .hljs-string { color: #008000 !important; }
+body.light .hljs-keyword { color: #0000ff !important; }
+body.light .hljs-number { color: #098658 !important; }
+body.light .hljs-comment { color: #008040 !important; }
+body.light .hljs-function { color: #795e26 !important; }
+body.light .hljs-tag { color: #800000 !important; }
+body.light .hljs-attr { color: #ff0000 !important; }
+
+/* ========== RESPONSIVE TEXT SIZING ========== */
+@media (max-width: 768px) {
+    .code-block-container,
+    pre, code {
+        font-size: 12px !important;
+    }
+}
+
+@media (max-width: 480px) {
+    .code-block-container,
+    pre, code {
+        font-size: 11px !important;
+    }
+}

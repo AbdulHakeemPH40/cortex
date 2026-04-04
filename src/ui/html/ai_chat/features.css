@@ -1,394 +1,463 @@
-/* ══════════════════════════════════════════════════════════════
-   FEATURE 1 — PROJECT TREE CARD
-══════════════════════════════════════════════════════════════ */
+/* ================================================
+   CURSOR IDE CARD COMPONENTS
+   Modern, Compact Card-Based UI
+   ================================================ */
 
-.ptree-card {
-    background: #111;
-    border-radius: 6px;
-    padding: 10px 0 6px;
-    margin: 8px 0;
-    font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
-    font-size: 12.5px;
-}
-
-.ptree-root {
-    color: #c0c0c0;
-    font-size: 12px;
-    padding: 0 14px 8px;
-    cursor: pointer;
-    transition: color 0.15s;
-    white-space: nowrap;
+/* Card Container */
+.card-container {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    margin-bottom: 16px;
     overflow: hidden;
-    text-overflow: ellipsis;
-    display: block;
-}
-.ptree-root:hover { color: #2dd4bf; }
-
-.ptree-list { padding: 0; }
-
-.ptree-item {
-    display: flex;
-    align-items: center;
-    flex-wrap: nowrap;
-    gap: 6px;
-    padding: 3px 14px 3px 0;
-    line-height: 1.5;
-    white-space: nowrap;
-}
-
-.ptree-branch {
-    color: #555;
-    font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
-    white-space: pre;
-    flex-shrink: 0;
-    font-size: 12px;
-    width: 24px;
-    text-align: right;
-}
-
-.ptree-icon {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 16px;
-    height: 16px;
-}
-
-.ptree-filename {
-    background: none;
-    border: none;
-    color: #e0e0e0;
-    font-family: inherit;
-    font-size: inherit;
-    cursor: pointer;
-    padding: 0;
-    text-align: left;
-    white-space: nowrap;
-    transition: color 0.12s;
-}
-.ptree-filename:hover { color: #2dd4bf; text-decoration: underline; }
-
-.ptree-size {
-    color: #555;
-    font-size: 11.5px;
-    white-space: nowrap;
-    flex-shrink: 0;
-}
-
-.ptree-desc {
-    color: #555;
-    font-size: 11.5px;
-    flex: 1;
-    min-width: 0;
-}
-
-
-/* ══════════════════════════════════════════════════════════════
-   FEATURE 2 — TERMINAL COMMAND CARD
-══════════════════════════════════════════════════════════════ */
-
-.term-card {
-    background: #111;
-    border: 1px solid #1e1e1e;
-    border-radius: 8px;
-    margin: 6px 0;
-    overflow: hidden;
-    font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
-}
-.term-card.term-running { border-left: 2.5px solid #555; }
-.term-card.term-success { border-left: 2.5px solid #22c55e; }
-.term-card.term-error   { border-left: 2.5px solid #ef4444; }
-
-.term-header {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    padding: 7px 12px 5px;
-}
-.term-status-icon {
     font-size: 13px;
-    flex-shrink: 0;
-    width: 16px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-.term-title {
-    font-size: 12px;
-    font-weight: 500;
-    color: #c0c0c0;
-    font-family: inherit;
-    flex: 1;
-}
-.term-exit-code {
-    font-size: 11px;
-    color: #ef4444;
-    margin-left: auto;
-    white-space: nowrap;
-}
-.term-body { padding: 0 12px 6px; }
-.term-command {
-    margin: 0;
-    font-size: 12px;
-    line-height: 1.6;
-    color: #c0c0c0;
-    white-space: pre-wrap;
-    word-break: break-all;
-    background: transparent;
-    border: none;
-    padding: 0;
-    font-family: inherit;
-}
-.term-path    { color: #fb923c; }
-.term-keyword { color: #38bdf8; font-weight: 600; }
-
-.term-footer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 5px 12px 8px;
-    gap: 10px;
-}
-.term-output-toggle {
-    background: none;
-    border: none;
-    color: #666;
-    font-size: 11.5px;
-    font-family: inherit;
-    cursor: pointer;
-    padding: 0;
-    display: flex;
-    align-items: center;
-    gap: 3px;
-    transition: color 0.15s;
-}
-.term-output-toggle:hover { color: #888; }
-.term-chevron { font-size: 13px; line-height: 1; }
-.term-view-btn {
-    background: none;
-    border: none;
-    color: #555;
-    font-size: 11px;
-    font-family: inherit;
-    cursor: pointer;
-    padding: 0;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    transition: color 0.15s;
-    white-space: nowrap;
-}
-.term-view-btn:hover { color: #888; }
-.term-output-body {
-    border-top: 1px solid #1a1a1a;
-    padding: 8px 12px;
-    background: #0a0a0a;
-}
-.term-output-text {
-    margin: 0;
-    font-size: 11.5px;
-    color: #888;
-    white-space: pre-wrap;
-    word-break: break-word;
-    line-height: 1.5;
-    max-height: 200px;
-    overflow-y: auto;
-    font-family: inherit;
-}
-.term-card.term-error .term-output-text { color: #fca5a5; }
-
-
-/* ══════════════════════════════════════════════════════════════
-   FEATURE 3 — TODO PANEL (above input, collapsible)
-══════════════════════════════════════════════════════════════ */
-
-.todo-section {
-    display: flex;
-    flex-direction: column;
-    background: #111;
-    border-top: 1px solid #1e1e1e;
-    flex-shrink: 0;
-    max-height: 260px;
+    transition: all 0.2s ease;
 }
 
-.todo-header {
+.card-container:hover {
+    border-color: var(--border-light);
+}
+
+/* Card Header */
+.card-header {
+    padding: 10px 14px;
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 6px 12px;
     cursor: pointer;
     user-select: none;
-    min-height: 30px;
-    flex-shrink: 0;
-    transition: background 0.1s;
-}
-.todo-header:hover { background: #161616; }
-
-.todo-header-left {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    min-width: 0;
-    flex: 1;
-    overflow: hidden;
+    background: rgba(255, 255, 255, 0.02);
+    transition: background 0.15s ease;
 }
 
-.todo-chevron {
-    color: #555;
-    flex-shrink: 0;
-    transition: transform 0.18s ease;
-}
-.todo-section.expanded .todo-chevron { transform: rotate(90deg); }
-
-.todo-label {
-    font-size: 11.5px;
-    font-weight: 600;
-    color: #888;
-    white-space: nowrap;
-    flex-shrink: 0;
+.card-header:hover {
+    background: rgba(255, 255, 255, 0.05);
 }
 
-.todo-preview {
-    font-size: 11.5px;
-    color: #4a4a4a;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    min-width: 0;
-    flex: 1;
-}
-
-.todo-count {
-    font-size: 11.5px;
-    color: #555;
-    white-space: nowrap;
-    flex-shrink: 0;
-    font-variant-numeric: tabular-nums;
-}
-
-.todo-body { overflow-y: auto; flex: 1; }
-.todo-list { padding: 3px 0 6px; }
-
-.todo-item {
-    display: flex;
-    align-items: flex-start;
-    gap: 9px;
-    padding: 5px 14px 5px 26px;
-    font-size: 12px;
-    line-height: 1.55;
-    color: #bbb;
-    transition: background 0.1s;
-}
-.todo-item:hover { background: #161616; }
-
-/* Icon circle */
-.todo-icon {
+/* Chevron Icon */
+.card-chevron {
     width: 14px;
     height: 14px;
-    flex-shrink: 0;
-    margin-top: 2px;
+    margin-right: 10px;
+    transition: transform 0.2s ease;
+    opacity: 0.4;
+    fill: currentColor;
+}
+
+.expanded .card-chevron {
+    transform: rotate(90deg);
+}
+
+/* Card Body */
+.card-body {
+    display: none;
+    border-top: 1px solid var(--border);
+    background: #141414;
+}
+
+.expanded .card-body {
+    display: block;
+    animation: slideDown 0.2s ease;
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* ================================================
+   TODO CIRCLE COMPONENTS
+   ================================================ */
+
+.todo-circle {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 1px solid rgba(255, 255, 255, 0.1); /* 1px transparent border */
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 50%;
-}
-.todo-icon-pending  { border: 1.5px solid #333; }
-.todo-icon-progress { border: 1.5px solid #777; background: #1a1a1a; color: #888; }
-.todo-icon-done     { border: 1.5px solid #22c55e; background: #14532d44; color: #22c55e; }
-.todo-icon-cancelled { border: 1.5px solid #2a2a2a; color: #3a3a3a; }
-
-.todo-text { flex: 1; }
-.todo-item.todo-complete   .todo-text { color: #3a3a3a; text-decoration: line-through; }
-.todo-item.todo-inprogress .todo-text { color: #e0e0e0; }
-.todo-item.todo-cancelled  .todo-text { color: #333; text-decoration: line-through; }
-
-
-/* ══════════════════════════════════════════════════════════════
-   FEATURE 4 — MESSAGE QUEUE BAR (above input)
-══════════════════════════════════════════════════════════════ */
-
-.msg-queue-bar {
-    flex-direction: column;
-    background: #0f0f0f;
-    border-top: 1px solid #1e1e1e;
+    margin-right: 12px;
     flex-shrink: 0;
-    max-height: 130px;
+    position: relative;
+    transition: all 0.2s ease;
+}
+
+.todo-circle.completed {
+    background-color: var(--green); /* #2EA043 */
+    border-color: var(--green);
+}
+
+.todo-circle.completed svg {
+    width: 10px;
+    height: 10px;
+    color: #fff;
+}
+
+/* Completed state - line-through text */
+.todo-item.completed .todo-text {
+    text-decoration: line-through;
+    opacity: 0.5;
+}
+
+.todo-circle.active {
+    border-color: transparent; /* Hide border when spinning */
+}
+
+/* Spinner Animation - colored top-arc rotating at 0.8s */
+.todo-spinner {
+    width: 14px;
+    height: 14px;
+    border: 1px solid transparent;
+    border-top-color: var(--accent-primary); /* Colored arc */
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+/* ================================================
+   TERMINAL VIEWPORT
+   ================================================ */
+
+.terminal-viewport {
+    background: #000000; /* Pure black for terminal */
+    padding: 14px;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+    font-size: 12px;
+    color: #dddddd;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-all;
+    overflow-x: auto;
+}
+
+/* Terminal prompt markers - color-coded */
+.terminal-viewport .prompt-green::before {
+    content: '$ ';
+    color: #2EA043; /* Green prompt */
+    font-weight: bold;
+}
+
+.terminal-viewport .prompt-ps::before {
+    content: 'PS> ';
+    color: #3B82F6; /* Blue PowerShell prompt */
+    font-weight: bold;
+}
+
+/* Auto-expand/collapse behavior handled by JavaScript */
+.terminal-viewport.expanded {
+    max-height: none;
+}
+
+.terminal-viewport.collapsed {
+    max-height: 120px;
+    overflow-y: auto;
+}
+
+/* ================================================
+   STEP LOG ENTRIES
+   ================================================ */
+
+.step-log {
+    font-size: 12px;
+    color: #777;
+    margin-bottom: 10px;
+    padding-left: 10px;
+    border-left: 2px solid #222;
+    font-family: 'Fira Code', 'Cascadia Code', monospace;
+    line-height: 1.5;
+}
+
+.step-log .log-detail {
+    opacity: 0.6;
+}
+
+/* ================================================
+   LIST ROW COMPONENTS
+   ================================================ */
+
+.list-row {
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid #222;
+    transition: background 0.15s ease;
+}
+
+.list-row:last-child {
+    border-bottom: none;
+}
+
+.list-row:hover {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+/* ================================================
+   STATUS TAGS & BADGES
+   ================================================ */
+
+.status-tag {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    margin-left: auto;
+    padding: 2px 8px;
+    border-radius: 3px;
+    letter-spacing: 0.5px;
+}
+
+.text-mod {
+    color: var(--yellow);
+    background: rgba(234, 179, 8, 0.15);
+}
+
+.text-add {
+    color: var(--green-bright);
+    background: var(--green-bg);
+}
+
+.text-del {
+    color: var(--red);
+    background: var(--red-bg);
+}
+
+/* ================================================
+   PULSE TIMER ANIMATION
+   ================================================ */
+
+.pulse-timer {
+    animation: pulse-opacity 1.5s infinite;
+    color: var(--accent-primary);
+}
+
+@keyframes pulse-opacity {
+    0% { opacity: 0.4; }
+    50% { opacity: 1; }
+    100% { opacity: 0.4; }
+}
+
+/* ================================================
+   PERMISSION BUTTON GROUPS
+   ================================================ */
+
+.btn-group {
+    display: flex;
+    gap: 8px;
+    margin-left: auto;
+}
+
+.btn-accept {
+    background: var(--green);
+    color: #fff;
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.btn-accept:hover {
+    background: var(--green-bright);
+    transform: translateY(-1px);
+}
+
+.btn-reject {
+    background: #333333;
+    color: #dddddd;
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.btn-reject:hover {
+    background: #444444;
+    transform: translateY(-1px);
+}
+
+/* ================================================
+   DIFF VIEWER INSIDE CARDS
+   ================================================ */
+
+.diff-viewer-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    margin-bottom: 16px;
     overflow: hidden;
 }
 
-.mq-header {
+.diff-header {
+    padding: 10px 14px;
+    background: rgba(255, 255, 255, 0.02);
+    border-bottom: 1px solid var(--border);
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 5px 12px 4px;
-    flex-shrink: 0;
+    justify-content: space-between;
 }
 
-.mq-label {
-    font-size: 10.5px;
+.diff-title {
+    font-size: 13px;
     font-weight: 600;
-    color: #555;
-    text-transform: uppercase;
-    letter-spacing: 0.07em;
-}
-
-.mq-count {
-    font-size: 10.5px;
-    color: #444;
-    background: #1a1a1a;
-    padding: 0 5px;
-    border-radius: 8px;
-    min-width: 16px;
-    text-align: center;
-}
-
-.mq-list { overflow-y: auto; flex: 1; }
-
-.mq-item {
+    color: var(--text-main);
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 4px 12px;
-    border-bottom: 1px solid #161616;
-    transition: background 0.1s;
 }
-.mq-item:last-child { border-bottom: none; }
-.mq-item:hover { background: #141414; }
 
-.mq-position {
-    width: 15px;
-    height: 15px;
-    background: #1a1a1a;
-    border-radius: 50%;
-    font-size: 9px;
-    color: #555;
+.diff-filename {
+    font-family: 'Fira Code', monospace;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.diff-actions {
     display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    font-weight: 700;
+    gap: 8px;
 }
 
-.mq-text {
-    flex: 1;
-    font-size: 11.5px;
-    color: #666;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    min-width: 0;
-}
-
-.mq-remove {
-    background: none;
+.diff-btn {
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
     border: none;
-    color: #2a2a2a;
     cursor: pointer;
-    font-size: 14px;
-    line-height: 1;
-    padding: 0;
-    flex-shrink: 0;
-    transition: color 0.12s;
+    transition: all 0.15s;
 }
-.mq-remove:hover { color: #ef4444; }
+
+.diff-btn-accept {
+    background: var(--green);
+    color: #fff;
+}
+
+.diff-btn-accept:hover {
+    background: var(--green-bright);
+}
+
+.diff-btn-reject {
+    background: #333;
+    color: #ddd;
+}
+
+.diff-btn-reject:hover {
+    background: #444;
+}
+
+.diff-content {
+    padding: 14px;
+    background: var(--bg-code);
+    font-family: 'Fira Code', monospace;
+    font-size: 11px;
+    line-height: 1.6;
+    overflow-x: auto;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.diff-line {
+    padding: 2px 8px;
+    white-space: pre;
+}
+
+.diff-line.added {
+    background: var(--green-bg);
+    color: var(--diff-add);
+}
+
+.diff-line.removed {
+    background: var(--red-bg);
+    color: var(--diff-remove);
+}
+
+.diff-line.context {
+    color: var(--text-secondary);
+}
+
+.diff-line-number {
+    display: inline-block;
+    width: 40px;
+    color: var(--text-dim);
+    user-select: none;
+}
+
+/* Inline Diff Footer */
+.inline-diff-footer {
+    padding: 10px 14px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.01);
+}
+
+.diff-stats {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.diff-stats .additions {
+    color: var(--green-bright);
+}
+
+.diff-stats .deletions {
+    color: var(--red);
+}
+
+/* ================================================
+   RESPONSIVE ADJUSTMENTS
+   ================================================ */
+
+@media (max-width: 768px) {
+    .card-container {
+        margin-bottom: 12px;
+    }
+    
+    .card-header {
+        padding: 8px 12px;
+    }
+    
+    .list-row {
+        padding: 8px 12px;
+    }
+    
+    .btn-group {
+        flex-direction: column;
+        gap: 6px;
+    }
+    
+    .btn-accept,
+    .btn-reject {
+        width: 100%;
+    }
+    
+    .diff-actions {
+        flex-direction: column;
+    }
+}
+
+@media (max-width: 480px) {
+    .terminal-viewport {
+        font-size: 10px;
+        padding: 10px;
+    }
+    
+    .diff-content {
+        font-size: 10px;
+        padding: 10px;
+    }
+}

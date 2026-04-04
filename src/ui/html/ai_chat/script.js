@@ -1,9 +1,22 @@
-var bridge = null;
+﻿var bridge = null;
 var term = null;
 var fitAddon = null;
 var currentChatId = null;
 var currentProjectPath = ''; // Current project path for isolated chat history
 var bridgeReady = false; // Flag to track if bridge is initialized
+var _terminalBatchBuffer = '';
+var _terminalFlushTimeout = null;
+var _lastUserMessage = null;
+var _lastUserHasImages = false;
+var _lastUserImageData = null;
+var _rateLimitRetryTimer = null;
+var _rateLimitRetryRemaining = 0;
+
+// Initialize batch buffer when DOM is ready
+document.addEventListener('DOMContentLoaded', function() {
+    _terminalBatchBuffer = '';
+    _terminalFlushTimeout = null;
+});
 
 // Get storage key based on current project
 function getStorageKey() {
@@ -27,193 +40,158 @@ function getStorageKey() {
     return 'cortex_chats';
 }
 
-// Load chats for current project
+// --- CHAT PERSISTENCE (Consolidated & Handled for Robust Shutdown) ---
+
+// Load chats for current project - MERGE with SQLite source-of-truth
 function loadProjectChats() {
     var key = getStorageKey();
+    var lsChats = [];
     try {
         var data = localStorage.getItem(key);
-        console.log('[CHAT] LOAD - Key:', key);
-        console.log('[CHAT] LOAD - Data:', data ? 'found (' + data.length + ' chars)' : 'NULL (no saved chats)');
-        var parsed = JSON.parse(data || '[]');
-        console.log('[CHAT] LOAD - Parsed', parsed.length, 'chat(s)');
-        if (parsed.length > 0) {
-            parsed.forEach(function(c, i) {
-                var msgCount = (c.messages && c.messages.length) ? c.messages.length : 0;
-                if (typeof c.message_count === 'number' && c.message_count > msgCount) {
-                    c.truncated = true;
-                }
-                console.log('[CHAT]   Chat ' + (i+1) + ': "' + c.title + '" with ' + msgCount + ' messages');
-            });
-            return parsed;
-        }
-        
-        // If localStorage is empty or returns NULL, try loading from SQLite
-        console.log('[CHAT] LOAD - localStorage empty or no data, trying SQLite...');
-        return loadChatsFromSQLite();
+        lsChats = JSON.parse(data || '[]');
+        console.log('[CHAT] LOAD LS - Parsed', lsChats.length, 'chat(s) from localStorage');
     } catch (e) {
-        console.error('[CHAT] LOAD ERROR:', e.message);
-        // On error, try loading from SQLite
-        console.log('[CHAT] LOAD - Error in localStorage, trying SQLite...');
-        return loadChatsFromSQLite();
+        console.warn('[CHAT] LOAD LS - Error parsing localStorage:', e.message);
     }
-}
-
-// SQLITE PERSISTENCE - Save chats for current project
-function saveProjectChatsToSQLite(chatList) {
-    var key = getStorageKey();
-    var data = JSON.stringify(chatList);
-    var success = false;
     
-    console.log('[CHAT] SAVE SQLITE - Saving', chatList.length, 'chat(s),', data.length, 'chars');
+    // Load from SQLite (Authority for history)
+    var sqlChats = loadChatsFromSQLite() || [];
+    console.log('[CHAT] LOAD SQLITE - Found', sqlChats.length, 'chat(s) in SQLite');
     
-    try {
-        if (bridge && typeof bridge.save_chats_to_sqlite === 'function') {
-            var result = bridge.save_chats_to_sqlite(key, data);
-            if (result === "OK") {
-                console.log('[CHAT] SAVE SQLITE - SUCCESS');
-                success = true;
-            } else {
-                console.error('[CHAT] SAVE SQLITE - FAILED:', result);
+    if (sqlChats.length === 0) return lsChats;
+    
+    // Merge: Create a map of LS chats for easy lookup
+    var lsMap = {};
+    lsChats.forEach(function(c) { 
+        if (c && c.id) lsMap[c.id] = c; 
+    });
+    
+    // Build final merged list based on SQLite's authoritative list
+    var merged = sqlChats.map(function(sqlChat) {
+        var lsChat = lsMap[sqlChat.id];
+        if (lsChat) {
+            // Update LS chat metadata if SQLite has newer info
+            var sqlCount = sqlChat.message_count || 0;
+            var lsCount = (lsChat.messages && lsChat.messages.length) || lsChat.message_count || 0;
+            
+            if (sqlCount > lsCount) {
+                console.log('[CHAT]   Chat "' + sqlChat.title + '" has newer messages in SQLite ('+sqlCount+' vs '+lsCount+')');
+                lsChat.message_count = sqlCount;
+                lsChat.truncated = true; // Mark as needing lazy load
             }
+            return lsChat;
         } else {
-            console.warn('[CHAT] SAVE SQLITE - Bridge not ready');
+            // New chat from SQLite that isn't in LS cache
+            console.log('[CHAT]   Adding missing chat from SQLite:', sqlChat.title);
+            return sqlChat;
         }
-    } catch (e) {
-        console.error('[CHAT] SAVE SQLITE - ERROR:', e.message);
-    }
+    });
     
-    return success;
+    return merged;
 }
 
-// SQLITE PERSISTENCE - Load chats from SQLite database
+// SQLITE PERSISTENCE - Load chats metadata from SQLite
 function loadChatsFromSQLite() {
     var key = getStorageKey();
-    console.log('[CHAT] LOAD SQLITE - Key:', key);
-    
     if (!bridge || typeof bridge.load_chats_from_sqlite !== 'function') {
         console.warn('[CHAT] LOAD SQLITE - Bridge not ready');
         return [];
     }
     
     try {
-        // The bridge method returns a string directly (synchronous)
         var result = bridge.load_chats_from_sqlite(key);
-        console.log('[CHAT] LOAD SQLITE - Raw result type:', typeof result);
-        console.log('[CHAT] LOAD SQLITE - Raw result:', result);
-        
-        // If result is a Promise or looks like "[object Promise]", we need to handle it differently
-        if (result && result.toString() === '[object Promise]') {
-            console.error('[CHAT] LOAD SQLITE - Got Promise instead of direct result. Bridge not ready.');
-            return [];
-        }
-        
-        // Check if we got a valid string result
         if (result && typeof result === 'string' && result !== "[]") {
-            console.log('[CHAT] LOAD SQLITE - Found', result.length, 'chars of data');
-            try {
-                var parsed = JSON.parse(result);
-                // Ensure all chats from SQLite (which are metadata-only) are marked as unloaded
-                var chatsWithMetadata = parsed.map(function(c) {
-                    return {
-                        id: c.id,
-                        title: c.title,
-                        created_at: c.created_at,
-                        message_count: c.message_count || 0,
-                        messages: [],
-                        loaded: false
-                    };
-                });
-                console.log('[CHAT] LOAD SQLITE - Successfully parsed', chatsWithMetadata.length, 'chats (marked as metadata)');
-                return chatsWithMetadata;
-            } catch (parseError) {
-                console.error('[CHAT] LOAD SQLITE - JSON parse error:', parseError.message);
-                console.error('[CHAT] LOAD SQLITE - Invalid JSON:', result.substring(0, 100));
-            }
-        } else if (result === "[]") {
-            console.log('[CHAT] LOAD SQLITE - Empty array returned (no saved chats)');
-            return [];
+            var parsed = JSON.parse(result);
+            return parsed.map(function(c) {
+                return {
+                    id: c.id,
+                    title: c.title,
+                    created_at: c.created_at,
+                    message_count: c.message_count || 0,
+                    messages: [],
+                    loaded: false
+                };
+            });
         }
     } catch (e) {
-        console.error('[CHAT] LOAD SQLITE - ERROR:', e.message);
-        console.error('[CHAT] LOAD SQLITE - Error stack:', e.stack);
+        console.error('[CHAT] LOAD SQLITE ERROR:', e.message);
     }
-    
-    console.log('[CHAT] LOAD SQLITE - No data or error occurred');
     return [];
 }
 
-// Save chats for current project - saves to both localStorage and file
+// CONSOLIDATED SAVE - Captures partial responses and ensures persistence
 function saveProjectChats(chatList) {
+    if (!chatList || chatList.length === 0) {
+        // Even if no chats, signal finish to allow shutdown to proceed
+        if (bridge && typeof bridge.on_save_finished === 'function') bridge.on_save_finished("EMPTY");
+        return false;
+    }
+    
+    // -- IMPORTANT: Capture partial AI response if streaming during shutdown --
+    if (typeof _isGenerating !== 'undefined' && _isGenerating && currentAssistantMessage && currentContent && currentContent.trim()) {
+        var chat = chatList.find(function(c) { return c.id == currentChatId; });
+        if (chat) {
+            var messages = chat.messages || [];
+            var lastMsg = messages[messages.length - 1];
+            var isDuplicate = lastMsg && (lastMsg.role === 'assistant' || lastMsg.sender === 'assistant') && (lastMsg.text === currentContent || lastMsg.content === currentContent);
+            
+            if (!isDuplicate) {
+                console.log('[CHAT] SAVE - Capturing partial AI response:', currentContent.substring(0, 30) + '...');
+                if (!chat.messages) chat.messages = [];
+                chat.messages.push({ 
+                    text: currentContent, 
+                    content: currentContent, 
+                    role: 'assistant', 
+                    sender: 'assistant',
+                    partial: true 
+                });
+            }
+        }
+    }
+    
     var key = getStorageKey();
     var fullData = JSON.stringify(chatList);
+    
+    // Truncate for localStorage (performance)
     var MAX_LOCAL_MESSAGES = 50;
     var storageChats = chatList.map(function(chat) {
         var messages = chat.messages || [];
-        var messageCount = (typeof chat.message_count === 'number') ? chat.message_count : messages.length;
-        var storedMessages = messages;
-        if (messages.length > MAX_LOCAL_MESSAGES) {
-            storedMessages = messages.slice(-MAX_LOCAL_MESSAGES);
-        }
+        var msgCount = (typeof chat.message_count === 'number') ? chat.message_count : messages.length;
         return {
             id: chat.id,
             title: chat.title,
             created_at: chat.created_at,
-            message_count: messageCount,
-            messages: storedMessages,
-            truncated: messageCount > storedMessages.length
+            message_count: msgCount,
+            messages: messages.slice(-MAX_LOCAL_MESSAGES),
+            truncated: msgCount > MAX_LOCAL_MESSAGES
         };
     });
-    var data = JSON.stringify(storageChats);
-    var saveSuccess = false;
+    var lsData = JSON.stringify(storageChats);
     
-    console.log('[CHAT] SAVE - Saving', chatList.length, 'chat(s),', data.length, 'chars');
+    console.log('[CHAT] SAVE - Persisting', chatList.length, 'chat(s) to LS and SQLite');
     
-    // Method 1: localStorage (fast but may not persist)
     try {
-        localStorage.setItem(key, data);
-        var verify = localStorage.getItem(key);
-        if (verify) {
-            console.log('[CHAT] SAVE - localStorage: OK (' + verify.length + ' chars)');
-            saveSuccess = true;
-        } else {
-            console.error('[CHAT] SAVE - localStorage: FAILED (verify returned null)');
-        }
-    } catch (e) {
-        console.error('[CHAT] SAVE ERROR (localStorage):', e.message);
-    }
-    
-    // Method 2: SQLite storage (high-performance persistent storage)
-    try {
-        // FAST PATH: Only serialize and sync the active chat across the QWebChannel bridge
+        localStorage.setItem(key, lsData);
+        
+        // Priority 1: Save Active Chat (Fast Path)
         var activeChat = chatList.find(function(c) { return c.id === currentChatId; });
         if (activeChat && bridge && typeof bridge.save_single_chat_to_sqlite === 'function') {
-            var singleData = JSON.stringify(activeChat);
-            var promise = bridge.save_single_chat_to_sqlite(key, singleData);
-            if (promise && typeof promise.then === 'function') {
-                promise.catch(function(err) {
-                    console.error('[CHAT] SAVE - SQLite Single: ERROR:', err);
-                });
-            }
+            var activeData = JSON.stringify(activeChat);
+            bridge.save_single_chat_to_sqlite(key, activeData);
         } else if (bridge && typeof bridge.save_chats_to_sqlite === 'function') {
-            // FALLBACK FULL SYNC
-            var promise = bridge.save_chats_to_sqlite(key, fullData);
-            if (promise && typeof promise.then === 'function') {
-                promise.catch(function(err) {
-                    console.error('[CHAT] SAVE - SQLite Full: ERROR:', err);
-                });
-            }
-        } else {
-            console.warn('[CHAT] SAVE - SQLite: Bridge not ready');
+            // Fallback: Full Sync
+            bridge.save_chats_to_sqlite(key, fullData);
         }
     } catch (e) {
-        console.error('[CHAT] SAVE ERROR (SQLite):', e.message);
+        console.error('[CHAT] SAVE ERROR:', e.message);
     }
     
-    if (!saveSuccess) {
-        console.error('[CHAT] SAVE - ALL METHODS FAILED - chats may be lost on restart!');
+    // CRITICAL: Notify Python bridge that save is complete for shutdown handshake
+    if (bridge && typeof bridge.on_save_finished === 'function') {
+        bridge.on_save_finished("OK");
     }
     
-    return saveSuccess;
+    return true;
 }
 
 // Initialize chats as empty - will be loaded when project is set
@@ -229,7 +207,7 @@ var _taskSummaryBuffer = ""; // Accumulates <task_summary>...</task_summary> dur
 var _inTaskSummary = false;  // True while receiving a task_summary block
 
 
-// ── TASK COMPLETION TRACKING ─────────────────────────────────────────
+// -- TASK COMPLETION TRACKING -----------------------------------------
 var _taskActivities = [];
 var _taskStartTime = null;
 
@@ -265,7 +243,7 @@ function showTaskCompletionSummary() {
     card.className = 'task-completion-card';
     
     var statusClass = errors > 0 ? 'has-errors' : 'success';
-    var statusIcon = errors > 0 ? '⚠️' : '✅';
+    var statusIcon = errors > 0 ? 'WARN' : 'OK';
     var statusText = errors > 0 ? 'Completed with issues' : 'Task completed';
     
     var html = '<div class="tcc-header ' + statusClass + '">' +
@@ -274,9 +252,9 @@ function showTaskCompletionSummary() {
         '<span class="tcc-duration">' + duration + 's</span></div>';
     
     html += '<div class="tcc-stats">';
-    if (filesRead > 0) html += '<span class="tcc-stat">📄 ' + filesRead + ' read</span>';
-    if (filesWritten > 0) html += '<span class="tcc-stat">✏️ ' + filesWritten + ' modified</span>';
-    if (commandsRun > 0) html += '<span class="tcc-stat">⚙️ ' + commandsRun + ' commands</span>';
+    if (filesRead > 0) html += '<span class="tcc-stat">READ ' + filesRead + ' read</span>';
+    if (filesWritten > 0) html += '<span class="tcc-stat">EDIT ' + filesWritten + ' modified</span>';
+    if (commandsRun > 0) html += '<span class="tcc-stat">RUN ' + commandsRun + ' commands</span>';
     html += '</div>';
     
     card.innerHTML = html;
@@ -303,7 +281,10 @@ function smartScroll(container) {
 // Track user scroll
 function initScrollTracking() {
     var container = document.getElementById('chatMessages');
-    if (!container) return;
+    if (!container) {
+        console.warn('[SCROLL] chatMessages element not found, skipping scroll tracking');
+        return;
+    }
     
     container.addEventListener('scroll', function() {
         // Check if user scrolled up (not at bottom)
@@ -496,8 +477,8 @@ function initMarked() {
     lines.forEach(function(line) {
         if (!line.trim()) return;
         
-        // Parse tree structure (├──, └──, │, etc.)
-        var treeMatch = line.match(/^(\s*)([│├└─\-\s]*)(.*)$/);
+        // Parse tree structure (+--, |, etc.)
+        var treeMatch = line.match(/^(\s*)([-++-\-\s]*)(.*)$/);
         if (!treeMatch) return;
         
         var indent = treeMatch[1].length + treeMatch[2].length;
@@ -550,59 +531,229 @@ function initMarked() {
     return html;
 }
 
+// -- OPENCODE SPRITE ICON SYSTEM ---------------------------------------------
+// Uses OpenCode's file-icons/sprite.svg (1096 icons) via <use href="...#Name">
+// sprite.svg is bundled at: src/ui/html/ai_chat/file-icons/sprite.svg
+
+var SPRITE_URL = 'file-icons/sprite.svg';
+
+// Map file extension ? OpenCode IconName
+var EXT_TO_SPRITE = {
+    // JS / TS
+    'js': 'Javascript', 'mjs': 'Javascript', 'cjs': 'Javascript',
+    'ts': 'Typescript', 'tsx': 'React_ts', 'jsx': 'React',
+    'd.ts': 'TypescriptDef', 'js.map': 'JavascriptMap',
+    // Web
+    'html': 'Html', 'htm': 'Html',
+    'css': 'Css', 'scss': 'Sass', 'sass': 'Sass', 'less': 'Less', 'styl': 'Stylus',
+    // Languages
+    'py': 'Python', 'pyx': 'Python', 'pyw': 'Python',
+    'java': 'Java', 'kt': 'Kotlin', 'scala': 'Scala',
+    'cs': 'Csharp', 'vb': 'Visualstudio',
+    'cpp': 'Cpp', 'cc': 'Cpp', 'cxx': 'Cpp', 'c': 'C', 'h': 'H', 'hpp': 'Hpp',
+    'rs': 'Rust', 'go': 'Go', 'rb': 'Ruby', 'php': 'Php',
+    'swift': 'Swift', 'm': 'ObjectiveC', 'mm': 'ObjectiveCpp',
+    'dart': 'Dart', 'lua': 'Lua', 'pl': 'Perl',
+    'r': 'R', 'jl': 'Julia', 'hs': 'Haskell', 'elm': 'Elm',
+    'ex': 'Elixir', 'exs': 'Elixir', 'erl': 'Erlang',
+    'clj': 'Clojure', 'cljs': 'Clojure', 'ml': 'Ocaml', 'fs': 'Fsharp',
+    'nim': 'Nim', 'zig': 'Zig', 'v': 'Vlang', 'odin': 'Odin',
+    'gleam': 'Gleam', 'grain': 'Grain',
+    // Shell
+    'sh': 'Console', 'bash': 'Console', 'zsh': 'Console', 'fish': 'Console',
+    'ps1': 'Powershell', 'bat': 'Console',
+    // Data / config
+    'json': 'Json', 'xml': 'Xml', 'yaml': 'Yaml', 'yml': 'Yaml',
+    'toml': 'Toml', 'hjson': 'Hjson', 'env': 'Tune',
+    'cfg': 'Settings', 'ini': 'Settings', 'conf': 'Settings',
+    'properties': 'Settings',
+    // Docs
+    'md': 'Markdown', 'mdx': 'Mdx', 'tex': 'Tex',
+    // DB / query
+    'sql': 'Database', 'db': 'Database', 'sqlite': 'Database',
+    'graphql': 'Graphql', 'gql': 'Graphql', 'proto': 'Proto',
+    // Media
+    'svg': 'Svg', 'png': 'Image', 'jpg': 'Image', 'jpeg': 'Image',
+    'gif': 'Image', 'webp': 'Image', 'bmp': 'Image', 'ico': 'Favicon',
+    'mp4': 'Video', 'mov': 'Video', 'avi': 'Video', 'webm': 'Video',
+    'mp3': 'Audio', 'wav': 'Audio', 'flac': 'Audio',
+    // Archives
+    'zip': 'Zip', 'tar': 'Zip', 'gz': 'Zip', 'rar': 'Zip', '7z': 'Zip',
+    // Docs
+    'pdf': 'Pdf', 'doc': 'Word', 'docx': 'Word',
+    'ppt': 'Powerpoint', 'pptx': 'Powerpoint',
+    // Other
+    'log': 'Log', 'lock': 'Lock', 'key': 'Key',
+    'pem': 'Certificate', 'crt': 'Certificate',
+    'wasm': 'Webassembly', 'dockerfile': 'Docker',
+    // Test files
+    'spec.ts': 'TestTs', 'test.ts': 'TestTs',
+    'spec.js': 'TestJs', 'test.js': 'TestJs',
+    'spec.tsx': 'TestJsx', 'test.tsx': 'TestJsx',
+    'spec.jsx': 'TestJsx', 'test.jsx': 'TestJsx',
+    // Vue / Svelte
+    'vue': 'Vue', 'svelte': 'Svelte',
+};
+
+// Exact filename ? OpenCode IconName
+var FILENAME_TO_SPRITE = {
+    'package.json': 'Nodejs', 'package-lock.json': 'Nodejs',
+    '.nvmrc': 'Nodejs', '.node-version': 'Nodejs',
+    'yarn.lock': 'Yarn', 'pnpm-lock.yaml': 'Pnpm',
+    'bun.lock': 'Bun', 'bun.lockb': 'Bun', 'bunfig.toml': 'Bun',
+    'dockerfile': 'Docker', 'docker-compose.yml': 'Docker',
+    'docker-compose.yaml': 'Docker', '.dockerignore': 'Docker',
+    '.gitignore': 'Git', '.gitattributes': 'Git',
+    'tsconfig.json': 'Tsconfig', 'jsconfig.json': 'Jsconfig',
+    'vite.config.js': 'Vite', 'vite.config.ts': 'Vite',
+    'tailwind.config.js': 'Tailwindcss', 'tailwind.config.ts': 'Tailwindcss',
+    'jest.config.js': 'Jest', 'jest.config.ts': 'Jest',
+    'vitest.config.js': 'Vitest', 'vitest.config.ts': 'Vitest',
+    '.eslintrc': 'Eslint', '.eslintrc.js': 'Eslint', '.eslintrc.json': 'Eslint',
+    '.prettierrc': 'Prettier', '.prettierrc.js': 'Prettier',
+    'webpack.config.js': 'Webpack', 'rollup.config.js': 'Rollup',
+    'next.config.js': 'Next', 'next.config.mjs': 'Next',
+    'nuxt.config.js': 'Nuxt', 'nuxt.config.ts': 'Nuxt',
+    'svelte.config.js': 'Svelte', 'astro.config.mjs': 'AstroConfig',
+    'gatsby-config.js': 'Gatsby', 'remix.config.js': 'Remix',
+    '.gitpod.yml': 'Gitpod', 'turbo.json': 'Turborepo',
+    'cargo.toml': 'Rust', 'go.mod': 'GoMod', 'go.sum': 'GoMod',
+    'requirements.txt': 'Python', 'pyproject.toml': 'Python',
+    'pipfile': 'Python', 'poetry.lock': 'Poetry',
+    'gemfile': 'Gemfile', 'rakefile': 'Ruby',
+    'composer.json': 'Php', 'build.gradle': 'Gradle', 'pom.xml': 'Maven',
+    'deno.json': 'Deno', 'deno.jsonc': 'Deno',
+    'vercel.json': 'Vercel', 'netlify.toml': 'Netlify',
+    '.env': 'Tune', '.env.local': 'Tune', '.env.example': 'Tune',
+    '.editorconfig': 'Editorconfig', 'makefile': 'Makefile',
+    'robots.txt': 'Robots', 'favicon.ico': 'Favicon',
+    '.babelrc': 'Babel', 'babel.config.js': 'Babel',
+    'firebase.json': 'Firebase', 'angular.json': 'Angular',
+    'nx.json': 'Nx', 'lerna.json': 'Lerna',
+    'cypress.config.js': 'Cypress', 'playwright.config.js': 'Playwright',
+    'wrangler.toml': 'Wrangler', 'renovate.json': 'Renovate',
+    'readme.md': 'Readme', 'changelog.md': 'Changelog',
+    'license': 'Certificate',
+};
+
+// Folder name ? sprite icon name (collapsed / open)
+var FOLDER_TO_SPRITE = {
+    'src': 'FolderSrc', 'source': 'FolderSrc',
+    'lib': 'FolderLib', 'libs': 'FolderLib',
+    'test': 'FolderTest', 'tests': 'FolderTest', '__tests__': 'FolderTest',
+    'spec': 'FolderTest', 'specs': 'FolderTest', 'e2e': 'FolderTest',
+    'node_modules': 'FolderNode',
+    'vendor': 'FolderPackages', 'packages': 'FolderPackages',
+    'build': 'FolderBuildkite', 'dist': 'FolderDist',
+    'out': 'FolderDist', 'output': 'FolderDist', 'target': 'FolderTarget',
+    'config': 'FolderConfig', 'configs': 'FolderConfig',
+    'env': 'FolderEnvironment', 'environments': 'FolderEnvironment',
+    'docker': 'FolderDocker', 'containers': 'FolderDocker',
+    'docs': 'FolderDocs', 'doc': 'FolderDocs', 'documentation': 'FolderDocs',
+    'public': 'FolderPublic', 'static': 'FolderPublic',
+    'assets': 'FolderImages', 'images': 'FolderImages',
+    'img': 'FolderImages', 'icons': 'FolderImages', 'media': 'FolderImages',
+    'fonts': 'FolderFont',
+    'styles': 'FolderCss', 'stylesheets': 'FolderCss', 'css': 'FolderCss',
+    'sass': 'FolderSass', 'scss': 'FolderSass',
+    'scripts': 'FolderScripts', 'script': 'FolderScripts',
+    'utils': 'FolderUtils', 'utilities': 'FolderUtils',
+    'helpers': 'FolderHelper', 'tools': 'FolderTools',
+    'components': 'FolderComponents', 'component': 'FolderComponents',
+    'views': 'FolderViews', 'view': 'FolderViews',
+    'layouts': 'FolderLayout', 'layout': 'FolderLayout',
+    'templates': 'FolderTemplate', 'template': 'FolderTemplate',
+    'hooks': 'FolderHook', 'hook': 'FolderHook',
+    'store': 'FolderStore', 'stores': 'FolderStore',
+    'reducers': 'FolderReduxReducer', 'reducer': 'FolderReduxReducer',
+    'services': 'FolderApi', 'service': 'FolderApi',
+    'api': 'FolderApi', 'apis': 'FolderApi',
+    'routes': 'FolderRoutes', 'route': 'FolderRoutes',
+    'middleware': 'FolderMiddleware', 'middlewares': 'FolderMiddleware',
+    'controllers': 'FolderController', 'controller': 'FolderController',
+    'models': 'FolderDatabase', 'model': 'FolderDatabase',
+    'schemas': 'FolderDatabase', 'migrations': 'FolderDatabase',
+    'types': 'FolderTypescript', 'typing': 'FolderTypescript',
+    'typings': 'FolderTypescript', '@types': 'FolderTypescript',
+    'interfaces': 'FolderInterface', 'interface': 'FolderInterface',
+    'android': 'FolderAndroid', 'ios': 'FolderIos',
+    'flutter': 'FolderFlutter', 'mobile': 'FolderMobile',
+    'kubernetes': 'FolderKubernetes', 'k8s': 'FolderKubernetes',
+    'terraform': 'FolderTerraform',
+    'aws': 'FolderAws', 'firebase': 'FolderFirebase',
+    '.github': 'FolderGithub', '.gitlab': 'FolderGitlab',
+    '.circleci': 'FolderCircleci', '.git': 'FolderGit',
+    'workflows': 'FolderGhWorkflows',
+    '.vscode': 'FolderVscode', '.idea': 'FolderIntellij',
+    '.cursor': 'FolderCursor', '.storybook': 'FolderStorybook',
+    'i18n': 'FolderI18n', 'locales': 'FolderI18n', 'lang': 'FolderI18n',
+    'temp': 'FolderTemp', 'tmp': 'FolderTemp',
+    'logs': 'FolderLog', 'log': 'FolderLog',
+    'mocks': 'FolderMock', 'mock': 'FolderMock',
+    'data': 'FolderDatabase', 'database': 'FolderDatabase', 'db': 'FolderDatabase',
+    'prisma': 'FolderPrisma', 'drizzle': 'FolderDrizzle',
+    'functions': 'FolderFunctions', 'lambda': 'FolderFunctions',
+    'security': 'FolderSecure', 'auth': 'FolderSecure',
+    'keys': 'FolderKeys', 'certs': 'FolderKeys',
+    'examples': 'FolderExamples', 'example': 'FolderExamples',
+    'demo': 'FolderExamples', 'demos': 'FolderExamples',
+    'content': 'FolderContent', 'posts': 'FolderContent',
+    'jobs': 'FolderJob', 'tasks': 'FolderTasks',
+    'desktop': 'FolderDesktop',
+};
+
+/**
+ * Get sprite-based SVG icon for a file/folder.
+ * Works in: tree view, diff cards, @mention pickers, file links.
+ *
+ * @param {string} nameOrExt  - filename "main.py", extension "py", or "" for folder
+ * @param {boolean} isDir     - true for folders
+ * @param {boolean} expanded  - if dir, use open variant
+ * @param {number} size       - icon size in px (default 16)
+ * @returns {string} HTML string with <svg><use> referencing sprite.svg
+ */
+function getFileIcon(nameOrExt, isDir, expanded, size) {
+    size = size || 16;
+    var iconName;
+
+    if (isDir) {
+        var folderKey = (nameOrExt || '').toLowerCase().replace(/^[._]+/, '').replace(/\/$/, '');
+        // Check with leading dots too (e.g. ".github")
+        var origLower = (nameOrExt || '').toLowerCase().replace(/\/$/, '');
+        iconName = FOLDER_TO_SPRITE[origLower] || FOLDER_TO_SPRITE[folderKey] || 'Folder';
+        if (expanded && !iconName.endsWith('Open')) iconName = iconName + 'Open';
+    } else {
+        var fn = (nameOrExt || '').toLowerCase();
+        // 1. Exact filename match
+        iconName = FILENAME_TO_SPRITE[fn];
+        // 2. Compound extension (spec.ts, test.js etc)
+        if (!iconName && fn.includes('.')) {
+            var firstDot = fn.indexOf('.');
+            var compoundExt = fn.slice(firstDot + 1);
+            iconName = EXT_TO_SPRITE[compoundExt];
+        }
+        // 3. Last extension
+        if (!iconName) {
+            var lastDot = fn.lastIndexOf('.');
+            if (lastDot !== -1) iconName = EXT_TO_SPRITE[fn.slice(lastDot + 1)];
+        }
+        // 4. Fallback
+        if (!iconName) iconName = 'Document';
+    }
+
+    return '<svg class="file-type-icon" width="' + size + '" height="' + size + '" viewBox="0 0 32 32" aria-hidden="true">' +
+           '<use href="' + SPRITE_URL + '#' + iconName + '"></use>' +
+           '</svg>';
+}
+
+// -- Legacy alias used by tree renderer ---------------------------------------
 function getFileIconForTree(ext, isDir) {
     if (isDir) {
-        return '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M3 9c0-1.1.9-2 2-2h8l3 3h11c1.1 0 2 .9 2 2v13c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V9z" fill="#DCB67A"/><path d="M3 13h26v11c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V13z" fill="#ECBD78"/></svg>';
+        return getFileIcon('', true, false, 18);
     }
-    
-    var iconMap = {
-        'py': '<svg viewBox="0 0 32 32" width="18" height="18"><defs><linearGradient id="pyg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#387EB8"/><stop offset="100%" stop-color="#366994"/></linearGradient><linearGradient id="pyy" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#FFE052"/><stop offset="100%" stop-color="#FFC331"/></linearGradient></defs><path d="M15.9 5C10.3 5 10.7 7.4 10.7 7.4l.01 2.5h5.3v.7H8.7S5 10.1 5 15.8c0 5.7 3.2 5.5 3.2 5.5h1.9v-2.6s-.1-3.2 3.1-3.2h5.4s3 .05 3-2.9V8.5S22.1 5 15.9 5z" fill="url(#pyg)"/><circle cx="12.5" cy="8.2" r="1.1" fill="#fff" opacity=".8"/><path d="M16.1 27c5.6 0 5.2-2.4 5.2-2.4l-.01-2.5h-5.3v-.7h7.3S27 21.9 27 16.2c0-5.7-3.2-5.5-3.2-5.5h-1.9v2.6s.1 3.2-3.1 3.2h-5.4s-3-.05-3 2.9v4.6S9.9 27 16.1 27z" fill="url(#pyy)"/><circle cx="19.5" cy="23.8" r="1.1" fill="#fff" opacity=".8"/></svg>',
-        'js': '<svg viewBox="0 0 32 32" width="18" height="18"><rect width="32" height="32" rx="3" fill="#F7DF1E"/><path d="M20.8 24.3c.5.9 1.2 1.5 2.4 1.5 1 0 1.6-.5 1.6-1.2 0-.8-.7-1.1-1.8-1.6l-.6-.3c-1.8-.8-3-1.7-3-3.7 0-1.9 1.4-3.3 3.6-3.3 1.6 0 2.7.5 3.5 1.9l-1.9 1.2c-.4-.8-.9-1.1-1.6-1.1-.7 0-1.2.5-1.2 1.1 0 .8.5 1.1 1.6 1.5l.6.3c2.1.9 3.3 1.8 3.3 3.9 0 2.2-1.7 3.5-4 3.5-2.2 0-3.7-1.1-4.4-2.5l2-.1z" fill="#222"/><path d="M12.2 24.6c.4.6.7 1.2 1.6 1.2.8 0 1.3-.3 1.3-1.5V16h2.4v8.3c0 2.5-1.5 3.7-3.6 3.7-1.9 0-3-1-3.6-2.2l1.9-1.2z" fill="#222"/></svg>',
-        'ts': '<svg viewBox="0 0 32 32" width="18" height="18"><rect width="32" height="32" rx="3" fill="#3178C6"/><path d="M18 17.4h3.4v.9H19v1.2h2.2v.9H19V23h-1V17.4zM9 17.4h5.8v1H12V23h-1v-4.6H9v-1z" fill="#fff"/><path d="M14.2 19.9c0-1.8 1.2-2.7 2.8-2.7.7 0 1.3.1 1.8.4l-.3.9c-.4-.2-.9-.3-1.4-.3-1 0-1.7.6-1.7 1.7 0 1.1.7 1.8 1.8 1.8.3 0 .6 0 .8-.1v-1.2H17v-.9h2v2.7c-.5.3-1.2.5-2 .5-1.8 0-2.8-1-2.8-2.8z" fill="#fff"/></svg>',
-        'jsx': '<svg viewBox="0 0 32 32" width="18" height="18"><circle cx="16" cy="16" r="2.5" fill="#61DAFB"/><ellipse cx="16" cy="16" rx="11" ry="4.2" fill="none" stroke="#61DAFB" stroke-width="1.3"/><ellipse cx="16" cy="16" rx="11" ry="4.2" fill="none" stroke="#61DAFB" stroke-width="1.3" transform="rotate(60 16 16)"/><ellipse cx="16" cy="16" rx="11" ry="4.2" fill="none" stroke="#61DAFB" stroke-width="1.3" transform="rotate(120 16 16)"/></svg>',
-        'tsx': '<svg viewBox="0 0 32 32" width="18" height="18"><circle cx="16" cy="16" r="2.5" fill="#61DAFB"/><ellipse cx="16" cy="16" rx="11" ry="4.2" fill="none" stroke="#61DAFB" stroke-width="1.3"/><ellipse cx="16" cy="16" rx="11" ry="4.2" fill="none" stroke="#61DAFB" stroke-width="1.3" transform="rotate(60 16 16)"/><ellipse cx="16" cy="16" rx="11" ry="4.2" fill="none" stroke="#61DAFB" stroke-width="1.3" transform="rotate(120 16 16)"/></svg>',
-        'html': '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M4 3l2.3 25.7L16 31l9.7-2.3L28 3z" fill="#E44D26"/><path d="M16 28.4V5.7l10.2 22.7z" fill="#F16529"/><path d="M9.4 13.5l.4 3.9H16v-3.9zM8.7 8H16V4.1H8.3zM16 21.5l-.05.01-4.1-1.1-.26-3h-3.9l.5 5.7 7.8 2.2z" fill="#EBEBEB"/><path d="M16 13.5v3.9h5.9l-.6 6.1-5.3 1.5v4l7.8-2.2.06-.6 1.2-13.1.12-1.6zm0-9.4v3.9h10.2l.08-1 .18-2.9z" fill="#fff"/></svg>',
-        'css': '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M4 3l2.3 25.7L16 31l9.7-2.3L28 3z" fill="#1572B6"/><path d="M16 28.4V5.7l10.2 22.7z" fill="#33A9DC"/><path d="M21.5 13.5H16v-3.9h6l.4-3.6H9.6L10 9.6h5.9v3.9H9.3l.4 3.6H16v4.1l-4.2-1.2-.3-3.1H7.7l.6 6.3 7.7 2.1z" fill="#fff"/><path d="M16 17.2v-3.7h5.1l-.5 5.2L16 19.9v4.1l7.7-2.1.1-.6 1-10.4.1-1.4H16v4zM16 5.7v3.9h5.7l.1-1 .2-2.9z" fill="#EBEBEB"/></svg>',
-        'scss': '<svg viewBox="0 0 32 32" width="18" height="18"><circle cx="16" cy="16" r="13" fill="#CD6799"/><path d="M22.5 14.7c-.7-.3-1.1-.4-1.6-.6-.3-.1-.6-.2-.8-.3-.2-.1-.4-.2-.4-.4 0-.3.4-.6 1.2-.6.9 0 1.7.3 2.1.5l.8-1.8c-.5-.3-1.5-.7-2.9-.7-1.5 0-2.7.4-3.5 1.1-.7.7-1 1.5-.9 2.4.1.9.7 1.6 1.9 2.1.5.2 1 .3 1.4.5.3.1.5.2.7.3.2.2.3.4.2.7-.1.5-.7.8-1.5.8-1 0-1.9-.3-2.5-.7l-.8 1.9c.7.4 1.8.7 3 .7h.3c1.3-.05 2.4-.4 3.1-1.1.7-.7 1-1.5.9-2.5-.1-.9-.7-1.6-1.7-2.3zm-7.6-4.2c-1.5 0-2.8.5-3.7 1.3l-.8-1.2-2.1 1.2.9 1.4c-.6.9-1 2-1 3.2s.4 2.3 1.1 3.2l-1.1 1.2 1.6 1.4 1.2-1.3c.9.5 1.9.8 3.1.8 3.4 0 5.7-2.5 5.7-5.7-.1-3-2.1-5.5-4.9-5.5zm-.3 9c-1.9 0-3.2-1.4-3.2-3.3s1.3-3.3 3.2-3.3c.8 0 1.5.3 2 .8l-3.4 4.2c.4.4.9.6 1.4.6z" fill="#fff"/></svg>',
-        'java': '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M12.2 22.1s-1.2.7.8 1c2.4.3 3.6.2 6.2-.2 0 0 .7.4 1.6.8-5.7 2.4-12.9-.1-8.6-1.6zM11.5 19s-1.3 1 .7 1.2c2.5.3 4.5.3 8-.4 0 0 .5.5 1.2.8-7.1 2.1-15-.2-9.9-1.6z" fill="#E76F00"/><path d="M17.2 13.4c1.4 1.7-.4 3.2-.4 3.2s3.6-1.9 2-4.2c-1.5-2.2-2.6-3.3 3.6-7.1 0 0-9.8 2.4-5.2 8.1z" fill="#E76F00"/><path d="M23.2 24.4s.9.7-.9 1.3c-3.4 1-14.1 1.3-17.1 0-1.1-.5.9-1.1 1.5-1.2.6-.1 1-.1 1-.1-1.1-.8-7.4 1.6-3.2 2.3 11.6 1.9 21.1-.8 18.7-2.3zM12.6 15.9s-5.3 1.3-1.9 1.8c1.5.2 4.4.2 7.1-.1 2.2-.3 4.5-.8 4.5-.8s-.8.3-1.3.7c-5.4 1.4-15.7.8-12.8-.7 2.5-1.3 4.4-1 4.4-.9zM20.6 20.8c5.4-2.8 2.9-5.6 1.2-5.2-.4.1-.6.2-.6.2s.2-.3.5-.4c3.6-1.3 6.4 3.8-1.1 5.8 0 0 .1-.1 0-.4z" fill="#E76F00"/><path d="M18.5 3s3 3-2.9 7.7c-4.7 3.8-1.1 5.9 0 8.3-2.7-2.5-4.7-4.7-3.4-6.7 2-3 7.5-4.4 6.3-9.3z" fill="#E76F00"/></svg>',
-        'kt': '<svg viewBox="0 0 32 32" width="18" height="18"><defs><linearGradient id="kot" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#7F52FF"/><stop offset="50%" stop-color="#C811E1"/><stop offset="100%" stop-color="#E54857"/></linearGradient></defs><path d="M4 4h10l14 12-14 12H4L4 4z" fill="url(#kot)"/><path d="M18 4l14 12-14 12V4z" fill="url(#kot)" opacity=".6"/></svg>',
-        'swift': '<svg viewBox="0 0 32 32" width="18" height="18"><defs><linearGradient id="swf" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#F05138"/><stop offset="100%" stop-color="#F8981E"/></linearGradient></defs><path d="M16 4c-3 2-6 6-6 10s2 6 4 7c-1-3 1-7 4-9 2 2 4 5 3 9 2-1 4-3 4-7s-3-8-6-10h-3z" fill="url(#swf)"/><circle cx="16" cy="16" r="4" fill="#fff"/></svg>',
-        'go': '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M16 5C9.4 5 4 10.4 4 17s5.4 12 12 12 12-5.4 12-12S22.6 5 16 5zm0 21c-5 0-9-4-9-9s4-9 9-9 9 4 9 9-4 9-9 9z" fill="#00ACD7"/><circle cx="12.5" cy="14.5" r="1.3" fill="#00ACD7"/><circle cx="19.5" cy="14.5" r="1.3" fill="#00ACD7"/><path d="M13 19s.7 2 3 2 3-2 3-2H13z" fill="#00ACD7"/></svg>',
-        'rs': '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M16 3L18.1 7.3 22.8 6.2 22.7 11 27.1 12.9 24.5 17 27.1 21.1 22.7 23 22.8 27.8 18.1 26.7 16 31 13.9 26.7 9.2 27.8 9.3 23 4.9 21.1 7.5 17 4.9 12.9 9.3 11 9.2 6.2 13.9 7.3z" fill="#DEA584"/><circle cx="16" cy="17" r="5" fill="none" stroke="#DEA584" stroke-width="2"/><circle cx="16" cy="17" r="2.5" fill="#DEA584"/></svg>',
-        'c': '<svg viewBox="0 0 32 32" width="18" height="18"><circle cx="16" cy="16" r="13" fill="#005B9F"/><path d="M22.5 20.4c-.8 2.5-3.1 4.3-5.8 4.3-3.4 0-6.1-2.7-6.1-6.1 0-3.4 2.7-6.1 6.1-6.1 2.8 0 5.1 1.9 5.9 4.4H20c-.6-1.3-1.9-2.1-3.3-2.1-2 0-3.7 1.6-3.7 3.7s1.7 3.7 3.7 3.7c1.5 0 2.7-.9 3.3-2.2h2.5z" fill="#fff"/></svg>',
-        'cpp': '<svg viewBox="0 0 32 32" width="18" height="18"><circle cx="16" cy="16" r="13" fill="#00599C"/><path d="M18 20.4c-.8 2.5-3.1 4.3-5.8 4.3-3.4 0-6.1-2.7-6.1-6.1 0-3.4 2.7-6.1 6.1-6.1 2.8 0 5.1 1.9 5.9 4.4h-2.6c-.6-1.3-1.9-2.1-3.3-2.1-2 0-3.7 1.6-3.7 3.7s1.7 3.7 3.7 3.7c1.5 0 2.7-.9 3.3-2.2H18z" fill="#fff"/><path d="M21 13.3v1.5h-1.5V16H21v1.7h1.5V16H24v-1.2h-1.5v-1.5zm4.5 0v1.5H24V16h1.5v1.7H27V16h1.5v-1.2H27v-1.5z" fill="#fff"/></svg>',
-        'cs': '<svg viewBox="0 0 32 32" width="18" height="18"><defs><linearGradient id="csg2" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#9B4F96"/><stop offset="100%" stop-color="#68217A"/></linearGradient></defs><circle cx="16" cy="16" r="13" fill="url(#csg2)"/><path d="M10 19.8c-.8-2.1.1-4.6 2.1-5.8s4.5-1 6.3.5l-1 1.7c-1.2-.9-2.8-1.1-4.1-.3-1.3.7-1.9 2.2-1.5 3.6l-1.8.3zm12 0c-.5 1.4-1.7 2.5-3.1 2.8l-.4-1.9c.8-.2 1.4-.8 1.7-1.5l1.8.6z" fill="#fff"/><path d="M20 13.4h1.2v1.2H20zm0 2.4h1.2v1.2H20zm2.4-2.4h1.2v1.2h-1.2zm0 2.4h1.2v1.2h-1.2z" fill="#fff"/></svg>',
-        'rb': '<svg viewBox="0 0 32 32" width="18" height="18"><defs><linearGradient id="rbg2" x1="0%" y1="100%" x2="100%" y2="0%"><stop offset="0%" stop-color="#FF0000"/><stop offset="100%" stop-color="#A30000"/></linearGradient></defs><path d="M22.9 5L27 9.1l.1 17.8-4.2 4.1H9L5 27.1 4.9 9.3 9 5z" fill="url(#rbg2)"/><path d="M11 10l-3 3v9l3 3h10l3-3v-9l-3-3zm.5 13l-2-2v-7l2-2h9l2 2v7l-2 2z" fill="#fff" opacity=".7"/><circle cx="16" cy="16" r="2.5" fill="#fff"/></svg>',
-        'php': '<svg viewBox="0 0 32 32" width="18" height="18"><ellipse cx="16" cy="16" rx="14" ry="9" fill="#8892BF"/><path d="M10.5 12H8l-2 8h2l.5-2h2l.5 2h2zm-.5 4.5H9l.5-2h.5zm6.5-4.5h-3l-2 8h2l.5-2h1c1.7 0 3-1.3 3-3s-1.3-3-2.5-3zm-.5 4.5H16l.5-2h.5c.5 0 1 .5 1 1s-.5 1-1 1zm7.5-4.5h-3l-2 8h2l.5-2h2l.5 2h2zm-.5 4.5h-1l.5-2h.5z" fill="#fff"/></svg>',
-        'dart': '<svg viewBox="0 0 32 32" width="18" height="18"><defs><linearGradient id="dart" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#0175C2"/><stop offset="100%" stop-color="#02569B"/></linearGradient></defs><path d="M16 4L4 12v12l12 8 12-8V12z" fill="url(#dart)"/><path d="M16 4v24l12-8V12z" fill="url(#dart)" opacity=".7"/><path d="M10 14h12v2H10zm2 4h8v2h-8z" fill="#fff"/></svg>',
-        'lua': '<svg viewBox="0 0 32 32" width="18" height="18"><circle cx="16" cy="16" r="13" fill="#000080"/><path d="M22 10c-2 0-3 1-3.5 2.5-.5-1-1.5-1.5-2.5-1.5-1.5 0-2.5 1-2.5 2.5 0 2 2 2.5 4 3 2 .5 4 1 4 3 0 1.5-1 2.5-2.5 2.5-2 0-3-1.5-4-3-.5 1.5-1.5 3-3 3v-2c1 0 2-.5 2.5-1.5.5 1 1.5 1.5 2.5 1.5 1.5 0 2.5-1 2.5-2.5 0-2-2-2.5-4-3-2-.5-4-1-4-3C12 8.5 13.5 7 16 7c1.5 0 2.5 1 3.5 2 .5-1.5 1.5-2.5 3-2.5v2z" fill="#fff"/></svg>',
-        'r': '<svg viewBox="0 0 32 32" width="18" height="18"><rect width="32" height="32" rx="3" fill="#276DC3"/><path d="M8 8h4v16h-4zM14 8h10l-2 5h-3l-1 3h3l-2 8H14z" fill="#fff"/></svg>',
-        'jl': '<svg viewBox="0 0 32 32" width="18" height="18"><circle cx="16" cy="16" r="13" fill="#9558B2"/><circle cx="16" cy="16" r="9" fill="none" stroke="#fff" stroke-width="1.5"/><circle cx="16" cy="16" r="4" fill="#fff"/><path d="M16 7v4M16 21v4M7 16h4M21 16h4" stroke="#fff" stroke-width="1.5"/></svg>',
-        'zig': '<svg viewBox="0 0 32 32" width="18" height="18"><defs><linearGradient id="zig" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#F7A800"/><stop offset="100%" stop-color="#FF9500"/></linearGradient></defs><path d="M16 4L4 16l12 12 12-12z" fill="url(#zig)"/><path d="M16 10l-6 6 6 6 6-6z" fill="#000" opacity=".3"/></svg>',
-        'ex': '<svg viewBox="0 0 32 32" width="18" height="18"><defs><linearGradient id="elx" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#4B275F"/><stop offset="100%" stop-color="#6E3A8E"/></linearGradient></defs><circle cx="16" cy="16" r="13" fill="url(#elx)"/><path d="M10 10c0-1 1-2 2-2h8c1 0 2 1 2 2v2l-6 8-6-8v-2z" fill="#fff"/><ellipse cx="16" cy="14" rx="4" ry="2" fill="#4B275F"/></svg>',
-        'hs': '<svg viewBox="0 0 32 32" width="18" height="18"><defs><linearGradient id="hs" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#5D4F85"/><stop offset="100%" stop-color="#453A6B"/></linearGradient></defs><path d="M8 4h10l6 6v18H8V4z" fill="url(#hs)"/><path d="M18 4v6h6" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><text x="16" y="22" font-family="Segoe UI,sans-serif" font-size="6" font-weight="bold" fill="#fff" text-anchor="middle">HS</text></svg>',
-        'clj': '<svg viewBox="0 0 32 32" width="18" height="18"><circle cx="16" cy="16" r="13" fill="#588526"/><path d="M10 10l6 12 6-12H10z" fill="#96CA50"/><circle cx="16" cy="16" r="3" fill="#fff"/></svg>',
-        'vue': '<svg viewBox="0 0 32 32" width="18" height="18"><polygon points="16,27 2,5 8.5,5 16,18.5 23.5,5 30,5" fill="#41B883"/><polygon points="16,20 9.5,9 13,9 16,14 19,9 22.5,9" fill="#35495E"/></svg>',
-        'svelte': '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M26.1 5.8c-2.8-4-8.4-5-12.4-2.3L7.2 7.7C5.3 9 4 11 3.8 13.3c-.2 1.9.3 3.8 1.4 5.3-.8 1.2-1.2 2.7-1.1 4.1.2 2.7 1.9 5.1 4.4 6.2 2.8 1.2 6 .7 8.3-1.2l6.5-4.2c1.9-1.3 3.2-3.3 3.4-5.6.2-1.9-.3-3.8-1.4-5.3.8-1.2 1.2-2.7 1.1-4.1-.1-1.1-.5-2.2-1.3-2.7z" fill="#FF3E00"/><path d="M13.7 27c-1.6.4-3.3 0-4.6-.9-1.8-1.3-2.5-3.5-1.8-5.5l.2-.5.4.3c1 .7 2 1.2 3.2 1.5l.3.1-.03.3c-.05.7.2 1.4.7 1.9.9.8 2.3.9 3.3.2l6.5-4.2c.6-.4 1-.9 1.1-1.6.1-.7-.1-1.4-.6-1.9-.9-.8-2.3-.9-3.3-.2l-2.5 1.6c-1.1.7-2.4 1-3.7.8-1.5-.2-2.8-1-3.6-2.2-1.4-2-1-4.7.9-6.2l6.5-4.2c1.6-1.1 3.7-1.3 5.5-.6 1.8.7 3 2.3 3.2 4.2.1.7 0 1.5-.3 2.2l-.2.5-.4-.3c-1-.7-2-1.2-3.2-1.5l-.3-.1.03-.3c.05-.7-.2-1.4-.7-1.9-.9-.8-2.3-.9-3.3-.2l-6.5 4.2c-.6.4-1 .9-1.1 1.6-.1.7.1 1.4.6 1.9.9.8 2.3.9 3.3.2l2.5-1.6c1.1-.7 2.4-1 3.7-.8 1.5.2 2.8 1 3.6 2.2 1.4 2 1 4.7-.9 6.2L18 26.3c-.8.5-1.5.8-2.3.7z" fill="#fff"/></svg>',
-        'sql': '<svg viewBox="0 0 32 32" width="18" height="18"><ellipse cx="16" cy="10" rx="10" ry="4" fill="#4479A1"/><path d="M6 10v4c0 2.2 4.5 4 10 4s10-1.8 10-4v-4c0 2.2-4.5 4-10 4S6 12.2 6 10z" fill="#4479A1"/><path d="M6 14v4c0 2.2 4.5 4 10 4s10-1.8 10-4v-4c0 2.2-4.5 4-10 4S6 16.2 6 14z" fill="#336791"/><path d="M6 18v4c0 2.2 4.5 4 10 4s10-1.8 10-4v-4c0 2.2-4.5 4-10 4S6 20.2 6 18z" fill="#336791"/></svg>',
-        'md': '<svg viewBox="0 0 32 32" width="18" height="18"><rect x="2" y="7" width="28" height="18" rx="3" fill="#42A5F5"/><path d="M7 22V10h3l3 4 3-4h3v12h-3v-7l-3 4-3-4v7zm16 0l-4-6h2.5v-6h3v6H27z" fill="#fff"/></svg>',
-        'json': '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M12.7 6c-1.5 0-2.5.4-3 1.1-.5.7-.5 1.7-.5 2.5v2.2c0 .8-.2 1.5-.8 1.9-.3.2-.7.3-1.4.3v4c.7 0 1.1.1 1.4.3.6.4.8 1.1.8 1.9v2.2c0 .8 0 1.8.5 2.5.5.7 1.5 1.1 3 1.1H14v-2h-1.3c-.7 0-.9-.2-1-.4-.1-.2-.1-.7-.1-1.4v-2.2c0-1.2-.3-2.2-1.2-2.8-.2-.2-.5-.3-.8-.4.3-.1.5-.2.8-.4.9-.6 1.2-1.6 1.2-2.8V9.8c0-.7 0-1.2.1-1.4.1-.2.3-.4 1-.4H14V6h-1.3zm6.6 0v2h1.3c.7 0 .9.2 1 .4.1.2.1.7.1 1.4v2.2c0 1.2.3 2.2 1.2 2.8.2.2.5.3.8.4-.3.1-.5.2-.8.4-.9.6-1.2 1.6-1.2 2.8v2.2c0 .7 0 1.2-.1 1.4-.1.2-.3.4-1 .4H18v2h1.3c1.5 0 2.5-.4 3-1.1.5-.7.5-1.7.5-2.5v-2.2c0-.8.2-1.5.8-1.9.3-.2.7-.3 1.4-.3v-4c-.7 0-1.1-.1-1.4-.3-.6-.4-.8-1.1-.8-1.9V9.8c0-.8 0-1.8-.5-2.5C21.8 6.4 20.8 6 19.3 6z" fill="#F5A623"/></svg>',
-        'yaml': '<svg viewBox="0 0 32 32" width="18" height="18"><rect width="32" height="32" rx="3" fill="#CC1018"/><path d="M7 9h2.5l3 5 3-5H18l-4.5 7v6h-2v-6zm11 4h7v2h-2.5v8h-2v-8H18z" fill="#fff"/></svg>',
-        'xml': '<svg viewBox="0 0 32 32" width="18" height="18"><rect width="32" height="32" rx="3" fill="#607D8B"/><circle cx="16" cy="16" r="5" fill="none" stroke="#fff" stroke-width="2"/><path d="M16 5v4M16 23v4M5 16h4M23 16h4M8.5 8.5l2.8 2.8M20.7 20.7l2.8 2.8M8.5 23.5l2.8-2.8M20.7 11.3l2.8-2.8" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>',
-        'sh': '<svg viewBox="0 0 32 32" width="18" height="18"><rect width="32" height="32" rx="3" fill="#1E1E1E"/><path d="M6 10l7 6-7 6" fill="none" stroke="#4EC9B0" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 22h10" stroke="#4EC9B0" stroke-width="2.5" stroke-linecap="round"/></svg>',
-        'bat': '<svg viewBox="0 0 32 32" width="18" height="18"><rect width="32" height="32" rx="3" fill="#1E1E1E"/><path d="M6 10l7 6-7 6" fill="none" stroke="#4EC9B0" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 22h10" stroke="#4EC9B0" stroke-width="2.5" stroke-linecap="round"/></svg>',
-        'ps1': '<svg viewBox="0 0 32 32" width="18" height="18"><rect width="32" height="32" rx="3" fill="#1E1E1E"/><path d="M6 10l7 6-7 6" fill="none" stroke="#4EC9B0" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 22h10" stroke="#4EC9B0" stroke-width="2.5" stroke-linecap="round"/></svg>',
-        'txt': '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M8 4h10l6 6v18H8V4z" fill="#9AAABB"/><path d="M18 4v6h6" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><line x1="10" y1="13" x2="22" y2="13" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/><line x1="10" y1="17" x2="22" y2="17" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/><line x1="10" y1="21" x2="18" y2="21" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg>',
-        'env': '<svg viewBox="0 0 32 32" width="18" height="18"><rect width="32" height="32" rx="3" fill="#4A9B4F"/><path d="M8 4h10l6 6v18H8V4z" fill="#5DBA5F"/><path d="M18 4v6h6" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><text x="16" y="22" font-family="Segoe UI,sans-serif" font-size="7" font-weight="bold" fill="#fff" text-anchor="middle">ENV</text></svg>',
-        'zip': '<svg viewBox="0 0 32 32" width="18" height="18"><rect width="32" height="32" rx="3" fill="#8E44AD"/><path d="M16 7l-2 2h-3l-1 3h3l-2 2 2 2h-3l1 3h3l2 2 2-2h3l1-3h-3l2-2-2-2h3l-1-3h-3z" fill="#F39C12"/><rect x="10" y="12" width="12" height="10" rx="1" fill="none" stroke="#fff" stroke-width="1.5"/></svg>',
-        'git': '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M29.5 14.5L17.5 2.5c-.7-.7-1.8-.7-2.5 0L12.4 5l3 3c.7-.2 1.5 0 2 .6.6.5.8 1.3.6 2l2.9 2.9c.7-.2 1.5 0 2 .6.9.9.9 2.3 0 3.2-.9.9-2.3.9-3.2 0-.6-.6-.8-1.5-.5-2.2L16.5 12v8c.2.1.4.2.6.4.9.9.9 2.3 0 3.2-.9.9-2.3.9-3.2 0-.9-.9-.9-2.3 0-3.2.2-.2.5-.4.7-.5v-8c-.2-.1-.5-.3-.7-.5-.6-.6-.8-1.5-.5-2.2L10.5 6.1 2.5 14c-.7.7-.7 1.8 0 2.5l12 12c.7.7 1.8.7 2.5 0l12.5-12.5c.7-.7.7-1.8 0-2.5z" fill="#F34F29"/></svg>',
-        'gitignore': '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M29.5 14.5L17.5 2.5c-.7-.7-1.8-.7-2.5 0L12.4 5l3 3c.7-.2 1.5 0 2 .6.6.5.8 1.3.6 2l2.9 2.9c.7-.2 1.5 0 2 .6.9.9.9 2.3 0 3.2-.9.9-2.3.9-3.2 0-.6-.6-.8-1.5-.5-2.2L16.5 12v8c.2.1.4.2.6.4.9.9.9 2.3 0 3.2-.9.9-2.3.9-3.2 0-.9-.9-.9-2.3 0-3.2.2-.2.5-.4.7-.5v-8c-.2-.1-.5-.3-.7-.5-.6-.6-.8-1.5-.5-2.2L10.5 6.1 2.5 14c-.7.7-.7 1.8 0 2.5l12 12c.7.7 1.8.7 2.5 0l12.5-12.5c.7-.7.7-1.8 0-2.5z" fill="#F34F29"/></svg>',
-        'gitattributes': '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M29.5 14.5L17.5 2.5c-.7-.7-1.8-.7-2.5 0L12.4 5l3 3c.7-.2 1.5 0 2 .6.6.5.8 1.3.6 2l2.9 2.9c.7-.2 1.5 0 2 .6.9.9.9 2.3 0 3.2-.9.9-2.3.9-3.2 0-.6-.6-.8-1.5-.5-2.2L16.5 12v8c.2.1.4.2.6.4.9.9.9 2.3 0 3.2-.9.9-2.3.9-3.2 0-.9-.9-.9-2.3 0-3.2.2-.2.5-.4.7-.5v-8c-.2-.1-.5-.3-.7-.5-.6-.6-.8-1.5-.5-2.2L10.5 6.1 2.5 14c-.7.7-.7 1.8 0 2.5l12 12c.7.7 1.8.7 2.5 0l12.5-12.5c.7-.7.7-1.8 0-2.5z" fill="#F34F29"/></svg>',
-        'docker': '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M28.8 14.5c-.5-.3-1.6-.5-2.5-.3-.1-.9-.7-1.7-1.6-2.3l-.5-.3-.4.4c-.5.6-.7 1.6-.6 2.3.1.5.3.9.6 1.3-.3.1-.8.3-1.5.3H4.1c-.3 1.3-.1 3 .9 4.2.9 1.2 2.3 1.9 4.3 1.9 4 0 7-1.8 8.9-5 1.1.1 3.4.1 4.6-2.2.1 0 .6-.3 1.6-.9l.5-.3-.1-.1z" fill="#2396ED"/><rect x="7" y="13" width="2" height="2" rx=".3" fill="#2396ED"/><rect x="9.7" y="13" width="2" height="2" rx=".3" fill="#2396ED"/><rect x="12.4" y="13" width="2" height="2" rx=".3" fill="#2396ED"/><rect x="15.1" y="13" width="2" height="2" rx=".3" fill="#2396ED"/><rect x="17.8" y="13" width="2" height="2" rx=".3" fill="#2396ED"/><rect x="12.4" y="11" width="2" height="2" rx=".3" fill="#2396ED"/><rect x="15.1" y="11" width="2" height="2" rx=".3" fill="#2396ED"/><rect x="17.8" y="11" width="2" height="2" rx=".3" fill="#2396ED"/><rect x="15.1" y="9" width="2" height="2" rx=".3" fill="#2396ED"/></svg>',
-    };
-    
-    return iconMap[ext] || '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M8 4h10l6 6v18H8V4z" fill="#90A4AE"/><path d="M18 4v6h6" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    return getFileIcon(ext, false, false, 18);
 }
+
     
     // Configure marked with all options
     marked.setOptions({ 
@@ -626,13 +777,14 @@ function initBridge() {
 
     try {
         new QWebChannel(transport, function (channel) {
-            bridge = channel.objects.bridge;
-            if (!bridge) {
+            window.bridge = channel.objects.bridge;
+            if (!window.bridge) {
                 console.error("Cortex: Bridge object 'bridge' not found on channel.");
                 return;
             }
 
-            bridgeReady = true;
+            window.bridgeReady = true;
+            bridge = window.bridge;
             console.log('[CHAT] Bridge initialized successfully');
             
             // Re-fetch project info if it was set before bridge was ready
@@ -655,6 +807,7 @@ function initBridge() {
             var _terminalLastWrite = 0;
             var _terminalMaxBufferSize = 8192; // Max buffer before forced flush
             var _terminalPendingData = []; // Queue for burst handling
+            // Batching for AI chat terminal output (uses global vars above)
             
             function _flushTerminalOutput() {
                 _terminalOutputFrameId = null;
@@ -779,13 +932,34 @@ window.trySetProjectInfo = function(name, path, retryCount, callback) {
 };
 
 document.addEventListener('DOMContentLoaded', function () {
-    initMarked();
-    // Terminal is initialized lazily when first shown
-    initBridge();
-    initScrollTracking(); // Initialize scroll tracking
+    console.log('[INIT] DOMContentLoaded fired');
     
-    // Mark as ready when everything is loaded
-    if (window.markReady) window.markReady();
+    try {
+        console.log('[INIT] Starting initMarked()...');
+        initMarked();
+        
+        console.log('[INIT] Starting initBridge()...');
+        // Terminal is initialized lazily when first shown
+        initBridge();
+        
+        console.log('[INIT] Starting initScrollTracking()...');
+        initScrollTracking(); // Initialize scroll tracking
+        
+        console.log('[INIT] All initialization complete, marking ready');
+    } catch (error) {
+        console.error('[INIT] Error during initialization:', error);
+        console.error('[INIT] Error stack:', error.stack);
+    } finally {
+        // Always mark as ready even if there were errors
+        console.log('[INIT] Entering finally block, checking markReady...');
+        if (window.markReady) {
+            console.log('[INIT] Calling window.markReady()');
+            window.markReady();
+            console.log('[INIT] Page marked as ready - body classes:', document.body.className);
+        } else {
+            console.error('[INIT] ERROR: window.markReady is not defined!');
+        }
+    }
 
     // Image attachment handling
     var attachImageBtn = document.querySelector('[title="Attach Image"]');
@@ -816,12 +990,12 @@ document.addEventListener('DOMContentLoaded', function () {
             }
             
             if (!supportsVision) {
-                alert('⚠️ Image attachment requires a vision-capable model.\n\n' +
+                alert('NOTE: Image attachment requires a vision-capable model.\n\n' +
                       'Current model: ' + modelText + '\n\n' +
                       'Please switch to a vision model like:\n' +
-                      '• Qwen-VL (SiliconFlow)\n' +
-                      '• GPT-4 Vision\n' +
-                      '• Claude 3\n\n' +
+                      '- Qwen-VL (SiliconFlow)\n' +
+                      '- GPT-4 Vision\n' +
+                      '- Claude 3\n\n' +
                       'Click the model selector (top-right) to change models.');
                 return;
             }
@@ -850,6 +1024,109 @@ document.addEventListener('DOMContentLoaded', function () {
 
     var newChatBtn = document.getElementById('new-chat-btn');
     if (newChatBtn) newChatBtn.onclick = startNewChat;
+
+    // AutoGen Multi-Agent Toggle (Compact Banner in Dropdown)
+    var autogenBanner = document.getElementById('autogen-banner');
+    var autogenToggleSwitch = document.getElementById('autogen-toggle-switch');
+    var autogenBannerText = document.getElementById('autogen-banner-text');
+    
+    console.log('[AutoGen] Banner elements:', {
+        banner: !!autogenBanner,
+        switch: !!autogenToggleSwitch,
+        text: !!autogenBannerText
+    });
+    
+    if (autogenBanner && autogenToggleSwitch) {
+        console.log('[AutoGen] Click handler attached');
+        
+        autogenToggleSwitch.onclick = function(e) {
+            e.stopPropagation();
+            e.preventDefault();
+            
+            console.log('[AutoGen] Toggle clicked! Bridge available:', !!bridge);
+            console.log('[AutoGen] on_toggle_autogen method:', typeof (bridge && bridge.on_toggle_autogen));
+            
+            if (bridge && bridge.on_toggle_autogen) {
+                console.log('[AutoGen] Calling bridge.on_toggle_autogen()...');
+                // Toggle AutoGen using the correct method name
+                bridge.on_toggle_autogen();
+                
+                // Update UI after small delay
+                setTimeout(function() {
+                    autogenBanner.classList.toggle('active');
+                    var isActive = autogenBanner.classList.contains('active');
+                    autogenBannerText.textContent = isActive ? 
+                        'Multi-Agent: ON' : 'Multi-Agent: OFF';
+                    
+                    console.log('[AutoGen] UI updated, active:', isActive);
+                    
+                    // Show toast notification (inline to avoid hoisting issues)
+                    try {
+                        if (typeof showToast === 'function') {
+                            showToast(
+                                isActive ? '? Multi-Agent Mode ENABLED' : '? Multi-Agent Mode DISABLED',
+                                isActive ? 'success' : 'info',
+                                3000
+                            );
+                        } else {
+                            console.log('[AutoGen] Mode toggled:', isActive ? 'ON' : 'OFF');
+                        }
+                    } catch (err) {
+                        console.log('[AutoGen] Toast error:', err);
+                    }
+                }, 200);
+            } else {
+                console.error('[AutoGen] Bridge method not ready!', {
+                    bridge: !!bridge,
+                    on_toggle_autogen: typeof (bridge && bridge.on_toggle_autogen)
+                });
+            }
+        };
+        
+        // Prevent dropdown from closing when clicking banner
+        autogenBanner.onclick = function(e) {
+            e.stopPropagation();
+            e.preventDefault();
+        };
+    } else {
+        console.error('[AutoGen] Banner or switch element not found!');
+    }
+    
+    // Always Allow Toggle Handler
+    var alwaysAllowBtn = document.getElementById('always-allow-toggle');
+    if (alwaysAllowBtn) {
+        // Check saved state
+        var alwaysAllowEnabled = localStorage.getItem('cortex_always_allow') === 'true';
+        if (alwaysAllowEnabled) {
+            alwaysAllowBtn.classList.add('active');
+        }
+        
+        alwaysAllowBtn.onclick = function() {
+            var isActive = !alwaysAllowBtn.classList.contains('active');
+            alwaysAllowBtn.classList.toggle('active');
+            localStorage.setItem('cortex_always_allow', isActive);
+            
+            // Notify Python bridge
+            if (bridge && bridge.on_always_allow_changed) {
+                bridge.on_always_allow_changed(isActive);
+            }
+            
+            // Show toast
+            try {
+                if (typeof showToast === 'function') {
+                    showToast(
+                        isActive ? '? Auto-approval ENABLED' : '? Auto-approval DISABLED',
+                        isActive ? 'success' : 'info',
+                        3000
+                    );
+                }
+            } catch (err) {
+                console.log('[AlwaysAllow] Toast error:', err);
+            }
+            
+            console.log('[AlwaysAllow] Mode toggled:', isActive ? 'ON' : 'OFF');
+        };
+    }
 
     var send = document.getElementById('sendBtn');
     if (send) send.onclick = sendMessage;
@@ -890,7 +1167,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 });
                 
                 if (isNonVision) {
-                    alert('⚠️ Image paste requires a vision-capable model.\n\n' +
+                    alert('NOTE: Image paste requires a vision-capable model.\n\n' +
                           'Current model: ' + modelText + '\n\n' +
                           'Please switch to a vision model like Qwen-VL.');
                     return;
@@ -1053,6 +1330,7 @@ function renderHistoryList() {
         item.className = 'history-item' + (chat.id === currentChatId ? ' active' : '');
         
         var titleSpan = document.createElement('span');
+        titleSpan.className = 'title-text'; // Add class for proper ellipsis
         titleSpan.textContent = chat.title;
         
         var deleteBtn = document.createElement('button');
@@ -1194,8 +1472,13 @@ function hideLoadingIndicator() {
 }
 
 function loadChat(id) {
+    console.log('[CHAT] loadChat called with ID:', id);
     var chat = chats.find(function (c) { return c.id == id; });
-    if (!chat) return;
+    if (!chat) {
+        console.error('[CHAT] Chat not found in list:', id);
+        return;
+    }
+    console.log('[CHAT] Found chat:', chat.title, 'Messages:', chat.messages ? chat.messages.length : 0, 'Message count:', chat.message_count);
     currentChatId = id;
     
     // LAZY LOADING: If messages are not loaded yet, request them from the bridge
@@ -1205,6 +1488,7 @@ function loadChat(id) {
     if (chat.truncated && canLazyLoad) {
         needsLazyLoad = true;
     }
+    console.log('[CHAT] canLazyLoad:', canLazyLoad, 'needsLazyLoad:', needsLazyLoad, 'msgCount:', msgCount, 'message_count:', chat.message_count);
     if (needsLazyLoad && canLazyLoad) {
         console.log('[CHAT] Lazy loading messages for chat:', id);
         clearMessages();
@@ -1217,13 +1501,15 @@ function loadChat(id) {
         console.log('[CHAT] Requesting lazy load from bridge for:', id);
         if (bridge && typeof bridge.load_full_chat === 'function') {
             bridge.load_full_chat(id);
-            console.log('[CHAT] bridge.load_full_chat CALLED');
+            console.log('[CHAT] bridge.load_full_chat CALLED for ID:', id);
         } else {
             console.warn('[CHAT] Bridge not ready for lazy load. bridge exists:', !!bridge, 'type:', typeof (bridge && bridge.load_full_chat));
             hideLoadingIndicator();
         }
         return;
     }
+    
+    // ... rest of loadChat implementation
     
     clearMessages();
     
@@ -1345,6 +1631,93 @@ function normalizeMessageRoles(messages) {
     return false;
 }
 
+// Handle full chat load response from Python
+window.handleFullChatLoad = function(conversationId, chatData) {
+    console.log('[CHAT] handleFullChatLoad called for:', conversationId);
+    console.log('[CHAT] Chat data received:', chatData ? 'YES' : 'NO', 'Type:', typeof chatData);
+    if (chatData) {
+        console.log('[CHAT] Chat data keys:', Object.keys(chatData));
+        console.log('[CHAT] Messages count:', chatData.messages ? chatData.messages.length : 0);
+    }
+    hideLoadingIndicator();
+    
+    if (!chatData || !chatData.messages || chatData.messages.length === 0) {
+        console.warn('[CHAT] No chat data received for:', conversationId);
+        // Show empty state
+        var container = document.getElementById('chatMessages');
+        if (container && !document.getElementById('empty-state')) {
+            var emptyState = document.createElement('div');
+            emptyState.id = 'empty-state';
+            emptyState.innerHTML = '<p>No chat history found</p>';
+            container.appendChild(emptyState);
+        }
+        return;
+    }
+    
+    console.log('[CHAT] Received', chatData.messages.length, 'messages');
+    
+    // Find the chat in our list
+    var chat = chats.find(function(c) { return c.id == conversationId; });
+    if (!chat) {
+        console.error('[CHAT] Chat not found in list:', conversationId);
+        return;
+    }
+    
+    // Update chat with full data
+    chat.messages = chatData.messages || [];
+    chat.loaded = true;
+    chat.truncated = false;
+    
+    // Clear and render messages
+    clearMessages();
+    normalizeMessageRoles(chat.messages);
+    
+    chat.messages.forEach(function(msg) {
+        var msgText = msg.content || msg.text;
+        var msgSender = msg.role || msg.sender;
+        
+        if (!msgText || msgText === 'undefined' || msgText.trim() === '') return;
+        appendMessage(msgText, msgSender || 'user', false);
+        
+        // Restore tool activities
+        if (msg.toolActivities && msg.toolActivities.length > 0) {
+            msg.toolActivities.forEach(function(activity) {
+                if (activity.type === 'directory' && activity.contents) {
+                    var container = document.getElementById('chatMessages');
+                    var bubbles = container.querySelectorAll('.message-bubble.assistant');
+                    if (bubbles.length > 0) {
+                        currentAssistantMessage = bubbles[bubbles.length - 1];
+                        renderDirectoryContents(activity.path, activity.contents);
+                    }
+                }
+            });
+        }
+    });
+    
+    // Restore changed files if present
+    if (chatData.changedFiles && Object.keys(chatData.changedFiles).length > 0) {
+        _changedFiles = chatData.changedFiles;
+        Object.keys(_changedFiles).forEach(function(filePath) {
+            var file = _changedFiles[filePath];
+            if (file.status !== 'rejected') {
+                renderChangedFileRow(filePath, file.added, file.removed, file.editType, file.status);
+            }
+        });
+        _refreshCfsHeader();
+    }
+    
+    // Restore todos if present
+    if (chatData.todos && chatData.todos.length > 0) {
+        currentTodoList = chatData.todos;
+        updateTodos(currentTodoList, '');
+    } else {
+        currentTodoList = [];
+        updateTodos([], '');
+    }
+    
+    console.log('[CHAT] Chat loaded successfully:', conversationId);
+};
+
 function appendMessage(text, sender, shouldSave) {
     console.log('[CHAT] appendMessage called:', sender, 'length:', text ? text.length : 0);
     var container = document.getElementById('chatMessages');
@@ -1368,7 +1741,7 @@ function appendMessage(text, sender, shouldSave) {
     if (sender === 'user') {
         content.textContent = text;
 
-        // ── Enhanced user bubble: text wrap + avatar ─────────────────
+        // -- Enhanced user bubble: text wrap + avatar -----------------
         var row = document.createElement('div');
         row.className = 'user-msg-row';
 
@@ -1376,21 +1749,13 @@ function appendMessage(text, sender, shouldSave) {
         textWrap.className = 'user-text-wrap';
         textWrap.appendChild(content);
 
-        // Hover copy button (floats above bubble on hover)
-        var ub = document.createElement('button');
-        ub.className = 'user-copy-btn';
-        ub.title = 'Copy message';
-        ub.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg> Copy';
-        ub.onclick = function(e) { e.stopPropagation(); copyMessage(text, ub); };
-        textWrap.appendChild(ub);
-
-        // User avatar
+        // User avatar - append FIRST so it appears on right with inline-block
         var av = document.createElement('div');
         av.className = 'user-avatar';
         av.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>';
 
-        row.appendChild(textWrap);
-        row.appendChild(av);
+        row.appendChild(av); // Avatar first (appears on right due to text-align: right)
+        row.appendChild(textWrap); // Text second (appears on left)
         bubble.appendChild(row);
     } else {
         var parsedHtml = '';
@@ -1407,16 +1772,6 @@ function appendMessage(text, sender, shouldSave) {
         // Ensure we never set undefined
         content.innerHTML = parsedHtml || text || '';
 
-        // Copy button for assistant messages
-        var copyBtn = document.createElement('button');
-        copyBtn.className = 'copy-msg-btn';
-        copyBtn.title = 'Copy Message';
-        copyBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>';
-        copyBtn.onclick = function(e) {
-            e.stopPropagation();
-            copyMessage(text, copyBtn);
-        };
-        bubble.appendChild(copyBtn);
         bubble.appendChild(content);
     }
 
@@ -1443,6 +1798,16 @@ function appendMessage(text, sender, shouldSave) {
             saveChats();
         }
     }
+    
+    // Re-verify title for first message if needed
+    if (sender === 'user' && shouldSave) {
+        var chat = chats.find(function(c) { return c.id == currentChatId; });
+        if (chat && (chat.messages.length === 1 || !chat.title || chat.title === 'New Chat')) {
+             chat.title = text.substring(0, 40) + (text.length > 40 ? '...' : '');
+             renderHistoryList();
+        }
+    }
+    
     return bubble;
 }
 
@@ -1568,7 +1933,7 @@ function addToolResult(icon, text) {
         item.className = 'exploration-item tool-result';
         
         // Style based on icon type
-        var isError = icon === '❌';
+        var isError = icon === '?';
         var iconClass = isError ? 'error-icon' : 'success-icon';
         
         item.innerHTML = `<span class="exploration-icon ${iconClass}">${icon}</span><span class="${isError ? 'error-text' : ''}">${escapeHtml(text)}</span>`;
@@ -1666,13 +2031,13 @@ function renderPermissionBlock(permData) {
 
 function getToolIcon(toolName) {
     var name = (toolName || '').toLowerCase();
-    if (name.includes('read') || name.includes('file')) return '📄';
-    if (name.includes('write') || name.includes('edit')) return '✏️';
-    if (name.includes('run') || name.includes('command') || name.includes('terminal')) return '⚙️';
-    if (name.includes('search') || name.includes('find')) return '🔍';
-    if (name.includes('list') || name.includes('dir')) return '📁';
-    if (name.includes('git')) return '📦';
-    return '🔧';
+    if (name.includes('read') || name.includes('file')) return 'READ';
+    if (name.includes('write') || name.includes('edit')) return 'EDIT';
+    if (name.includes('run') || name.includes('command') || name.includes('terminal')) return 'RUN';
+    if (name.includes('search') || name.includes('find')) return 'FIND';
+    if (name.includes('list') || name.includes('dir')) return 'LIST';
+    if (name.includes('git')) return 'GIT';
+    return 'TOOL';
 }
 
 function handlePermissionAllow() {
@@ -1743,7 +2108,25 @@ function removeThinkingIndicator() {
 }
 
 function stopGeneration() {
-    if (bridge) bridge.on_stop();
+    console.log('[STOP] Stopping generation...');
+    if (window.bridge && window.bridge.on_stop) {
+        window.bridge.on_stop();
+    } else if (bridge && bridge.on_stop) {
+        bridge.on_stop();
+    } else {
+        console.error('[STOP] Bridge or on_stop not available');
+    }
+    
+    // Hide the stop button and update terminal status
+    var terminalOutput = document.getElementById('inline-terminal-output');
+    if (terminalOutput) {
+        terminalOutput.classList.remove('running');
+        var cancelBtn = terminalOutput.querySelector('.terminal-action-btn.cancel');
+        if (cancelBtn) {
+            cancelBtn.style.display = 'none';
+        }
+    }
+    
     onComplete(); // Reset UI state
 }
 
@@ -1759,6 +2142,16 @@ var currentActivitySection = null;
 var fileCount = 0;
 
 function showToolActivity(type, info, status) {
+    // Handle both calling conventions:
+    // 1. showToolActivity(type, info, status) - legacy
+    // 2. showToolActivity({tool_type, info, status}) - new object format from Python
+    if (typeof type === 'object' && type !== null) {
+        var obj = type;
+        type = obj.tool_type;
+        info = obj.info;
+        status = obj.status;
+    }
+    
     var container = document.getElementById('chatMessages');
     if (!container) return;
 
@@ -1774,7 +2167,7 @@ function showToolActivity(type, info, status) {
         statusEl.textContent = activityText;
     }
 
-    // ── File read/edit cards (IMMEDIATE VISIBLE CARDS) ──────────────
+    // -- File read/edit cards (IMMEDIATE VISIBLE CARDS) --------------
     if (type === 'read_file' || type === 'edit_file' || type === 'write_file') {
         if (!currentAssistantMessage) {
             currentAssistantMessage = document.createElement('div');
@@ -1796,7 +2189,7 @@ function showToolActivity(type, info, status) {
         }
 
         // Parse file path from info (e.g., "hakeem.html (200 lines)")
-        var filePath = info.split(' ')[0];
+        var filePath = info ? info.split(' ')[0] : '';
         
         // Check if card already exists for this file
         var existingCard = cardsEl.querySelector('[data-path*="' + filePath + '"]');
@@ -1814,11 +2207,11 @@ function showToolActivity(type, info, status) {
             card.dataset.path = filePath;
             card.dataset.status = status === 'running' ? 'pending' : 'applied';
             
-            var fileName = filePath.split('/').pop().split('\\').pop();
-            var ext = fileName.split('.').pop().toLowerCase();
+            var fileName = filePath ? filePath.split('/').pop().split('\\').pop() : 'unknown';
+            var ext = fileName ? fileName.split('.').pop().toLowerCase() : 'default';
             var extClass = 'fec-ext-' + (ext || 'default');
             
-            var icon = type === 'read_file' ? '👁' : type === 'edit_file' ? '✎' : '📝';
+            var icon = type === 'read_file' ? 'READ' : type === 'edit_file' ? 'EDIT' : 'NEW';
             var actionText = type === 'read_file' ? 'Reading' : type === 'edit_file' ? 'Editing' : 'Creating';
             
             card.innerHTML = 
@@ -1832,7 +2225,7 @@ function showToolActivity(type, info, status) {
                 '<div class="fec-right">' +
                     (status === 'running' ? 
                         '<span class="fec-status-text fec-status-pending">...</span>' :
-                        '<span class="fec-status-text fec-status-applied">✓</span>'
+                        '<span class="fec-status-text fec-status-applied">OK</span>'
                     ) +
                 '</div>';
             
@@ -1843,7 +2236,7 @@ function showToolActivity(type, info, status) {
         return;
     }
 
-    // ── Terminal command card handling ──────────────────────────────
+    // -- Terminal command card handling ------------------------------
     if (type === 'run_command') {
         if (!currentAssistantMessage) {
             currentAssistantMessage = document.createElement('div');
@@ -1885,7 +2278,7 @@ function showToolActivity(type, info, status) {
         return;
     }
 
-    // ── list_directory tree card ────────────────────────────────────
+    // -- list_directory tree card ------------------------------------
     if (type === 'list_directory' && status === 'complete') {
         // Tree card is rendered via showDirectoryTree from Python
         smartScroll(container);
@@ -1900,7 +2293,7 @@ function showToolActivity(type, info, status) {
         // Create collapsible header
         var header = document.createElement('div');
         header.className = 'activity-header';
-        header.innerHTML = '<span class="activity-icon running">↻</span> <span class="activity-title">Exploring</span> <span class="activity-toggle">▼</span>';
+        header.innerHTML = '<span class="activity-icon running">?</span> <span class="activity-title">Exploring</span> <span class="activity-toggle">?</span>';
         header.style.cursor = 'pointer';
         
         // Click handler for toggle
@@ -1910,7 +2303,7 @@ function showToolActivity(type, info, status) {
             var isCollapsed = section.classList.toggle('collapsed');
             var toggle = this.querySelector('.activity-toggle');
             if (toggle) {
-                toggle.textContent = isCollapsed ? '▶' : '▼';
+                toggle.textContent = isCollapsed ? '?' : '?';
             }
         };
         
@@ -2016,11 +2409,167 @@ function showToolActivity(type, info, status) {
     if (status === 'complete') {
         var iconEl = currentActivitySection.querySelector('.activity-icon');
         if (iconEl) {
-            iconEl.textContent = '✓';
+            iconEl.textContent = 'Done';
             iconEl.className = 'activity-icon complete';
         }
     }
     
+    smartScroll(container);
+}
+
+// Professional Tool Execution Summary Display
+function showToolSummary(summaryData) {
+    console.log('[JS] showToolSummary called:', summaryData);
+    var container = document.getElementById('chatMessages');
+    if (!container || !summaryData) return;
+    
+    // Create or get the current assistant message
+    if (!currentAssistantMessage) {
+        currentAssistantMessage = document.createElement('div');
+        currentAssistantMessage.className = 'message-bubble assistant';
+        var ce = document.createElement('div');
+        ce.className = 'message-content';
+        currentAssistantMessage.appendChild(ce);
+        currentContent = "";
+        container.appendChild(currentAssistantMessage);
+        var es = document.getElementById('empty-state');
+        if (es) es.remove();
+    }
+    
+    // Create summary card container
+    var summaryCard = document.createElement('div');
+    summaryCard.className = 'tool-summary-card';
+    
+    // Calculate totals
+    var totalWrites = summaryData.file_writes ? summaryData.file_writes.length : 0;
+    var totalReads = summaryData.file_reads ? summaryData.file_reads.length : 0;
+    var totalCommands = summaryData.commands ? summaryData.commands.length : 0;
+    var totalErrors = summaryData.errors ? summaryData.errors.length : 0;
+    var totalOther = summaryData.other ? summaryData.other.length : 0;
+    var grandTotal = totalWrites + totalReads + totalCommands + totalErrors + totalOther;
+    
+    if (grandTotal === 0) return;
+    
+    // Build header
+    var headerHtml = '<div class="summary-header" onclick="this.parentElement.classList.toggle(\'collapsed\')">';
+    headerHtml += '<span class="summary-icon">TOOLS</span>';
+    headerHtml += '<span class="summary-title">Tool Execution Summary</span>';
+    headerHtml += '<span class="summary-count">' + grandTotal + ' action' + (grandTotal > 1 ? 's' : '') + '</span>';
+    headerHtml += '<span class="summary-toggle">Details</span>';
+    headerHtml += '</div>';
+    
+    // Build content
+    var contentHtml = '<div class="summary-content">';
+    
+    // File writes section
+    if (totalWrites > 0) {
+        contentHtml += '<div class="summary-section">';
+        contentHtml += '<div class="section-header"><span class="section-icon">EDIT</span>Files Modified (' + totalWrites + ')</div>';
+        contentHtml += '<div class="section-items">';
+        summaryData.file_writes.forEach(function(item, index) {
+            // Icon based on operation type
+            var iconMap = {
+                'edit': 'EDIT',
+                'create': 'NEW',
+                'delete': 'DEL',
+                'directory': 'DIR'
+            };
+            var icon = iconMap[item.type] || 'FILE';
+            var fileName = item.path ? item.path.split('/').pop().split('\\').pop() : 'unknown';
+            contentHtml += '<div class="summary-item">';
+            contentHtml += '<span class="item-icon">' + icon + '</span>';
+            contentHtml += '<span class="item-name" title="' + escapeHtml(item.path) + '">' + escapeHtml(fileName) + '</span>';
+            // Show diff stats if available (+X -Y)
+            if (item.lines_added > 0 || item.lines_removed > 0) {
+                var diffHtml = '';
+                if (item.lines_added > 0) {
+                    diffHtml += '<span class="item-meta diff-added">+' + item.lines_added + '</span>';
+                }
+                if (item.lines_removed > 0) {
+                    diffHtml += '<span class="item-meta diff-removed">-' + item.lines_removed + '</span>';
+                }
+                contentHtml += diffHtml;
+            } else if (item.line_count > 0) {
+                contentHtml += '<span class="item-meta">' + item.line_count + ' lines</span>';
+            }
+            if (item.size) {
+                contentHtml += '<span class="item-meta">' + item.size + '</span>';
+            }
+            // Add clickable diff link if file path is valid
+            if (item.path && item.path !== 'Unknown' && !item.path.startsWith('Error')) {
+                var escapedPath = item.path.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                contentHtml += '<span class="item-diff-link" onclick="showDiff(\'' + escapedPath + '\')">diff</span>';
+            }
+            contentHtml += '</div>';
+        });
+        contentHtml += '</div></div>';
+    }
+    
+    // File reads section
+    if (totalReads > 0) {
+        contentHtml += '<div class="summary-section">';
+        contentHtml += '<div class="section-header"><span class="section-icon">READ</span>Files Read (' + totalReads + ')</div>';
+        contentHtml += '<div class="section-items">';
+        summaryData.file_reads.forEach(function(item) {
+            var fileName = item.path ? item.path.split('/').pop().split('\\').pop() : 'unknown';
+            contentHtml += '<div class="summary-item">';
+            contentHtml += '<span class="item-icon">READ</span>';
+            contentHtml += '<span class="item-name">' + escapeHtml(fileName) + '</span>';
+            contentHtml += '</div>';
+        });
+        contentHtml += '</div></div>';
+    }
+    
+    // Commands section
+    if (totalCommands > 0) {
+        contentHtml += '<div class="summary-section">';
+        contentHtml += '<div class="section-header"><span class="section-icon">RUN</span>Commands (' + totalCommands + ')</div>';
+        contentHtml += '<div class="section-items">';
+        summaryData.commands.forEach(function(item) {
+            contentHtml += '<div class="summary-item">';
+            contentHtml += '<span class="item-icon">RUN</span>';
+            contentHtml += '<span class="item-name">' + escapeHtml(item.command || item.name) + '</span>';
+            contentHtml += '</div>';
+        });
+        contentHtml += '</div></div>';
+    }
+    
+    // Errors section
+    if (totalErrors > 0) {
+        contentHtml += '<div class="summary-section error">';
+        contentHtml += '<div class="section-header"><span class="section-icon">ERR</span>Errors (' + totalErrors + ')</div>';
+        contentHtml += '<div class="section-items">';
+        summaryData.errors.forEach(function(item) {
+            contentHtml += '<div class="summary-item error">';
+            contentHtml += '<span class="item-icon">ERR</span>';
+            contentHtml += '<span class="item-name">' + escapeHtml(item.name) + '</span>';
+            contentHtml += '<span class="item-error">' + escapeHtml(item.error.substring(0, 100)) + '</span>';
+            contentHtml += '</div>';
+        });
+        contentHtml += '</div></div>';
+    }
+    
+    // Other operations
+    if (totalOther > 0) {
+        contentHtml += '<div class="summary-section">';
+        contentHtml += '<div class="section-header"><span class="section-icon">INFO</span>Other (' + totalOther + ')</div>';
+        contentHtml += '<div class="section-items">';
+        summaryData.other.forEach(function(item) {
+            contentHtml += '<div class="summary-item">';
+            contentHtml += '<span class="item-icon">INFO</span>';
+            contentHtml += '<span class="item-name">' + escapeHtml(item.name) + '</span>';
+            contentHtml += '</div>';
+        });
+        contentHtml += '</div></div>';
+    }
+    
+    contentHtml += '</div>';
+    
+    // Assemble card
+    summaryCard.innerHTML = headerHtml + contentHtml;
+    
+    // Add to message
+    currentAssistantMessage.appendChild(summaryCard);
     smartScroll(container);
 }
 
@@ -2030,18 +2579,18 @@ function getFileIcon(type, info) {
         var opType = type.replace('terminal_', '');
         var icons = {
             'create': '<span class="file-icon terminal">+</span>',
-            'create_dir': '<span class="file-icon folder">📁</span>',
-            'delete': '<span class="file-icon delete">🗑️</span>',
-            'delete_dir': '<span class="file-icon delete">🗑️</span>',
-            'move': '<span class="file-icon move">→</span>',
-            'copy': '<span class="file-icon copy">📋</span>',
-            'rename': '<span class="file-icon rename">✎</span>'
+            'create_dir': '<span class="file-icon folder">DIR</span>',
+            'delete': '<span class="file-icon delete">DEL</span>',
+            'delete_dir': '<span class="file-icon delete">DEL</span>',
+            'move': '<span class="file-icon move">?</span>',
+            'copy': '<span class=\"file-icon copy\">COPY</span>',
+            'rename': '<span class="file-icon rename">?</span>'
         };
-        return icons[opType] || '<span class="file-icon terminal">⌘</span>';
+        return icons[opType] || '<span class="file-icon terminal">RUN</span>';
     }
     
     if (type === 'read_file' || type === 'write_file' || type === 'edit_file' || type === 'inject_after' || type === 'add_import' || type === 'create_file') {
-        var ext = info.split('.').pop().toLowerCase();
+        var ext = info ? info.split('.').pop().toLowerCase() : 'default';
         var icons = {
             'js': '<span class="file-icon js">JS</span>',
             'py': '<span class="file-icon py">PY</span>',
@@ -2062,15 +2611,15 @@ function getFileIcon(type, info) {
         };
         return icons[ext] || '<span class="file-icon">FILE</span>';
     }
-    if (type === 'list_directory') return '<span class="file-icon folder">📁</span>';
-    if (type === 'create_directory') return '<span class="file-icon folder">📁+</span>';
-    if (type === 'delete_file') return '<span class="file-icon delete">🗑️</span>';
-    if (type === 'delete_directory') return '<span class="file-icon delete">🗑️</span>';
-    if (type === 'run_command') return '<span class="file-icon terminal">⌘</span>';
-    if (type === 'search_code') return '<span class="file-icon search">🔍</span>';
+    if (type === 'list_directory') return '<span class="file-icon folder">DIR</span>';
+    if (type === 'create_directory') return '<span class="file-icon folder">DIR+</span>';
+    if (type === 'delete_file') return '<span class="file-icon delete">DEL</span>';
+    if (type === 'delete_directory') return '<span class="file-icon delete">DEL</span>';
+    if (type === 'run_command') return '<span class="file-icon terminal">RUN</span>';
+    if (type === 'search_code') return '<span class="file-icon search">FIND</span>';
     if (type === 'git_status' || type === 'git_diff') return '<span class="file-icon git">GIT</span>';
-    if (type === 'thinking') return '<span class="file-icon think">💭</span>';
-    return '<span class="file-icon">⚙️</span>';
+    if (type === 'thinking') return '<span class="file-icon think">THINK</span>';
+    return '<span class="file-icon">FILE</span>';
 }
 
 function formatActivityLabel(type, info, status) {
@@ -2095,22 +2644,22 @@ function formatActivityLabel(type, info, status) {
         return status === 'running' ? runningPrefix + displayInfo : displayInfo;
     }
     if (isEdit) {
-        var checkmark = (status === 'complete' && !diffMatch) ? ' ✓' : '';
+        var checkmark = (status === 'complete' && !diffMatch) ? ' Done' : '';
         return status === 'running' ? runningPrefix + displayInfo : displayInfo + checkmark;
     }
     if (isCreate) {
         var action = type === 'create_directory' ? 'Created directory' : 'Created file';
-        return status === 'running' ? runningPrefix + displayInfo : action + ' ' + displayInfo + ' ✓';
+        return status === 'running' ? runningPrefix + displayInfo : action + ' ' + displayInfo + ' Done';
     }
     if (isDelete) {
         var action = type === 'delete_directory' ? 'Deleted directory' : 'Deleted file';
-        return status === 'running' ? runningPrefix + displayInfo : action + ' ' + displayInfo + ' ✓';
+        return status === 'running' ? runningPrefix + displayInfo : action + ' ' + displayInfo + ' Done';
     }
     if (type === 'list_directory') {
         return status === 'running' ? 'Exploring ' + displayInfo : 'Exploring ' + displayInfo;
     }
     if (type === 'run_command') {
-        return runningPrefix + '<code>' + displayInfo + '</code>' + (status === 'complete' ? ' ✓' : '');
+        return runningPrefix + '<code>' + displayInfo + '</code>' + (status === 'complete' ? ' ?' : '');
     }
     if (type === 'search_code') {
         return 'Grepped code <code>' + displayInfo + '</code>';
@@ -2122,7 +2671,7 @@ function formatActivityLabel(type, info, status) {
         return status === 'running' ? 'Getting diff' : 'Diff retrieved';
     }
     if (type === 'thinking') {
-        return 'Thought · ' + displayInfo;
+        return 'Thought - ' + displayInfo;
     }
     return displayInfo;
 }
@@ -2165,11 +2714,11 @@ function renderDirectoryContents(path, contents) {
         item.onmouseover = function() { this.style.background = 'rgba(255,255,255,0.05)'; };
         item.onmouseout = function() { this.style.background = 'transparent'; };
         
-        // Check if it's a folder (ends with / or has 📁 in the line from backend)
-        var isFolder = line.includes('📁') || line.trim().endsWith('/');
+        // Check if it's a folder (ends with / or has ?? in the line from backend)
+        var isFolder = line.includes('??') || line.trim().endsWith('/');
         
         // Extract just the name (remove emoji and size info)
-        var name = line.replace(/[📁📄]/g, '').replace(/\s*\([^)]*\)/g, '').replace(/\s*\d+B$/, '').trim();
+        var name = line.replace(/[????]/g, '').replace(/\s*\([^)]*\)/g, '').replace(/\s*\d+B$/, '').trim();
         
         var icon;
         if (isFolder) {
@@ -2183,7 +2732,7 @@ function renderDirectoryContents(path, contents) {
                 var ext = name.split('.').pop().toLowerCase();
                 icon = getFileExtensionIcon(ext);
             } else {
-                icon = '📄';
+                icon = 'PAT';
             }
         }
         
@@ -2236,7 +2785,7 @@ function showDirectoryContents(path, contents) {
 
 // Test function - can be called from console
 function testDirectoryDisplay() {
-    var testContent = "📁 agents/\n📁 skills/\n📄 plugin.json\n🐍 main.py\n📜 script.js\n🌐 index.html";
+    var testContent = "DIR agents/\nDIR skills/\nFILE plugin.json\nFILE main.py\nFILE script.js\nFILE index.html";
     showDirectoryContents("test_folder", testContent);
     console.log("Test directory display called");
 }
@@ -2356,13 +2905,13 @@ function showThinking() {
         var header = document.createElement('div');
         header.className = 'activity-header';
         header.innerHTML =
-            '<span class="activity-icon running">↻</span>' +
-            '<span class="activity-title">Working</span>' +
-            '<span class="activity-toggle">▾</span>';
+            '<svg class="activity-spinner" viewBox="0 0 24 24" width="16" height="16"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2" opacity="0.2"/><path d="M12 2 A 10 10 0 1 1 2 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>' +
+            '<span class="activity-title">Working <span class="activity-mention">@</span></span>' +
+            '<span class="activity-toggle">?</span>';
         header.onclick = function() {
             currentActivitySection.classList.toggle('collapsed');
             var t = header.querySelector('.activity-toggle');
-            if (t) t.textContent = currentActivitySection.classList.contains('collapsed') ? '▸' : '▾';
+            if (t) t.textContent = currentActivitySection.classList.contains('collapsed') ? '?' : '?';
         };
 
         var list = document.createElement('div');
@@ -2379,17 +2928,17 @@ function showThinking() {
     var list = currentActivitySection.querySelector('.activity-list');
     if (!list) return;
 
-    // ── FREEZE any previous thinking item ─────────────────────────────────
+    // -- FREEZE any previous thinking item ---------------------------------
     // Convert ALL existing thinking-indicator elements to static state
     var prevThinking = document.getElementById('thinking-indicator');
     if (prevThinking) {
         prevThinking.removeAttribute('id');          // de-register old id
-        prevThinking.className = 'activity-item';    // removes 'thinking' class → stops blink
+        prevThinking.className = 'activity-item';    // removes 'thinking' class ? stops blink
         var dotsEl = prevThinking.querySelector('.thinking-dots');
-        if (dotsEl) dotsEl.textContent = '•';       // replace '...' with static bullet
+        if (dotsEl) dotsEl.textContent = '.';       // replace '...' with static bullet
     }
 
-    // ── Add new ACTIVE thinking item at the bottom of the list ────────────
+    // -- Add new ACTIVE thinking item at the bottom of the list ------------
     var thinkingItem = document.createElement('div');
     thinkingItem.className = 'activity-item thinking';
     thinkingItem.id = 'thinking-indicator';
@@ -2402,7 +2951,7 @@ function showThinking() {
         var elapsed = Math.floor((Date.now() - activityStartTime) / 1000);
         var item = document.getElementById('thinking-indicator');
         if (item) {
-            item.querySelector('.activity-text').textContent = 'Thinking · ' + elapsed + 's';
+            item.querySelector('.activity-text').textContent = 'Thinking - ' + elapsed + 's';
         }
     }, 1000);
 
@@ -2417,9 +2966,9 @@ function hideThinking() {
     var item = document.getElementById('thinking-indicator');
     if (item) {
         item.removeAttribute('id');             // de-register so no stale id lingers
-        item.className = 'activity-item';       // removes 'thinking' → stops blink
+        item.className = 'activity-item';       // removes 'thinking' ? stops blink
         var dotsEl = item.querySelector('.thinking-dots');
-        if (dotsEl) dotsEl.textContent = '•'; // freeze to static bullet
+        if (dotsEl) dotsEl.textContent = '.'; // freeze to static bullet
     }
 }
 
@@ -2438,7 +2987,7 @@ function updateActivityHeader(count, status) {
     }
     var icon = document.querySelector('.activity-header .activity-icon');
     if (icon) {
-        icon.textContent = status === 'complete' ? '✓' : '↻';
+        icon.textContent = status === 'complete' ? '?' : '?';
         icon.className = 'activity-icon ' + (status === 'complete' ? 'complete' : 'running');
     }
 }
@@ -2486,7 +3035,7 @@ function showCreatedFilesCard(summaryData) {
     var title  = summaryData.title   || 'Task Complete';
     var msg    = summaryData.message || '';
 
-    // ── Build card element ──────────────────────────────────────────────────
+    // -- Build card element --------------------------------------------------
     var card = document.createElement('div');
     card.className = 'created-files-card';
     card.setAttribute('aria-label', 'Files changed by Cortex AI');
@@ -2546,7 +3095,12 @@ function showCreatedFilesCard(summaryData) {
             } else {
                 diffBtn.onclick = (function(p) {
                     return function() {
-                        if (bridge && bridge.show_diff) bridge.show_diff(p);
+                        console.log('[Diff-Handler] Button clicked for path:', p);
+                        console.log('[Diff-Handler] window.bridge:', !!window.bridge);
+                        console.log('[Diff-Handler] window.bridge.on_show_diff:', !!(window.bridge && window.bridge.on_show_diff));
+                        if (window.bridge && window.bridge.on_show_diff) window.bridge.on_show_diff(p);
+                        else if (bridge && bridge.on_show_diff) bridge.on_show_diff(p);
+                        else console.error('[Diff-Handler] Neither window.bridge nor bridge has on_show_diff');
                     };
                 })(path);
             }
@@ -2599,27 +3153,32 @@ function getCfcFileIcon(ext) {
 
 var currentTodoList = [];
 
+/**
+ * Update todos using NEW Cursor IDE card design
+ * @param {Array} todos - Array of todo objects {id, content, status}
+ * @param {string} mainTask - Optional main task description
+ */
 function updateTodos(todos, mainTask) {
-    if (!todos || !Array.isArray(todos)) return;
+    console.log('[TODO] updateTodos called, todos count:', todos ? todos.length : 0);
+    if (!todos || !Array.isArray(todos)) {
+        console.log('[TODO] Invalid todos data, returning');
+        return;
+    }
 
-    var section  = document.getElementById('todo-section');
-    var list     = document.getElementById('todo-list');
-    var previewEl = document.getElementById('todo-preview-text');
-    var countEl  = document.getElementById('todo-progress-count');
-
-    if (!section || !list) return;
-
-    // If empty todos received, don't clear existing ones - persist until completed
+    // If empty todos received, don't clear existing ones
     if (todos.length === 0) {
-        // Only hide if there are no existing todos
+        console.log('[TODO] Empty todos received');
         if (currentTodoList.length === 0) {
-            section.style.display = 'none';
-            list.innerHTML = '';
-            if (previewEl) previewEl.textContent = '';
-            if (countEl)   countEl.textContent   = '0/0';
+            // Remove any existing todo card
+            var existingCard = document.getElementById('todo-card-container');
+            if (existingCard) {
+                existingCard.remove();
+            }
         }
         return;
     }
+    
+    console.log('[TODO] Processing', todos.length, 'todos');
 
     // Merge new todos with existing ones (avoid duplicates by id)
     var existingIds = new Set(currentTodoList.map(function(t) { return t.id; }));
@@ -2636,51 +3195,39 @@ function updateTodos(todos, mainTask) {
     
     // Add new todos
     currentTodoList = currentTodoList.concat(newTodos);
-    section.style.display = 'flex';
-
-    // Calculate stats from currentTodoList (merged list)
-    var total     = currentTodoList.length;
-    var completed = currentTodoList.filter(function(t) { return t.status === 'COMPLETE'; }).length;
-
-    if (countEl) countEl.textContent = completed + '/' + total;
-
-    // Header preview: first incomplete task text
-    if (previewEl) {
-        var firstIncomplete = null;
-        for (var i = 0; i < currentTodoList.length; i++) {
-            if (currentTodoList[i].status !== 'COMPLETE' && currentTodoList[i].status !== 'CANCELLED') {
-                firstIncomplete = currentTodoList[i];
-                break;
-            }
-        }
-        previewEl.textContent = (firstIncomplete || currentTodoList[0]).content;
-    }
-
-    list.innerHTML = '';
-    currentTodoList.forEach(function(todo) {
-        var item = document.createElement('div');
-        var statusLow = todo.status.toLowerCase().replace('_', '');
-        item.className = 'todo-item todo-' + statusLow;
-        item.dataset.id = todo.id;
-
-        var iconHtml = '';
-        switch (todo.status) {
-            case 'COMPLETE':
-                iconHtml = '<div class="todo-icon todo-icon-done"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><polyline points="20 6 9 17 4 12"/></svg></div>';
-                break;
-            case 'IN_PROGRESS':
-                iconHtml = '<div class="todo-icon todo-icon-progress"><svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="5"/></svg></div>';
-                break;
-            case 'CANCELLED':
-                iconHtml = '<div class="todo-icon todo-icon-cancelled"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></div>';
-                break;
-            default:
-                iconHtml = '<div class="todo-icon todo-icon-pending"></div>';
-        }
-
-        item.innerHTML = iconHtml + '<span class="todo-text">' + escapeHtml(todo.content) + '</span>';
-        list.appendChild(item);
+    
+    // Convert to new card format
+    var cardTodos = currentTodoList.map(function(todo) {
+        return {
+            text: todo.content,
+            status: (todo.status === 'COMPLETE' || todo.status === 'CANCELLED') ? 'completed' : 'active'
+        };
     });
+    
+    // Check if todo card already exists
+    var existingCard = document.getElementById('todo-card-container');
+    if (existingCard) {
+        // Update existing card
+        existingCard.remove();
+    }
+    
+    // Create new todo card
+    var card = window.createTodoCard(cardTodos);
+    card.id = 'todo-card-container';
+    
+    // Append or prepend to chat (todos should appear near the top)
+    var chatMessages = document.getElementById('chatMessages');
+    if (chatMessages) {
+        // Insert after empty state but before other messages
+        var emptyState = document.getElementById('empty-state');
+        if (emptyState && emptyState.nextSibling) {
+            chatMessages.insertBefore(card, emptyState.nextSibling);
+        } else {
+            chatMessages.insertBefore(card, chatMessages.firstChild);
+        }
+    }
+    
+    console.log('[TODO] Card rendered with', cardTodos.length, 'items');
 }
 
 function getStatusClass(status) {
@@ -2759,6 +3306,11 @@ function startStreaming() {
 }
 
 function onChunk(chunk) {
+    if (chunk === undefined || chunk === null) {
+        console.warn('[JS] onChunk received undefined/null chunk');
+        return;
+    }
+    chunk = String(chunk);
     console.log('[JS] onChunk received:', chunk.substring(0, 50));
     var container = document.getElementById('chatMessages');
     if (!container) {
@@ -2766,7 +3318,7 @@ function onChunk(chunk) {
         return;
     }
 
-    // ── Set thinking start time on first real content chunk ──────────────
+    // -- Set thinking start time on first real content chunk --------------
     if (!_thinkingStartTime && chunk.trim() && !chunk.startsWith('<')) {
         _thinkingStartTime = Date.now();
     }
@@ -2786,14 +3338,14 @@ function onChunk(chunk) {
     }
 
     // Check if this is an exploration item (tool execution feedback)
-    var explorationMatch = chunk.match(/^(📁|📄|✏️|🔧|⚙️)\s*`?([^`\n]+)`?/);
+    var explorationMatch = chunk.match(/^(READ|WRITE|RUN|SEARCH|INFO)\s*?([^\n]+)?/i);
     if (explorationMatch) {
-        addExplorationItem(explorationMatch[1], explorationMatch[2].trim());
+        addExplorationItem(explorationMatch[1], (explorationMatch[2] || "" ).trim());
         return;
     }
 
     // Check for tool result lines
-    var toolResultMatch = chunk.match(/^(\s*)(→|✓|✏️|🔧|🔍|📊|📋|❌)\s*(.+)$/);
+    var toolResultMatch = chunk.match(/^(\s*)(OK|DONE|ERROR|WARN|INFO|RESULT|OUTPUT)\s*(.+)$/i);
     if (toolResultMatch) {
         addToolResult(toolResultMatch[2], toolResultMatch[3].trim());
         return;
@@ -2807,7 +3359,7 @@ function onChunk(chunk) {
     }
     if (chunk.includes('</exploration>')) return;
 
-    // ── Task Summary: buffer for final card, suppress from stream ────────
+    // -- Task Summary: buffer for final card, suppress from stream --------
     if (chunk.includes('<task_summary>')) _inTaskSummary = true;
     if (_inTaskSummary) {
         _taskSummaryBuffer += chunk;
@@ -2815,11 +3367,24 @@ function onChunk(chunk) {
         return;
     }
 
-    // ── Terminal output streaming: route to terminal card ────────────────
+    // -- Terminal output streaming: route to terminal card (BATCHED) -------
     if (chunk.includes('<terminal_output>')) {
         var termMatch = chunk.match(/<terminal_output>(.*?)<\/terminal_output>/);
         if (termMatch) {
-            _updateCurrentTerminalCard(termMatch[1]);
+            // Batch terminal output updates to reduce DOM manipulations
+            if (!_terminalBatchBuffer) _terminalBatchBuffer = '';
+            _terminalBatchBuffer += termMatch[1] + '\n';
+            
+            // Flush every 10 lines or 100ms
+            if (!_terminalFlushTimeout) {
+                _terminalFlushTimeout = setTimeout(function() {
+                    if (_terminalBatchBuffer) {
+                        _updateCurrentTerminalCard(_terminalBatchBuffer);
+                        _terminalBatchBuffer = '';
+                    }
+                    _terminalFlushTimeout = null;
+                }, 100);
+            }
         }
         return;  // Don't add terminal output to AI text bubble
     }
@@ -2841,16 +3406,16 @@ function onChunk(chunk) {
         if (emptyState) emptyState.remove();
     }
 
-    // Accumulate raw content (INCLUDING custom tags — stripped at render time)
+    // Accumulate raw content (INCLUDING custom tags - stripped at render time)
     currentContent += chunk;
 
-    // Throttled Rendering (100ms debounce to prevent massive O(N^2) UI freezing)
+    // Throttled Rendering (200ms debounce - increased to reduce UI freezing during terminal streaming)
     if (!renderPending) {
         renderPending = true;
         window._streamRenderTimeout = setTimeout(function() {
             renderPending = false;
             updateStreamingUI();
-        }, 100);
+        }, 200);
     }
 }
 
@@ -2862,7 +3427,7 @@ function updateStreamingUI() {
     if (!contentDiv) return;
 
     try {
-        // ── 1. Strip ALL custom tags before markdown render ─────────────────
+        // -- 1. Strip ALL custom tags before markdown render -----------------
         var cleanText = currentContent
             .replace(/<file_edited>[\s\S]*?<\/file_edited>/g, '')
             .replace(/<exploration>[\s\S]*?<\/exploration>/g, '')
@@ -2872,7 +3437,7 @@ function updateStreamingUI() {
             .replace(/<permission>[\s\S]*?<\/permission>/g, '')
             .trim();
 
-        // ── 2. Parse markdown ────────────────────────────────────────────
+        // -- 2. Parse markdown --------------------------------------------
         var html = '';
         try {
             if (typeof marked !== 'undefined' && marked.parse) {
@@ -2892,7 +3457,7 @@ function updateStreamingUI() {
         html = highlightFileCreations(html);
         contentDiv.innerHTML = html;
 
-        // ── 3. Syntax highlight (skip already-highlighted blocks) ──────────
+        // -- 3. Syntax highlight (skip already-highlighted blocks) ----------
         if (window.hljs) {
             contentDiv.querySelectorAll('pre code').forEach(function(block) {
                 if (!block.dataset.highlighted) {
@@ -2902,7 +3467,7 @@ function updateStreamingUI() {
             });
         }
 
-        // ── 4. Inject code block headers on new blocks ─────────────────
+        // -- 4. Inject code block headers on new blocks -----------------
         contentDiv.querySelectorAll('pre code').forEach(function(block) {
             injectCodeBlockHeader(block);
         });
@@ -2919,6 +3484,9 @@ function updateStreamingUI() {
 function formatMarkdownFallback(text) {
     if (!text) return '';
     
+    // First, normalize line endings (Windows \r\n -> \n)
+    text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    
     // Process line by line for better control
     var lines = text.split('\n');
     var result = [];
@@ -2928,8 +3496,22 @@ function formatMarkdownFallback(text) {
         var line = lines[i];
         var trimmed = line.trim();
         
+        // Horizontal rule
+        if (trimmed.match(/^(-{3,}|\*{3,}|_{3,})$/)) {
+            if (inList) {
+                result.push('</ul>');
+                inList = false;
+            }
+            result.push('<hr>');
+            continue;
+        }
+        
         // Headers
         if (trimmed.match(/^#{1,6}\s/)) {
+            if (inList) {
+                result.push('</ul>');
+                inList = false;
+            }
             var level = trimmed.match(/^(#+)/)[1].length;
             var content = trimmed.replace(/^#{1,6}\s*/, '');
             result.push('<h' + level + '>' + processInlineMarkdown(content) + '</h' + level + '>');
@@ -2950,9 +3532,25 @@ function formatMarkdownFallback(text) {
             inList = false;
         }
         
-        // Regular paragraph
-        if (trimmed) {
-            result.push('<p>' + processInlineMarkdown(line) + '</p>');
+        // Blockquotes
+        if (trimmed.startsWith('>')) {
+            if (inList) {
+                result.push('</ul>');
+                inList = false;
+            }
+            var quoteContent = trimmed.substring(1).trim();
+            result.push('<blockquote>' + processInlineMarkdown(quoteContent) + '</blockquote>');
+            continue;
+        }
+        
+        // Regular paragraph (including empty lines for spacing)
+        if (trimmed || (i > 0 && lines[i-1].trim())) {
+            if (trimmed) {
+                result.push('<p>' + processInlineMarkdown(line) + '</p>');
+            } else if (result.length > 0 && result[result.length - 1] !== '<br>') {
+                // Preserve paragraph breaks
+                result.push('<br>');
+            }
         }
     }
     
@@ -3006,7 +3604,7 @@ function onComplete() {
     }
 
     if (currentAssistantMessage) {
-        // ── Strip all custom tags for display ─────────────────────────────
+        // -- Strip all custom tags for display -----------------------------
         var displayText = currentContent
             .replace(/<task_summary>[\s\S]*?<\/task_summary>/g, '')
             .replace(/<file_edited>[\s\S]*?<\/file_edited>/g, '')
@@ -3016,15 +3614,20 @@ function onComplete() {
             .replace(/<permission>[\s\S]*?<\/permission>/g, '')
             .trim();
 
-        // ── Save to history (only if content is valid) ─────────────────────
+        console.log('[CHAT] onComplete: displayText length:', displayText ? displayText.length : 0);
+        console.log('[CHAT] onComplete: currentAssistantMessage exists:', !!currentAssistantMessage);
+
+        // -- Save to history (only if content is valid) ---------------------
         var chat = chats.find(function(c) { return c.id == currentChatId; });
         if (chat && displayText && displayText.trim() !== '' && displayText !== 'undefined') {
             chat.messages.push({ text: displayText, sender: 'assistant', role: 'assistant' });
             saveChats();
         }
 
-        // ── Final markdown render ───────────────────────────────────────
+        // -- Final markdown render ---------------------------------------
         var contentDiv = currentAssistantMessage.querySelector('.message-content');
+        console.log('[CHAT] onComplete: contentDiv found:', !!contentDiv);
+        
         if (contentDiv) {
             var finalHtml = '';
             try {
@@ -3034,26 +3637,35 @@ function onComplete() {
             } catch (e) {
                 finalHtml = formatMarkdownFallback(displayText);
             }
-            contentDiv.innerHTML = finalHtml || '';
+            
+            // CRITICAL FIX: Ensure contentDiv is visible and has content
+            contentDiv.innerHTML = finalHtml || displayText || '';
+            contentDiv.style.display = 'block';  // Force visibility
+            contentDiv.style.visibility = 'visible';
+            
+            console.log('[CHAT] onComplete: contentDiv.innerHTML set, length:', contentDiv.innerHTML.length);
 
-            // ── Code block headers + syntax highlight ───────────────────
+            // -- Code block headers + syntax highlight -------------------
             contentDiv.querySelectorAll('pre code').forEach(function(block) {
                 if (window.hljs) hljs.highlightElement(block);
                 injectCodeBlockHeader(block);
             });
+        } else {
+            console.error('[CHAT] onComplete: contentDiv NOT FOUND! Message structure may be broken.');
         }
 
-        // ── File edit cards ← KEY FIX ────────────────────────────────
+        // -- File edit cards ? KEY FIX --------------------------------
+        // Render cards AFTER ensuring content is visible
         renderCustomTagsInto(currentAssistantMessage, currentContent);
 
-        // ── Thought duration badge ──────────────────────────────────
+        // -- Thought duration badge ----------------------------------
         var secs = getThoughtSeconds();
         if (secs >= 1) {
             currentAssistantMessage.appendChild(buildThoughtBadge(secs));
         }
         _thinkingStartTime = null;
 
-        // ── Task summary card ───────────────────────────────────────
+        // -- Task summary card ---------------------------------------
         var summaryText = _taskSummaryBuffer || currentContent;
         var summaryMatch = summaryText.match(/<task_summary>([\s\S]*?)<\/task_summary>/);
         if (summaryMatch) {
@@ -3066,12 +3678,14 @@ function onComplete() {
         if (window.MathJax && window.MathJax.typeset) {
             window.MathJax.typeset([currentAssistantMessage]);
         }
+    } else {
+        console.warn('[CHAT] onComplete: currentAssistantMessage is null!');
     }
 
-    // ── Show task completion summary ─────────────────────────────────
+    // -- Show task completion summary ---------------------------------
     showTaskCompletionSummary();
 
-    // ── Reset state ────────────────────────────────────────────────
+    // -- Reset state ------------------------------------------------
     currentAssistantMessage = null;
     currentContent          = '';
     _taskSummaryBuffer      = '';
@@ -3082,10 +3696,78 @@ function onComplete() {
     if (sendBtn) sendBtn.style.display = 'flex';
     if (stopBtn) stopBtn.style.display = 'none';
 
-    // ── Trigger queue processing ────────────────────────────────────
+    // -- Trigger queue processing ------------------------------------
     _onGenerationComplete();
 }
 
+
+
+function _startRateLimitRetry(seconds) {
+    if (!_lastUserMessage || _isGenerating) return;
+    if (_rateLimitRetryTimer) {
+        clearInterval(_rateLimitRetryTimer);
+        _rateLimitRetryTimer = null;
+    }
+    _rateLimitRetryRemaining = Math.max(1, seconds || 10);
+
+    // Show waiting UI
+    showThinkingIndicator();
+    updateThinkingText('Rate limited. Retrying in ' + _rateLimitRetryRemaining + 's');
+    var statusEl = document.getElementById('thinking-status');
+    if (statusEl) statusEl.textContent = 'Waiting for provider rate limit...';
+
+    _rateLimitRetryTimer = setInterval(function() {
+        _rateLimitRetryRemaining -= 1;
+        if (_rateLimitRetryRemaining <= 0) {
+            clearInterval(_rateLimitRetryTimer);
+            _rateLimitRetryTimer = null;
+            // Retry without duplicating the user bubble
+            _isGenerating = true;
+            var sendBtn = document.getElementById('sendBtn');
+            var stopBtn = document.getElementById('stopBtn');
+            if (sendBtn) sendBtn.style.display = 'none';
+            if (stopBtn) stopBtn.style.display = 'flex';
+            showThinkingIndicator();
+            if (_lastUserHasImages && _lastUserImageData) {
+                bridge.on_message_with_images(_lastUserMessage, _lastUserImageData);
+            } else {
+                bridge.on_message_submitted(_lastUserMessage);
+            }
+            return;
+        }
+        updateThinkingText('Rate limited. Retrying in ' + _rateLimitRetryRemaining + 's');
+    }, 1000);
+}
+
+function onError(errorMessage) {
+    console.error('[CHAT] onError:', errorMessage);
+    removeThinkingIndicator();
+    hideThinking();
+    clearActivitySection();
+
+    // Show error in chat
+    try {
+        appendMessage(errorMessage || 'An error occurred.', 'system', true);
+    } catch (e) {}
+
+    // Reset UI state
+    var sendBtn = document.getElementById('sendBtn');
+    var stopBtn = document.getElementById('stopBtn');
+    if (sendBtn) sendBtn.style.display = 'flex';
+    if (stopBtn) stopBtn.style.display = 'none';
+
+    _isGenerating = false;
+
+    // Auto-retry for rate limits with countdown
+    if (errorMessage && /rate limit|429/i.test(errorMessage)) {
+        var m = errorMessage.match(/wait\s+(\d+)\s*seconds/i);
+        var seconds = m ? parseInt(m[1], 10) : 15;
+        _startRateLimitRetry(seconds);
+        return;
+    }
+
+    _onGenerationComplete();
+}
 
 function handlePostRenderSpecialTags(container) {
     // Handle interactive blocks that need to stay in chat
@@ -3300,11 +3982,11 @@ function renderExplorationBlock(data, isStreaming) {
 }
 
 function renderFileEditedBlock(data, isStreaming) {
-    if (isStreaming) return '<div class="file-edit-inline"><span class="pending">⏳ Editing...</span></div>';
+    if (isStreaming) return '<div class="file-edit-inline"><span class="pending">? Editing...</span></div>';
     
-    var lines = data.trim().split('\n');
-    var filePath = lines[0] || data.trim();
-    var fileName = filePath.split('/').pop().split('\\').pop();
+    var lines = data ? data.trim().split('\n') : [''];
+    var filePath = lines[0] || (data ? data.trim() : '');
+    var fileName = filePath ? filePath.split('/').pop().split('\\').pop() : 'unknown';
     
     // Parse change stats if available (+X -Y format)
     var changeStats = '';
@@ -3321,9 +4003,9 @@ function renderFileEditedBlock(data, isStreaming) {
           (changeStats ? '<span class="fec-stats">' + escapeHtml(changeStats) + '</span>' : '') +
         '</div>' +
         '<div class="fec-actions">' +
-          '<button class="fec-btn fec-diff" onclick="requestDiff(\'' + escapedPath + '\')" title="View diff">Diff</button>' +
-          '<button class="fec-btn fec-accept" onclick="acceptFileEdit(\'' + escapedPath + '\', this)" title="Accept changes">✓</button>' +
-          '<button class="fec-btn fec-reject" onclick="rejectFileEdit(\'' + escapedPath + '\', this)" title="Reject changes">✗</button>' +
+          '<button class="fec-btn fec-diff" data-path="' + escapeHtml(filePath) + '" onclick="event.stopPropagation(); requestFecDiff(this)" title="View diff">Diff</button>' +
+          '<button class="fec-btn fec-accept" onclick="acceptFileEdit(\'' + escapedPath + '\', this)" title="Accept changes">?</button>' +
+          '<button class="fec-btn fec-reject" onclick="rejectFileEdit(\'' + escapedPath + '\', this)" title="Reject changes">?</button>' +
         '</div>' +
     '</div>';
 }
@@ -3339,7 +4021,7 @@ function renderTaskSummary(data) {
         var message = summary.message || '';
         
         var html = '<div class="task-summary-card">';
-        html += '<div class="task-summary-header">✅ ' + escapeHtml(title) + '</div>';
+        html += '<div class="task-summary-header">DONE ' + escapeHtml(title) + '</div>';
         
         // Removed section
         if (removed.length > 0) {
@@ -3347,7 +4029,7 @@ function renderTaskSummary(data) {
             html += '<div class="task-summary-label">Removed:</div>';
             html += '<ul class="task-summary-list removed">';
             removed.forEach(function(item) {
-                html += '<li><span class="item-icon">🗑️</span>' + escapeHtml(item) + '</li>';
+                html += '<li><span class="item-icon">DEL</span>' + escapeHtml(item) + '</li>';
             });
             html += '</ul></div>';
         }
@@ -3358,7 +4040,7 @@ function renderTaskSummary(data) {
             html += '<div class="task-summary-label">Kept:</div>';
             html += '<ul class="task-summary-list kept">';
             kept.forEach(function(item) {
-                html += '<li><span class="item-icon">✓</span>' + escapeHtml(item) + '</li>';
+                html += '<li><span class="item-icon">INFO</span>' + escapeHtml(item) + '</li>';
             });
             html += '</ul></div>';
         }
@@ -3369,7 +4051,7 @@ function renderTaskSummary(data) {
             html += '<div class="task-summary-label">Files:</div>';
             html += '<ul class="task-summary-list files">';
             files.forEach(function(item) {
-                var icon = item.action === 'created' ? '📄' : item.action === 'deleted' ? '🗑️' : '📝';
+                var icon = item.action === 'created' ? 'NEW' : item.action === 'deleted' ? 'DEL' : 'EDIT';
                 var status = item.action || 'modified';
                 html += '<li><span class="item-icon">' + icon + '</span><code>' + escapeHtml(item.name) + '</code> <span class="file-action">' + status + '</span></li>';
             });
@@ -3385,7 +4067,7 @@ function renderTaskSummary(data) {
         return html;
     } catch (e) {
         console.error('Task summary parse error:', e);
-        return '<div class="task-summary-card"><div class="task-summary-header">✅ Task Complete</div></div>';
+        return '<div class="task-summary-card"><div class="task-summary-header">DONE Task Complete</div></div>';
     }
 }
 
@@ -3420,52 +4102,55 @@ function renderDiffBlock(data, isStreaming) {
     }
 }
 
-// --- Terminal Output Display in Chat ---
+// --- Terminal Output Display in Chat (NEW Cursor IDE Card Design) ---
 function showTerminalOutputInChat(command, output, isRunning) {
-    var container = document.getElementById('chatMessages');
-    if (!container) return;
+    console.log('[TERMINAL] Showing output in card:', command);
     
-    // Remove existing terminal output if any
-    var existingOutput = document.getElementById('inline-terminal-output');
-    if (existingOutput) {
-        existingOutput.remove();
-    }
+    // Create terminal card using new card system
+    var card = window.createTerminalCard(command, output || '');
     
-    var html = '<div id="inline-terminal-output" class="terminal-output-block' + (isRunning ? ' running' : '') + '">';
-    html += '<div class="terminal-output-header">';
-    html += '<span class="terminal-status"><i class="fas fa-terminal"></i> ' + (isRunning ? 'Running in terminal' : 'Terminal Output') + '</span>';
+    // If running, add a pulse animation indicator
     if (isRunning) {
-        html += '<span class="terminal-actions">';
-        html += '<button class="terminal-action-btn" onclick="window.showTerminal()">Run in the background</button>';
-        html += '<button class="terminal-action-btn cancel" onclick="stopGeneration()">Cancel</button>';
-        html += '</span>';
-    } else {
-        html += '<button class="terminal-action-btn" onclick="window.showTerminal()"><i class="fas fa-external-link-alt"></i> View in terminal</button>';
-    }
-    html += '</div>';
-    
-    // Command display
-    html += '<div class="terminal-command">';
-    html += '<span class="prompt">$</span> ' + escapeHtml(command);
-    html += '</div>';
-    
-    // Output display
-    if (output) {
-        html += '<div class="terminal-content">';
-        html += '<pre>' + escapeHtml(output) + '</pre>';
-        html += '</div>';
+        var header = card.querySelector('.card-header');
+        if (header) {
+            var statusSpan = document.createElement('span');
+            statusSpan.className = 'ml-auto text-[10px] opacity-40 pulse-timer';
+            statusSpan.textContent = 'Running...';
+            header.appendChild(statusSpan);
+        }
     }
     
-    html += '</div>';
+    // Append card to chat
+    window.appendCardToChat(card);
+}
+
+/**
+ * Mark terminal output as complete (NEW design)
+ * Called from Python when terminal command finishes
+ */
+function completeTerminalOutput() {
+    console.log('[TERMINAL] Output complete');
     
-    // Insert before the current assistant message or append to container
-    if (currentAssistantMessage) {
-        currentAssistantMessage.insertAdjacentHTML('beforebegin', html);
-    } else {
-        container.insertAdjacentHTML('beforeend', html);
-    }
-    
-    smartScroll(container);
+    // Find the last terminal card and update it
+    var terminalCards = document.querySelectorAll('.card-container');
+    terminalCards.forEach(function(card) {
+        var header = card.querySelector('.card-header');
+        if (header && header.textContent.includes('Run in terminal')) {
+            // Remove any "Running..." indicators
+            var runningIndicator = card.querySelector('.pulse-timer');
+            if (runningIndicator) {
+                runningIndicator.remove();
+            }
+            
+            // Update header to show completion
+            var viewLink = header.querySelector('.text-\\[10px\\]');
+            if (viewLink) {
+                viewLink.textContent = 'Completed ✓';
+                viewLink.classList.remove('opacity-40');
+                viewLink.style.color = 'var(--green-bright)';
+            }
+        }
+    });
 }
 
 // --- File Reference Display ---
@@ -3473,8 +4158,8 @@ function showFileReference(filePath, lineNumber, content) {
     var container = document.getElementById('chatMessages');
     if (!container) return;
     
-    var fileName = filePath.split('/').pop().split('\\').pop();
-    var escapedPath = filePath.replace(/\\/g, '\\\\');
+    var fileName = filePath ? filePath.split('/').pop().split('\\').pop() : 'unknown';
+    var escapedPath = filePath ? filePath.replace(/\\/g, '\\\\') : '';
     
     var html = '<div class="file-reference-block">';
     html += '<div class="file-reference-header">';
@@ -3646,7 +4331,7 @@ function showImageAttachmentPreview(filename, base64) {
     preview.className = 'image-attachment-preview';
     preview.innerHTML = 
         '<img src="' + base64 + '" alt="' + escapeHtml(filename) + '" />' +
-        '<button class="remove-preview" onclick="removeImageAttachment()">×</button>' +
+        '<button class="remove-preview" onclick="removeImageAttachment()">x</button>' +
         '<span class="preview-filename">' + escapeHtml(filename) + '</span>';
     
     // Insert after input container
@@ -3739,30 +4424,101 @@ document.addEventListener('DOMContentLoaded', function() {
 
         trigger.onclick = function(e) {
             e.stopPropagation();
-            menu.style.display = ''; // clear any inline override first
-            menu.classList.toggle('show');
+            e.preventDefault();
+            
+            // Close other dropdowns first
+            document.querySelectorAll('.dropdown-menu').forEach(function(m) {
+                if (m !== menu) {
+                    m.classList.remove('show');
+                    m.style.display = 'none';
+                }
+            });
+            
+            // Toggle show class
+            var isShowing = menu.classList.contains('show');
+            
+            // Hide menu if currently showing
+            if (isShowing) {
+                menu.classList.remove('show');
+                menu.style.display = 'none';
+                return;
+            }
+            
+            // Show menu if currently hidden - calculate position
+            var rect = trigger.getBoundingClientRect();
+            var menuWidth = 220; // min-width from CSS
+            var menuHeight = 300;
+            var margin = 10; // minimum margin from viewport edges
+            
+            // ALWAYS position ABOVE the trigger (UPWARD)
+            var bottomPosition = window.innerHeight - rect.top + 8;
+            
+            // Align LEFT edge of dropdown with LEFT edge of button
+            var left = rect.left;
+            
+            // Calculate boundaries to prevent overflow
+            var minLeft = margin;
+            var maxLeft = window.innerWidth - menuWidth - margin;
+            
+            // Clamp left position within viewport bounds
+            var clampedLeft = Math.max(minLeft, Math.min(left, maxLeft));
+            
+            // Set fixed position ABOVE (always upward)
+            menu.style.position = 'fixed';
+            menu.style.bottom = bottomPosition + 'px';
+            menu.style.top = 'auto';
+            menu.classList.add('position-top');
+            
+            menu.style.left = clampedLeft + 'px';
+            menu.style.transform = 'none'; // No centering transform needed
+            menu.style.zIndex = '100000';
+            menu.style.display = 'block';
+            menu.classList.add('show');
         };
 
-        items.forEach(function(item) {
-            item.onclick = function(e) {
-                e.stopPropagation();
-                var val = this.dataset.value;
-                items.forEach(function(i) { i.classList.remove('active'); });
-                this.classList.add('active');
-                
-                if (modeText) modeText.innerText = val;
-                
-                // Update trigger icon (SVG swap)
-                var svgWrap = trigger.querySelector('svg.mode-icon');
-                if (svgWrap) {
-                    if (val === 'Agent') svgWrap.innerHTML = '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 4c1.93 0 3.5 1.57 3.5 3.5S13.93 13 12 13s-3.5-1.57-3.5-3.5S10.07 6 12 6zm0 14c-2.03 0-4.43-.82-6.14-2.88C7.55 15.8 9.68 15 12 15s4.45.8 6.14 2.12C16.43 19.18 14.03 20 12 20z"/>';
-                    else if (val === 'Ask') svgWrap.innerHTML = '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>';
-                    else if (val === 'Plan') svgWrap.innerHTML = '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>';
+        // Use event delegation on menu instead of individual item listeners
+        menu.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var item = e.target.closest('.dropdown-item');
+            if (!item) return;
+            
+            var val = item.dataset.value;
+            items.forEach(function(i) { i.classList.remove('active'); });
+            item.classList.add('active');
+            
+            if (modeText) modeText.innerText = val;
+            
+            // Update textarea placeholder based on mode
+            var textarea = document.getElementById('user-input');
+            if (textarea) {
+                switch(val) {
+                    case 'Agent':
+                        textarea.placeholder = 'Plan and build...';
+                        break;
+                    case 'Ask':
+                        textarea.placeholder = 'Ask a question...';
+                        break;
+                    case 'Plan':
+                        textarea.placeholder = 'Create a plan...';
+                        break;
+                    default:
+                        textarea.placeholder = 'Type a message...';
                 }
+            }
+            
+            // Update trigger icon (SVG swap)
+            var svgWrap = trigger.querySelector('svg.mode-icon');
+            if (svgWrap) {
+                if (val === 'Agent') svgWrap.innerHTML = '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 4c1.93 0 3.5 1.57 3.5 3.5S13.93 13 12 13s-3.5-1.57-3.5-3.5S10.07 6 12 6zm0 14c-2.03 0-4.43-.82-6.14-2.88C7.55 15.8 9.68 15 12 15s4.45.8 6.14 2.12C16.43 19.18 14.03 20 12 20z"/>';
+                else if (val === 'Ask') svgWrap.innerHTML = '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>';
+                else if (val === 'Plan') svgWrap.innerHTML = '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>';
+            }
 
-                if (bridge) bridge.on_mode_changed(val);
-                menu.classList.remove('show'); // class only, no inline style
-            };
+            if (bridge) bridge.on_mode_changed(val);
+            
+            // IMMEDIATELY hide dropdown
+            menu.classList.remove('show');
+            menu.style.display = 'none';
         });
     }
 
@@ -3798,35 +4554,34 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             
             // Show menu if currently hidden
-            // Calculate position - place above the trigger button
+            // ALWAYS position ABOVE the trigger (UPWARD)
             var rect = modelTrigger.getBoundingClientRect();
             var menuWidth = 280; // min-width from CSS
             var menuHeight = 350;
             var margin = 10; // minimum margin from viewport edges
             
-            // Position above the trigger with some spacing
+            // Position ABOVE the trigger (always upward)
             var bottomPosition = window.innerHeight - rect.top + 8;
-            var left = rect.left + (rect.width / 2);
+            
+            // Align LEFT edge of dropdown with LEFT edge of button
+            var left = rect.left;
             
             // Calculate boundaries to prevent overflow
-            var halfMenuWidth = menuWidth / 2;
-            var minLeft = margin + halfMenuWidth;
-            var maxLeft = window.innerWidth - margin - halfMenuWidth;
+            var minLeft = margin;
+            var maxLeft = window.innerWidth - menuWidth - margin;
             
             // Clamp left position within viewport bounds
             var clampedLeft = Math.max(minLeft, Math.min(left, maxLeft));
             
-            // Adjust transform based on how much we had to shift
-            var transformOffset = -(left - clampedLeft);
-            var transform = 'translateX(calc(-50% + ' + transformOffset + 'px))';
-            
-            // Set fixed position anchored to bottom
+            // Set fixed position ABOVE (always upward)
             modelMenu.style.position = 'fixed';
             modelMenu.style.bottom = bottomPosition + 'px';
-            modelMenu.style.left = clampedLeft + 'px';
-            modelMenu.style.transform = transform;
-            modelMenu.style.zIndex = '9999';
             modelMenu.style.top = 'auto';
+            modelMenu.classList.add('position-top');
+            
+            modelMenu.style.left = clampedLeft + 'px';
+            modelMenu.style.transform = 'none'; // No centering transform
+            modelMenu.style.zIndex = '100000';
             modelMenu.style.display = 'block';
             modelMenu.classList.add('show');
         };
@@ -3920,14 +4675,30 @@ document.addEventListener('DOMContentLoaded', function() {
     window.showToolActivity = showToolActivity;
     window.updateToolActivity = updateToolActivity;
     window.clearToolActivity = clearToolActivity;
+    window.showToolSummary = showToolSummary;
     window.showThinking = showThinking;
     window.hideThinking = hideThinking;
+    window.onError = onError;
     window.updateActivityHeader = updateActivityHeader;
     
     // TODO Functions
     window.updateTodos = updateTodos;
     window.toggleTodoSection = toggleTodoSection;
     window.clearTodos = clearTodos;
+    
+    // Chat Title Update Function (Phase 4)
+    window.updateChatTitle = function(conversationId, title) {
+        // Update the chat title in the chat list/history
+        var chat = chats.find(function(c) { return c.id === conversationId; });
+        if (chat) {
+            chat.title = title;
+            // Update the history list UI
+            renderHistoryList();
+            // Also update the page title
+            document.title = title ? 'Cortex - ' + title : 'Cortex AI Chat';
+            console.log('[CHAT] Title updated:', title);
+        }
+    };
     
     window.setTheme = function (isDark) {
         // Preserve the 'loaded' class when changing theme
@@ -3986,20 +4757,37 @@ document.addEventListener('DOMContentLoaded', function() {
     };
 
     window.showDiff = function(filePath) {
-        if (bridge) bridge.on_show_diff(filePath);
+        console.log('[Diff] showDiff called with:', filePath);
+        console.log('[Diff] window.bridge exists:', !!window.bridge);
+        console.log('[Diff] window.bridge.on_show_diff exists:', !!(window.bridge && window.bridge.on_show_diff));
+        console.log('[Diff] bridge exists:', !!bridge);
+        console.log('[Diff] bridge.on_show_diff exists:', !!(bridge && bridge.on_show_diff));
+        if (window.bridge && window.bridge.on_show_diff) {
+            window.bridge.on_show_diff(filePath);
+            console.log('[Diff] Bridge method called successfully');
+        } else if (bridge && bridge.on_show_diff) {
+            bridge.on_show_diff(filePath);
+            console.log('[Diff] Legacy bridge method called');
+        } else {
+            console.error('[Diff] Bridge or on_show_diff not available. bridgeReady:', window.bridgeReady);
+        }
     };
 
     window.markFileAccepted = function(filePath) {
         const escapedId = filePath.replace(/[^a-zA-Z0-9]/g, '-');
         const statusEl = document.getElementById('status-' + escapedId);
         if (statusEl) {
-            statusEl.innerHTML = '<span class="accepted">✅ Changes applied automatically</span>';
+            statusEl.innerHTML = '<span class="accepted">? Changes applied automatically</span>';
         }
     };
 
     // --- New Qoder-like Features ---
     window.showTerminalOutput = function(command, output, isRunning) {
         showTerminalOutputInChat(command, output, isRunning);
+    };
+
+    window.completeTerminalOutput = function() {
+        completeTerminalOutput();
     };
 
     window.showFileRef = function(filePath, lineNumber, content) {
@@ -4155,6 +4943,16 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 });
                 renderHistoryList();
+                
+                // Auto-scroll to bottom to show latest message
+                setTimeout(function() {
+                    var container = document.getElementById('chat-output') || document.getElementById('chatMessages');
+                    if (container) {
+                        container.scrollTop = container.scrollHeight;
+                        console.log('[CHAT] Auto-scrolled to bottom after loading', chat.messages.length, 'messages');
+                    }
+                }, 100);
+                
                 console.log('[CHAT] chatFullLoadHandler: Render complete.');
             } else {
                 console.warn('[CHAT] chatFullLoadHandler: currentChatId mismatch. current:', currentChatId, 'loaded:', id);
@@ -4170,7 +4968,15 @@ document.addEventListener('DOMContentLoaded', function() {
     // New method that receives chat data directly from Python
     window.setProjectInfoWithChats = function(name, path, chatsJson) {
         console.log('[CHAT] setProjectInfoWithChats called:', name, path);
-        console.log('[CHAT] Received chat data from Python:', chatsJson ? chatsJson.length + ' chars' : 'null');
+        var chatsInfo = 'null';
+        if (Array.isArray(chatsJson)) {
+            chatsInfo = chatsJson.length + ' items';
+        } else if (typeof chatsJson === 'string') {
+            chatsInfo = chatsJson.length + ' chars';
+        } else if (chatsJson && typeof chatsJson === 'object') {
+            chatsInfo = 'object';
+        }
+        console.log('[CHAT] Received chat data from Python:', chatsInfo);
         
         var indicator = document.getElementById('project-indicator');
         var projectName = document.getElementById('project-name');
@@ -4195,15 +5001,25 @@ document.addEventListener('DOMContentLoaded', function() {
             if (path) {
                 // Set the path first before loading
                 currentProjectPath = path;
-                console.log('[CHAT] ✅ currentProjectPath SET to:', currentProjectPath);
+                console.log('[CHAT] ? currentProjectPath SET to:', currentProjectPath);
                 
                 // Parse the chats METADATA only (lazy loading - no messages yet)
                 var savedChats = []; // This variable is re-declared here, but the one above is for the bridge-ready case.
                                      // The original intent of this line was to initialize for the chatsJson parsing.
                                      // We'll keep it for the chatsJson path.
                 try {
-                    if (chatsJson && chatsJson !== "[]") {
-                        savedChats = JSON.parse(chatsJson);
+                    if (Array.isArray(chatsJson)) {
+                        savedChats = chatsJson;
+                    } else if (typeof chatsJson === 'string') {
+                        if (chatsJson && chatsJson !== "[]") {
+                            savedChats = JSON.parse(chatsJson);
+                        }
+                    } else if (chatsJson && typeof chatsJson === 'object') {
+                        if (typeof chatsJson.length === 'number') {
+                            savedChats = chatsJson;
+                        }
+                    }
+                    if (savedChats.length > 0) {
                         console.log('[CHAT] Parsed', savedChats.length, 'chat metadata from Python data');
                         
                         // Initialize chat list with metadata (sidebar shows titles only)
@@ -4236,7 +5052,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     // If we have existing chats (e.g. from localStorage) but Python says 0, 
                     // it means the DB is empty (e.g. after deletion). 
                     // We should respect the DB and clear our local list.
-                    if (chats.length > 0 && chatsJson === "[]") {
+                    if (chats.length > 0 && ((typeof chatsJson === 'string' && chatsJson === "[]") || (Array.isArray(chatsJson) && chatsJson.length === 0))) {
                         console.log('[CHAT] Clearing local cache as DB is empty');
                         chats = [];
                     }
@@ -4251,7 +5067,46 @@ document.addEventListener('DOMContentLoaded', function() {
             indicator.style.display = 'none';
         }
     };
+
+    if (window._pendingProjectInfoWithChats) {
+        var pendingInfo = window._pendingProjectInfoWithChats;
+        window._pendingProjectInfoWithChats = null;
+        window.setProjectInfoWithChats(pendingInfo.name, pendingInfo.path, pendingInfo.chatsJson);
+    }
+
+    // ============================================
+    // THEME TOGGLE FUNCTION
+    // ============================================
+    window.setTheme = function(theme) {
+        console.log('[THEME] Setting theme to:', theme);
+        
+        if (theme === 'light') {
+            document.body.classList.add('light-mode');
+            document.body.classList.remove('dark');
+            localStorage.setItem('cortex_theme', 'light');
+        } else {
+            // Default to dark
+            document.body.classList.remove('light-mode');
+            document.body.classList.add('dark');
+            localStorage.setItem('cortex_theme', 'dark');
+        }
+        
+        console.log('[THEME] Theme applied - body classes:', document.body.className);
+    };
     
+    // Load saved theme on startup
+    (function loadSavedTheme() {
+        var savedTheme = localStorage.getItem('cortex_theme');
+        if (savedTheme) {
+            console.log('[THEME] Loading saved theme:', savedTheme);
+            window.setTheme(savedTheme);
+        } else {
+            // Default to dark mode
+            document.body.classList.add('dark');
+            console.log('[THEME] Using default dark theme');
+        }
+    })();
+
     // Keep the old method for compatibility
     window.setProjectInfo = function(name, path) {
         console.log('[CHAT] setProjectInfo called:', name, path);
@@ -4290,7 +5145,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     
                     // Set the path first before loading
                     currentProjectPath = path;
-                    console.log('[CHAT] ✅ currentProjectPath SET to:', currentProjectPath);
+                    console.log('[CHAT] ? currentProjectPath SET to:', currentProjectPath);
                     
                     // Load chats for this project
                     var savedChats = loadProjectChats();
@@ -4389,8 +5244,8 @@ function renderChangedFileRow(filePath, added, removed, editType, status) {
 
     section.style.display = 'flex';
 
-    var fileName    = filePath.split('/').pop().split('\\').pop();
-    var esc         = filePath.replace(/'/g, "\\'");
+    var fileName    = filePath ? filePath.split('/').pop().split('\\').pop() : 'unknown';
+    var esc         = filePath ? filePath.replace(/'/g, "\\'") : '';
     var badgeClass  = { 'M': 'cfs-badge-m', 'C': 'cfs-badge-c', 'D': 'cfs-badge-d' }[editType] || 'cfs-badge-m';
     var addedHtml   = added   > 0 ? '<span class="cfs-stat-added">+' + added   + '</span>' : '';
     var removedHtml = removed > 0 ? '<span class="cfs-stat-removed">-' + removed + '</span>' : '';
@@ -4573,20 +5428,20 @@ function buildFileEditCard(filePath, added, removed, editType, status, original,
     editType = editType || 'M';
     status   = status   || 'pending';
 
-    var fileName = filePath.split('/').pop().split('\\').pop();
-    var ext      = fileName.split('.').pop().toLowerCase();
-    var esc      = filePath.replace(/'/g, "\\'");
+    var fileName = filePath ? filePath.split('/').pop().split('\\').pop() : 'unknown';
+    var ext      = fileName ? fileName.split('.').pop().toLowerCase() : 'default';
+    var esc      = filePath ? filePath.replace(/'/g, "\\'") : '';
 
-    // ── File type badge (colored, matches Cursor/Qoder) ──────────────────
+    // -- File type badge (colored, matches Cursor/Qoder) ------------------
     var ftBadge = getFileTypeBadge(ext);
 
-    // ── Diff stats ─────────────────────────────────────────────
+    // -- Diff stats ---------------------------------------------
     // For new files (C), always show added count even if 0
     // For modified files (M), show both added and removed
     var addedHtml   = (added > 0 || editType === 'C') ? '<span class="fec-added">+'  + added   + '</span>' : '';
     var removedHtml = removed > 0 ? '<span class="fec-removed">-' + removed + '</span>' : '';
 
-    // ── M/C/D badge ─────────────────────────────────────────────
+    // -- M/C/D badge ---------------------------------------------
     var mClass = { 'M': 'fec-badge-m', 'C': 'fec-badge-c', 'D': 'fec-badge-d' }[editType] || 'fec-badge-m';
 
     var isPending  = status === 'pending';
@@ -4599,7 +5454,7 @@ function buildFileEditCard(filePath, added, removed, editType, status, original,
         if (editType === 'M') {
             rightHtml =
                 '<div class="fec-pending-actions">' +
-                    '<button class="fec-btn-diff" onclick="event.stopPropagation(); if(window.bridge) window.bridge.on_show_diff(this.closest(\'.fec\').dataset.path || \'\');">Diff</button>' +
+                    '<button class="fec-btn-diff" data-path="' + escapeHtml(filePath) + '" onclick="event.stopPropagation(); requestFecDiff(this);">Diff</button>' +
                 '</div>';
         }
     } else if (isApplied) {
@@ -4615,7 +5470,7 @@ function buildFileEditCard(filePath, added, removed, editType, status, original,
     card.dataset.original = original || '';
     card.dataset.modified = modified || '';
 
-    // Click card — no diff overlay, just open file in editor
+    // Click card - no diff overlay, just open file in editor
     card.onclick = function(e) {
         if (e.target.tagName === 'BUTTON') return;
         openFileInEditor(filePath);
@@ -4635,7 +5490,7 @@ function buildFileEditCard(filePath, added, removed, editType, status, original,
     return card;
 }
 
-// File type badge — SVG icons
+// File type badge - SVG icons
 function getFileTypeBadge(ext) {
     var badges = {
         'js':   '<svg viewBox="0 0 32 32" width="16" height="16"><rect width="32" height="32" rx="3" fill="#F7DF1E"/><path d="M20.8 24.3c.5.9 1.2 1.5 2.4 1.5 1 0 1.6-.5 1.6-1.2 0-.8-.7-1.1-1.8-1.6l-.6-.3c-1.8-.8-3-1.7-3-3.7 0-1.9 1.4-3.3 3.6-3.3 1.6 0 2.7.5 3.5 1.9l-1.9 1.2c-.4-.8-.9-1.1-1.6-1.1-.7 0-1.2.5-1.2 1.1 0 .8.5 1.1 1.6 1.5l.6.3c2.1.9 3.3 1.8 3.3 3.9 0 2.2-1.7 3.5-4 3.5-2.2 0-3.7-1.1-4.4-2.5l2-.1z" fill="#222"/><path d="M12.2 24.6c.4.6.7 1.2 1.6 1.2.8 0 1.3-.3 1.3-1.5V16h2.4v8.3c0 2.5-1.5 3.7-3.6 3.7-1.9 0-3-1-3.6-2.2l1.9-1.2z" fill="#222"/></svg>',
@@ -4696,7 +5551,7 @@ function renderCustomTagsInto(msgEl, fullText) {
 
     console.log('[DEBUG] renderCustomTagsInto called, fullText length:', fullText.length);
 
-    // ── Find or create cards container ────────────────────────────────
+    // -- Find or create cards container --------------------------------
     // Works with BOTH .message-bubble AND .msg structures
     var cardsEl = msgEl.querySelector('.msg-cards') ||
                   msgEl.querySelector('.fec-cards-container');
@@ -4715,7 +5570,7 @@ function renderCustomTagsInto(msgEl, fullText) {
         console.log('[DEBUG] Created new cards container');
     }
 
-    // ── Parse <file_edited> tags ────────────────────────────────────
+    // -- Parse <file_edited> tags ------------------------------------
     var feRe = /<file_edited>([\s\S]*?)<\/file_edited>/g;
     var m;
     var matchCount = 0;
@@ -4859,10 +5714,10 @@ function buildThoughtBadge(seconds) {
 }
 
 // ================================================================
-// INDUSTRY STANDARD ENHANCEMENTS — CURSOR/QODER PARITY
+// INDUSTRY STANDARD ENHANCEMENTS - CURSOR/QODER PARITY
 // ================================================================
 
-// ── FILE EDIT CARD BRIDGE HANDLERS ──────────────────────────────
+// -- FILE EDIT CARD BRIDGE HANDLERS ------------------------------
 function openFileInEditor(filePath) {
     // Handle relative paths by prepending project path
     if (filePath && currentProjectPath) {
@@ -4883,7 +5738,24 @@ function openFileInEditor(filePath) {
 }
 
 function requestDiff(filePath) {
-    if (window.bridge) bridge.on_show_diff(filePath);
+    console.log('[Diff] requestDiff called with:', filePath);
+    if (window.bridge && window.bridge.on_show_diff) {
+        window.bridge.on_show_diff(filePath);
+        console.log('[Diff] requestDiff: Bridge method called');
+    } else {
+        console.error('[Diff] requestDiff: Bridge or on_show_diff not available');
+    }
+}
+
+function requestFecDiff(btn) {
+    var filePath = btn.dataset.path;
+    console.log('[Diff] requestFecDiff called with:', filePath);
+    if (window.bridge && window.bridge.on_show_diff) {
+        window.bridge.on_show_diff(filePath);
+        console.log('[Diff] requestFecDiff: Bridge method called');
+    } else {
+        console.error('[Diff] requestFecDiff: Bridge or on_show_diff not available');
+    }
 }
 
 function acceptFileEdit(filePath, triggerEl) {
@@ -4963,7 +5835,7 @@ function markFileRejected(filePath) {
     rejectFileEdit(filePath, null);
 }
 
-// ── @ MENTION SYSTEM ────────────────────────────────────────────
+// -- @ MENTION SYSTEM --------------------------------------------
 var _mentionAtIndex = -1;
 
 function showMentionDropdown(query, atIdx) {
@@ -5069,7 +5941,7 @@ function selectActiveMentionItem() {
     if (active) active.click();
 }
 
-// ── TOKEN COUNTER ────────────────────────────────────────────────
+// -- TOKEN COUNTER ------------------------------------------------
 function updateTokenCounter() {
     var input = document.getElementById('chatInput');
     if (!input) return;
@@ -5091,7 +5963,7 @@ function updateTokenCounter() {
     }
 }
 
-// ── SCROLL JUMP BUTTON ───────────────────────────────────────────
+// -- SCROLL JUMP BUTTON -------------------------------------------
 function showScrollJumpBtn() {
     if (document.getElementById('scroll-jump-btn')) return;
     var btn = document.createElement('button');
@@ -5113,7 +5985,7 @@ function hideScrollJumpBtn() {
     if (btn) btn.remove();
 }
 
-// ── LIVE TOOL ACTIVITY (onToolActivity from Python bridge) ───────
+// -- LIVE TOOL ACTIVITY (onToolActivity from Python bridge) -------
 var TOOL_ICONS = {
     'read_file':      '\ud83d\udcc4',
     'write_file':     '\u270f\ufe0f',
@@ -5135,7 +6007,7 @@ function onToolActivity(toolType, info, status) {
     }
 }
 
-// ── INPUT ENHANCEMENTS: @ DETECTION + TOKEN COUNTER ─────────────
+// -- INPUT ENHANCEMENTS: @ DETECTION + TOKEN COUNTER -------------
 (function setupInputEnhancements() {
     function init() {
         var input = document.getElementById('chatInput');
@@ -5182,7 +6054,7 @@ function onToolActivity(toolType, info, status) {
     init();
 })();
 
-// ── SCROLL JUMP BUTTON: show when user scrolls up during streaming ─
+// -- SCROLL JUMP BUTTON: show when user scrolls up during streaming -
 (function setupScrollJump() {
     function init() {
         var msgs = document.getElementById('chatMessages');
@@ -5200,19 +6072,19 @@ function onToolActivity(toolType, info, status) {
 })();
 
 
-// ══════════════════════════════════════════════════════════════
+// --------------------------------------------------------------
 // THREE FEATURES IMPLEMENTATION
-// ══════════════════════════════════════════════════════════════
+// --------------------------------------------------------------
 
-// ── State variables for features ──────────────────────────────
+// -- State variables for features ------------------------------
 var _todoExpanded = false;
 var _msgQueue     = [];
 var _isGenerating = false;
 var _queueIdSeq   = 0;
 
-// ══════════════════════════════════════════════════════════════
-// FEATURE 1 — PROJECT TREE CARD
-// ══════════════════════════════════════════════════════════════
+// --------------------------------------------------------------
+// FEATURE 1 - PROJECT TREE CARD
+// --------------------------------------------------------------
 
 function buildProjectTreeCard(rootPath, items) {
     var card = document.createElement('div');
@@ -5243,7 +6115,7 @@ function buildProjectTreeCard(rootPath, items) {
         row.style.paddingLeft = (depth * 16) + 'px';  // Indent based on depth
 
         // Determine the branch connector
-        var branch = isLast ? '└──' : '├──';
+        var branch = isLast ? '+--' : '+--';
 
         // Use SVG icons instead of emoji
         var icon = item.isDir
@@ -5279,18 +6151,18 @@ function buildProjectTreeCard(rootPath, items) {
 function getFileEmoji(filename) {
     var ext = (filename || '').split('.').pop().toLowerCase();
     var map = {
-        'html': '📄', 'htm': '📄',
-        'js':   '📄', 'ts':  '📄', 'jsx': '📄', 'tsx': '📄',
-        'css':  '📄', 'scss': '📄',
-        'py':   '📄', 'java': '📄', 'go':  '📄', 'rs':  '📄',
-        'json': '📄', 'yaml': '📄', 'yml': '📄',
-        'md':   '📄', 'txt':  '📄',
-        'png':  '🖼️', 'jpg': '🖼️', 'svg': '🖼️',
-        'mp4':  '🎬', 'mp3':  '🎵',
-        'zip':  '📦', 'tar':  '📦',
-        'sh':   '⚙️', 'bat':  '⚙️',
+        'html': 'HTML', 'htm': 'HTML',
+        'js':   'JS', 'ts':  'TS', 'jsx': 'JSX', 'tsx': 'TSX',
+        'css':  'CSS', 'scss': 'SCSS',
+        'py':   'PY', 'java': 'JAVA', 'go':  'GO', 'rs':  'RS',
+        'json': 'JSON', 'yaml': 'YAML', 'yml': 'YML',
+        'md':   'MD', 'txt':  'TXT',
+        'png':  'PNG', 'jpg': 'JPG', 'svg': 'SVG',
+        'mp4':  'MP4', 'mp3':  'MP3',
+        'zip':  'ZIP', 'tar':  'TAR',
+        'sh':   'SH', 'bat':  'BAT',
     };
-    return map[ext] || '📄';
+    return map[ext] || 'FILE';
 }
 
 function showProjectTreeCard(rootPath, items) {
@@ -5324,9 +6196,9 @@ window.showDirectoryTree = function(rootPath, items) {
     showProjectTreeCard(rootPath, items);
 };
 
-// ══════════════════════════════════════════════════════════════
-// FEATURE 2 — TERMINAL COMMAND CARD
-// ══════════════════════════════════════════════════════════════
+// --------------------------------------------------------------
+// FEATURE 2 - TERMINAL COMMAND CARD
+// --------------------------------------------------------------
 
 function buildTerminalCard(command, output, status, exitCode, cardId) {
     var card = document.createElement('div');
@@ -5336,10 +6208,10 @@ function buildTerminalCard(command, output, status, exitCode, cardId) {
     card.dataset.status  = status;
 
     var headerIcon = {
-        'running': '▷',
-        'success': '<span style="color:#22c55e">✓</span>',
-        'error':   '<span style="color:#ef4444">⊗</span>'
-    }[status] || '▷';
+        'running': '?',
+        'success': '<span style="color:#22c55e">?</span>',
+        'error':   '<span style="color:#ef4444">?</span>'
+    }[status] || '?';
 
     var exitCodeHtml = (status === 'error' && exitCode !== undefined && exitCode !== null)
         ? '<span class="term-exit-code">Exit Code: ' + exitCode + '</span>'
@@ -5415,7 +6287,7 @@ function toggleTerminalOutput(outputId, btn) {
     var isHidden = output.style.display === 'none';
     output.style.display = isHidden ? 'block' : 'none';
     var chevron = btn.querySelector('.term-chevron');
-    if (chevron) chevron.textContent = isHidden ? '⌄' : '›';
+    if (chevron) chevron.textContent = isHidden ? '?' : '-';
 }
 
 function updateTerminalCard(cardId, status, exitCode, output) {
@@ -5427,8 +6299,8 @@ function updateTerminalCard(cardId, status, exitCode, output) {
 
     var iconEl = card.querySelector('.term-status-icon');
     if (iconEl) {
-        if (status === 'success') iconEl.innerHTML = '<span style="color:#22c55e">✓</span>';
-        if (status === 'error')   iconEl.innerHTML = '<span style="color:#ef4444">⊗</span>';
+        if (status === 'success') iconEl.innerHTML = '<span style="color:#22c55e">?</span>';
+        if (status === 'error')   iconEl.innerHTML = '<span style="color:#ef4444">?</span>';
     }
 
     if (status === 'error' && exitCode !== undefined) {
@@ -5470,9 +6342,9 @@ window.setTerminalOutput = function(cardId, output, exitCode) {
     updateTerminalCard(cardId, status, exitCode, output);
 };
 
-// ══════════════════════════════════════════════════════════════
-// FEATURE 3 — TODO PANEL
-// ══════════════════════════════════════════════════════════════
+// --------------------------------------------------------------
+// FEATURE 3 - TODO PANEL
+// --------------------------------------------------------------
 
 function updateTodos(todos, mainTask) {
     var section   = document.getElementById('todo-section');
@@ -5573,9 +6445,9 @@ function toggleTodoSection() {
 window.updateTodos = updateTodos;
 window.toggleTodoSection = toggleTodoSection;
 
-// ══════════════════════════════════════════════════════════════
-// FEATURE 4 — MESSAGE QUEUE SYSTEM
-// ══════════════════════════════════════════════════════════════
+// --------------------------------------------------------------
+// FEATURE 4 - MESSAGE QUEUE SYSTEM
+// --------------------------------------------------------------
 
 function _sendNow(text) {
     _isGenerating = true;
@@ -5601,6 +6473,11 @@ function _sendNow(text) {
     var stopBtn = document.getElementById('stopBtn');
     if (sendBtn) sendBtn.style.display = 'none';
     if (stopBtn) stopBtn.style.display = 'flex';
+
+    // Remember last user message for retry
+    _lastUserMessage = text;
+    _lastUserHasImages = hasImages;
+    _lastUserImageData = imageData;
 
     // Send message with image data if present
     if (hasImages) {
@@ -5658,8 +6535,11 @@ function _renderQueueBar() {
             ? msg.text.slice(0, 60) + '...'
             : msg.text;
 
+        // Card with icon, text, and remove button - no serial numbers
         item.innerHTML =
-            '<span class="mq-position">' + (_msgQueue.indexOf(msg) + 1) + '</span>' +
+            '<svg class="message-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+                '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>' +
+            '</svg>' +
             '<span class="mq-text">' + escapeHtml(preview) + '</span>' +
             '<button class="mq-remove" onclick="_removeFromQueue(' + msg.id + ')" ' +
                     'title="Remove from queue">×</button>';
@@ -5710,3 +6590,1784 @@ function hideIndexingStatus() {
 
 window.showIndexingStatus = showIndexingStatus;
 window.hideIndexingStatus = hideIndexingStatus;
+
+// ================================================
+// PERMISSION CARD SYSTEM (IN-CHAT) (NEW)
+// ================================================
+
+/**
+ * Show permission card using NEW Cursor IDE card design
+ * @param {string} toolName - Name of the tool requesting permission
+ * @param {Object} details - Permission details {action, files, type}
+ * @param {function} callback - Function to call with (approved) when user responds
+ */
+function showPermissionCard(toolName, details, callback) {
+    console.log('[PERMISSION] Showing card for:', toolName);
+    
+    // Extract action and files from details
+    var action = details.action || details.text || 'Permission required';
+    var files = details.files || [];
+    var cardId = 'permission-' + Date.now();
+    
+    // Create permission card using new card system
+    var card = window.createPermissionCard(action, files, cardId);
+    
+    // Store callback for bridge communication
+    card._permissionCallback = callback;
+    
+    // Override handlePermission to use our callback
+    var originalHandlePermission = window.handlePermission;
+    window.handlePermission = function(id, accepted) {
+        if (id === cardId) {
+            console.log('[PERMISSION] User response:', accepted ? 'ACCEPTED' : 'REJECTED');
+            
+            // Call the stored callback
+            if (card._permissionCallback) {
+                card._permissionCallback(accepted, false);
+            }
+            
+            // Notify Python bridge
+            if (window.bridge && window.bridge.on_permission_response) {
+                window.bridge.on_permission_response({
+                    id: id,
+                    accepted: accepted,
+                    tool: toolName
+                });
+            }
+            
+            // Use visual feedback from new design
+            originalHandlePermission(id, accepted);
+        }
+    };
+    
+    // Append card to chat
+    window.appendCardToChat(card);
+}
+
+// Expose to Python bridge
+window.showPermissionCard = showPermissionCard;
+
+
+// -- INTERACTIVE QUESTION SUPPORT (STOP-AND-WAIT PIPELINE) ----------
+
+/**
+ * Shows a premium interaction card in the chat for AI questions.
+ * @param {Object} info - {id, text, type, choices, default}
+ */
+window.showQuestionCard = function(info) {
+    console.log('[CHAT] showQuestionCard called:', info);
+    var container = document.getElementById('chatMessages');
+    if (!container) return;
+
+    // Use Template for permissions if available (Cursor IDE Style)
+    if (info.type === 'permission') {
+        var template = document.getElementById('permission-card-template');
+        if (template) {
+            var card = template.content.cloneNode(true).querySelector('.permission-card');
+            card.id = 'interaction-' + info.id;
+            
+            // Set tool name with icon
+            var titleEl = card.querySelector('.tool-badge-name');
+            if (titleEl) {
+                var toolName = info.tool_name || 'Action Request';
+                var toolIcon = 'TOOL';
+                if (toolName.includes('write') || toolName.includes('edit')) toolIcon = 'EDIT';
+                else if (toolName.includes('read')) toolIcon = 'READ';
+                else if (toolName.includes('bash') || toolName.includes('command')) toolIcon = 'RUN';
+                else if (toolName.includes('delete')) toolIcon = 'DEL';
+                
+                var iconEl = card.querySelector('.tool-badge-icon');
+                if (iconEl) iconEl.textContent = toolIcon;
+                titleEl.textContent = toolName;
+            }
+            
+            // Set details content
+            var detailsEl = card.querySelector('.details-content');
+            if (detailsEl) detailsEl.innerHTML = info.details || '<span style="color: #6b7280;">No additional details</span>';
+            
+            // Handle Allow button
+            var allowBtn = card.querySelector('.permission-btn-allow');
+            if (allowBtn) {
+                allowBtn.onclick = function() { 
+                    console.log('[PERMISSION] Allow clicked for', info.id);
+                    var rememberCheckbox = card.querySelector('.permission-remember-checkbox');
+                    var remember = rememberCheckbox ? rememberCheckbox.checked : false;
+                    console.log('[PERMISSION] Remember flag:', remember);
+                    
+                    // Store the remember choice
+                    if (remember) {
+                        window.permissionRemember[info.id] = true;
+                    }
+                    
+                    // Set the scope and grant permission
+                    window.permissionScopes[info.id] = card._selectedScope || 'session';
+                    window.grantPermission(info.id, remember);
+                };
+            }
+            
+            // Handle Deny button
+            var denyBtn = card.querySelector('.permission-btn-deny');
+            if (denyBtn) {
+                denyBtn.onclick = function() { 
+                    console.log('[PERMISSION] Deny clicked for', info.id);
+                    var rememberCheckbox = card.querySelector('.permission-remember-checkbox');
+                    var remember = rememberCheckbox ? rememberCheckbox.checked : false;
+                    
+                    // Store the deny choice if remember is checked
+                    if (remember) {
+                        window.permissionRemember[info.id] = false;
+                    }
+                    
+                    window.denyPermission(info.id);
+                };
+            }
+            
+            // Handle Always button
+            var alwaysBtn = card.querySelector('.permission-btn-always');
+            if (alwaysBtn) {
+                alwaysBtn.onclick = function() { 
+                    console.log('[PERMISSION] Always clicked for', info.id);
+                    // Check the remember checkbox automatically when clicking Always
+                    var checkbox = card.querySelector('.permission-remember-checkbox');
+                    if (checkbox) checkbox.checked = true;
+                    
+                    // Store the "always" choice with remember=true
+                    window.permissionRemember[info.id] = true;
+                    window.permissionScopes[info.id] = 'global';
+                    window.grantPermission(info.id, true);
+                };
+            }
+            
+            // Handle scope buttons
+            var scopeButtons = card.querySelectorAll('.scope-btn');
+            scopeButtons.forEach(function(btn) {
+                btn.onclick = function() {
+                    var scope = this.dataset.scope;
+                    console.log('[PERMISSION] Scope selected:', scope);
+                    card._selectedScope = scope;
+                    // Update UI
+                    scopeButtons.forEach(function(b) { b.classList.remove('active'); });
+                    this.classList.add('active');
+                };
+            });
+            // Set default scope
+            card._selectedScope = 'session';
+            
+            // Handle Remember toggle - sync with localStorage
+            var rememberCheckbox = card.querySelector('.permission-remember-checkbox');
+            if (rememberCheckbox) {
+                // Check if we should remember by default for this session
+                var rememberEnabled = localStorage.getItem('cortex_permission_remember') === 'true';
+                rememberCheckbox.checked = rememberEnabled;
+                
+                rememberCheckbox.onchange = function() {
+                    localStorage.setItem('cortex_permission_remember', this.checked);
+                    console.log('[CHAT] Permission remember setting:', this.checked);
+                };
+            }
+            
+            container.appendChild(card);
+            // Use requestAnimationFrame for smooth scrolling (non-blocking)
+            requestAnimationFrame(function() {
+                container.scrollTop = container.scrollHeight;
+                console.log('[CHAT] Professional permission card appended');
+            });
+            return;
+        }
+    }
+
+    var card = document.createElement('div');
+    card.className = 'interaction-card';
+    card.id = 'interaction-' + info.id;
+
+    var html = '<div class="interaction-header">' +
+               '<span class="interaction-icon">?</span>' +
+               '<span class="interaction-title">AI Question</span>' +
+               '</div>' +
+               '<div class="interaction-body">' +
+               '<p class="interaction-text">' + (info.text || "I have a question before I continue.") + '</p>';
+
+    if (info.type === 'confirm') {
+        html += '<div class="interaction-actions">' +
+                '<button class="interaction-btn deny" onclick="submitInteractionAnswer(\'' + info.id + '\', \'no\')">No</button>' +
+                '<button class="interaction-btn approve" onclick="submitInteractionAnswer(\'' + info.id + '\', \'yes\')">Yes</button>' +
+                '</div>';
+    } else if (info.type === 'permission') {
+        html += '<div class="interaction-permission-details">' + (info.details || "") + '</div>' +
+                '<div class="interaction-actions permission-grid">' +
+                '<button class="interaction-btn secondary" onclick="submitInteractionAnswer(\'' + info.id + '\', \'deny\')">Deny</button>' +
+                '<button class="interaction-btn primary" onclick="submitInteractionAnswer(\'' + info.id + '\', \'allow\')">Allow</button>' +
+                '<button class="interaction-btn ghost" onclick="submitInteractionAnswer(\'' + info.id + '\', \'always\')">Always</button>' +
+                '</div>';
+    } else if (info.type === 'choice' && info.choices && info.choices.length > 0) {
+        html += '<div class="interaction-choices">';
+        info.choices.forEach(function(choice) {
+            html += '<button class="interaction-choice-btn" onclick="submitInteractionAnswer(\'' + info.id + '\', \'' + choice.replace(/'/g, "\\'") + '\')">' + choice + '</button>';
+        });
+        html += '</div>';
+    } else {
+        // Default text input
+        html += '<div class="interaction-input-group">' +
+                '<input type="text" id="input-' + info.id + '" class="interaction-input" placeholder="' + (info.default || 'Type your answer...') + '" />' +
+                '<button class="interaction-submit-btn" onclick="submitInteractionByInput(\'' + info.id + '\')">Send</button>' +
+                '</div>';
+    }
+
+    html += '</div>';
+    card.innerHTML = html;
+    container.appendChild(card);
+    
+    // FORCE scroll to bottom for interactions - high priority (non-blocking)
+    requestAnimationFrame(function() {
+        container.scrollTop = container.scrollHeight;
+        console.log('[CHAT] Interaction card appended and scrolled to bottom');
+    });
+
+    // Focus input if it's a text type and handle Enter key (non-blocking)
+    if (info.type !== 'confirm' && info.type !== 'choice' && info.type !== 'permission') {
+        requestAnimationFrame(function() {
+            var input = document.getElementById('input-' + info.id);
+            if (input) {
+                input.focus();
+                input.onkeydown = function(e) {
+                    if (e.key === 'Enter') {
+                        submitInteractionByInput(info.id);
+                    }
+                };
+            }
+        });
+    }
+};
+
+/**
+ * Submits the answer back to the Python AIAgent.
+ * @param {string} id - The interaction/permission ID
+ * @param {string} answer - The answer (allow, deny, always, yes, no)
+ * @param {string} scope - Optional scope (session, workspace, global)
+ */
+window.submitInteractionAnswer = function(id, answer, scope) {
+    scope = scope || 'session';
+    console.log('[CHAT] Submitting interaction answer:', id, answer, 'scope:', scope);
+    var card = document.getElementById('interaction-' + id);
+    if (card) {
+        card.classList.add('answered');
+        
+        if (card.classList.contains('permission-card')) {
+            // Professional card handling
+            var actions = card.querySelector('.permission-card-actions');
+            var remember = card.querySelector('.permission-card-remember');
+            var details = card.querySelector('.permission-card-details');
+            
+            if (actions) actions.style.display = 'none';
+            if (remember) remember.style.display = 'none';
+            
+            // Create compact status indicator
+            var isApproved = answer === 'allow' || answer === 'always' || answer === 'yes';
+            var statusText = isApproved ? (answer === 'always' ? '? Always' : '? Allowed') : '? Denied';
+            var statusColor = isApproved ? '#22c55e' : '#ef4444';
+            
+            var statusDiv = document.createElement('div');
+            statusDiv.className = 'permission-status';
+            statusDiv.style.cssText = 'text-align: center; padding: 8px; color: ' + statusColor + '; font-size: 12px; font-weight: 500;';
+            statusDiv.textContent = statusText;
+            
+            var body = card.querySelector('.permission-card-body');
+            if (body) body.appendChild(statusDiv);
+            
+            // Store approval in localStorage if "always"
+            if (answer === 'always') {
+                localStorage.setItem('cortex_permission_always_' + id, 'true');
+                console.log('[CHAT] Permission set to always for:', id);
+            }
+        } else {
+            // Standard card handling
+            var answeredContainer = card.querySelector('.interaction-answered') || card;
+            card.innerHTML = '<div class="interaction-answered">' +
+                             '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>' +
+                             ' Answered: ' + answer + '</div>';
+        }
+    }
+    
+    if (window.bridge && typeof window.bridge.on_answer_question === 'function') {
+        // Include scope in the answer for permission requests
+        var answerWithScope = answer;
+        if (scope && scope !== 'session') {
+            answerWithScope = answer + ':' + scope;
+        }
+        window.bridge.on_answer_question(id, answerWithScope);
+    } else {
+        console.error('[CHAT] Bridge not ready to send interaction answer');
+    }
+};
+
+/**
+ * Helper to submit answer from a text input field.
+ */
+window.submitInteractionByInput = function(id) {
+    var input = document.getElementById('input-' + id);
+    var answer = input ? input.value : '';
+    // If empty but has a default (placeholder), use it
+    if (!answer && input && input.placeholder !== 'Type your answer...') {
+        answer = input.placeholder;
+    }
+    if (!answer) answer = ""; // Ensure not null
+    window.submitInteractionAnswer(id, answer);
+};
+
+// ============================================================================
+// OpenCode Enhancement - Permission Card Support
+// ============================================================================
+
+/**
+ * Global storage for permission scopes
+ */
+window.permissionScopes = {};
+
+/**
+ * Global storage for permission remember choices
+ */
+window.permissionRemember = {};
+
+/**
+ * Display a permission card in the chat
+ * @param {string} requestId - The permission request ID
+ * @param {string} html - The HTML content of the permission card
+ */
+window.showPermissionCard = function(requestId, html) {
+    console.log('[Permission] Showing permission card:', requestId);
+    
+    // Create message container
+    var messageDiv = document.createElement('div');
+    messageDiv.className = 'message permission-message';
+    messageDiv.id = 'perm-message-' + requestId;
+    
+    // Create bubble
+    var bubble = document.createElement('div');
+    bubble.className = 'message-bubble permission';
+    bubble.innerHTML = html;
+    
+    messageDiv.appendChild(bubble);
+    
+    // Add to chat
+    var chatContainer = document.getElementById('chatMessages');
+    if (chatContainer) {
+        chatContainer.appendChild(messageDiv);
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
+    
+    // Initialize scope and remember storage
+    window.permissionScopes[requestId] = 'session';
+    window.permissionRemember[requestId] = false;
+    
+    // Setup scope button handlers
+    // Setup permission card immediately - no delay
+    var card = document.getElementById('perm-card-' + requestId) || messageDiv.querySelector('.permission-card');
+    if (card) {
+        card.id = 'perm-card-' + requestId;
+        
+        // Use event delegation for better performance
+        card.addEventListener('click', function(e) {
+            // Find closest button element (handles clicks on child elements)
+            var target = e.target.closest('.scope-btn');
+            if (target) {
+                var selectedScope = target.dataset.scope;
+                window.selectScope(requestId, selectedScope);
+                return;
+            }
+            
+            // Handle action button clicks - check allow FIRST before deny/always
+            target = e.target.closest('.permission-btn-allow');
+            if (target) {
+                console.log('ALLOW BUTTON CLICKED!');
+                var scope = window.permissionScopes[requestId] || 'session';
+                var remember = window.permissionRemember[requestId] || false;
+                window.grantPermission(requestId, remember);
+                return;
+            }
+            
+            target = e.target.closest('.permission-btn-deny');
+            if (target) {
+                window.denyPermission(requestId);
+                return;
+            }
+            
+            target = e.target.closest('.permission-btn-always');
+            if (target) {
+                window.permissionScopes[requestId] = 'global';
+                var rememberCheck = card.querySelector('.permission-remember-checkbox');
+                if (rememberCheck) rememberCheck.checked = true;
+                window.permissionRemember[requestId] = true;
+                window.grantPermission(requestId, true);
+                return;
+            }
+            
+            // Handle remember toggle click
+            target = e.target.closest('.remember-toggle') || e.target.closest('.remember-label');
+            if (target) {
+                var rememberCheck = card.querySelector('.permission-remember-checkbox');
+                if (rememberCheck) {
+                    rememberCheck.checked = !rememberCheck.checked;
+                    window.permissionRemember[requestId] = rememberCheck.checked;
+                }
+                return;
+            }
+        });
+    }
+};
+
+/**
+ * Select permission scope (Session/Workspace/Global)
+ * @param {string} requestId - The permission request ID
+ * @param {string} scope - The selected scope
+ */
+window.selectScope = function(requestId, scope) {
+    console.log('[Permission] Selected scope:', scope, 'for request:', requestId);
+    
+    // Store selection
+    window.permissionScopes[requestId] = scope;
+    
+    // Update UI
+    var card = document.getElementById('perm-card-' + requestId);
+    if (card) {
+        var buttons = card.querySelectorAll('.scope-btn');
+        buttons.forEach(function(btn) {
+            btn.classList.remove('active');
+            if (btn.dataset.scope === scope) {
+                btn.classList.add('active');
+            }
+        });
+    }
+};
+
+/**
+ * Grant permission
+ * @param {string} requestId - The permission request ID
+ * @param {boolean} remember - Whether to remember this choice
+ */
+window.grantPermission = function(requestId, remember) {
+    console.log('[Permission] Granting permission:', requestId, 'remember:', remember);
+    
+    var scope = window.permissionScopes[requestId] || 'session';
+    remember = remember || window.permissionRemember[requestId] || false;
+    
+    // Send to Python with remember flag
+    if (window.bridge && typeof window.bridge.on_permission_card_response === 'function') {
+        window.bridge.on_permission_card_response(requestId, true, scope, remember);
+    }
+    
+    // Update UI
+    window.disablePermissionCard(requestId, 'Granted ?');
+};
+
+/**
+ * Grant limited permission (read-only)
+ * @param {string} requestId - The permission request ID
+ */
+window.grantLimited = function(requestId) {
+    console.log('[Permission] Granting limited permission:', requestId);
+    
+    // Send to Python with limited scope
+    if (window.bridge && typeof window.bridge.on_permission_card_response === 'function') {
+        window.bridge.on_permission_card_response(requestId, true, 'limited', false);
+    }
+    
+    // Update UI
+    window.disablePermissionCard(requestId, 'Limited Access ?');
+};
+
+/**
+ * Deny permission
+ * @param {string} requestId - The permission request ID
+ */
+window.denyPermission = function(requestId) {
+    console.log('[Permission] Denying permission:', requestId);
+    
+    // Send to Python
+    if (window.bridge && typeof window.bridge.on_permission_card_response === 'function') {
+        window.bridge.on_permission_card_response(requestId, false, 'denied', false);
+    }
+    
+    // Update UI
+    window.disablePermissionCard(requestId, 'Denied ?');
+};
+
+/**
+ * Disable permission card after response
+ * @param {string} requestId - The permission request ID
+ * @param {string} statusText - Status text to display
+ */
+window.disablePermissionCard = function(requestId, statusText) {
+    var card = document.getElementById('perm-card-' + requestId);
+    if (card) {
+        // Disable all buttons
+        var buttons = card.querySelectorAll('button');
+        buttons.forEach(function(btn) {
+            btn.disabled = true;
+            btn.style.opacity = '0.5';
+        });
+        
+        // Add status indicator
+        var statusDiv = document.createElement('div');
+        statusDiv.className = 'permission-status';
+        statusDiv.textContent = statusText;
+        statusDiv.style.cssText = 'text-align: center; padding: 8px; margin-top: 8px; font-weight: bold;';
+        
+        if (statusText.includes('Granted')) {
+            statusDiv.style.color = '#10b981';
+        } else if (statusText.includes('Denied')) {
+            statusDiv.style.color = '#ef4444';
+        }
+        
+        card.appendChild(statusDiv);
+        
+        // Fade the card
+        card.style.opacity = '0.7';
+    }
+};
+
+/**
+ * Create a tool execution card
+ * @param {string} toolName - Name of the tool
+ * @param {Object} params - Tool parameters
+ * @param {string} status - Tool status (pending, executing, completed, failed)
+ */
+window.createToolCard = function(toolName, params, status) {
+    var cardId = 'tool-' + Date.now();
+    
+    var card = document.createElement('div');
+    card.className = 'tool-card';
+    card.id = cardId;
+    
+    var statusClass = status || 'pending';
+    var statusText = status ? status.charAt(0).toUpperCase() + status.slice(1) : 'Pending';
+    
+    card.innerHTML = `
+        <div class="tool-header">
+            <span class="tool-icon">TOOL</span>
+            <span class="tool-name">${toolName}</span>
+            <span class="tool-status ${statusClass}">${statusText}</span>
+        </div>
+        <div class="tool-progress">
+            <div class="tool-progress-bar" style="width: ${status === 'completed' ? '100%' : '0%'}"></div>
+        </div>
+        <div class="tool-params">${JSON.stringify(params, null, 2)}</div>
+    `;
+    
+    return { card: card, id: cardId };
+};
+
+/**
+ * Update tool card status
+ * @param {string} cardId - The tool card ID
+ * @param {string} status - New status
+ * @param {string} result - Optional result text
+ */
+window.updateToolCard = function(cardId, status, result) {
+    var card = document.getElementById(cardId);
+    if (!card) return;
+    
+    var statusEl = card.querySelector('.tool-status');
+    var progressBar = card.querySelector('.tool-progress-bar');
+    
+    if (statusEl) {
+        statusEl.className = 'tool-status ' + status;
+        statusEl.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+    }
+    
+    if (progressBar) {
+        progressBar.style.width = status === 'completed' ? '100%' : 
+                                  status === 'failed' ? '0%' : '50%';
+    }
+    
+    if (result) {
+        var resultDiv = document.createElement('div');
+        resultDiv.className = 'tool-result ' + (status === 'failed' ? 'error' : 'success');
+        resultDiv.textContent = result;
+        card.appendChild(resultDiv);
+    }
+};
+
+// ============================================================================
+// OpenCode Enhancement - Quick Actions
+// ============================================================================
+
+/**
+ * Initialize quick action buttons
+ */
+window.initQuickActions = function() {
+    var container = document.getElementById('quickActions');
+    if (!container) return;
+    
+    var actions = [
+        { id: 'explain', icon: 'EXP', label: 'Explain Code' },
+        { id: 'fix', icon: 'FIX', label: 'Fix Issues' },
+        { id: 'optimize', icon: 'OPT', label: 'Optimize' },
+        { id: 'test', icon: 'TEST', label: 'Generate Tests' },
+        { id: 'document', icon: 'DOC', label: 'Add Docs' }
+    ];
+    
+    actions.forEach(function(action) {
+        var btn = document.createElement('button');
+        btn.className = 'quick-action-btn';
+        btn.innerHTML = `<span>${action.icon}</span> ${action.label}`;
+        btn.onclick = function() {
+            window.handleQuickAction(action.id);
+        };
+        container.appendChild(btn);
+    });
+};
+
+/**
+ * Handle quick action button click
+ * @param {string} actionId - The action ID
+ */
+window.handleQuickAction = function(actionId) {
+    var prompts = {
+        'explain': 'Explain this code to me:',
+        'fix': 'Fix any issues in this code:',
+        'optimize': 'Optimize this code for better performance:',
+        'test': 'Generate unit tests for this code:',
+        'document': 'Add documentation to this code:'
+    };
+    
+    var input = document.getElementById('messageInput');
+    if (input) {
+        input.value = prompts[actionId] || '';
+        input.focus();
+    }
+};
+
+// Initialize quick actions when DOM is ready
+document.addEventListener('DOMContentLoaded', function() {
+    window.initQuickActions();
+});
+
+// -- TESTING WORKFLOW UI SUPPORT -------------------------------------
+
+/**
+ * Shows a testing status card in the chat.
+ * @param {Object} info - {decision, priority, trigger, scope, tools}
+ */
+function showTestingCard(info) {
+    console.log('[TESTING] Showing card:', info);
+    
+    var chatMessages = document.getElementById('chatMessages');
+    if (!chatMessages) {
+        console.error('[TESTING] Chat messages container not found!');
+        return;
+    }
+    
+    // Create testing card
+    var card = document.createElement('div');
+    card.className = 'testing-card';
+    card.id = 'testing-card-' + Date.now();
+    
+    var priorityColor = {
+        'high': '#ef4444',
+        'medium': '#f59e0b',
+        'low': '#10b981'
+    }[info.priority] || '#6b7280';
+    
+    card.innerHTML = `
+        <div class="testing-card-header">
+            <span class="testing-icon">TEST</span>
+            <span class="testing-title">Testing Mode</span>
+            <span class="testing-priority" style="background: ${priorityColor}20; color: ${priorityColor};">
+                ${info.priority?.toUpperCase() || 'MEDIUM'}
+            </span>
+        </div>
+        <div class="testing-card-body">
+            <div class="testing-info">
+                <div><strong>Decision:</strong> ${info.decision === 'write_tests' ? 'Write Tests' : info.decision}</div>
+                <div><strong>Trigger:</strong> ${info.trigger || 'Unknown'}</div>
+                <div><strong>Scope:</strong> ${info.scope || 'Basic'}</div>
+            </div>
+            ${info.tools ? `
+            <div class="testing-tools">
+                <strong>Test Tools:</strong>
+                <div class="tool-tags">
+                    ${info.tools.map(tool => `<span class="tool-tag">${tool}</span>`).join('')}
+                </div>
+            </div>
+            ` : ''}
+        </div>
+    `;
+    
+    chatMessages.appendChild(card);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+/**
+ * Shows test results in the chat.
+ * @param {Object} results - {all_passed, passed_count, failed_count, failures}
+ */
+function showTestResults(results) {
+    console.log('[TESTING] Showing results:', results);
+    
+    var chatMessages = document.getElementById('chatMessages');
+    if (!chatMessages) {
+        console.error('[TESTING] Chat messages container not found!');
+        return;
+    }
+    
+    var statusIcon = results.all_passed ? 'PASS' : 'WARN';
+    var statusColor = results.all_passed ? '#10b981' : '#f59e0b';
+    var statusText = results.all_passed ? 'All Tests Passed!' : 'Tests Completed';
+    
+    var card = document.createElement('div');
+    card.className = 'test-results-card';
+    card.style.cssText = `
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid ${statusColor}40;
+        border-radius: 8px;
+        padding: 12px;
+        margin: 8px 0;
+    `;
+    
+    card.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+            <span style="font-size: 20px;">${statusIcon}</span>
+            <span style="font-weight: 600; color: ${statusColor};">${statusText}</span>
+        </div>
+        <div style="display: flex; gap: 16px; font-size: 13px;">
+            <span style="color: #10b981;">PASS ${results.passed_count || 0} passed</span>
+            ${results.failed_count > 0 ? `<span style="color: #ef4444;">FAIL ${results.failed_count} failed</span>` : ''}
+        </div>
+        ${results.failures && results.failures.length > 0 ? `
+        <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.1);">
+            <div style="font-size: 12px; color: #888; margin-bottom: 4px;">Failures:</div>
+            ${results.failures.slice(0, 3).map(f => `
+                <div style="font-size: 12px; color: #ef4444; margin: 2px 0;">
+                    - ${f.name}${f.error ? `: ${f.error.substring(0, 50)}...` : ''}
+                </div>
+            `).join('')}
+            ${results.failures.length > 3 ? `<div style="font-size: 11px; color: #666;">... and ${results.failures.length - 3} more</div>` : ''}
+        </div>
+        ` : ''}
+    `;
+    
+    chatMessages.appendChild(card);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+// Expose to Python bridge
+window.showTestingCard = showTestingCard;
+window.showTestResults = showTestResults;
+
+// ============================================================================
+// CODE COMPLETION SYSTEM - OpenCode Style Integration
+// ============================================================================
+
+/**
+ * Code Completion State
+ */
+window.codeCompletionState = {
+    isVisible: false,
+    completions: [],
+    selectedIndex: 0,
+    currentRequestId: null,
+    debounceTimer: null
+};
+
+/**
+ * Show code completion popup with suggestions
+ * @param {Array} completions - Array of completion objects
+ * @param {string} requestId - Unique request ID
+ */
+window.showCodeCompletionPopup = function(completions, requestId) {
+    console.log('[CodeCompletion] Showing popup with', completions.length, 'suggestions');
+    
+    var popup = document.getElementById('code-completion-popup');
+    var list = document.getElementById('completion-list');
+    var counter = document.getElementById('completion-counter');
+    var preview = document.getElementById('completion-preview');
+    var actions = document.getElementById('completion-actions');
+    
+    if (!popup || !list) {
+        console.error('[CodeCompletion] Popup elements not found');
+        return;
+    }
+    
+    // Store state
+    window.codeCompletionState.completions = completions;
+    window.codeCompletionState.selectedIndex = 0;
+    window.codeCompletionState.currentRequestId = requestId;
+    window.codeCompletionState.isVisible = true;
+    
+    // Update counter
+    counter.textContent = completions.length + ' suggestion' + (completions.length !== 1 ? 's' : '');
+    
+    // Render completion items
+    list.innerHTML = '';
+    completions.forEach(function(completion, index) {
+        var item = createCompletionItem(completion, index);
+        list.appendChild(item);
+    });
+    
+    // Show first preview
+    if (completions.length > 0) {
+        showCompletionPreview(completions[0]);
+        preview.style.display = 'block';
+        actions.style.display = 'flex';
+    }
+    
+    // Position popup
+    positionCompletionPopup();
+    
+    // Show popup
+    popup.classList.add('visible');
+    
+    // Select first item
+    updateCompletionSelection(0);
+};
+
+/**
+ * Create a completion item element
+ */
+function createCompletionItem(completion, index) {
+    var item = document.createElement('div');
+    item.className = 'completion-item';
+    item.dataset.index = index;
+    
+    // Determine icon based on strategy
+    var icon = 'AUTO';
+    var typeClass = '';
+    if (completion.strategy === 'pattern') {
+        icon = 'AI';
+        typeClass = 'pattern';
+    } else if (completion.strategy === 'ai') {
+        icon = 'TPL';
+        typeClass = 'ai';
+    } else if (completion.strategy === 'syntax') {
+        icon = 'SYN';
+        typeClass = 'syntax';
+    } else if (completion.strategy === 'template') {
+        icon = 'FILE';
+        typeClass = 'template';
+    }
+    
+    item.classList.add(typeClass);
+    
+    // Confidence color
+    var confidenceClass = completion.confidence >= 0.8 ? '' : 'low';
+    
+    item.innerHTML = `
+        <div class="completion-icon">${icon}</div>
+        <div class="completion-content">
+            <div class="completion-label">${escapeHtml(completion.label || 'Completion')}</div>
+            <div class="completion-description">${escapeHtml(completion.description || '')}</div>
+        </div>
+        <div class="completion-confidence ${confidenceClass}">
+            ${Math.round((completion.confidence || 0) * 100)}%
+        </div>
+    `;
+    
+    // Click handler
+    item.addEventListener('click', function() {
+        selectCompletion(index);
+    });
+    
+    return item;
+}
+
+/**
+ * Show completion preview
+ */
+function showCompletionPreview(completion) {
+    var preview = document.getElementById('completion-preview');
+    if (!preview || !completion.preview) return;
+    
+    preview.textContent = completion.preview;
+}
+
+/**
+ * Update selected completion
+ */
+function updateCompletionSelection(index) {
+    var items = document.querySelectorAll('.completion-item');
+    
+    items.forEach(function(item, i) {
+        item.classList.toggle('selected', i === index);
+    });
+    
+    window.codeCompletionState.selectedIndex = index;
+    
+    // Update preview
+    if (window.codeCompletionState.completions[index]) {
+        showCompletionPreview(window.codeCompletionState.completions[index]);
+    }
+    
+    // Scroll into view
+    var selectedItem = items[index];
+    if (selectedItem) {
+        selectedItem.scrollIntoView({ block: 'nearest' });
+    }
+}
+
+/**
+ * Select a completion by index
+ */
+function selectCompletion(index) {
+    updateCompletionSelection(index);
+    
+    var completion = window.codeCompletionState.completions[index];
+    if (completion && window.bridge) {
+        window.bridge.on_code_completion_selected({
+            requestId: window.codeCompletionState.currentRequestId,
+            index: index,
+            completion: completion
+        });
+    }
+}
+
+/**
+ * Accept the currently selected completion
+ */
+window.acceptCodeCompletion = function() {
+    if (!window.codeCompletionState.isVisible) return;
+    
+    var index = window.codeCompletionState.selectedIndex;
+    selectCompletion(index);
+    hideCodeCompletionPopup();
+};
+
+/**
+ * Dismiss the completion popup
+ */
+window.dismissCodeCompletion = function() {
+    hideCodeCompletionPopup();
+    
+    if (window.bridge && window.codeCompletionState.currentRequestId) {
+        window.bridge.on_code_completion_dismissed({
+            requestId: window.codeCompletionState.currentRequestId
+        });
+    }
+};
+
+/**
+ * Hide completion popup
+ */
+function hideCodeCompletionPopup() {
+    var popup = document.getElementById('code-completion-popup');
+    if (popup) {
+        popup.classList.remove('visible');
+    }
+    
+    window.codeCompletionState.isVisible = false;
+    window.codeCompletionState.completions = [];
+}
+
+/**
+ * Position completion popup near cursor
+ */
+function positionCompletionPopup() {
+    var popup = document.getElementById('code-completion-popup');
+    var input = document.getElementById('chatInput');
+    
+    if (!popup || !input) return;
+    
+    // Get input position
+    var rect = input.getBoundingClientRect();
+    
+    // Position above input
+    popup.style.left = rect.left + 'px';
+    popup.style.top = (rect.top - popup.offsetHeight - 10) + 'px';
+    popup.style.width = Math.min(500, rect.width) + 'px';
+}
+
+/**
+ * Show code completion card in chat
+ */
+window.showCodeCompletionCard = function(completionData) {
+    console.log('[CodeCompletion] Showing card:', completionData);
+    
+    var template = document.getElementById('code-completion-card-template');
+    var container = document.getElementById('chatMessages');
+    
+    if (!template || !container) {
+        console.error('[CodeCompletion] Template or container not found');
+        return;
+    }
+    
+    var card = template.content.cloneNode(true).querySelector('.code-completion-card');
+    card.id = 'completion-card-' + completionData.requestId;
+    
+    // Set confidence badge
+    var badge = card.querySelector('#completion-confidence-badge');
+    if (badge) {
+        badge.textContent = Math.round((completionData.confidence || 0.9) * 100) + '% confidence';
+    }
+    
+    // Set explanation
+    var explanation = card.querySelector('#completion-explanation');
+    if (explanation) {
+        explanation.textContent = completionData.explanation || 'Code completion available';
+    }
+    
+    // Set diff content
+    var diffContent = card.querySelector('#completion-diff-content');
+    if (diffContent && completionData.diff) {
+        diffContent.innerHTML = renderCompletionDiff(completionData.diff);
+    }
+    
+    // Setup buttons
+    var acceptBtn = card.querySelector('#card-accept-completion');
+    var dismissBtn = card.querySelector('#card-dismiss-completion');
+    
+    if (acceptBtn) {
+        acceptBtn.onclick = function() {
+            if (window.bridge) {
+                window.bridge.on_code_completion_accepted({
+                    requestId: completionData.requestId,
+                    completedCode: completionData.completedCode
+                });
+            }
+            card.remove();
+        };
+    }
+    
+    if (dismissBtn) {
+        dismissBtn.onclick = function() {
+            card.remove();
+        };
+    }
+    
+    container.appendChild(card);
+    container.scrollTop = container.scrollHeight;
+};
+
+/**
+ * Render completion diff
+ */
+function renderCompletionDiff(diff) {
+    if (!diff || !diff.lines) return '';
+    
+    return diff.lines.map(function(line) {
+        var className = '';
+        var prefix = ' ';
+        
+        if (line.type === 'added') {
+            className = 'added';
+            prefix = '+';
+        } else if (line.type === 'removed') {
+            className = 'removed';
+            prefix = '-';
+        }
+        
+        return `
+            <div class="diff-line ${className}">
+                <span class="diff-line-num">${prefix}</span>
+                <span>${escapeHtml(line.content)}</span>
+            </div>
+        `;
+    }).join('');
+}
+
+/**
+ * Show completion indicator (loading state)
+ */
+window.showCompletionIndicator = function() {
+    var indicator = document.getElementById('completion-indicator');
+    if (indicator) {
+        indicator.classList.add('visible');
+    }
+};
+
+/**
+ * Hide completion indicator
+ */
+window.hideCompletionIndicator = function() {
+    var indicator = document.getElementById('completion-indicator');
+    if (indicator) {
+        indicator.classList.remove('visible');
+    }
+};
+
+/**
+ * Request code completion from Python
+ */
+window.requestCodeCompletion = function(code, language) {
+    console.log('[CodeCompletion] Requesting completion for', language);
+    
+    if (window.bridge && typeof window.bridge.on_request_code_completion === 'function') {
+        window.showCompletionIndicator();
+        
+        window.bridge.on_request_code_completion({
+            code: code,
+            language: language || 'python',
+            cursorPosition: getInputCursorPosition(),
+            timestamp: Date.now()
+        });
+    }
+};
+
+/**
+ * Get cursor position in input
+ */
+function getInputCursorPosition() {
+    var input = document.getElementById('chatInput');
+    return input ? input.selectionStart : 0;
+}
+
+/**
+ * Escape HTML special characters
+ */
+function escapeHtml(text) {
+    if (!text) return '';
+    var div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+/**
+ * Setup keyboard shortcuts for code completion
+ */
+function setupCompletionKeyboardShortcuts() {
+    document.addEventListener('keydown', function(e) {
+        // Ctrl+Space or Cmd+Space to trigger completion
+        if ((e.ctrlKey || e.metaKey) && e.code === 'Space') {
+            e.preventDefault();
+            var input = document.getElementById('chatInput');
+            if (input) {
+                window.requestCodeCompletion(input.value, 'python');
+            }
+            return;
+        }
+        
+        // Handle completion popup navigation
+        if (window.codeCompletionState.isVisible) {
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                var nextIndex = (window.codeCompletionState.selectedIndex + 1) % window.codeCompletionState.completions.length;
+                updateCompletionSelection(nextIndex);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                var prevIndex = window.codeCompletionState.selectedIndex - 1;
+                if (prevIndex < 0) prevIndex = window.codeCompletionState.completions.length - 1;
+                updateCompletionSelection(prevIndex);
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                window.acceptCodeCompletion();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                window.dismissCodeCompletion();
+            }
+        }
+    });
+}
+
+/**
+ * Setup real-time completion
+ */
+function setupRealTimeCompletion() {
+    var input = document.getElementById('chatInput');
+    if (!input) return;
+    
+    input.addEventListener('input', function(e) {
+        // Clear existing timer
+        if (window.codeCompletionState.debounceTimer) {
+            clearTimeout(window.codeCompletionState.debounceTimer);
+        }
+        
+        // Debounce completion requests
+        window.codeCompletionState.debounceTimer = setTimeout(function() {
+            var code = input.value;
+            
+            // Only request completion if code looks incomplete
+            if (shouldRequestCompletion(code)) {
+                window.requestCodeCompletion(code, 'python');
+            }
+        }, 1000); // 1 second debounce
+    });
+}
+
+/**
+ * Check if we should request completion
+ */
+function shouldRequestCompletion(code) {
+    if (!code || code.length < 10) return false;
+    
+    // Check for incomplete patterns
+    var incompletePatterns = [
+        /:\s*$/,  // Ends with colon (incomplete block)
+        /def\s+\w+\s*\([^)]*\)\s*$/,  // Incomplete function
+        /class\s+\w+\s*(:\s*)?$/,  // Incomplete class
+        /try\s*:\s*$/,  // Incomplete try
+        /if\s+.+:\s*$/,  // Incomplete if
+        /for\s+.+:\s*$/,  // Incomplete for
+        /while\s+.+:\s*$/,  // Incomplete while
+        /#\s*TODO/i,  // Has TODO
+        /pass\s*$/,  // Ends with pass
+    ];
+    
+    var lines = code.split('\n');
+    var lastLine = lines[lines.length - 1].trim();
+    
+    return incompletePatterns.some(function(pattern) {
+        return pattern.test(lastLine);
+    });
+}
+
+// Initialize code completion system
+document.addEventListener('DOMContentLoaded', function() {
+    setupCompletionKeyboardShortcuts();
+    setupRealTimeCompletion();
+    console.log('[CodeCompletion] System initialized');
+});
+
+// Expose functions to Python bridge
+window.showCodeCompletionPopup = window.showCodeCompletionPopup;
+window.acceptCodeCompletion = window.acceptCodeCompletion;
+window.dismissCodeCompletion = window.dismissCodeCompletion;
+window.showCodeCompletionCard = window.showCodeCompletionCard;
+window.showCompletionIndicator = window.showCompletionIndicator;
+window.hideCompletionIndicator = window.hideCompletionIndicator;
+window.requestCodeCompletion = window.requestCodeCompletion;
+
+// ============================================================================
+// INLINE DIFF VIEWER - OpenCode Style Integration
+// ============================================================================
+
+/**
+ * Show inline diff in chat
+ * @param {Object} diffData - Diff data with original, modified, filePath, etc.
+ */
+window.showInlineDiff = function(diffData) {
+    console.log('[DiffViewer] Showing inline diff for:', diffData.filePath);
+    
+    var container = document.createElement('div');
+    container.className = 'inline-diff-container';
+    container.id = 'diff-' + diffData.filePath.replace(/[^a-zA-Z0-9]/g, '_');
+    
+    // Header
+    var header = document.createElement('div');
+    header.className = 'inline-diff-header';
+    header.innerHTML = `
+        <div class="inline-diff-title">
+            <div class="file-icon">FILE</div>
+            <span>${escapeHtml(diffData.filePath)}</span>
+        </div>
+        <div class="inline-diff-stats">
+            <div class="inline-diff-stat added">
+                <span>+${diffData.additions || 0}</span>
+            </div>
+            <div class="inline-diff-stat removed">
+                <span>-${diffData.deletions || 0}</span>
+            </div>
+        </div>
+    `;
+    container.appendChild(header);
+    
+    // Semantic badges
+    if (diffData.semanticChanges && diffData.semanticChanges.length > 0) {
+        var badgesContainer = document.createElement('div');
+        badgesContainer.className = 'semantic-badges';
+        
+        diffData.semanticChanges.forEach(function(change) {
+            var badge = document.createElement('div');
+            badge.className = 'semantic-badge ' + change.type;
+            badge.innerHTML = `
+                <span>${getSemanticIcon(change.type)}</span>
+                <span>${escapeHtml(change.description)}</span>
+            `;
+            badgesContainer.appendChild(badge);
+        });
+        
+        container.appendChild(badgesContainer);
+    }
+    
+    // Diff content
+    var content = document.createElement('div');
+    content.className = 'inline-diff-content';
+    
+    if (diffData.lines && diffData.lines.length > 0) {
+        var currentHunk = null;
+        
+        diffData.lines.forEach(function(line) {
+            if (line.type === 'hunk_header') {
+                // Hunk header
+                var hunkHeader = document.createElement('div');
+                hunkHeader.className = 'diff-hunk-header';
+                hunkHeader.innerHTML = escapeHtml(line.content);
+                hunkHeader.onclick = function() {
+                    this.classList.toggle('collapsed');
+                    var next = this.nextElementSibling;
+                    while (next && !next.classList.contains('diff-hunk-header')) {
+                        next.style.display = next.style.display === 'none' ? '' : 'none';
+                        next = next.nextElementSibling;
+                    }
+                };
+                content.appendChild(hunkHeader);
+                return;
+            }
+            
+            // Diff row
+            var row = document.createElement('div');
+            row.className = 'diff-row ' + line.type;
+            
+            var lineNums = document.createElement('div');
+            lineNums.className = 'diff-line-numbers';
+            lineNums.innerHTML = `
+                <div class="diff-line-num old">${line.lineNumber.original || ''}</div>
+                <div class="diff-line-num new">${line.lineNumber.new || ''}</div>
+            `;
+            
+            var lineContent = document.createElement('div');
+            lineContent.className = 'diff-line-content';
+            
+            var prefix = ' ';
+            if (line.type === 'added') prefix = '+';
+            if (line.type === 'removed') prefix = '-';
+            
+            lineContent.innerHTML = `
+                <span class="diff-line-prefix">${prefix}</span>
+                <code>${escapeHtml(line.content)}</code>
+            `;
+            
+            var actions = document.createElement('div');
+            actions.className = 'diff-line-actions';
+            actions.innerHTML = `
+                <button class="diff-line-btn accept" title="Accept line" onclick="acceptDiffLine('${diffData.filePath}', ${line.lineNumber.new || line.lineNumber.original || 0})">OK</button>
+                <button class="diff-line-btn reject" title="Reject line" onclick="rejectDiffLine('${diffData.filePath}', ${line.lineNumber.new || line.lineNumber.original || 0})">NO</button>
+                <button class="diff-line-btn comment" title="Add comment" onclick="commentDiffLine('${diffData.filePath}', ${line.lineNumber.new || line.lineNumber.original || 0})">CMT</button>
+            `;
+            
+            row.appendChild(lineNums);
+            row.appendChild(lineContent);
+            row.appendChild(actions);
+            content.appendChild(row);
+        });
+    }
+    
+    container.appendChild(content);
+    
+    // Footer
+    var footer = document.createElement('div');
+    footer.className = 'inline-diff-footer';
+    
+    var confidencePercent = Math.round((diffData.confidence || 0.9) * 100);
+    var confidenceClass = confidencePercent >= 80 ? 'high' : (confidencePercent >= 60 ? 'medium' : 'low');
+    
+    footer.innerHTML = `
+        <div class="inline-diff-actions">
+            <button class="inline-diff-btn accept-all" onclick="acceptAllDiffLines('${diffData.filePath}')">
+                <span>OK</span>
+                <span>Accept All</span>
+            </button>
+            <button class="inline-diff-btn reject-all" onclick="rejectAllDiffLines('${diffData.filePath}')">
+                <span>NO</span>
+                <span>Reject All</span>
+            </button>
+            <button class="inline-diff-btn view-full" onclick="showFullDiff('${diffData.filePath}')">
+                <span>DIFF</span>
+                <span>View Full Diff</span>
+            </button>
+        </div>
+        <div class="inline-diff-confidence">
+            <span>Confidence:</span>
+            <div class="confidence-bar">
+                <div class="confidence-fill ${confidenceClass}" style="width: ${confidencePercent}%"></div>
+            </div>
+            <span>${confidencePercent}%</span>
+        </div>
+    `;
+    
+    container.appendChild(footer);
+    
+    // Add to chat
+    var chatMessages = document.getElementById('chatMessages');
+    if (chatMessages) {
+        chatMessages.appendChild(container);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+};
+
+/**
+ * Get icon for semantic change type
+ */
+function getSemanticIcon(type) {
+    var icons = {
+        'bug_fix': 'FIX',
+        'feature_add': 'FEAT',
+        'refactor': 'REF',
+        'optimization': 'OPT',
+        'security': 'SEC',
+        'test': 'TEST',
+        'documentation': 'DOC',
+        'style': 'STYLE',
+        'other': 'INFO'
+    };
+    return icons[type] || 'INFO';
+}
+
+/**
+ * Accept a single diff line
+ */
+window.acceptDiffLine = function(filePath, lineNumber) {
+    console.log('[DiffViewer] Accepting line', lineNumber, 'in', filePath);
+    if (window.bridge && window.bridge.on_diff_line_accepted) {
+        window.bridge.on_diff_line_accepted({
+            filePath: filePath,
+            lineNumber: lineNumber
+        });
+    }
+};
+
+/**
+ * Reject a single diff line
+ */
+window.rejectDiffLine = function(filePath, lineNumber) {
+    console.log('[DiffViewer] Rejecting line', lineNumber, 'in', filePath);
+    if (window.bridge && window.bridge.on_diff_line_rejected) {
+        window.bridge.on_diff_line_rejected({
+            filePath: filePath,
+            lineNumber: lineNumber
+        });
+    }
+};
+
+/**
+ * Add comment to a diff line
+ */
+window.commentDiffLine = function(filePath, lineNumber) {
+    console.log('[DiffViewer] Adding comment to line', lineNumber, 'in', filePath);
+    var comment = prompt('Enter your comment:');
+    if (comment && window.bridge && window.bridge.on_diff_line_commented) {
+        window.bridge.on_diff_line_commented({
+            filePath: filePath,
+            lineNumber: lineNumber,
+            comment: comment
+        });
+    }
+};
+
+/**
+ * Accept all diff lines for a file
+ */
+window.acceptAllDiffLines = function(filePath) {
+    console.log('[DiffViewer] Accepting all changes in', filePath);
+    if (window.bridge && window.bridge.on_accept_file_edit) {
+        window.bridge.on_accept_file_edit(filePath);
+    }
+    
+    // Update UI
+    var container = document.getElementById('diff-' + filePath.replace(/[^a-zA-Z0-9]/g, '_'));
+    if (container) {
+        container.style.opacity = '0.5';
+        container.querySelector('.inline-diff-footer').innerHTML = '<div style="padding: 12px; text-align: center; color: #22c55e;">? All changes accepted</div>';
+    }
+};
+
+/**
+ * Reject all diff lines for a file
+ */
+window.rejectAllDiffLines = function(filePath) {
+    console.log('[DiffViewer] Rejecting all changes in', filePath);
+    if (window.bridge && window.bridge.on_reject_file_edit) {
+        window.bridge.on_reject_file_edit(filePath);
+    }
+    
+    // Update UI
+    var container = document.getElementById('diff-' + filePath.replace(/[^a-zA-Z0-9]/g, '_'));
+    if (container) {
+        container.style.opacity = '0.5';
+        container.querySelector('.inline-diff-footer').innerHTML = '<div style="padding: 12px; text-align: center; color: #ef4444;">? All changes rejected</div>';
+    }
+};
+
+/**
+ * Show full diff in editor
+ */
+window.showFullDiff = function(filePath) {
+    console.log('[DiffViewer] Opening full diff for', filePath);
+    if (window.bridge && window.bridge.on_show_diff) {
+        window.bridge.on_show_diff(filePath);
+    }
+};
+
+// Expose diff viewer functions
+window.showInlineDiff = window.showInlineDiff;
+window.acceptDiffLine = window.acceptDiffLine;
+window.rejectDiffLine = window.rejectDiffLine;
+window.commentDiffLine = window.commentDiffLine;
+window.acceptAllDiffLines = window.acceptAllDiffLines;
+window.rejectAllDiffLines = window.rejectAllDiffLines;
+window.showFullDiff = window.showFullDiff;
+
+
+/* ================================================
+   CURSOR IDE CARD COMPONENTS - DYNAMIC RENDERING
+   Transforms tool execution into modern card-based UI
+   ================================================ */
+
+/**
+ * Toggle card expansion (from new_aichat.html)
+ * @param {HTMLElement} header - The card header element
+ */
+window.toggleCard = function(header) {
+    header.parentElement.classList.toggle('expanded');
+};
+
+/**
+ * Handle permission accept/reject (from new_aichat.html)
+ * @param {string} cardId - The card ID
+ * @param {boolean} accepted - Whether permission was accepted
+ */
+window.handlePermission = function(cardId, accepted) {
+    const card = document.getElementById(cardId);
+    if (!card) return;
+    
+    const btnGroup = card.querySelector('.btn-group');
+    if (!btnGroup) return;
+    
+    if (accepted) {
+        btnGroup.innerHTML = `<span class="text-green-500 text-[11px] font-bold">✓ ACCEPTED</span>`;
+        setTimeout(() => { 
+            card.classList.remove('expanded'); 
+        }, 800);
+        
+        // Notify bridge if available
+        if (window.bridge && window.bridge.on_permission_response) {
+            window.bridge.on_permission_response({ id: cardId, accepted: true });
+        }
+    } else {
+        btnGroup.innerHTML = `<span class="text-red-500 text-[11px] font-bold">✕ REJECTED</span>`;
+        setTimeout(() => { 
+            card.style.opacity = '0.5'; 
+        }, 500);
+        
+        // Notify bridge if available
+        if (window.bridge && window.bridge.on_permission_response) {
+            window.bridge.on_permission_response({ id: cardId, accepted: false });
+        }
+    }
+};
+
+/**
+ * Create a todo card with collapsible items
+ * @param {Array} todos - Array of todo objects {text, status: 'completed'|'active'}
+ * @returns {HTMLElement}
+ */
+window.createTodoCard = function(todos) {
+    const completedCount = todos.filter(t => t.status === 'completed').length;
+    const totalCount = todos.length;
+    
+    const card = document.createElement('div');
+    card.className = 'card-container expanded';
+    
+    let todoItemsHTML = '';
+    todos.forEach(todo => {
+        const isCompleted = todo.status === 'completed';
+        todoItemsHTML += `
+            <div class="list-row ${isCompleted ? 'opacity-50' : ''}">
+                <div class="todo-circle ${isCompleted ? 'completed' : 'active'}">
+                    ${isCompleted ? 
+                        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4"><path d="M20 6L9 17L4 12"/></svg>' :
+                        '<div class="todo-spinner"></div>'
+                    }
+                </div>
+                <span class="${isCompleted ? 'line-through text-gray-500' : 'text-white'}">${todo.text}</span>
+            </div>
+        `;
+    });
+    
+    card.innerHTML = `
+        <div class="card-header" onclick="toggleCard(this)">
+            <svg class="card-chevron" fill="currentColor" viewBox="0 0 20 20"><path d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"/></svg>
+            <span>To-dos</span>
+            <span class="ml-auto text-xs text-gray-600">${completedCount}/${totalCount} done</span>
+        </div>
+        <div class="card-body">
+            ${todoItemsHTML}
+        </div>
+    `;
+    
+    return card;
+};
+
+/**
+ * Create a terminal output card
+ * @param {string} command - The command that was run
+ * @param {string} output - Terminal output text
+ * @returns {HTMLElement}
+ */
+window.createTerminalCard = function(command, output) {
+    const card = document.createElement('div');
+    card.className = 'card-container expanded';
+    
+    card.innerHTML = `
+        <div class="card-header" onclick="toggleCard(this)">
+            <svg class="card-chevron" fill="currentColor" viewBox="0 0 20 20"><path d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"/></svg>
+            <span>Run in terminal</span>
+            <span class="ml-auto text-[10px] opacity-40">View Output ↗</span>
+        </div>
+        <div class="card-body">
+            <div class="terminal-viewport">$ ${command}\n${output}</div>
+        </div>
+    `;
+    
+    return card;
+};
+
+/**
+ * Create a permission request card
+ * @param {string} action - Action description (e.g., "Delete temporary parts?")
+ * @param {Array} files - Array of file objects {name, status: 'A'|'M'|'D'}
+ * @param {string} cardId - Unique ID for this permission card
+ * @returns {HTMLElement}
+ */
+window.createPermissionCard = function(action, files, cardId) {
+    const card = document.createElement('div');
+    card.className = 'card-container expanded';
+    card.id = cardId || 'permission-' + Date.now();
+    
+    // Determine icon based on action
+    let iconSVG = '<svg class="w-3.5 h-3.5 text-blue-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>';
+    if (action.toLowerCase().includes('delete')) {
+        iconSVG = '<svg class="w-3.5 h-3.5 text-red-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>';
+    } else if (action.toLowerCase().includes('create') || action.toLowerCase().includes('add')) {
+        iconSVG = '<svg class="w-3.5 h-3.5 text-green-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>';
+    }
+    
+    let filesHTML = '';
+    files.forEach(file => {
+        let statusClass = '';
+        let statusText = '';
+        let icon = '📄';
+        
+        switch(file.status) {
+            case 'A':
+                statusClass = 'text-add';
+                statusText = 'A Created';
+                icon = '🐍';
+                break;
+            case 'M':
+                statusClass = 'text-mod';
+                statusText = 'M Modified';
+                icon = '🐍';
+                break;
+            case 'D':
+                statusClass = 'text-del';
+                statusText = 'D Deleted';
+                icon = '📄';
+                break;
+        }
+        
+        filesHTML += `<div class="list-row"><span>${icon} ${file.name}</span> <span class="status-tag ${statusClass}">${statusText}</span></div>`;
+    });
+    
+    card.innerHTML = `
+        <div class="card-header">
+            <svg class="card-chevron" fill="currentColor" viewBox="0 0 20 20"><path d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"/></svg>
+            <span class="flex items-center gap-2">
+                ${iconSVG}
+                ${action}
+            </span>
+            <div class="btn-group">
+                <button class="btn-reject" onclick="handlePermission('${card.id}', false)">Reject</button>
+                <button class="btn-accept" onclick="handlePermission('${card.id}', true)">Accept</button>
+            </div>
+        </div>
+        <div class="card-body">
+            ${filesHTML}
+        </div>
+    `;
+    
+    return card;
+};
+
+/**
+ * Create a step log entry
+ * @param {string} message - Log message
+ * @param {string} detail - Optional detail text
+ * @returns {HTMLElement}
+ */
+window.createStepLog = function(message, detail) {
+    const log = document.createElement('div');
+    log.className = 'step-log';
+    log.innerHTML = `${message}${detail ? ` <span class="opacity-60">${detail}</span>` : ''}`;
+    return log;
+};
+
+/**
+ * Create a "creating file" progress indicator
+ * @param {string} fileName - Name of file being created
+ * @returns {HTMLElement}
+ */
+window.createCreatingFileCard = function(fileName) {
+    const card = document.createElement('div');
+    card.className = 'card-container';
+    card.id = 'creating-file-card';
+    
+    card.innerHTML = `
+        <div class="flex items-center p-3 gap-3">
+            <svg class="w-4 h-4 text-blue-500 pulse-timer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <span class="text-gray-400">Create file</span>
+            <span class="text-gray-500 ml-auto">${fileName}</span>
+        </div>
+    `;
+    
+    return card;
+};
+
+/**
+ * Append a card component to the chat container
+ * @param {HTMLElement} card - The card element to append
+ */
+window.appendCardToChat = function(card) {
+    const container = document.getElementById('chatMessages');
+    if (!container) {
+        console.warn('[CardUI] Chat container not found');
+        return;
+    }
+    
+    // Hide empty state if visible
+    const emptyState = document.getElementById('empty-state');
+    if (emptyState) emptyState.style.display = 'none';
+    
+    container.appendChild(card);
+    
+    // Auto-scroll to show new card
+    container.scrollTop = container.scrollHeight;
+};
+
+/**
+ * Render tool execution as a card (wrapper for backward compatibility)
+ * @param {Object} toolData - Tool execution data from bridge
+ */
+window.renderToolAsCard = function(toolData) {
+    console.log('[CardUI] Rendering tool as card:', toolData);
+    
+    let card = null;
+    
+    switch(toolData.type) {
+        case 'todo':
+            card = window.createTodoCard(toolData.todos || []);
+            break;
+        case 'terminal':
+            card = window.createTerminalCard(toolData.command || '', toolData.output || '');
+            break;
+        case 'permission':
+            card = window.createPermissionCard(
+                toolData.action || 'Permission required',
+                toolData.files || [],
+                toolData.cardId || 'permission-' + Date.now()
+            );
+            break;
+        case 'creating_file':
+            card = window.createCreatingFileCard(toolData.fileName || 'unknown');
+            break;
+        default:
+            console.warn('[CardUI] Unknown tool type:', toolData.type);
+            return;
+    }
+    
+    if (card) {
+        window.appendCardToChat(card);
+    }
+};
+
+console.log('[CardUI] Cursor IDE card components initialized');
+
+
+

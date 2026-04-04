@@ -90,6 +90,13 @@ class DeepSeekProvider:
             **kwargs
         }
         
+        # DEBUG: Log if tools are present
+        if 'tools' in kwargs and kwargs['tools']:
+            log.info(f"[DEEPSEEK DEBUG] Sending {len(kwargs['tools'])} tools to API")
+            log.info(f"[DEEPSEEK DEBUG] First tool: {kwargs['tools'][0].get('function', {}).get('name', 'unknown')}")
+        else:
+            log.warning("[DEEPSEEK DEBUG] NO TOOLS in request!")
+        
         url = f"{self.base_url}/chat/completions"
         
         try:
@@ -101,7 +108,13 @@ class DeepSeekProvider:
                 
                 for line in response.iter_lines():
                     if line:
-                        line_text = line.decode('utf-8').strip()
+                        try:
+                            line_text = line.decode('utf-8', errors='replace').strip()
+                        except UnicodeDecodeError as e:
+                            import logging
+                            log = logging.getLogger('cortex.provider')
+                            log.warning(f"[DeepSeek] Unicode decode error: {e}")
+                            line_text = line.decode('utf-8', errors='replace').strip()
                         
                         if line_text.startswith('data: '):
                             data_str = line_text[6:]
@@ -120,10 +133,19 @@ class DeepSeekProvider:
                                     
                                     # Yield content if available
                                     if content:
-                                        yield content
+                                        # Filter out corrupted/non-printable characters
+                                        import re
+                                        # Remove replacement chars and control chars, BUT preserve \n (0x0a) and \t (0x09)
+                                        content = re.sub(r'[\ufffd\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]', '', content)
+                                        if content.strip():
+                                            yield content
                                     # Yield reasoning content separately (prefix with [THINK])
                                     elif reasoning:
-                                        yield f"[THINK] {reasoning}"
+                                        # Also filter reasoning content
+                                        import re
+                                        reasoning = re.sub(r'[\ufffd\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]', '', reasoning)
+                                        if reasoning.strip():
+                                            yield f"[THINK] {reasoning}"
                                     
                                     # Handle tool calls
                                     if tool_calls:
@@ -135,7 +157,7 @@ class DeepSeekProvider:
                                                 'function': {
                                                     'name': tc.get('function', {}).get('name', ''),
                                                     'arguments': tc.get('function', {}).get('arguments', '')
-                                                }
+                                               }
                                             }
                                             tool_call_data.append(tc_info)
                                         yield f"__TOOL_CALL_DELTA__:{json.dumps(tool_call_data)}"

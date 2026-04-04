@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cortex AI Chat - UI Test</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="features.css">
+    <style>
+        html, body {
+            margin: 0;
+            padding: 20px;
+            background: var(--bg-main);
+            height: auto;
+            overflow: visible;
+        }
+        
+        .test-section {
+            margin-bottom: 40px;
+            padding: 20px;
+            background: var(--bg-card);
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+        
+        .test-section h2 {
+            color: var(--accent-primary);
+            margin-top: 0;
+            font-size: 18px;
+            border-bottom: 2px solid var(--border);
+            padding-bottom: 10px;
+        }
+        
+        .demo-container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="demo-container">
+        <h1 style="text-align: center; color: var(--accent-primary); margin-bottom: 30px;">
+            🧠 Cortex AI Chat - Complete UI Test
+        </h1>
+
+        <!-- 1. HEADER TEST -->
+        <div class="test-section">
+            <h2>1. Header Layout (Centered Branding)</h2>
+            <div id="header" style="position: relative; margin-bottom: 20px;">
+                <div class="header-left">
+                    <button id="toggle-history-btn" class="icon-btn" title="Recent Chats">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <polyline points="12 6 12 12 16 14"></polyline>
+                        </svg>
+                    </button>
+                    <span class="project-indicator">📁 black_box</span>
+                </div>
+                
+                <div class="header-center">
+                    <svg class="logo" width="18" height="18" viewBox="0 0 24 24" fill="var(--accent-primary)">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                    </svg>
+                    <span class="title">CORTEX AI</span>
+                </div>
+                
+                <div class="header-right actions">
+                    <button class="icon-btn" title="New Chat">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                    </button>
+                    <button class="icon-btn" title="Theme Toggle">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="5"></circle>
+                            <line x1="12" y1="1" x2="12" y2="3"></line>
+                            <line x1="12" y1="21" x2="12" y2="23"></line>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. CHAT BUBBLES TEST -->
+        <div class="test-section">
+            <h2>2. Chat Bubbles (User Right, AI Left)</h2>
+            <div id="chatMessages" style="max-height: 400px; overflow-y: auto;">
+                <!-- User Message -->
+                <div class="message-bubble user">
+                    <div class="user-msg-row">
+                        <div class="user-avatar">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
+                            </svg>
+                        </div>
+                        <div class="user-text-wrap">hi</div>
+                    </div>
+                </div>
+
+                <!-- AI Message with Label -->
+                <div class="message-bubble assistant">
+                    <div class="agent-label">AGENT</div>
+                    <div class="message-content">
+                        Hello! I'm ready to help you with your code. What would you like to work on?
+                    </div>
+                </div>
+
+                <!-- User Message (Longer) -->
+                <div class="message-bubble user">
+                    <div class="user-msg-row">
+                        <div class="user-avatar">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
+                            </svg>
+                        </div>
+                        <div class="user-text-wrap">Can you help me refactor this function to be more efficient?</div>
+                    </div>
+                </div>
+
+                <!-- AI Thinking State -->
+                <div class="message-bubble assistant">
+                    <div class="agent-label">AGENT</div>
+                    <div class="message-content">
+                        <div class="thinking-dots">
+                            <span></span>
+                            <span></span>
+                            <span></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. TODO CARD TEST -->
+        <div class="test-section">
+            <h2>3. Animated To-Do Card</h2>
+            <div class="card-container">
+                <div class="card-header">
+                    <span class="card-title">📋 Tasks</span>
+                    <span class="card-count">3/5 done</span>
+                    <svg class="card-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                </div>
+                <div class="card-body">
+                    <div class="todo-list">
+                        <div class="todo-item completed">
+                            <div class="todo-circle completed">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                                    <polyline points="20 6 9 17 4 12"></polyline>
+                                </svg>
+                            </div>
+                            <span class="todo-text">Initialize project structure</span>
+                        </div>
+                        <div class="todo-item active">
+                            <div class="todo-circle active">
+                                <div class="todo-spinner"></div>
+                            </div>
+                            <span class="todo-text">Refactor authentication module</span>
+                        </div>
+                        <div class="todo-item">
+                            <div class="todo-circle"></div>
+                            <span class="todo-text">Add unit tests</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 4. TERMINAL CARD TEST -->
+        <div class="test-section">
+            <h2>4. Terminal Output Card</h2>
+            <div class="card-container">
+                <div class="card-header">
+                    <span class="card-title">⌨️ Terminal</span>
+                    <svg class="card-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                </div>
+                <div class="card-body">
+                    <div class="terminal-viewport">
+<span class="prompt-green">$</span> npm install cortex-agent
+<span class="prompt-green">$</span> cd src/ui/components
+<span class="prompt-ps">PS&gt;</span> python agent.py --mode explore
+<span style="color: #4ADE80;">✓</span> Project indexed successfully
+<span style="color: #3B82F6;">→</span> Found 23 files matching pattern
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 5. DIFF VIEWER CARD TEST -->
+        <div class="test-section">
+            <h2>5. Diff Viewer Card (File Changes)</h2>
+            <div class="diff-viewer-card">
+                <div class="diff-header">
+                    <span class="diff-filename">src/agent.py</span>
+                    <div class="diff-stats">
+                        <span class="text-add">+12</span>
+                        <span class="text-del">-5</span>
+                    </div>
+                </div>
+                <div class="diff-content">
+                    <div class="diff-line removed">- def old_function():</div>
+                    <div class="diff-line removed">-     return None</div>
+                    <div class="diff-line added">+ def new_function():</div>
+                    <div class="diff-line added">+     """Improved implementation"""</div>
+                    <div class="diff-line added">+     return True</div>
+                    <div class="diff-line context">  </div>
+                    <div class="diff-line context">  def helper():</div>
+                </div>
+                <div class="diff-actions">
+                    <button class="btn-accept">✓ Accept</button>
+                    <button class="btn-reject">✗ Reject</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 6. PERMISSION CARD TEST -->
+        <div class="test-section">
+            <h2>6. Permission Request Card</h2>
+            <div class="card-container permission-card">
+                <div class="card-header">
+                    <span class="card-title">🔒 Permission Required</span>
+                </div>
+                <div class="card-body">
+                    <p style="margin: 0 0 12px 0; color: var(--text-secondary);">
+                        Agent wants to modify <strong>src/config.py</strong>
+                    </p>
+                    <div class="permission-actions">
+                        <button class="btn-accept">Allow Once</button>
+                        <button class="btn-accept" style="background: var(--purple);">Always Allow</button>
+                        <button class="btn-reject">Deny</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 7. INPUT COMPOSER TEST -->
+        <div class="test-section">
+            <h2>7. Input Composer (Compact + Responsive)</h2>
+            <div id="input-area">
+                <div id="input-container">
+                    <textarea id="chatInput" placeholder="Type your message...">@ mentions • Attach files • Ask anything</textarea>
+                    
+                    <div class="input-toolbar">
+                        <div class="toolbar-left">
+                            <button class="dropdown-trigger toolbar-btn">
+                                <span>Agent</span>
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="6 9 12 15 18 9"></polyline>
+                                </svg>
+                            </button>
+                            <button class="toolbar-btn">Auto</button>
+                        </div>
+                        
+                        <div class="toolbar-right">
+                            <button class="dropdown-trigger" id="model-selector">
+                                <span id="selected-model">Detecting Model...</span>
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="6 9 12 15 18 9"></polyline>
+                                </svg>
+                            </button>
+                            <button class="icon-btn optional-btn" title="Mentions">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="10"></circle>
+                                    <line x1="12" y1="8" x2="12" y2="16"></line>
+                                    <line x1="8" y1="12" x2="16" y2="12"></line>
+                                </svg>
+                            </button>
+                            <button class="icon-btn optional-btn" title="Attach Image">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                    <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                                    <polyline points="21 15 16 10 5 21"></polyline>
+                                </svg>
+                            </button>
+                            <button class="primary-btn" id="sendBtn">
+                                <span>Submit</span>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="12" y1="19" x2="12" y2="5"></line>
+                                    <polyline points="5 12 12 5 19 12"></polyline>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 8. AGENT MODE INDICATORS TEST -->
+        <div class="test-section">
+            <h2>8. Agent Mode Indicators (5 Stages)</h2>
+            <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+                <div class="mode-indicator" style="padding: 12px; background: var(--bg-elevated); border-radius: 8px; text-align: center; min-width: 100px;">
+                    <div style="font-size: 24px; margin-bottom: 8px;">🧠</div>
+                    <div style="font-size: 11px; font-weight: 600; color: var(--accent-primary);">THINK</div>
+                    <div style="font-size: 10px; color: var(--text-secondary); margin-top: 4px;">Reasoning</div>
+                </div>
+                <div class="mode-indicator" style="padding: 12px; background: var(--bg-elevated); border-radius: 8px; text-align: center; min-width: 100px;">
+                    <div style="font-size: 24px; margin-bottom: 8px;">📄</div>
+                    <div style="font-size: 11px; font-weight: 600; color: var(--green);">READ</div>
+                    <div style="font-size: 10px; color: var(--text-secondary); margin-top: 4px;">File Access</div>
+                </div>
+                <div class="mode-indicator" style="padding: 12px; background: var(--bg-elevated); border-radius: 8px; text-align: center; min-width: 100px;">
+                    <div style="font-size: 24px; margin-bottom: 8px;">🔍</div>
+                    <div style="font-size: 11px; font-weight: 600; color: var(--yellow);">EXPLORE</div>
+                    <div style="font-size: 10px; color: var(--text-secondary); margin-top: 4px;">Codebase Grep</div>
+                </div>
+                <div class="mode-indicator" style="padding: 12px; background: var(--bg-elevated); border-radius: 8px; text-align: center; min-width: 100px;">
+                    <div style="font-size: 24px; margin-bottom: 8px;">🌐</div>
+                    <div style="font-size: 11px; font-weight: 600; color: var(--purple);">SURF</div>
+                    <div style="font-size: 10px; color: var(--text-secondary); margin-top: 4px;">Web Search</div>
+                </div>
+                <div class="mode-indicator" style="padding: 12px; background: var(--bg-elevated); border-radius: 8px; text-align: center; min-width: 100px;">
+                    <div style="font-size: 24px; margin-bottom: 8px;">🔧</div>
+                    <div style="font-size: 11px; font-weight: 600; color: var(--red);">DIVE</div>
+                    <div style="font-size: 10px; color: var(--text-secondary); margin-top: 4px;">File Writes</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 9. SCROLLBAR TEST -->
+        <div class="test-section">
+            <h2>9. Lightweight Scrollbars</h2>
+            <div style="height: 150px; overflow-y: auto; background: var(--bg-elevated); padding: 12px; border-radius: 8px;">
+                <p style="margin: 0 0 8px 0; color: var(--text-secondary);">This container has a custom thin scrollbar (4px width)</p>
+                <p style="margin: 0 0 8px 0; color: var(--text-secondary);">Scroll down to see it in action...</p>
+                <div style="height: 300px;"></div>
+                <p style="margin: 0; color: var(--text-secondary);">End of scrollable area</p>
+            </div>
+        </div>
+
+        <div style="text-align: center; margin-top: 40px; padding: 20px; color: var(--text-secondary);">
+            <p>✅ All UI components tested | Metallic Theme Applied | PyQt6 Compatible</p>
+        </div>
+    </div>
+
+    <script>
+        // Wait for DOM to be fully loaded
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('[TEST] DOM loaded, initializing collapse/expand...');
+            
+            // Make all card headers clickable for collapse/expand
+            const headers = document.querySelectorAll('.card-header');
+            console.log('[TEST] Found', headers.length, 'card headers');
+            
+            headers.forEach((header, index) => {
+                header.style.cursor = 'pointer';
+                
+                header.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    const card = this.parentElement;
+                    const isCollapsed = card.classList.toggle('collapsed');
+                    
+                    console.log('[TEST] Card', index + 1, 'toggled. Collapsed:', isCollapsed);
+                    
+                    // Rotate chevron icon
+                    const chevron = this.querySelector('.card-chevron');
+                    if (chevron) {
+                        chevron.style.transform = isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
+                        chevron.style.transition = 'transform 0.2s ease';
+                    }
+                });
+                
+                console.log('[TEST] Attached click handler to card', index + 1);
+            });
+        });
+
+        // Add collapsed state styling
+        const style = document.createElement('style');
+        style.textContent = `
+            .card-container.collapsed .card-body {
+                display: none !important;
+            }
+            
+            .card-header:hover {
+                background: rgba(255, 255, 255, 0.03);
+            }
+            
+            .card-chevron {
+                transition: transform 0.2s ease;
+            }
+        `;
+        document.head.appendChild(style);
+        
+        console.log('[TEST] Styles injected');
+    </script>
+</body>
+</html>
