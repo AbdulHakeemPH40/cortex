@@ -4488,6 +4488,24 @@ document.addEventListener('DOMContentLoaded', function() {
             
             if (modeText) modeText.innerText = val;
             
+            // Update textarea placeholder based on mode
+            var textarea = document.getElementById('user-input');
+            if (textarea) {
+                switch(val) {
+                    case 'Agent':
+                        textarea.placeholder = 'Plan and build...';
+                        break;
+                    case 'Ask':
+                        textarea.placeholder = 'Ask a question...';
+                        break;
+                    case 'Plan':
+                        textarea.placeholder = 'Create a plan...';
+                        break;
+                    default:
+                        textarea.placeholder = 'Type a message...';
+                }
+            }
+            
             // Update trigger icon (SVG swap)
             var svgWrap = trigger.querySelector('svg.mode-icon');
             if (svgWrap) {
@@ -6517,11 +6535,14 @@ function _renderQueueBar() {
             ? msg.text.slice(0, 60) + '...'
             : msg.text;
 
+        // Card with icon, text, and remove button - no serial numbers
         item.innerHTML =
-            '<span class="mq-position">' + (_msgQueue.indexOf(msg) + 1) + '</span>' +
+            '<svg class="message-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+                '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>' +
+            '</svg>' +
             '<span class="mq-text">' + escapeHtml(preview) + '</span>' +
             '<button class="mq-remove" onclick="_removeFromQueue(' + msg.id + ')" ' +
-                    'title="Remove from queue">-</button>';
+                    'title="Remove from queue">×</button>';
 
         listEl.appendChild(item);
     });

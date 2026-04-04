@@ -23,9 +23,11 @@ from src.core.project_manager import ProjectManager
 from src.core.file_manager import FileManager
 from src.core.session_manager import SessionManager
 from src.core.codebase_index import get_codebase_index
-from src.ai.agent import AIAgent
-from src.ai.code_analyzer import CodeAnalyzer
-from src.ai.file_edit_tracker import FileEditTracker
+# TEMPORARILY COMMENTED - Will be replaced with OpenHands SDK integration
+# from src.ai.agent import AIAgent
+from src.ai.stub_agent import get_stub_agent as AIAgent  # Temporary stub
+# from src.ai.code_analyzer import CodeAnalyzer
+# from src.ai.file_edit_tracker import FileEditTracker
 from src.ui.components.sidebar import SidebarWidget
 from src.ui.components.editor import CodeEditor
 from src.ui.components.ai_chat import AIChatWidget
@@ -37,20 +39,6 @@ from src.utils.helpers import detect_language, shorten_path
 from src.utils.logger import get_logger
 from src.utils.notifications import show_task_complete_notification
 
-# Phase 1, 2, 3 Integration Imports
-from src.ai.title_generator import get_title_generator
-from src.ai.session_schema import get_session_schema_manager
-from src.ai.acp import AgentType
-
-# Phase 4 Integration Imports
-from src.ai.todo import get_todo_manager, TaskStatus
-from src.ai.permission import get_permission_evaluator
-from src.ai.github import get_github_agent
-
-# NEW: OpenCode Enhancement Integration
-from src.ai.integration import get_ai_integration_layer
-
-# NEW: Universal Syntax Highlighting Support
 try:
     from src.ui.syntax_highlighting_config import (
         UniversalCodeColorizer,
@@ -546,32 +534,36 @@ class CortexMainWindow(QMainWindow):
         self._project_manager = ProjectManager()
         self._file_manager = FileManager()
         self._session_manager = SessionManager()
+        
+        # TEMPORARY: Using stub agent until OpenHands SDK integration
         self._ai_agent = AIAgent(file_manager=self._file_manager)
+        log.info("[AGENT] Stub agent initialized - awaiting OpenHands SDK")
         
-        # Set DeepSeek as default for reliable agentic workflows
-        self._ai_agent.update_settings(provider="deepseek", model="deepseek-chat")
-        log.info("[AGENT] AI Agent initialized with DeepSeek")
-        log.info("[AGENT] Using DeepSeek V3 for reliable agentic work")
+        # Phase 1, 2, 3 Integration: TEMPORARILY DISABLED
+        # log.info("[INIT] Initializing Phase 1, 2, 3 components...")
+        # self._title_generator = get_title_generator(self._ai_agent)
+        # self._session_db = get_session_schema_manager()
+        # log.info("[OK] Phase 1, 2, 3 components initialized")
         
-        # Phase 1, 2, 3 Integration: Initialize components
-        log.info("[INIT] Initializing Phase 1, 2, 3 components...")
-        self._title_generator = get_title_generator(self._ai_agent)
-        self._session_db = get_session_schema_manager()
-        log.info("[OK] Phase 1, 2, 3 components initialized")
+        # Phase 4 Integration: TEMPORARILY DISABLED
+        # log.info("[INIT] Initializing Phase 4 components...")
+        # self._todo_manager = get_todo_manager()
+        # self._permission_evaluator = get_permission_evaluator()
+        # self._github_agent = get_github_agent()
+        # log.info("[OK] Phase 4 components initialized")
         
-        # Phase 4 Integration: Initialize TODO, Permission, and GitHub components
-        log.info("[INIT] Initializing Phase 4 components...")
-        self._todo_manager = get_todo_manager()
-        self._permission_evaluator = get_permission_evaluator()
-        self._github_agent = get_github_agent()
-        log.info("[OK] Phase 4 components initialized")
+        # NEW: OpenCode Enhancement Integration - TEMPORARILY DISABLED
+        # log.info("[INIT] Initializing OpenCode Enhancement Integration...")
+        # self._ai_integration = get_ai_integration_layer()
+        # log.info("[OK] OpenCode Enhancement Integration initialized")
         
-        # NEW: Initialize OpenCode Enhancement Integration Layer
-        log.info("[INIT] Initializing OpenCode Enhancement Integration...")
-        self._ai_integration = get_ai_integration_layer()
-        log.info("[OK] OpenCode Enhancement Integration initialized")
+        log.info("[INIT] Legacy AI components disabled - awaiting OpenHands SDK")
         
-        self._file_tracker = FileEditTracker(self)
+        # TEMPORARILY DISABLED - FileEditTracker was part of deleted agentic code
+        # self._file_tracker = FileEditTracker(self)
+        self._file_tracker = None
+        
+        # Keep diff window (it's UI, not agentic)
         self._diff_window = DiffWindow(self)
         self._codebase_index = None
         self._inline_edit_context = None
@@ -1274,7 +1266,8 @@ class CortexMainWindow(QMainWindow):
         self._ai_agent.response_complete.connect(self._on_ai_task_complete)
         self._ai_agent.request_error.connect(self._ai_chat.on_error)
         self._ai_agent.file_generated.connect(self._open_file)
-        self._ai_agent.file_edited_diff.connect(self._file_tracker.add_edit)
+        # TEMPORARILY DISABLED - file_tracker was part of deleted agentic code
+        # self._ai_agent.file_edited_diff.connect(self._file_tracker.add_edit)
         self._ai_agent.file_edited_diff.connect(self._on_file_edited_diff_for_js)
         self._ai_agent.file_edited_diff.connect(self._on_inline_edit_diff)
         self._ai_agent.tool_activity.connect(self._ai_chat.show_tool_activity)
@@ -1285,40 +1278,42 @@ class CortexMainWindow(QMainWindow):
         self._ai_agent.todos_updated.connect(self._ai_chat.update_todos)
         self._ai_agent.tool_summary_ready.connect(self._ai_chat.show_tool_summary)
         
-        # Phase 4: Connect Todo Manager signals to update Chat UI in real-time
-        self._todo_manager.task_added.connect(self._on_todo_task_added)
-        self._todo_manager.task_completed.connect(self._on_todo_task_completed)
-        self._todo_manager.task_updated.connect(self._on_todo_task_updated)
+        # Phase 4: TEMPORARILY DISABLED - todo_manager, title_generator were deleted
+        # self._todo_manager.task_added.connect(self._on_todo_task_added)
+        # self._todo_manager.task_completed.connect(self._on_todo_task_completed)
+        # self._todo_manager.task_updated.connect(self._on_todo_task_updated)
         
-        # Phase 4: Connect Title Generator to update chat tab
-        self._title_generator.title_generated.connect(self._on_title_generated)
+        # Phase 4: TEMPORARILY DISABLED - title_generator was deleted
+        # self._title_generator.title_generated.connect(self._on_title_generated)
         
         # New interaction signals
         self._ai_chat.generate_plan_requested.connect(self._on_generate_plan)
-        self._ai_chat.mode_changed.connect(self._ai_agent.set_interaction_mode)
+        # TEMPORARILY DISABLED - set_interaction_mode doesn't exist on stub agent
+        # self._ai_chat.mode_changed.connect(self._ai_agent.set_interaction_mode)
         self._ai_chat.open_file_requested.connect(self._open_file)
         self._ai_chat.open_file_at_line_requested.connect(self._open_file_at_line)
         log.info(f"[Diff-Debug] Connecting show_diff_requested to _on_show_diff. Signal exists: {hasattr(self._ai_chat, 'show_diff_requested')}")
         self._ai_chat.show_diff_requested.connect(self._on_show_diff)
         self._ai_chat.answer_question_requested.connect(self._ai_agent.user_responded)
         self._ai_chat.smart_paste_check_requested.connect(self._on_smart_paste_check)
-        self._ai_chat.always_allow_changed.connect(self._ai_agent.set_always_allowed)
+        # TEMPORARILY DISABLED - set_always_allowed doesn't exist on stub agent
+        # self._ai_chat.always_allow_changed.connect(self._ai_agent.set_always_allowed)
         
-        # NEW: Connect AI Integration Layer signals for OpenCode enhancements
-        self._ai_integration.intent_classified.connect(self._on_intent_classified)
-        self._ai_integration.agent_selected.connect(self._on_agent_selected)
-        self._ai_integration.tools_selected.connect(self._on_tools_selected)
-        self._ai_integration.permission_requested.connect(self._on_permission_requested)
-        self._ai_integration.permission_granted.connect(self._on_permission_granted)
-        self._ai_integration.permission_denied.connect(self._on_permission_denied)
-        self._ai_integration.user_denied_workflow.connect(self._on_user_denied_workflow)
+        # NEW: TEMPORARILY DISABLED - AI Integration Layer was deleted
+        # self._ai_integration.intent_classified.connect(self._on_intent_classified)
+        # self._ai_integration.agent_selected.connect(self._on_agent_selected)
+        # self._ai_integration.tools_selected.connect(self._on_tools_selected)
+        # self._ai_integration.permission_requested.connect(self._on_permission_requested)
+        # self._ai_integration.permission_granted.connect(self._on_permission_granted)
+        # self._ai_integration.permission_denied.connect(self._on_permission_denied)
+        # self._ai_integration.user_denied_workflow.connect(self._on_user_denied_workflow)
         
-        # NEW: Connect Testing Workflow signals
-        self._ai_integration.testing_decision.connect(self._on_testing_decision)
-        self._ai_integration.test_tools_selected.connect(self._on_test_tools_selected)
-        self._ai_integration.test_execution_started.connect(self._on_test_execution_started)
-        self._ai_integration.test_execution_completed.connect(self._on_test_execution_completed)
-        self._ai_integration.test_analysis_ready.connect(self._on_test_analysis_ready)
+        # NEW: TEMPORARILY DISABLED - Testing Workflow was deleted
+        # self._ai_integration.testing_decision.connect(self._on_testing_decision)
+        # self._ai_integration.test_tools_selected.connect(self._on_test_tools_selected)
+        # self._ai_integration.test_execution_started.connect(self._on_test_execution_started)
+        # self._ai_integration.test_execution_completed.connect(self._on_test_execution_completed)
+        # self._ai_integration.test_analysis_ready.connect(self._on_test_analysis_ready)
         
         # NEW: Connect AI Chat permission response signals
         self._ai_chat.permission_response.connect(self._on_chat_permission_response)
@@ -2569,9 +2564,8 @@ class CortexMainWindow(QMainWindow):
         # Hook up "New Terminal" button from within the terminal
         term.new_terminal_requested.connect(lambda: self._new_terminal(show_panel=True))
         
-        # Link to AI Agent immediately
-        self._ai_agent.set_terminal(term)
-        
+       
+       
         # Connect file operations to AI chat
         term.file_operation_detected.connect(self._on_terminal_file_operation)
         

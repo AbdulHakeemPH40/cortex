@@ -1,1 +1,2 @@
 # Temporary file - can be deleted
+pip install openhands-sdk

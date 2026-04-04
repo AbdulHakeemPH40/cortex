@@ -6,8 +6,8 @@
 
 /* --- Global --- */
 QWidget {
-    background-color: #1e1e2e;  /* Base - editor background */
-    color: #cdd6f4;  /* Text - default foreground */
+    background-color: #1E1E1E;  /* Dark Gunmetal - Main workspace */
+    color: #CCCCCC;  /* Primary text */
     font-family: "Segoe UI", Arial, sans-serif;
     font-size: 13px;
     border: none;
@@ -15,14 +15,14 @@ QWidget {
 }
 
 QMainWindow {
-    background-color: #1e1e2e;  /* Base - main window */
+    background-color: #1E1E1E;  /* Dark Gunmetal - main window */
 }
 
 /* --- Top Menu Bar - Crust/Mantle */
 QMenuBar {
-    background-color: #181825;  /* Mantle - darker than base */
-    color: #cdd6f4;  /* Text */
-    border-bottom: 1px solid #313244;  /* Surface 0 - panel border */
+    background-color: #121212;  /* Onyx - Sidebar/Header layer */
+    color: #CCCCCC;  /* Primary text */
+    border-bottom: 1px solid #2D2D2D;  /* Subtle separator */
     padding: 2px 0px;
 }
 
@@ -42,7 +42,7 @@ QMenuBar::item:pressed {
 }
 
 QMenu {
-    background-color: #181825;  /* Mantle - menu background */
+    background-color: #252525;  /* Metallic Grey - Component cards */
     border: 1px solid #313244;  /* Surface 0 - border */
     border-radius: 4px;
     padding: 4px 0px;
@@ -68,7 +68,7 @@ QMenu::separator {
 
 /* --- Tool Bar - Mantle */
 QToolBar {
-    background-color: #181825;  /* Mantle - toolbar */
+    background-color: #252525;  /* Metallic Grey - toolbar */
     border-bottom: 1px solid #313244;  /* Surface 0 - border */
     spacing: 2px;
     padding: 4px 8px;
@@ -112,7 +112,7 @@ QSplitter::handle:hover {
 /* --- Tab Widget - Mantle/Base */
 QTabWidget::pane {
     border: none;
-    background-color: #1e1e2e;  /* Base - tab content */
+    background-color: #1E1E1E;  /* Dark Gunmetal - tab content */
 }
 
 QTabWidget::tab-bar {
@@ -120,11 +120,11 @@ QTabWidget::tab-bar {
 }
 
 QTabBar {
-    background-color: #181825;  /* Mantle - tab bar */
+    background-color: #252525;  /* Metallic Grey - tab bar */
 }
 
 QTabBar::tab {
-    background-color: #181825;  /* Mantle - inactive tab */
+    background-color: #252525;  /* Metallic Grey - inactive tab */
     color: #cdd6f4;  /* Text */
     padding: 0px 12px;
     height: 34px;
@@ -136,9 +136,9 @@ QTabBar::tab {
 }
 
 QTabBar::tab:selected {
-    background-color: #1e1e2e;  /* Base - active tab */
+    background-color: #1E1E1E;  /* Dark Gunmetal - active tab */
     color: #ffffff;
-    border-top: 2px solid #cba6f7;  /* Lavender - active tab accent */
+    border-top: 2px solid #3B82F6;  /* Vibrant Blue - active tab accent */
     border-right: 1px solid #313244;  /* Surface 0 */
 }
 
@@ -195,7 +195,7 @@ QScrollBar::handle:vertical:hover {
 }
 
 QScrollBar::handle:vertical:pressed {
-    background: #cba6f7;  /* Lavender - pressed accent */
+    background: #3B82F6;  /* Vibrant Blue - pressed accent */
 }
 
 QScrollBar::add-line:vertical,
@@ -313,12 +313,12 @@ QPushButton:hover {
 }
 
 QPushButton:pressed {
-    background-color: #89b4fa;  /* Blue - pressed accent */
+    background-color: #3B82F6;  /* Vibrant Blue - pressed accent */
     color: #1e1e2e;  /* Base background for contrast */
 }
 
 QPushButton:disabled {
-    background-color: #313244;  /* Surface 0 - disabled */
+    background-color: #3D3D3D;  /* Higher contrast border */
     color: #6c7086;  /* Overlay 0 - disabled text */
 }
 
@@ -335,7 +335,7 @@ QPushButton[flat="true"]:hover {
 
 /* --- Line Edit / Input - Surface Colors */
 QLineEdit {
-    background-color: #313244;  /* Surface 0 - input background */
+    background-color: #252525;  /* Metallic Grey - input background */
     color: #cdd6f4;  /* Text */
     border: 1px solid #6c7086;  /* Overlay 0 - border */
     border-radius: 4px;
@@ -345,13 +345,13 @@ QLineEdit {
 }
 
 QLineEdit:focus {
-    border: 2px solid #89b4fa;  /* Blue - focus border */
+    border: 2px solid #3B82F6;  /* Vibrant Blue - focus border */
 }
 
 /* --- Text Edit / Plain Text Edit (CODE EDITOR) - Cursor Style --- */
 /* IMPORTANT: Allow syntax highlighting to render - do NOT set text color */
 QTextEdit, QPlainTextEdit {
-    background-color: #1e1e2e;  /* Base - editor background */
+    background-color: #1E1E1E;  /* Dark Gunmetal - editor background */
     border: none;
     selection-background-color: #45475a;  /* Surface 1 - selection */
     selection-color: #cdd6f4;  /* Keep selected text readable */

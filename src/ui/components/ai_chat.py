@@ -833,6 +833,24 @@ class AIChatWidget(QWidget):
             self._view.settings().WebAttribute.LocalStorageEnabled, True
         )
         
+        # CRITICAL: Enable SVG rendering and local file access for icons
+        self._view.settings().setAttribute(
+            self._view.settings().WebAttribute.LocalContentCanAccessFileUrls, True
+        )
+        self._view.settings().setAttribute(
+            self._view.settings().WebAttribute.AllowRunningInsecureContent, True
+        )
+        self._view.settings().setAttribute(
+            self._view.settings().WebAttribute.PluginsEnabled, True
+        )
+        # Enable WebGL for better graphics rendering
+        try:
+            self._view.settings().setAttribute(
+                self._view.settings().WebAttribute.WebGLEnabled, True
+            )
+        except AttributeError:
+            pass  # WebGL may not be available on all systems
+        
         # Setup Channel
         self._channel = QWebChannel()
         self._bridge = ChatBridge(self._view, parent_widget=self)
