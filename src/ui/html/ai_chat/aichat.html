@@ -24,6 +24,8 @@
         
         // Define setTheme immediately so Python can always call it
         window.setTheme = function(isDark) {
+            console.log('[THEME] setTheme called, isDark=' + isDark);
+            
             if (!document.body) {
                 window._themeChangeQueue.push(isDark);
                 return;
@@ -32,8 +34,10 @@
             const body = document.body;
             if (isDark) {
                 body.classList.remove('light-mode');
+                console.log('[THEME] Removed light-mode, classes=' + body.className);
             } else {
                 body.classList.add('light-mode');
+                console.log('[THEME] Added light-mode, classes=' + body.className);
             }
             
             try {
@@ -45,7 +49,7 @@
         
         // Process queue after DOM ready
         document.addEventListener('DOMContentLoaded', function() {
-            console.log('[THEME] DOM ready, processing theme queue');
+            console.log('[THEME] DOM ready');
             while (window._themeChangeQueue.length > 0) {
                 var isDark = window._themeChangeQueue.shift();
                 window.setTheme(isDark);
@@ -57,7 +61,7 @@
                 var saved = localStorage.getItem('cortex_theme');
                 if (saved === 'light') {
                     document.body.classList.add('light-mode');
-                    console.log('[THEME] Applied saved Light Mode');
+                    console.log('[THEME] Restored light mode from storage');
                 }
             } catch (e) {}
         });

@@ -1,0 +1,8 @@
+5ba5fbe18222eed3d4a3c869d0b463fecc188ae9 commit	refs/heads/craeye
+b4bda4a0082707fa5ae50b3f3981c8921b9f684f commit	refs/heads/main
+bd99308114f783e41c52ecb051a60faafb2a266b commit	refs/heads/ui-chat-bubble-fix
+5ba5fbe18222eed3d4a3c869d0b463fecc188ae9 commit	refs/remotes/origin/craeye
+b4bda4a0082707fa5ae50b3f3981c8921b9f684f commit	refs/remotes/origin/main
+34988541eca6601685ac26bd8ad4fd7f63f973bc commit	refs/remotes/origin/master
+77ed8d15cecd6fe4c499059444b6adf08aea9cea commit	refs/remotes/origin/ui-chat-bubble-fix
+62796c27a5c375254e77576de380fd1e5a623898 commit	refs/stash
