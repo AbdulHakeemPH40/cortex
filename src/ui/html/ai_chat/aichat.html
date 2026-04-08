@@ -24,34 +24,23 @@
         
         // Define setTheme immediately so Python can always call it
         window.setTheme = function(isDark) {
-            console.log('[THEME] setTheme called with isDark:', isDark, typeof isDark);
-            
-            // Queue if body not ready
             if (!document.body) {
-                console.log('[THEME] Body not ready, queuing theme change');
                 window._themeChangeQueue.push(isDark);
                 return;
             }
             
-            // Apply theme
             const body = document.body;
             if (isDark) {
                 body.classList.remove('light-mode');
-                console.log('[THEME] Switched to Dark Mode, body classes:', body.className);
             } else {
                 body.classList.add('light-mode');
-                console.log('[THEME] Switched to Light Mode, body classes:', body.className);
             }
             
-            // Save preference
             try {
                 localStorage.setItem('cortex_theme', isDark ? 'dark' : 'light');
-            } catch (e) {
-                console.warn('[THEME] Could not save theme:', e);
-            }
+            } catch (e) {}
             
-            // Return current theme state for verification
-            return body.classList.contains('light-mode') ? 'light' : 'dark';
+            return 'success';
         };
         
         // Process queue after DOM ready
