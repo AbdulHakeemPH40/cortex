@@ -1052,36 +1052,68 @@
       
       /* CLEAN PERMISSION CARD - Windsurf Style */
       
-      /* User messages - bubble style (constrained width, transparent container) */
+      /* ================================================
+         MESSAGE BUBBLES - Clean Separation
+         User = right bubble, AI = full width
+         ================================================ */
+      
+      /* User messages - right-aligned bubble container */
       .message-bubble.user {
           background: transparent !important;
-          max-width: fit-content !important;
+          max-width: 85% !important;
           width: auto !important;
-          align-self: flex-end;
-          margin-left: auto;
-          margin-right: 0;
-          padding: 0 !important;
+          align-self: flex-end !important;
+          margin-left: auto !important;
+          margin-right: 16px !important;
+          padding: 8px 0 !important;
+          display: flex !important;
+          justify-content: flex-end !important;
+          overflow: visible !important;
       }
       
-      /* AI messages - full width, transparent */
+      /* User message content - single bubble with proper padding */
+      .message-bubble.user .message-content {
+          background: var(--bg-elevated, #2A2A2A) !important;
+          border: 1px solid var(--border-light, #3D3D3D) !important;
+          border-radius: 18px 18px 4px 18px !important;
+          padding: 14px 18px !important;
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2) !important;
+          max-width: 100% !important;
+          width: auto !important;
+          display: block !important;
+          flex: none !important;
+          min-width: auto !important;
+          overflow: visible !important;
+          word-wrap: break-word !important;
+          overflow-wrap: break-word !important;
+          white-space: pre-wrap !important;
+          text-align: left !important;
+      }
+      
+      /* AI messages - full width, left-aligned, no bubble */
       .message-bubble.assistant {
           background: transparent !important;
           border: none !important;
           border-radius: 0 !important;
-          padding-left: 0 !important;
+          padding: 12px 16px !important;
+          margin: 8px 0 !important;
           width: 100% !important;
           max-width: 100% !important;
-          box-sizing: border-box;
+          box-sizing: border-box !important;
+          display: block !important;
+          text-align: left !important;
       }
       
-      /* Override style.css on assistant message content */
+      /* AI message content - transparent, full width */
       .message-bubble.assistant .message-content {
           background: transparent !important;
           border: none !important;
           box-shadow: none !important;
           padding: 0 !important;
+          margin: 0 !important;
           max-width: 100% !important;
           width: 100% !important;
+          display: block !important;
       }
       
       .message-avatar {
@@ -1147,6 +1179,208 @@
       @keyframes fadeIn {
           from { opacity: 0; transform: translateY(8px); }
           to { opacity: 1; transform: translateY(0); }
+      }
+      
+      /* --- AI Thinking Animation (Cursor/Windsurf style) --- */
+      .thinking-message {
+          display: flex;
+          align-items: center;
+          gap: 16px;
+          padding: 16px 20px;
+          margin: 12px 0;
+          background: transparent;
+          border-left: 3px solid var(--accent-blue, #3b82f6);
+          animation: fadeIn 0.3s ease;
+      }
+      
+      /* Pulsing Orb Animation */
+      .thinking-orb {
+          position: relative;
+          width: 32px;
+          height: 32px;
+          flex-shrink: 0;
+      }
+      
+      .thinking-orb-core {
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          width: 12px;
+          height: 12px;
+          background: var(--accent-blue, #3b82f6);
+          border-radius: 50%;
+          box-shadow: 0 0 12px var(--accent-blue, #3b82f6);
+          animation: orbPulse 1.5s ease-in-out infinite;
+      }
+      
+      .thinking-orb-ring {
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          width: 100%;
+          height: 100%;
+          border: 2px solid var(--accent-blue, #3b82f6);
+          border-radius: 50%;
+          opacity: 0.4;
+          animation: orbRipple 2s ease-out infinite;
+      }
+      
+      .thinking-orb-ring:nth-child(2) {
+          animation-delay: 0.5s;
+      }
+      
+      @keyframes orbPulse {
+          0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+          50% { transform: translate(-50%, -50%) scale(0.8); opacity: 0.6; }
+      }
+      
+      @keyframes orbRipple {
+          0% { transform: translate(-50%, -50%) scale(0.5); opacity: 0.8; }
+          100% { transform: translate(-50%, -50%) scale(1.5); opacity: 0; }
+      }
+      
+      /* Thinking Content */
+      .thinking-content {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+      }
+      
+      .thinking-title {
+          font-weight: 500;
+          font-size: 14px;
+          color: var(--text-main, #e5e5e5);
+      }
+      
+      .thinking-subtitle {
+          font-size: 12px;
+          color: var(--text-secondary, #a3a3a3);
+          animation: textPulse 2s ease-in-out infinite;
+      }
+      
+      @keyframes textPulse {
+          0%, 100% { opacity: 0.6; }
+          50% { opacity: 1; }
+      }
+      
+      .thinking-status {
+          font-size: 11px;
+          color: var(--text-muted, #737373) !important;
+          margin-top: 4px;
+      }
+      
+      /* Timer with pulse animation */
+      .thinking-timer {
+          font-size: 13px;
+          font-weight: 600;
+          color: var(--accent-blue, #3b82f6);
+          animation: timerPulse 1s ease-in-out infinite;
+          font-variant-numeric: tabular-nums;
+          min-width: 40px;
+          text-align: right;
+      }
+      
+      @keyframes timerPulse {
+          0%, 100% { opacity: 0.7; transform: scale(1); }
+          50% { opacity: 1; transform: scale(1.05); }
+      }
+      
+      /* --- Action Button Container (prevents flickering) --- */
+      .action-btn-container {
+          position: relative;
+          width: 36px;
+          height: 32px;
+          flex-shrink: 0;
+          z-index: 10;
+      }
+      
+      .action-btn-container .primary-btn,
+      .action-btn-container .stop-btn {
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          margin: 0;
+          padding: 0 !important;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+      }
+      
+      /* When hidden, ensure display:none works */
+      .action-btn-container .primary-btn[style*="none"],
+      .action-btn-container .stop-btn[style*="none"] {
+          display: none !important;
+      }
+      
+      /* --- Stop Button (Cursor/Windsurf style) --- */
+      .stop-btn {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 32px;
+          height: 32px;
+          background: linear-gradient(135deg, rgba(239, 68, 68, 0.15), rgba(220, 38, 38, 0.1));
+          border: 1.5px solid rgba(239, 68, 68, 0.5);
+          border-radius: 8px;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          animation: stopBtnPulse 1.5s ease-in-out infinite;
+          position: relative;
+          overflow: hidden;
+      }
+      
+      .stop-btn::before {
+          content: '';
+          position: absolute;
+          inset: 0;
+          background: radial-gradient(circle at center, rgba(239, 68, 68, 0.3), transparent 70%);
+          opacity: 0;
+          transition: opacity 0.3s ease;
+      }
+      
+      .stop-btn:hover {
+          background: linear-gradient(135deg, rgba(239, 68, 68, 0.25), rgba(220, 38, 38, 0.2));
+          border-color: rgba(239, 68, 68, 0.8);
+          transform: scale(1.05);
+          box-shadow: 0 0 16px rgba(239, 68, 68, 0.4);
+      }
+      
+      .stop-btn:hover::before {
+          opacity: 1;
+      }
+      
+      .stop-btn:active {
+          transform: scale(0.95);
+      }
+      
+      .stop-btn svg {
+          width: 14px;
+          height: 14px;
+          color: #ef4444;
+          position: relative;
+          z-index: 1;
+          transition: all 0.2s ease;
+      }
+      
+      .stop-btn:hover svg {
+          color: #f87171;
+          transform: scale(1.1);
+      }
+      
+      @keyframes stopBtnPulse {
+          0%, 100% { 
+              box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+              border-color: rgba(239, 68, 68, 0.5);
+          }
+          50% { 
+              box-shadow: 0 0 0 4px rgba(239, 68, 68, 0);
+              border-color: rgba(239, 68, 68, 0.8);
+          }
       }
       
       .code-completion-popup {
@@ -2567,12 +2801,14 @@
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
                             </button>
                             
-                            <button id="sendBtn" class="primary-btn" title="Send Message">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
-                            </button>
-                            <button id="stopBtn" class="stop-btn" title="Stop" style="display: none;">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect></svg>
-                            </button>
+                            <div class="action-btn-container">
+                                <button id="sendBtn" class="primary-btn" title="Send Message">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                                </button>
+                                <button id="stopBtn" class="stop-btn" title="Stop Generation" style="display: none;">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>

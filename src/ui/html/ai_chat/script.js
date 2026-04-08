@@ -87,6 +87,25 @@ function loadProjectChats() {
         }
     });
     
+    // Clean any thinking messages from all chats before returning
+    merged.forEach(function(chat) {
+        if (chat.messages && chat.messages.length > 0) {
+            var originalCount = chat.messages.length;
+            chat.messages = chat.messages.filter(function(msg) {
+                if (!msg || !msg.text) return true;
+                var text = String(msg.text);
+                // Filter out thinking/temporary indicators
+                var isThinking = text.includes('Thinking') || 
+                                 text.includes('Analyzing your request') ||
+                                 text.includes('Cortex is working');
+                return !isThinking;
+            });
+            if (chat.messages.length !== originalCount) {
+                console.log('[CHAT] CLEANUP - Removed', originalCount - chat.messages.length, 'thinking messages from chat:', chat.title);
+            }
+        }
+    });
+    
     return merged;
 }
 
@@ -1740,23 +1759,8 @@ function appendMessage(text, sender, shouldSave) {
 
     if (sender === 'user') {
         content.textContent = text;
-
-        // -- Enhanced user bubble: text wrap + avatar -----------------
-        var row = document.createElement('div');
-        row.className = 'user-msg-row';
-
-        var textWrap = document.createElement('div');
-        textWrap.className = 'user-text-wrap';
-        textWrap.appendChild(content);
-
-        // User avatar - append FIRST so it appears on right with inline-block
-        var av = document.createElement('div');
-        av.className = 'user-avatar';
-        av.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>';
-
-        row.appendChild(av); // Avatar first (appears on right due to text-align: right)
-        row.appendChild(textWrap); // Text second (appears on left)
-        bubble.appendChild(row);
+        // User messages: simple single container, no nested wrappers
+        bubble.appendChild(content);
     } else {
         var parsedHtml = '';
         try {
@@ -1785,6 +1789,17 @@ function appendMessage(text, sender, shouldSave) {
     if (shouldSave) {
         var chat = chats.find(function (c) { return c.id == currentChatId; });
         if (chat) {
+            // Skip saving "Thinking..." and other temporary indicator messages
+            var isThinkingMessage = text && (
+                text.includes('Thinking') || 
+                text.includes('Analyzing your request') ||
+                text.includes('Cortex is working')
+            );
+            if (isThinkingMessage) {
+                console.log('[CHAT] Skipping persistence of temporary thinking indicator');
+                return bubble;
+            }
+            
             // Include any pending tool activities with the message
             var messageData = { text: text, sender: sender, role: sender };
             if (window._pendingToolActivities && window._pendingToolActivities.length > 0) {
@@ -4911,7 +4926,21 @@ document.addEventListener('DOMContentLoaded', function() {
         var chat = chats.find(function(c) { return c.id == id; });
         if (chat) {
             console.log('[CHAT] Target chat object found. Setting messages (count:', messagesParsed ? messagesParsed.length : 0, ')');
-            chat.messages = messagesParsed || [];
+            
+            // Clean thinking messages from loaded data
+            var cleanedMessages = (messagesParsed || []).filter(function(msg) {
+                if (!msg || !(msg.content || msg.text)) return true;
+                var text = String(msg.content || msg.text);
+                var isThinking = text.includes('Thinking') || 
+                                 text.includes('Analyzing your request') ||
+                                 text.includes('Cortex is working');
+                return !isThinking;
+            });
+            if (cleanedMessages.length !== (messagesParsed || []).length) {
+                console.log('[CHAT] CLEANUP - Removed', (messagesParsed || []).length - cleanedMessages.length, 'thinking messages from SQLite load');
+            }
+            
+            chat.messages = cleanedMessages;
             chat.loaded = true;
             chat.message_count = chat.messages.length;
             chat.truncated = false;

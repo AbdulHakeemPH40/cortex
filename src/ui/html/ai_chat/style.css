@@ -575,41 +575,55 @@ button svg,
     overflow-y: auto; /* Scroll when content exceeds max-height */
 }
 
-/* Lightweight scrollbar for chat input */
+/* User-friendly scrollbar for chat input */
 #chatInput::-webkit-scrollbar {
-    width: 4px;
-    height: 4px; /* For horizontal scrollbar */
+    width: 8px;
+    height: 8px;
 }
 
 #chatInput::-webkit-scrollbar-track {
-    background: transparent;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+    margin: 4px 0;
 }
 
 #chatInput::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.35);
     border-radius: 4px;
+    min-height: 40px;
 }
 
 #chatInput::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.3);
+    background: rgba(255, 255, 255, 0.55);
 }
 
-/* Lightweight horizontal scrollbar for input toolbar */
+#chatInput::-webkit-scrollbar-thumb:active {
+    background: rgba(255, 255, 255, 0.7);
+}
+
+/* Hide input toolbar scrollbar completely */
 .input-toolbar::-webkit-scrollbar {
-    height: 3px; /* Even thinner for toolbar */
+    width: 0px;
+    height: 0px;
+    display: none;
 }
 
-.input-toolbar::-webkit-scrollbar-track {
-    background: transparent;
+.input-toolbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
 }
 
-.input-toolbar::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.15);
-    border-radius: 3px;
+/* Hide any scrollbars on input container */
+#input-container::-webkit-scrollbar {
+    width: 0px;
+    height: 0px;
+    display: none;
 }
 
-.input-toolbar::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.25);
+#input-container {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+    overflow: visible;
 }
 
 #chatInput::placeholder {
@@ -629,14 +643,15 @@ button svg,
 .toolbar-left,
 .toolbar-right {
     display: flex;
-    gap: 6px; /* Reduced from 8px for compact layout */
+    gap: 4px; /* Compact spacing between buttons */
     align-items: center;
-    flex-shrink: 0; /* Prevent compression */
-    min-width: 0; /* Allow internal items to shrink */
 }
 
-/* Ensure toolbar buttons never collapse */
-.toolbar-btn,
+/* Even tighter spacing for toolbar-right icon buttons */
+.toolbar-right {
+    gap: 2px; /* Very tight spacing for icon buttons */
+}
+
 .icon-btn,
 .primary-btn,
 .dropdown-trigger {
@@ -644,9 +659,28 @@ button svg,
     white-space: nowrap;
 }
 
-/* Make model selector more compact */
+/* Make model selector more compact and responsive */
 #model-selector .dropdown-trigger {
-    max-width: 180px; /* Limit width to prevent overflow */
+    max-width: 160px; /* Limit width to prevent overflow */
+    min-width: 80px;
+}
+
+#model-selector .dropdown-trigger span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100px;
+}
+
+/* Ensure toolbar buttons are always visible */
+.toolbar-right {
+    flex-shrink: 0; /* Prevent buttons from shrinking */
+}
+
+.toolbar-left {
+    flex: 1; /* Allow left side to take available space */
+    min-width: 0; /* Allow shrinking below content size */
+    overflow: hidden; /* Hide overflow */
 }
 
 #selected-model {
@@ -699,8 +733,8 @@ button svg,
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     padding: 0;
     background: transparent;
     border: 1px solid transparent;
@@ -718,9 +752,20 @@ button svg,
 
 .icon-btn svg {
     display: block;
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
     flex-shrink: 0;
+}
+
+/* Smaller icon buttons for compact layout */
+.toolbar-right .icon-btn {
+    width: 24px;
+    height: 24px;
+}
+
+.toolbar-right .icon-btn svg {
+    width: 13px;
+    height: 13px;
 }
 
 /* Dropdown trigger button */
@@ -742,13 +787,6 @@ button svg,
     background: rgba(255, 255, 255, 0.05);
     border-color: var(--border);
     color: var(--text-main);
-}
-
-.icon-btn svg {
-    display: block;
-    width: 16px;
-    height: 16px;
-    flex-shrink: 0;
 }
 
 .optional-btn {
@@ -1720,6 +1758,59 @@ body.loaded #loading-overlay {
    RESPONSIVE LAYOUT
    ================================================ */
 
+/* Large desktop screens (1200px+) - comfortable spacing */
+@media (min-width: 1200px) {
+    .action-btn-container {
+        width: 40px;
+        height: 36px;
+    }
+    
+    #model-selector .dropdown-trigger {
+        max-width: 200px;
+    }
+    
+    .input-toolbar {
+        gap: 12px;
+    }
+}
+
+/* Standard desktop (992px - 1199px) - balanced */
+@media (max-width: 1199px) and (min-width: 992px) {
+    .action-btn-container {
+        width: 36px;
+        height: 32px;
+    }
+    
+    #model-selector .dropdown-trigger {
+        max-width: 160px;
+    }
+    
+    .input-toolbar {
+        gap: 8px;
+    }
+}
+
+/* Small laptops / large tablets (768px - 991px) - compact */
+@media (max-width: 991px) and (min-width: 768px) {
+    .action-btn-container {
+        width: 32px;
+        height: 28px;
+    }
+    
+    #model-selector .dropdown-trigger {
+        max-width: 140px;
+        padding: 5px 8px;
+    }
+    
+    #model-selector .dropdown-trigger span {
+        max-width: 90px;
+    }
+    
+    .input-toolbar {
+        gap: 6px;
+    }
+}
+
 /* Tablet screens - keep single line but reduce spacing */
 @media (max-width: 768px) {
     .input-toolbar {
@@ -1732,7 +1823,21 @@ body.loaded #loading-overlay {
     }
     
     #model-selector .dropdown-trigger {
-        max-width: 140px; /* Smaller model selector */
+        max-width: 120px; /* Smaller model selector */
+        padding: 5px 8px;
+    }
+    
+    #model-selector .dropdown-trigger span {
+        max-width: 80px;
+    }
+    
+    .action-btn-container {
+        width: 32px;
+        height: 28px;
+    }
+    
+    .primary-btn, .stop-btn {
+        padding: 6px 10px;
     }
     
     #selected-model {
@@ -1778,5 +1883,15 @@ body.loaded #loading-overlay {
         max-width: 60px;
         overflow: hidden;
         text-overflow: ellipsis;
+    }
+    
+    .action-btn-container {
+        width: 28px;
+        height: 24px;
+    }
+    
+    #model-selector .dropdown-trigger {
+        max-width: 100px;
+        padding: 4px 6px;
     }
 }
