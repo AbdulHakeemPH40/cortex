@@ -4859,12 +4859,33 @@ document.addEventListener('DOMContentLoaded', function() {
     };
     
     window.setTheme = function (isDark) {
-        // Preserve the 'loaded' class when changing theme
-        var isLoaded = document.body.classList.contains('loaded');
-        document.body.className = isDark ? 'dark' : 'light';
-        if (isLoaded) {
-            document.body.classList.add('loaded');
+        // Support both boolean (from Python) and string (from localStorage)
+        var isDarkMode;
+        if (typeof isDark === 'boolean') {
+            isDarkMode = isDark;
+        } else if (typeof isDark === 'string') {
+            isDarkMode = (isDark !== 'light');
+        } else {
+            isDarkMode = true; // Default to dark
         }
+        
+        console.log('[THEME] Setting theme to:', isDarkMode ? 'dark' : 'light', '(input was:', isDark, ')');
+        
+        // Apply theme using classList (matches CSS .light-mode selector)
+        if (!isDarkMode) {
+            // Light mode
+            document.body.classList.add('light-mode');
+            document.body.classList.remove('dark');
+            localStorage.setItem('cortex_theme', 'light');
+        } else {
+            // Dark mode (default)
+            document.body.classList.remove('light-mode');
+            document.body.classList.add('dark');
+            localStorage.setItem('cortex_theme', 'dark');
+        }
+        
+        console.log('[THEME] Theme applied - body classes:', document.body.className);
+        return 'success';
     };
     window.focusInput = function () {
         var input = document.getElementById('chatInput');
@@ -5247,24 +5268,9 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // ============================================
-    // THEME TOGGLE FUNCTION
+    // THEME INITIALIZATION
     // ============================================
-    window.setTheme = function(theme) {
-        console.log('[THEME] Setting theme to:', theme);
-        
-        if (theme === 'light') {
-            document.body.classList.add('light-mode');
-            document.body.classList.remove('dark');
-            localStorage.setItem('cortex_theme', 'light');
-        } else {
-            // Default to dark
-            document.body.classList.remove('light-mode');
-            document.body.classList.add('dark');
-            localStorage.setItem('cortex_theme', 'dark');
-        }
-        
-        console.log('[THEME] Theme applied - body classes:', document.body.className);
-    };
+    // Note: setTheme is defined earlier in the file and supports both boolean and string
     
     // Load saved theme on startup
     (function loadSavedTheme() {
