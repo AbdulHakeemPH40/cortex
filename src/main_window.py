@@ -715,8 +715,18 @@ class CortexMainWindow(QMainWindow):
         self._show_welcome()
 
     def _show_welcome(self):
-        """Show a welcome screen in the editor tabs."""
+        """Show a VS Code-like welcome screen in the editor tabs."""
         from PyQt6.QtWidgets import QScrollArea
+        
+        # Remove existing welcome tab if present
+        for i in range(self._editor_tabs.count()):
+            tab_text = self._editor_tabs.tabText(i)
+            if tab_text == "Welcome":
+                widget = self._editor_tabs.widget(i)
+                self._editor_tabs.removeTab(i)
+                if widget:
+                    widget.deleteLater()
+                break
         
         self._welcome_scroll = QScrollArea()
         self._welcome_scroll.setWidgetResizable(True)
@@ -727,9 +737,10 @@ class CortexMainWindow(QMainWindow):
         welcome = self._welcome_widget
         wlay = QVBoxLayout(welcome)
         wlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        wlay.setSpacing(16)
-        wlay.setContentsMargins(30, 30, 30, 30)
+        wlay.setSpacing(20)
+        wlay.setContentsMargins(40, 40, 40, 40)
 
+        # Logo and Title
         self._welcome_title = QLabel("🧠 Cortex AI Agent")
         self._welcome_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._welcome_title.setObjectName("welcome_title")
@@ -753,27 +764,61 @@ class CortexMainWindow(QMainWindow):
         self._welcome_hints = []
         self._update_welcome_project_info()
 
+        # Quick Actions Section
+        quick_actions_label = QLabel("Quick Actions")
+        quick_actions_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        quick_actions_label.setObjectName("quick_actions_label")
+        wlay.addWidget(quick_actions_label)
+        
         hints = [
-            ("📂 Open Project", "File → Open Folder  or  Ctrl+O"),
+            ("📂 Open Folder", "File → Open Folder  or  Ctrl+O"),
             ("✨ New Project", "File → New Project"),
             ("📝 New File", "File → New File  or  Ctrl+N"),
-            ("🎨 Toggle Theme", "View → Toggle Theme  or  Ctrl+Shift+T"),
-            ("⚡ Terminal", "View → Toggle Terminal  or  Ctrl+`"),
-            ("🤖 AI Chat", "Type a question in the right panel"),
         ]
         for icon_title, shortcut in hints:
             row = ClickableLabel(f"<b>{icon_title}</b>   <span class='shortcut'>{shortcut}</span>")
-            row.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            row.setAlignment(Qt.AlignmentFlag.AlignLeft)
             row.setObjectName("welcome_hint")
             
             # Connect actions
             if icon_title == "✨ New Project":
                 row.clicked.connect(self._new_project)
-            elif icon_title == "📂 Open Project":
+            elif icon_title == "📂 Open Folder":
                 row.clicked.connect(self._open_folder_dialog)
             elif icon_title == "📝 New File":
                 row.clicked.connect(self._new_file)
-            elif icon_title == "🎨 Toggle Theme":
+                
+            wlay.addWidget(row)
+            self._welcome_hints.append(row)
+
+        # Recent Projects Section (placeholder for future)
+        recent_label = QLabel("Recent")
+        recent_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        recent_label.setObjectName("recent_label")
+        wlay.addWidget(recent_label)
+        
+        self._recent_projects_list = QLabel("No recent projects")
+        self._recent_projects_list.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self._recent_projects_list.setObjectName("recent_projects")
+        wlay.addWidget(self._recent_projects_list)
+
+        # Help & Tips Section
+        help_label = QLabel("Help & Tips")
+        help_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        help_label.setObjectName("help_label")
+        wlay.addWidget(help_label)
+        
+        help_hints = [
+            ("🎨 Toggle Theme", "View → Toggle Theme  or  Ctrl+Shift+T"),
+            ("⚡ Terminal", "View → Toggle Terminal  or  Ctrl+`"),
+            ("🤖 AI Chat", "Type a question in the right panel"),
+        ]
+        for icon_title, shortcut in help_hints:
+            row = ClickableLabel(f"<b>{icon_title}</b>   <span class='shortcut'>{shortcut}</span>")
+            row.setAlignment(Qt.AlignmentFlag.AlignLeft)
+            row.setObjectName("welcome_hint")
+            
+            if icon_title == "🎨 Toggle Theme":
                 row.clicked.connect(self._toggle_theme)
             elif icon_title == "⚡ Terminal":
                 row.clicked.connect(self._toggle_terminal)
@@ -820,10 +865,12 @@ class CortexMainWindow(QMainWindow):
                 font-size: {title_size}px;
                 font-weight: bold;
                 color: #007acc;
+                margin-bottom: 8px;
             }}
             QLabel#welcome_subtitle {{
                 font-size: {subtitle_size}px;
                 color: {subtitle_color};
+                margin-bottom: 12px;
             }}
             QFrame#welcome_sep {{
                 color: {sep_color};
@@ -832,16 +879,31 @@ class CortexMainWindow(QMainWindow):
             QLabel#welcome_project_info {{
                 font-size: {project_size}px;
                 color: {'#c678dd' if is_dark else '#9b30ff'};
-                margin: 8px 0;
+                margin: 8px 0 16px 0;
+            }}
+            QLabel#quick_actions_label,
+            QLabel#recent_label,
+            QLabel#help_label {{
+                font-size: {hint_size + 1}px;
+                font-weight: bold;
+                color: {fg};
+                margin-top: 16px;
+                margin-bottom: 8px;
             }}
             ClickableLabel#welcome_hint {{
                 font-size: {hint_size}px;
                 color: {hint_fg};
                 padding: 6px 12px;
+                border-radius: 4px;
             }}
             ClickableLabel#welcome_hint:hover {{
                 background-color: {'#3e3e42' if is_dark else '#e9ecef'};
-                border-radius: 4px;
+            }}
+            QLabel#recent_projects {{
+                font-size: {hint_size - 1}px;
+                color: {subtitle_color};
+                padding: 4px 12px;
+                font-style: italic;
             }}
         """
         
@@ -3802,9 +3864,37 @@ class CortexMainWindow(QMainWindow):
             )
 
     def _on_project_closed(self):
-        self._update_welcome_project_info()
+        """Handle project close - show welcome page and clean up."""
+        log.info("🚪 Project closed - showing welcome page")
+        
+        # Clear all state
+        self._current_project_path = None
         self.setWindowTitle("Cortex AI Agent")
         self._ai_chat.clear_project_info()
+        
+        # Close all editor tabs
+        if hasattr(self, '_editor_tabs'):
+            self._editor_tabs.close_all_tabs()
+        
+        # Clear file snapshots and caches
+        if hasattr(self, '_file_snapshots'):
+            self._file_snapshots.clear()
+        if hasattr(self, '_diff_data_store'):
+            self._diff_data_store.clear()
+        if hasattr(self, '_file_tracker') and hasattr(self._file_tracker, '_edits'):
+            self._file_tracker._edits.clear()
+        if hasattr(self, '_search_results'):
+            self._search_results.clear()
+        
+        # Clear AI agent context
+        self._ai_agent.clear_active_file()
+        self._codebase_index = None
+        
+        # Update welcome page
+        self._update_welcome_project_info()
+        
+        # Show welcome page if not already visible
+        self._show_welcome()
 
     def _update_welcome_project_info(self):
         if not hasattr(self, '_welcome_project_info') or self._welcome_project_info is None:
