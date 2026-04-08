@@ -7,8 +7,8 @@ env/
 ENV/
 
 # Logs
-*.log
-test_out.txt
+# *.log
+# test_out.txt
 
 # Test files
 test_*.py

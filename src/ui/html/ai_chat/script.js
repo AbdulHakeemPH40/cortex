@@ -400,16 +400,27 @@ function initMarked() {
 
                 var highlighted;
                 try {
-                    // For HTML, use highlightAuto to handle embedded languages (CSS, JS)
-                    if (lang === 'html') {
-                        highlighted = hljs.highlightAuto(code).value;
+                    // Use the improved highlighting with language normalization and embedded support
+                    if (window.highlightCodeWithEmbedded) {
+                        highlighted = window.highlightCodeWithEmbedded(code, lang);
                     } else {
-                        highlighted = hljs.highlight(code, { language: hljs.getLanguage(lang) ? lang : 'plaintext' }).value;
+                        // Fallback to basic highlighting
+                        var normalizedLang = window.getNormalizedLanguage ? window.getNormalizedLanguage(lang) : lang;
+                        if (hljs.getLanguage(normalizedLang)) {
+                            highlighted = hljs.highlight(code, { language: normalizedLang }).value;
+                        } else {
+                            highlighted = hljs.highlightAuto(code).value;
+                        }
                     }
                 } catch (e) {
                     highlighted = escapeHtml(code);
                 }
-                return '<pre data-lang="' + escapeHtml(lang) + '"><code class="hljs language-' + lang + '">' + highlighted + '</code></pre>';
+                
+                // Get display language name (original for display, normalized for hljs class)
+                var displayLang = lang;
+                var hljsLang = window.getNormalizedLanguage ? window.getNormalizedLanguage(lang) : lang;
+                
+                return '<pre data-lang="' + escapeHtml(displayLang) + '"><code class="hljs language-' + escapeHtml(hljsLang) + '">' + highlighted + '</code></pre>';
             },
 
             table: function(header, body) {
@@ -440,7 +451,56 @@ function initMarked() {
             },
 
             codespan: function(code) {
-                return '<code class="inline-code">' + (code || '') + '</code>';
+                code = code || '';
+                
+                // Try to detect language and highlight inline code if it looks like code
+                var highlighted = code;
+                try {
+                    // Check if inline code contains keywords that suggest a language
+                    var lang = null;
+                    
+                    // Python detection
+                    if (/\b(def|class|import|from|return|if|elif|else|for|while|try|except|with|lambda)\b/.test(code)) {
+                        lang = 'python';
+                    }
+                    // JavaScript/TypeScript detection
+                    else if (/\b(function|const|let|var|=>|async|await|class|interface|type)\b/.test(code)) {
+                        lang = code.includes(':') || code.includes('interface') ? 'typescript' : 'javascript';
+                    }
+                    // HTML detection
+                    else if (/&lt;[a-zA-Z][^&>]*&gt;/.test(code) || /<[a-zA-Z][^>]*>/.test(code)) {
+                        lang = 'html';
+                    }
+                    // CSS detection
+                    else if (/[.#][a-zA-Z_-]+\s*\{/.test(code) || /:\s*[^;]+;/.test(code)) {
+                        lang = 'css';
+                    }
+                    // Shell/Bash detection
+                    else if (/^(npm|yarn|pip|python|node|git|cd|ls|mkdir|rm|cp|mv|cat|echo)\s/.test(code)) {
+                        lang = 'bash';
+                    }
+                    // JSON detection
+                    else if (/^\{[\s\S]*\}$|^\[[\s\S]*\]$/.test(code) && /"[^"]+":/.test(code)) {
+                        lang = 'json';
+                    }
+                    // SQL detection
+                    else if (/\b(SELECT|INSERT|UPDATE|DELETE|CREATE|TABLE|WHERE|FROM|JOIN)\b/i.test(code)) {
+                        lang = 'sql';
+                    }
+                    
+                    // If language detected and it's substantial code (not just a word), highlight it
+                    if (lang && (code.includes(' ') || code.includes('\n') || code.includes('(') || code.includes('{'))) {
+                        var normalizedLang = window.getNormalizedLanguage ? window.getNormalizedLanguage(lang) : lang;
+                        if (hljs.getLanguage(normalizedLang)) {
+                            highlighted = hljs.highlight(code, { language: normalizedLang }).value;
+                        }
+                    }
+                } catch (e) {
+                    // Keep original code on error
+                    highlighted = code;
+                }
+                
+                return '<code class="inline-code' + (lang ? ' inline-code-' + lang : '') + '">' + highlighted + '</code>';
             },
 
             link: function(href, title, text) {
@@ -1777,6 +1837,39 @@ function appendMessage(text, sender, shouldSave) {
         content.innerHTML = parsedHtml || text || '';
 
         bubble.appendChild(content);
+        
+        // Apply syntax highlighting to code blocks in assistant messages
+        if (sender === 'assistant' && window.hljs) {
+            content.querySelectorAll('pre code').forEach(function(block) {
+                if (!block.dataset.highlighted) {
+                    var pre = block.parentElement;
+                    var dataLang = pre ? pre.getAttribute('data-lang') : '';
+                    var classMatch = block.className.match(/language-(\w+)/);
+                    var classLang = classMatch ? classMatch[1] : '';
+                    var lang = dataLang || classLang || 'plaintext';
+                    
+                    var normalizedLang = window.getNormalizedLanguage ? window.getNormalizedLanguage(lang) : lang;
+                    var code = block.textContent || block.innerText || '';
+                    
+                    try {
+                        var highlighted;
+                        if (window.highlightCodeWithEmbedded) {
+                            highlighted = window.highlightCodeWithEmbedded(code, lang);
+                        } else if (hljs.getLanguage(normalizedLang)) {
+                            highlighted = hljs.highlight(code, { language: normalizedLang }).value;
+                        } else {
+                            highlighted = hljs.highlightAuto(code).value;
+                        }
+                        if (highlighted && highlighted !== code) {
+                            block.innerHTML = highlighted;
+                        }
+                    } catch (e) {
+                        console.warn('[SYNTAX] Highlight error:', e.message);
+                    }
+                    block.dataset.highlighted = '1';
+                }
+            });
+        }
     }
 
     container.appendChild(bubble);
@@ -2898,6 +2991,12 @@ function showThinking() {
     var container = document.getElementById('chatMessages');
     if (!container) return;
 
+    // Show agent mode indicator with animated Think mode
+    if (window.showAgentMode && window.setAgentMode) {
+        window.showAgentMode();
+        window.setAgentMode('think');
+    }
+
     // Create assistant message bubble if not exists (activity lives INSIDE it)
     if (!currentAssistantMessage) {
         currentAssistantMessage = document.createElement('div');
@@ -2984,6 +3083,11 @@ function hideThinking() {
         item.className = 'activity-item';       // removes 'thinking' ? stops blink
         var dotsEl = item.querySelector('.thinking-dots');
         if (dotsEl) dotsEl.textContent = '.'; // freeze to static bullet
+    }
+    
+    // Hide agent mode indicator
+    if (window.hideAgentMode) {
+        window.hideAgentMode();
     }
 }
 
@@ -3476,7 +3580,46 @@ function updateStreamingUI() {
         if (window.hljs) {
             contentDiv.querySelectorAll('pre code').forEach(function(block) {
                 if (!block.dataset.highlighted) {
-                    hljs.highlightElement(block);
+                    // Get the language from data-lang attribute or class
+                    var pre = block.parentElement;
+                    var dataLang = pre ? pre.getAttribute('data-lang') : '';
+                    var classLang = '';
+                    
+                    // Extract language from class (hljs language-xxx)
+                    var classMatch = block.className.match(/language-(\w+)/);
+                    if (classMatch) {
+                        classLang = classMatch[1];
+                    }
+                    
+                    // Use data-lang priority, then class, then auto-detect
+                    var lang = dataLang || classLang || 'plaintext';
+                    
+                    // Normalize language name
+                    var normalizedLang = window.getNormalizedLanguage ? window.getNormalizedLanguage(lang) : lang;
+                    
+                    // Get raw code
+                    var code = block.textContent || block.innerText || '';
+                    
+                    try {
+                        var highlighted;
+                        
+                        // Use improved highlighting with embedded language support
+                        if (window.highlightCodeWithEmbedded) {
+                            highlighted = window.highlightCodeWithEmbedded(code, lang);
+                        } else if (hljs.getLanguage(normalizedLang)) {
+                            highlighted = hljs.highlight(code, { language: normalizedLang }).value;
+                        } else {
+                            highlighted = hljs.highlightAuto(code).value;
+                        }
+                        
+                        // Only update if we got highlighted content
+                        if (highlighted && highlighted !== code) {
+                            block.innerHTML = highlighted;
+                        }
+                    } catch (e) {
+                        console.warn('[SYNTAX] Highlight error for ' + lang + ':', e.message);
+                    }
+                    
                     block.dataset.highlighted = '1';
                 }
             });

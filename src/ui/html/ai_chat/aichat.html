@@ -6,6 +6,77 @@
     <meta name="description" content="Cortex AI Agent IDE Chat Interface">
     <title>Cortex AI Chat</title>
     
+    <!-- THEME CONTROLLER - Must be FIRST script to ensure setTheme is always available -->
+    <script>
+    // IMMEDIATE LOG - should appear even if IIFE fails
+    console.log('[THEME] === THEME CONTROLLER SCRIPT START ===');
+    
+    (function() {
+        'use strict';
+        
+        console.log('[THEME] IIFE executing...');
+        
+        // Initialize immediately
+        window._themeChangeQueue = [];
+        window._themeControllerReady = false;
+        
+        console.log('[THEME] Queue initialized, defining setTheme...');
+        
+        // Define setTheme immediately so Python can always call it
+        window.setTheme = function(isDark) {
+            console.log('[THEME] setTheme called with isDark:', isDark, typeof isDark);
+            
+            // Queue if body not ready
+            if (!document.body) {
+                console.log('[THEME] Body not ready, queuing theme change');
+                window._themeChangeQueue.push(isDark);
+                return;
+            }
+            
+            // Apply theme
+            const body = document.body;
+            if (isDark) {
+                body.classList.remove('light-mode');
+                console.log('[THEME] Switched to Dark Mode, body classes:', body.className);
+            } else {
+                body.classList.add('light-mode');
+                console.log('[THEME] Switched to Light Mode, body classes:', body.className);
+            }
+            
+            // Save preference
+            try {
+                localStorage.setItem('cortex_theme', isDark ? 'dark' : 'light');
+            } catch (e) {
+                console.warn('[THEME] Could not save theme:', e);
+            }
+            
+            // Return current theme state for verification
+            return body.classList.contains('light-mode') ? 'light' : 'dark';
+        };
+        
+        // Process queue after DOM ready
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('[THEME] DOM ready, processing theme queue');
+            while (window._themeChangeQueue.length > 0) {
+                var isDark = window._themeChangeQueue.shift();
+                window.setTheme(isDark);
+            }
+            window._themeControllerReady = true;
+            
+            // Apply saved theme
+            try {
+                var saved = localStorage.getItem('cortex_theme');
+                if (saved === 'light') {
+                    document.body.classList.add('light-mode');
+                    console.log('[THEME] Applied saved Light Mode');
+                }
+            } catch (e) {}
+        });
+        
+        console.log('[THEME] Theme controller initialized');
+    })();
+    </script>
+    
     <!-- External Libraries (Local for reliability) -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -78,24 +149,118 @@
       if (window.hljs) {
         hljs.configure({
           ignoreUnescapedHTML: true,
-          languages: ['python','javascript','typescript','bash','json','html','css','sql','cpp','java','rust','go']
+          languages: ['python','javascript','typescript','jsx','tsx','bash','json','html','xml','css','scss','sass','sql','cpp','c','java','rust','go','php','ruby','perl','lua','r','julia','matlab','swift','kotlin','scala','groovy','dart','elixir','erlang','haskell','clojure','lisp','scheme','fsharp','csharp','vbnet','powershell','cmd','batch','shell','nginx','apache','dockerfile','yaml','toml','ini','vim','lua','graphql','regex','markdown','md','django','jinja2','vue','angular','react','svelte','wasm','webassembly','diff','patch','http','graphql']
         });
+        
+        // Language alias mapping for framework files
+        window.HLJS_LANGUAGE_ALIASES = {
+          // JavaScript frameworks
+          'jsx': 'javascript', 'tsx': 'typescript', 'react': 'javascript',
+          'vue': 'javascript', 'angular': 'typescript', 'svelte': 'javascript',
+          // Python frameworks
+          'django': 'python', 'jinja2': 'python', 'jinja': 'python',
+          'flask': 'python', 'fastapi': 'python', 'tornado': 'python',
+          // Web templating
+          'erb': 'ruby', 'ejs': 'javascript', 'handlebars': 'javascript',
+          'hbs': 'javascript', 'mustache': 'javascript', 'pug': 'javascript',
+          'blade': 'php', 'twig': 'php', 'smarty': 'php',
+          // Config files
+          'yml': 'yaml', 'docker': 'dockerfile', 'dockerfile': 'dockerfile',
+          'nginx': 'nginx', 'apache': 'apache', 'httpd': 'apache',
+          'sh': 'bash', 'zsh': 'bash', 'fish': 'bash', 'ksh': 'bash',
+          'ps1': 'powershell', 'psm1': 'powershell', 'psd1': 'powershell',
+          'bat': 'cmd', 'batch': 'cmd', 'cmd': 'cmd',
+          // Markup
+          'htm': 'html', 'xhtml': 'html', 'svg': 'xml',
+          'md': 'markdown', 'mdx': 'markdown', 'markdown': 'markdown',
+          // Data
+          'json5': 'json', 'jsonc': 'json', 'geojson': 'json',
+          'yaml': 'yaml', 'yml': 'yaml',
+          // Styles
+          'scss': 'scss', 'sass': 'scss', 'less': 'less', 'stylus': 'stylus',
+          // C family
+          'h': 'c', 'hpp': 'cpp', 'cc': 'cpp', 'cxx': 'cpp', 'hxx': 'cpp',
+          // Other
+          'rs': 'rust', 'gql': 'graphql', 'graphql': 'graphql',
+          'wasm': 'wasm', 'wat': 'wasm', 'wast': 'wasm',
+          'pl': 'perl', 'pm': 'perl', 't': 'perl',
+          'rb': 'ruby', 'rbw': 'ruby', 'rake': 'ruby', 'gemspec': 'ruby',
+          'pyw': 'python', 'pyi': 'python', 'pyx': 'python',
+          'jsm': 'javascript', 'mjs': 'javascript', 'cjs': 'javascript',
+          'ts': 'typescript', 'mts': 'typescript', 'cts': 'typescript',
+          // More frameworks
+          'astro': 'javascript', 'solid': 'javascript', 'qwik': 'javascript',
+          'nuxt': 'javascript', 'next': 'javascript',
+          'express': 'javascript', 'koa': 'javascript', 'hapi': 'javascript',
+          'nestjs': 'typescript', 'loopback': 'typescript',
+          'spring': 'java', 'springboot': 'java',
+          'laravel': 'php', 'symfony': 'php', 'cakephp': 'php',
+          'rails': 'ruby', 'sinatra': 'ruby',
+          'dotnet': 'csharp', 'aspnet': 'csharp',
+          'qt': 'cpp', 'wx': 'cpp', 'gtk': 'c',
+          'electron': 'javascript', 'tauri': 'javascript',
+          'reactnative': 'javascript', 'flutter': 'dart',
+          'ionic': 'javascript', 'cordova': 'javascript',
+          'unity': 'csharp', 'unreal': 'cpp', 'godot': 'python',
+          'tensorflow': 'python', 'pytorch': 'python', 'keras': 'python',
+          'pandas': 'python', 'numpy': 'python', 'scipy': 'python',
+          'sklearn': 'python', 'matplotlib': 'python', 'seaborn': 'python',
+          'plotly': 'python', 'bokeh': 'python', 'dash': 'python'
+        };
       }
       
-      // Syntax highlighting with embedded language support for HTML
+      // Get normalized language name with alias support
+      window.getNormalizedLanguage = function(lang) {
+        if (!lang) return 'plaintext';
+        lang = lang.toLowerCase().trim();
+        
+        // Check if it's an alias
+        if (window.HLJS_LANGUAGE_ALIASES && window.HLJS_LANGUAGE_ALIASES[lang]) {
+          return window.HLJS_LANGUAGE_ALIASES[lang];
+        }
+        
+        // Check if hljs has this language
+        if (hljs.getLanguage(lang)) {
+          return lang;
+        }
+        
+        return 'plaintext';
+      };
+      
+      // Syntax highlighting with full embedded language support
       window.highlightCodeWithEmbedded = function(code, lang) {
-        // If explicitly HTML, try to detect and highlight embedded languages
-        if (lang === 'html' || lang === 'xml') {
-          // Check if code contains <style> or <script> tags
-          if (code.includes('<style') || code.includes('<script')) {
-            // Use highlight-auto to let hljs detect embedded languages
-            return hljs.highlightAuto(code).value;
+        if (!code) return '';
+        lang = (lang || 'text').toLowerCase();
+        
+        // Normalize language (handle aliases)
+        var normalizedLang = window.getNormalizedLanguage(lang);
+        
+        // For HTML, use highlightAuto which properly handles embedded CSS/JS
+        if (normalizedLang === 'html' || normalizedLang === 'xml') {
+          try {
+            return hljs.highlightAuto(code, ['html', 'css', 'javascript', 'typescript', 'json']).value;
+          } catch (e) {
+            return hljs.highlight(code, { language: 'xml' }).value;
           }
         }
         
-        // Normal highlight
+        // For template languages (Django, Jinja, Vue, etc), highlight as HTML then apply specific patterns
+        if (['django', 'jinja2', 'jinja', 'vue', 'angular', 'svelte', 'blade', 'twig', 'erb', 'ejs'].includes(normalizedLang)) {
+          try {
+            // Use auto detection with web languages priority
+            return hljs.highlightAuto(code, ['html', 'css', 'javascript', 'typescript', 'json', 'xml']).value;
+          } catch (e) {
+            return hljs.highlight(code, { language: 'xml' }).value;
+          }
+        }
+        
+        // Normal highlight with normalized language
         try {
-          return hljs.highlight(code, { language: hljs.getLanguage(lang) ? lang : 'plaintext' }).value;
+          if (hljs.getLanguage(normalizedLang)) {
+            return hljs.highlight(code, { language: normalizedLang }).value;
+          }
+          // Fallback to auto detection
+          return hljs.highlightAuto(code).value;
         } catch (e) {
           return code.replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }
@@ -127,6 +292,40 @@
       #chatMessages > .message-bubble {
           overflow: visible !important;
       }
+      
+      /* Inline code with syntax highlighting */
+      .inline-code {
+          background: #282a36;
+          color: #f8f8f2;
+          padding: 2px 6px;
+          border-radius: 3px;
+          font-family: 'Fira Code', 'Consolas', 'Monaco', monospace;
+          font-size: 0.9em;
+          border: 1px solid #44475a;
+      }
+      
+      .inline-code .hljs-keyword { color: #bd93f9; }      /* Purple */
+      .inline-code .hljs-string { color: #50fa7b; }        /* Green */
+      .inline-code .hljs-number { color: #bd93f9; }        /* Purple */
+      .inline-code .hljs-comment { color: #6272a4; }       /* Blue-gray */
+      .inline-code .hljs-function { color: #ffb86c; }      /* Orange */
+      .inline-code .hljs-tag { color: #ff79c6; }           /* Pink */
+      .inline-code .hljs-variable { color: #ff5555; }      /* Red */
+      .inline-code .hljs-class { color: #8be9fd; }         /* Cyan */
+      .inline-code .hljs-attr { color: #50fa7b; }          /* Green */
+      .inline-code .hljs-built_in { color: #8be9fd; }      /* Cyan */
+      .inline-code .hljs-literal { color: #bd93f9; }       /* Purple */
+      .inline-code .hljs-operator { color: #ff79c6; }       /* Pink */
+      
+      /* Language-specific inline code styling */
+      .inline-code-python { border-left: 2px solid #c678dd; }
+      .inline-code-javascript { border-left: 2px solid #d19a66; }
+      .inline-code-typescript { border-left: 2px solid #61afef; }
+      .inline-code-html { border-left: 2px solid #e06c75; }
+      .inline-code-css { border-left: 2px solid #61afef; }
+      .inline-code-bash { border-left: 2px solid #98c379; }
+      .inline-code-json { border-left: 2px solid #d19a66; }
+      .inline-code-sql { border-left: 2px solid #e5c07b; }
       
       /* Indexing status bar */
       .indexing-bar {
@@ -2519,7 +2718,7 @@
                   <span class="thinking-label">Cortex is working...</span>
                 </div>
                 
-                <!-- Agent Mode Indicator (Think/Read/Explore/Surf/Dive) - Dynamic -->
+                <!-- Agent Mode Indicator (Think/Read/Explore/Surf/Dive/Search/Grep/Find) - Dynamic -->
                 <div id="agent-mode-indicator" style="display:none;">
                     <div class="agent-mode-container">
                         <div class="mode-indicator" data-mode="think" title="Thinking">
@@ -2537,25 +2736,45 @@
                             </svg>
                             <span>Read</span>
                         </div>
-                        <div class="mode-indicator" data-mode="explore" title="Exploring">
+                        <div class="mode-indicator" data-mode="search" title="Searching">
                             <svg class="mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <circle cx="11" cy="11" r="8"></circle>
                                 <path d="m21 21-4.35-4.35"></path>
+                            </svg>
+                            <span>Search</span>
+                        </div>
+                        <div class="mode-indicator" data-mode="grep" title="Grepping">
+                            <svg class="mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                            </svg>
+                            <span>Grep</span>
+                        </div>
+                        <div class="mode-indicator" data-mode="find" title="Finding">
+                            <svg class="mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                                <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                            </svg>
+                            <span>Find</span>
+                        </div>
+                        <div class="mode-indicator" data-mode="explore" title="Exploring">
+                            <svg class="mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <path d="M2 12h20"></path>
                             </svg>
                             <span>Explore</span>
                         </div>
                         <div class="mode-indicator" data-mode="surf" title="Surfing">
                             <svg class="mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="2" y1="12" x2="22" y2="12"></line>
+                                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
                             </svg>
                             <span>Surf</span>
                         </div>
                         <div class="mode-indicator" data-mode="dive" title="Diving">
                             <svg class="mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M12 2v20"></path>
-                                <path d="M2 12h20"></path>
-                                <path d="m4.93 4.93 14.14 14.14"></path>
-                                <path d="m19.07 4.93-14.14 14.14"></path>
+                                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1-7.94-7.94l3.77 3.77a1 1 0 0 0 1.4 0l1.6-1.6a1 1 0 0 0 0-1.4l-5-5a1 1 0 0 0-1.4 0l-1.6 1.6a1 1 0 0 0 0 1.4l5 5z"></path>
                             </svg>
                             <span>Dive</span>
                         </div>
@@ -3021,7 +3240,7 @@
     (function() {
         'use strict';
         
-        const MODES = ['think', 'read', 'explore', 'surf', 'dive'];
+        const MODES = ['think', 'read', 'search', 'grep', 'find', 'explore', 'surf', 'dive'];
         let currentMode = null;
         let completedModes = [];
         
@@ -3130,6 +3349,21 @@
             window.setAgentMode('dive');
         };
         
+        window.triggerSearchMode = function() {
+            window.showAgentMode();
+            window.setAgentMode('search');
+        };
+        
+        window.triggerGrepMode = function() {
+            window.showAgentMode();
+            window.setAgentMode('grep');
+        };
+        
+        window.triggerFindMode = function() {
+            window.showAgentMode();
+            window.setAgentMode('find');
+        };
+        
         /**
          * Trigger mode based on agent activity type
          * @param {string} activityType - Activity type (thinking, reading, searching, writing, analyzing)
@@ -3141,7 +3375,9 @@
                 'reasoning': 'think',
                 'reading': 'read',
                 'file_read': 'read',
-                'searching': 'explore',
+                'searching': 'search',
+                'grep': 'grep',
+                'find': 'find',
                 'browsing': 'surf',
                 'writing': 'dive',
                 'editing': 'dive',

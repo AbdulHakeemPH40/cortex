@@ -2676,14 +2676,17 @@ class CortexMainWindow(QMainWindow):
         return w if isinstance(w, XTermWidget) else None
 
     def _toggle_theme(self):
+        log.info("[THEME] _toggle_theme called")
         new_theme = self._theme_manager.toggle(QApplication_instance())
         self._settings.theme = new_theme
         is_dark = self._theme_manager.is_dark
+        log.info(f"[THEME] Toggling to {'dark' if is_dark else 'light'} mode")
         self._theme_btn.setText("☀️" if not is_dark else "🌙")
         self._editor_tabs.update_theme(is_dark)
         if isinstance(self._terminal_tabs.tabBar(), CleanTabBar):
             self._terminal_tabs.tabBar().set_dark(is_dark)
-            
+        
+        log.info(f"[THEME] Calling _ai_chat.set_theme({is_dark})")
         self._ai_chat.set_theme(is_dark)
         self._sidebar.set_theme(is_dark)
         if hasattr(self, '_diff_window'):
@@ -3673,7 +3676,7 @@ class CortexMainWindow(QMainWindow):
             provider = "deepseek"  # Default to DeepSeek
         
         log.info(f"[MainWindow] Model changed to: {model_id} (provider: {provider})")
-        self._ai_agent.update_settings(provider, model_id)
+        self._ai_agent.update_settings(provider=provider, model_id=model_id)
 
     def _on_ai_stop_requested(self):
         """Handle stop request from AI (via web bridge)."""

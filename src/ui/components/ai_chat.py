@@ -806,6 +806,9 @@ class AIChatWidget(QWidget):
         
         # These settings ensure data persists across app restarts
         try:
+            # Clear any existing cache to ensure fresh HTML/JS loads
+            profile.clearHttpCache()
+            print("[WEBVIEW] HTTP cache cleared")
             # Set cache type to disk (not memory)
             profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.DiskHttpCache)
             print("[WEBVIEW] HTTP cache set to disk")
@@ -906,31 +909,57 @@ class AIChatWidget(QWidget):
 
         self._page.setWebChannel(self._channel)
         
-        # Load local HTML
-        html_path = os.path.join(os.path.dirname(__file__), "..", "html", "ai_chat", "aichat.html")
-        self._view.setUrl(QUrl.fromLocalFile(os.path.abspath(html_path)))
-
         # Apply initial theme once the page has finished loading
         self._view.loadFinished.connect(self._on_page_loaded)
         self._page_loaded = False
         self._pending_project_info = None
         layout.addWidget(self._view)
         
+        # DEFERRED LOAD: Wait for cache clearing to complete before loading page
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(500, self._delayed_load_page)
+        
     def run_javascript(self, script: str):
         """Execute JavaScript in the chat context."""
         if hasattr(self, '_view') and self._view.page():
             self._view.page().runJavaScript(script)
+    
+    def _delayed_load_page(self):
+        """Load the HTML page after cache clearing delay."""
+        print("[WEBVIEW] Loading page after cache clearing delay...")
+        
+        # Load local HTML with aggressive cache-busting
+        html_path = os.path.join(os.path.dirname(__file__), "..", "html", "ai_chat", "aichat.html")
+        abs_path = os.path.abspath(html_path)
+        
+        # Multiple cache busting techniques
+        import time
+        cache_buster = int(time.time())
+        url = QUrl.fromLocalFile(abs_path)
+        url.setQuery(f"v={cache_buster}&nocache=1")
+        
+        # Force reload by triggering cache clear again
+        profile = self._view.page().profile()
+        if hasattr(profile, 'clearHttpCache'):
+            profile.clearHttpCache()
+        
+        self._view.setUrl(url)
+        print(f"[WEBVIEW] URL set: {url.toString()}")
         
     def _on_page_loaded(self, ok):
         """Apply the current theme immediately after the page finishes loading."""
+        import logging as _log
         if ok:
             self._page_loaded = True
-            js_bool = 'true' if self._is_dark else 'false'
-            self._view.page().runJavaScript(f"if(window.setTheme) window.setTheme({js_bool});")
+            _log.info(f"[AI_CHAT] Page loaded successfully, applying theme (is_dark={self._is_dark})")
+            # Use set_theme with retry logic
+            self.set_theme(self._is_dark)
             # Apply pending project info after page load
             if self._pending_project_info:
                 name, path, chats_json = self._pending_project_info
                 self._apply_project_info(name, path, chats_json)
+        else:
+            _log.error("[AI_CHAT] Page load failed!")
 
     def on_chunk(self, chunk):
         """Handle AI streaming chunk - async to prevent UI blocking."""
@@ -1139,11 +1168,44 @@ class AIChatWidget(QWidget):
         """Used by main_window to provide editor code context."""
         self._get_code_context = callback
 
-    def set_theme(self, is_dark: bool):
+    def set_theme(self, is_dark: bool, retry_count: int = 0):
         """Update the UI theme. Matches MainWindow naming convention."""
+        import logging as _log
         self._is_dark = is_dark
         js_bool = 'true' if is_dark else 'false'
-        self._view.page().runJavaScript(f"if(window.setTheme) window.setTheme({js_bool});")
+        _log.info(f"[AI_CHAT] Setting theme to {'dark' if is_dark else 'light'} (attempt {retry_count + 1})")
+        
+        def on_js_result(result):
+            _log.info(f"[AI_CHAT] set_theme result: {result}")
+            if result is None and retry_count < 10:
+                _log.warning(f"[AI_CHAT] setTheme not found, retrying in 300ms... (attempt {retry_count + 1}/10)")
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(300, lambda: self.set_theme(is_dark, retry_count + 1))
+            elif result == 'success':
+                _log.info(f"[AI_CHAT] Theme set successfully to {'dark' if is_dark else 'light'}")
+            else:
+                _log.warning(f"[AI_CHAT] setTheme returned unexpected result: {result}, retrying...")
+                if retry_count < 10:
+                    from PyQt6.QtCore import QTimer
+                    QTimer.singleShot(300, lambda: self.set_theme(is_dark, retry_count + 1))
+        
+        js_code = f"""
+        (function() {{
+            try {{
+                if (typeof window.setTheme === 'function') {{
+                    window.setTheme({js_bool});
+                    return 'success';
+                }} else {{
+                    console.error('[PY_BRIDGE] setTheme not found on window!');
+                    return 'not_found';
+                }}
+            }} catch (e) {{
+                console.error('[PY_BRIDGE] setTheme error:', e.message);
+                return 'error: ' + e.message;
+            }}
+        }})()
+        """
+        self._view.page().runJavaScript(js_code, on_js_result)
 
     def update_theme(self, is_dark: bool):
         """Alias for set_theme."""
