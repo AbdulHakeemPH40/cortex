@@ -7,7 +7,7 @@ EXACT COLORS from ai_chat.html - No white text for unsupported languages
 import re
 
 # ==================== DRACULA COLOR PALETTE ====================
-# Exact same colors as ai_chat.html hljs-fallback-styles
+# Exact match: AI_Agentic_IDE_Guide.md §4.1 / §4.2
 DRACULA_COLORS = {
     # Background
     'bg': '#282a36',
@@ -18,18 +18,22 @@ DRACULA_COLORS = {
     'text': '#f8f8f2',
     'text_faded': '#6272a4',
     
-    # Syntax Elements (EXACT ai_chat.html colors)
-    'keyword': '#bd93f9',       # Purple - def, class, if, etc.
-    'string': '#50fa7b',        # Green - strings, text
-    'number': '#bd93f9',        # Purple - numbers, literals
-    'comment': '#6272a4',       # Blue-gray - comments
-    'function': '#ffb86c',      # Orange - function names
-    'tag': '#ff79c6',           # Pink - tags, attributes  
-    'variable': '#ff5555',      # Red - variables, deletion
-    'class': '#8be9fd',         # Cyan - class names
-    'const': '#f1fa8c',         # Yellow - constants
+    # Syntax Elements — Guide §4.1 Color Reference
+    'keyword': '#ff79c6',       # Pink - if, def, class, return (Guide: Keywords)
+    'string': '#f1fa8c',        # Yellow - strings (Guide: Strings)
+    'number': '#bd93f9',        # Purple - numbers, literals (Guide: Numbers)
+    'comment': '#6272a4',       # Blue-gray - comments (Guide: Comments)
+    'function': '#50fa7b',      # Green - function names (Guide: Functions)
+    'tag': '#ff79c6',           # Pink - tags (Guide: same as keyword)
+    'variable': '#f8f8f2',      # White - variables (Guide: variable=foreground)
+    'class': '#8be9fd',         # Cyan - class/type names (Guide: Types/Cyan)
+    'const': '#bd93f9',         # Purple - constants (Guide: constant)
     'import': '#ff79c6',        # Pink - imports, exports
     'builtin': '#8be9fd',       # Cyan - built-in functions
+    'operator': '#ff79c6',      # Pink - operators (Guide: Operators)
+    'decorator': '#ffb86c',     # Orange - decorators (Guide: Orange Accent)
+    'regex': '#ffb86c',         # Orange - regex (Guide: Orange Accent)
+    'delimiter': '#f8f8f2',     # White - delimiters (Guide: delimiter)
 }
 
 # ==================== 100+ PROGRAMMING LANGUAGES & FRAMEWORKS ====================
@@ -181,7 +185,8 @@ def generate_language_css(language):
     .language-{language} .hljs-comment {{ color: {DRACULA_COLORS['comment']}; }}
     .language-{language} .hljs-function {{ color: {DRACULA_COLORS['function']}; }}
     .language-{language} .hljs-title {{ color: {DRACULA_COLORS['function']}; }}
-    .language-{language} .hljs-attr {{ color: {DRACULA_COLORS['tag']}; }}
+    .language-{language} .hljs-attr {{ color: {DRACULA_COLORS['function']}; }}
+    .language-{language} .hljs-attribute {{ color: {DRACULA_COLORS['string']}; }}
     .language-{language} .hljs-tag {{ color: {DRACULA_COLORS['tag']}; }}
     """
     return css

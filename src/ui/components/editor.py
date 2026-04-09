@@ -85,56 +85,60 @@ class PygmentsSyntaxHighlighter(QSyntaxHighlighter):
     # Works perfectly with: Python, JS/TS, HTML, CSS, Java, C/C++, Rust, Go, SQL, etc.
     DARK_COLORS = {
         # ============================================
-        # DRACULA THEME - EXACT COLORS FROM syntax_highlighting_config.py
+        # DRACULA THEME - EXACT MATCH: AI_Agentic_IDE_Guide.md §4.1/§4.2
         # Background: #282a36, Foreground: #f8f8f2
-        # EVERY ELEMENT COLORED - NO WHITE TEXT ALLOWED
+        # Guide ref: keyword=#ff79c6, string=#f1fa8c, function=#50fa7b,
+        #            number=#bd93f9, type=#8be9fd, operator=#ff79c6,
+        #            comment=#6272a4, decorator=#ffb86c, regex=#ffb86c
         # ============================================
         
-        # Keywords - Dracula Purple (#bd93f9)
-        Token.Keyword:            ("#bd93f9", False, False),     # Purple - def, class, if, for, return
-        Token.Keyword.Constant:   ("#bd93f9", False, False),     # Purple - True, False, None
-        Token.Keyword.Declaration:("#bd93f9", False, False),     # Purple - declarations
-        Token.Keyword.Namespace:  ("#bd93f9", False, False),     # Purple - import, export, package
-        Token.Keyword.Reserved:   ("#bd93f9", False, False),     # Purple - reserved words
-        Token.Keyword.Type:       ("#bd93f9", False, False),     # Purple - int, void, string, bool
+        # Keywords - Dracula Pink (#ff79c6) — Guide §4.1
+        Token.Keyword:            ("#ff79c6", False, False),     # Pink - if, def, class, return
+        Token.Keyword.Constant:   ("#bd93f9", False, False),     # Purple - True, False, None (constants)
+        Token.Keyword.Declaration:("#ff79c6", False, False),     # Pink - var, let, const declarations
+        Token.Keyword.Namespace:  ("#ff79c6", False, False),     # Pink - import, export, package
+        Token.Keyword.Reserved:   ("#ff79c6", False, False),     # Pink - reserved words
+        Token.Keyword.Type:       ("#8be9fd", False, False),     # Cyan - int, void, string, bool (types)
         
-        # Variables & Names - Dracula Colors (NO WHITE)
-        Token.Name:               ("#f1fa8c", False, False),     # Yellow - variables (NOT white)
+        # Variables & Names
+        Token.Name:               ("#f8f8f2", False, False),     # White - default variable names
         Token.Name.Builtin:       ("#8be9fd", False, False),     # Cyan - built-ins (len, print, console)
-        Token.Name.Builtin.Pseudo:("#ff5555", False, False),     # Red - self, this, super
-        Token.Name.Class:         ("#8be9fd", False, False),     # Cyan - class names
-        Token.Name.Decorator:     ("#ffb86c", False, False),     # Orange - @decorators
-        Token.Name.Entity:        ("#ffb86c", False, False),     # Orange - entities
+        Token.Name.Builtin.Pseudo:("#bd93f9", False, False),     # Purple - self, this, super
+        Token.Name.Class:         ("#8be9fd", True, False),      # Cyan BOLD - class names (Guide: bold)
+        Token.Name.Decorator:     ("#ffb86c", False, True),      # Orange ITALIC - @decorators (Guide §4.2)
+        Token.Name.Entity:        ("#ffb86c", False, False),     # Orange - HTML entities
         Token.Name.Exception:     ("#ff5555", False, False),     # Red - exceptions
-        Token.Name.Function:      ("#ffb86c", False, False),     # Orange - function definitions/calls
-        Token.Name.Function.Magic:("#ffb86c", False, False),     # Orange - __magic__ methods
-        Token.Name.Label:         ("#bd93f9", False, False),     # Purple - labels
+        Token.Name.Function:      ("#50fa7b", False, False),     # Green - function names (Guide §4.1)
+        Token.Name.Function.Magic:("#50fa7b", False, False),     # Green - __magic__ methods
+        Token.Name.Label:         ("#8be9fd", False, False),     # Cyan - labels
         Token.Name.Namespace:     ("#8be9fd", False, False),     # Cyan - namespaces
-        Token.Name.Tag:           ("#ff79c6", False, False),     # Pink - HTML/XML tags
-        Token.Name.Variable:      ("#ff5555", False, False),     # Red - variable names
-        Token.Name.Variable.Class:("#f1fa8c", False, False),     # Yellow - class vars (NOT white)
-        Token.Name.Variable.Global:("#f1fa8c", False, False),    # Yellow - global vars (NOT white)
-        Token.Name.Variable.Instance:("#f1fa8c", False, False),  # Yellow - instance vars (NOT white)
-        Token.Name.Constant:      ("#f1fa8c", False, False),     # Yellow - constants
-        Token.Name.Attribute:     ("#50fa7b", False, False),     # Green - attributes/properties
+        Token.Name.Other:         ("#8be9fd", False, False),     # Cyan - JS/CSS identifiers in embedded code (console, document, window, etc.)
+        Token.Name.Property:      ("#50fa7b", False, False),     # Green - object property access
+        Token.Name.Tag:           ("#ff79c6", False, False),     # Pink - HTML/XML tags (Guide §4.2)
+        Token.Name.Variable:      ("#f8f8f2", False, False),     # White - variable names (Guide §4.2)
+        Token.Name.Variable.Class:("#f8f8f2", False, False),     # White - class vars
+        Token.Name.Variable.Global:("#f8f8f2", False, False),    # White - global vars
+        Token.Name.Variable.Instance:("#f8f8f2", False, False),  # White - instance vars
+        Token.Name.Constant:      ("#bd93f9", False, False),     # Purple - constants (Guide: constant)
+        Token.Name.Attribute:     ("#50fa7b", False, False),     # Green - attribute.name (Guide §4.2)
         
-        # Strings - Dracula Green (#50fa7b)
-        Token.String:             ("#50fa7b", False, False),     # Green - all strings
-        Token.String.Affix:       ("#50fa7b", False, False),     # Green - f"", r"", b"" prefixes
-        Token.String.Backtick:    ("#50fa7b", False, False),     # Green - `template literals`
-        Token.String.Char:        ("#50fa7b", False, False),     # Green - char literals
-        Token.String.Delimiter:   ("#50fa7b", False, False),     # Green - quote marks
+        # Strings - Dracula Yellow (#f1fa8c) — Guide §4.1
+        Token.String:             ("#f1fa8c", False, False),     # Yellow - all strings
+        Token.String.Affix:       ("#ff79c6", False, False),     # Pink - f"", r"", b"" prefixes
+        Token.String.Backtick:    ("#f1fa8c", False, False),     # Yellow - `template literals`
+        Token.String.Char:        ("#f1fa8c", False, False),     # Yellow - char literals
+        Token.String.Delimiter:   ("#f1fa8c", False, False),     # Yellow - quote marks
         Token.String.Doc:         ("#6272a4", False, True),      # Blue-gray ITALIC - docstrings
-        Token.String.Double:      ("#50fa7b", False, False),     # Green - "double quoted"
-        Token.String.Escape:      ("#f1fa8c", False, False),     # Yellow - \n, \t, \\
-        Token.String.Heredoc:     ("#50fa7b", False, False),     # Green - heredocs
-        Token.String.Interpol:    ("#50fa7b", False, False),     # Green - ${expr} interpolations
-        Token.String.Other:       ("#50fa7b", False, False),     # Green - other strings
-        Token.String.Regex:       ("#ff5555", False, False),     # Red - /regex/ patterns
-        Token.String.Single:      ("#50fa7b", False, False),     # Green - 'single quoted'
+        Token.String.Double:      ("#f1fa8c", False, False),     # Yellow - "double quoted"
+        Token.String.Escape:      ("#ffb86c", False, False),     # Orange - \n, \t, \\ (escape sequences)
+        Token.String.Heredoc:     ("#f1fa8c", False, False),     # Yellow - heredocs
+        Token.String.Interpol:    ("#f1fa8c", False, False),     # Yellow - ${expr} interpolations
+        Token.String.Other:       ("#f1fa8c", False, False),     # Yellow - other strings
+        Token.String.Regex:       ("#ffb86c", False, False),     # Orange - /regex/ (Guide §4.1: orange accent)
+        Token.String.Single:      ("#f1fa8c", False, False),     # Yellow - 'single quoted'
         Token.String.Symbol:      ("#bd93f9", False, False),     # Purple - symbols
         
-        # Numbers - Dracula Purple (#bd93f9)
+        # Numbers - Dracula Purple (#bd93f9) — Guide §4.1
         Token.Number:             ("#bd93f9", False, False),     # Purple - all numbers
         Token.Number.Bin:         ("#bd93f9", False, False),     # Purple - 0b1010
         Token.Number.Float:       ("#bd93f9", False, False),     # Purple - 3.14
@@ -143,15 +147,15 @@ class PygmentsSyntaxHighlighter(QSyntaxHighlighter):
         Token.Number.Integer.Long:("#bd93f9", False, False),     # Purple - long ints
         Token.Number.Oct:         ("#bd93f9", False, False),     # Purple - 0o777
         
-        # Operators - Dracula Purple (#bd93f9) - NOT WHITE
-        Token.Operator:           ("#bd93f9", False, False),     # Purple - + - * / % operators
-        Token.Operator.Word:      ("#bd93f9", False, False),     # Purple - and, or, not
+        # Operators - Dracula Pink (#ff79c6) — Guide §4.1
+        Token.Operator:           ("#ff79c6", False, False),     # Pink - =, +, -, == operators
+        Token.Operator.Word:      ("#ff79c6", False, False),     # Pink - and, or, not
         
-        # Punctuation - Dracula Cyan (#8be9fd) - NOT WHITE
-        Token.Punctuation:        ("#8be9fd", False, False),     # Cyan - brackets [], parens (), braces {}
-        Token.Punctuation.Marker: ("#8be9fd", False, False),     # Cyan - semicolons, commas
+        # Punctuation / Delimiters - Dracula White (#f8f8f2) — Guide §4.2: delimiter
+        Token.Punctuation:        ("#f8f8f2", False, False),     # White - brackets, parens, braces
+        Token.Punctuation.Marker: ("#f8f8f2", False, False),     # White - semicolons, commas
         
-        # Comments - Dracula Blue-gray (#6272a4)
+        # Comments - Dracula Blue-gray (#6272a4) ITALIC — Guide §4.1
         Token.Comment:            ("#6272a4", False, True),      # Blue-gray ITALIC - comments
         Token.Comment.Hashbang:   ("#6272a4", False, True),      # Blue-gray ITALIC - shebang
         Token.Comment.Multiline:  ("#6272a4", False, True),      # Blue-gray ITALIC - /* */
@@ -160,102 +164,139 @@ class PygmentsSyntaxHighlighter(QSyntaxHighlighter):
         Token.Comment.Single:     ("#6272a4", False, True),      # Blue-gray ITALIC - // or #
         Token.Comment.Special:    ("#6272a4", False, True),      # Blue-gray ITALIC - special
         
-        # Errors - Dracula Red (#ff5555)
+        # Errors / Invalid - Dracula Red (#ff5555) — Guide §4.2: invalid
         Token.Error:              ("#ff5555", False, False),     # Red - syntax errors
         
-        # Types/Classes - Dracula Cyan (#8be9fd)
+        # Types/Classes - Dracula Cyan (#8be9fd) — Guide §4.1
         Token.Type:               ("#8be9fd", False, False),     # Cyan - type names
         
-        # Functions - Dracula Orange (#ffb86c)
-        Token.Name.Function:      ("#ffb86c", False, False),     # Orange - function definitions
-        Token.Name.Function.Magic:("#ffb86c", False, False),     # Orange - magic methods
-        
-        # Markup - For HTML/XML/Markdown - ALL COLORED
-        Token.Generic:            ("#f1fa8c", False, False),     # Yellow - generic markup (NOT white)
+        # Markup - For HTML/XML/Markdown
+        Token.Generic:            ("#f8f8f2", False, False),     # White - generic markup
         Token.Generic.Deleted:    ("#ff5555", False, False),     # Red - deleted text
-        Token.Generic.Emph:       ("#50fa7b", False, True),      # Green ITALIC - emphasis
+        Token.Generic.Emph:       ("#f1fa8c", False, True),      # Yellow ITALIC - emphasis
         Token.Generic.Error:      ("#ff5555", False, False),     # Red - errors
-        Token.Generic.Heading:    ("#8be9fd", False, False),     # Cyan - headings
+        Token.Generic.Heading:    ("#bd93f9", True, False),      # Purple BOLD - headings
         Token.Generic.Inserted:   ("#50fa7b", False, False),     # Green - inserted text
         Token.Generic.Output:     ("#6272a4", False, False),     # Blue-gray - program output
-        Token.Generic.Prompt:     ("#bd93f9", False, False),     # Purple - shell prompt
-        Token.Generic.Strong:     ("#f1fa8c", False, True),      # Yellow BOLD - strong (NOT white)
+        Token.Generic.Prompt:     ("#50fa7b", False, False),     # Green - shell prompt
+        Token.Generic.Strong:     ("#ffb86c", True, False),      # Orange BOLD - strong
         Token.Generic.Subheading: ("#bd93f9", False, False),     # Purple - subheadings
         Token.Generic.Traceback:  ("#ff5555", False, False),     # Red - tracebacks
         
         # Literals
         Token.Literal:            ("#bd93f9", False, False),     # Purple - literal values
         Token.Literal.Date:       ("#8be9fd", False, True),      # Cyan ITALIC - dates
-        Token.Literal.Number:     ("#bd93f9", False, False),     # Purple - numbers
-        Token.Literal.String:     ("#50fa7b", False, False),     # Green - strings
+        Token.Literal.Number:     ("#bd93f9", False, False),     # Purple - numbers (embedded JS/CSS)
+        Token.Literal.Number.Bin: ("#bd93f9", False, False),     # Purple - 0b1010
+        Token.Literal.Number.Float:("#bd93f9", False, False),    # Purple - 3.14 (embedded JS)
+        Token.Literal.Number.Hex: ("#bd93f9", False, False),     # Purple - #282a36 (CSS hex colors)
+        Token.Literal.Number.Integer:("#bd93f9", False, False),  # Purple - 14 (CSS values)
+        Token.Literal.Number.Integer.Long:("#bd93f9", False, False), # Purple - long ints
+        Token.Literal.Number.Oct: ("#bd93f9", False, False),     # Purple - 0o777
+        Token.Literal.String:     ("#f1fa8c", False, False),     # Yellow - strings (embedded JS)
+        Token.Literal.String.Affix:("#ff79c6", False, False),    # Pink - string prefixes
+        Token.Literal.String.Backtick:("#f1fa8c", False, False), # Yellow - template literals
+        Token.Literal.String.Char:("#f1fa8c", False, False),     # Yellow - char literals
+        Token.Literal.String.Delimiter:("#f1fa8c", False, False),# Yellow - quote marks
+        Token.Literal.String.Doc: ("#6272a4", False, True),      # Blue-gray ITALIC - docstrings
+        Token.Literal.String.Double:("#f1fa8c", False, False),   # Yellow - "double"
+        Token.Literal.String.Escape:("#ffb86c", False, False),   # Orange - escape chars
+        Token.Literal.String.Heredoc:("#f1fa8c", False, False),  # Yellow - heredocs
+        Token.Literal.String.Interpol:("#f1fa8c", False, False), # Yellow - interpolation
+        Token.Literal.String.Other:("#f1fa8c", False, False),    # Yellow - other strings
+        Token.Literal.String.Regex:("#ffb86c", False, False),    # Orange - regex
+        Token.Literal.String.Single:("#f1fa8c", False, False),   # Yellow - 'single'
+        Token.Literal.String.Symbol:("#bd93f9", False, False),   # Purple - symbols
         
-        # Text - Yellow (NOT WHITE)
-        Token.Text:               ("#f1fa8c", False, False),     # Yellow - plain text (NOT white)
-        Token.Text.Whitespace:    ("#6272a4", False, False),     # Blue-gray - whitespace (NOT white)
+        # Text
+        Token.Text:               ("#f8f8f2", False, False),     # White - plain text (foreground)
+        Token.Text.Whitespace:    ("#44475a", False, False),     # Selection bg - whitespace markers
         
-        # HTML SPECIFIC - Dracula Colors
-        Token.Name.Doctype:       ("#bd93f9", False, False),     # Purple - <!DOCTYPE html>
-        Token.Name.Entity:        ("#bd93f9", False, False),     # Purple - &nbsp; &amp;
-        
-        # CSS INSIDE <style> - Dracula Colors (Embedded CSS)
-        Token.Name.Builtin:       ("#f1fa8c", False, False),     # Yellow - CSS properties
-        Token.Name.Class:         ("#ffb86c", False, False),     # Orange - .class selectors
-        Token.Name.Constant:      ("#bd93f9", False, False),     # Purple - #id selectors
-        Token.Name.Decorator:     ("#ffb86c", False, False),     # Orange - :pseudo-classes
-        Token.Name.Function:      ("#ffb86c", False, False),     # Orange - calc(), var()
-        Token.String:             ("#50fa7b", False, False),     # Green - CSS strings
-        Token.String.Other:       ("#50fa7b", False, False),     # Green - url() strings
-        Token.Number:             ("#bd93f9", False, False),     # Purple - CSS numbers
-        Token.Number.Integer:     ("#bd93f9", False, False),     # Purple - CSS integers
-        Token.Number.Float:       ("#bd93f9", False, False),     # Purple - CSS floats
-        Token.Operator:           ("#bd93f9", False, False),     # Purple - CSS operators
-        Token.Punctuation:        ("#8be9fd", False, False),     # Cyan - CSS punctuation
-        
-        # JAVASCRIPT INSIDE <script> - Dracula Colors (Embedded JS)
-        Token.Name.Builtin:       ("#8be9fd", False, False),     # Cyan - console, window, document
-        Token.Name.Function:      ("#ffb86c", False, False),     # Orange - function calls
-        Token.Name.Variable:      ("#ff5555", False, False),     # Red - variables
-        Token.String:             ("#50fa7b", False, False),     # Green - JS strings
-        Token.String.Regex:       ("#ff5555", False, False),     # Red - /regex/
-        Token.Number:             ("#bd93f9", False, False),     # Purple - JS numbers
-        Token.Number.Integer:     ("#bd93f9", False, False),     # Purple - JS integers
-        Token.Number.Float:       ("#bd93f9", False, False),     # Purple - JS floats
-        Token.Operator:           ("#bd93f9", False, False),     # Purple - JS operators
-        Token.Punctuation:        ("#8be9fd", False, False),     # Cyan - JS punctuation
-        Token.Keyword:            ("#bd93f9", False, False),     # Purple - var, let, const, function
-        Token.Keyword.Declaration:("#bd93f9", False, False),     # Purple - var, let, const
-        Token.Keyword.Reserved:   ("#bd93f9", False, False),     # Purple - reserved words
-        
-        # Additional embedded language support
-        Token.Name.Exception:     ("#ff5555", False, False),     # Red - Error objects (JS)
-        Token.Name.Label:         ("#bd93f9", False, False),     # Purple - statement labels
-        Token.Literal.String.Other: ("#50fa7b", False, False),   # Green - other strings
-        Token.Comment:            ("#6272a4", False, True),      # Blue-gray Italic - comments
-        Token.Comment.Single:     ("#6272a4", False, True),      # Blue-gray Italic - single line
-        Token.Comment.Multiline:  ("#6272a4", False, True),      # Blue-gray Italic - multi-line
-        
-        # FALLBACK MAPPINGS - Catch-all for any unmapped tokens - ALL COLORED
-        Token.Name.Attribute:     ("#50fa7b", False, False),     # Green - attributes/properties
-        Token.Name.Namespace:     ("#8be9fd", False, False),     # Cyan - namespaces
-        Token.Name.Entity:        ("#ffb86c", False, False),     # Orange - entities
-        Token.Operator.Word:      ("#bd93f9", False, False),     # Purple - word operators (and, or)
-        Token.Punctuation.Marker: ("#8be9fd", False, False),     # Cyan - punctuation markers
+        # HTML / XML specific
+        Token.Name.Doctype:       ("#ff79c6", False, False),     # Pink - <!DOCTYPE html> (metatag)
     }
     
-    # Light theme (VS Code Light+)
+    # Light theme (VS Code Light+) — Full coverage for all token types
     LIGHT_COLORS = {
+        # Keywords
         Token.Keyword:            ("#0000FF", False, False),     # Blue - keywords
-        Token.Keyword.Type:       ("#0000FF", False, False),     # Blue - types
+        Token.Keyword.Constant:   ("#0000FF", False, False),     # Blue - True, False, None
+        Token.Keyword.Declaration:("#0000FF", False, False),     # Blue - var, let, const
+        Token.Keyword.Namespace:  ("#0000FF", False, False),     # Blue - import, export
+        Token.Keyword.Reserved:   ("#0000FF", False, False),     # Blue - reserved words
+        Token.Keyword.Type:       ("#267F99", False, False),     # Teal - int, void, string
+        
+        # Names
         Token.Name:               ("#001080", False, False),     # Dark Blue - names
+        Token.Name.Builtin:       ("#267F99", False, False),     # Teal - built-ins
+        Token.Name.Builtin.Pseudo:("#0000FF", False, False),     # Blue - self, this
+        Token.Name.Class:         ("#267F99", True, False),      # Teal BOLD - classes
+        Token.Name.Decorator:     ("#795E26", False, True),      # Brown ITALIC - decorators
+        Token.Name.Entity:        ("#795E26", False, False),     # Brown - entities
+        Token.Name.Exception:     ("#A31515", False, False),     # Red - exceptions
         Token.Name.Function:      ("#795E26", False, False),     # Brown - functions
-        Token.Name.Class:         ("#267F99", False, False),     # Teal - classes
-        Token.Name.Tag:           ("#800000", False, False),     # Maroon - tags
+        Token.Name.Function.Magic:("#795E26", False, False),     # Brown - __magic__
+        Token.Name.Label:         ("#001080", False, False),     # Dark Blue - labels
+        Token.Name.Namespace:     ("#267F99", False, False),     # Teal - namespaces
+        Token.Name.Other:         ("#267F99", False, False),     # Teal - JS/CSS identifiers in embedded code
+        Token.Name.Property:      ("#795E26", False, False),     # Brown - object property access
+        Token.Name.Tag:           ("#800000", False, False),     # Maroon - HTML/XML tags
+        Token.Name.Variable:      ("#001080", False, False),     # Dark Blue - variables
+        Token.Name.Constant:      ("#0000FF", False, False),     # Blue - constants
+        Token.Name.Attribute:     ("#FF0000", False, False),     # Red - attribute.name
+        Token.Name.Doctype:       ("#800000", False, False),     # Maroon - DOCTYPE
+        
+        # Strings
         Token.String:             ("#A31515", False, False),     # Red - strings
+        Token.String.Affix:       ("#0000FF", False, False),     # Blue - f"", r""
+        Token.String.Doc:         ("#008000", False, True),      # Green ITALIC - docstrings
+        Token.String.Escape:      ("#EE0000", False, False),     # Bright Red - escape chars
+        Token.String.Regex:       ("#811F3F", False, False),     # Dark Red - regex
+        Token.String.Interpol:    ("#001080", False, False),     # Dark Blue - interpolation
+        
+        # Numbers
         Token.Number:             ("#098658", False, False),     # Green - numbers
-        Token.Comment:            ("#008000", False, True),      # Green ITALIC - comments
+        
+        # Operators & Punctuation
         Token.Operator:           ("#000000", False, False),     # Black - operators
+        Token.Operator.Word:      ("#0000FF", False, False),     # Blue - and, or, not
         Token.Punctuation:        ("#000000", False, False),     # Black - punctuation
+        
+        # Comments
+        Token.Comment:            ("#008000", False, True),      # Green ITALIC - comments
+        Token.Comment.Preproc:    ("#808080", False, False),     # Gray - preprocessor
+        
+        # Errors
         Token.Error:              ("#FF0000", False, False),     # Red - errors
+        
+        # Types
+        Token.Type:               ("#267F99", False, False),     # Teal - type names
+        
+        # Markup / Markdown
+        Token.Generic:            ("#000000", False, False),     # Black - generic
+        Token.Generic.Deleted:    ("#A31515", False, False),     # Red - deleted
+        Token.Generic.Emph:       ("#000000", False, True),      # Black ITALIC - emphasis
+        Token.Generic.Error:      ("#FF0000", False, False),     # Red - errors
+        Token.Generic.Heading:    ("#0000FF", True, False),      # Blue BOLD - headings
+        Token.Generic.Inserted:   ("#098658", False, False),     # Green - inserted
+        Token.Generic.Output:     ("#808080", False, False),     # Gray - output
+        Token.Generic.Prompt:     ("#098658", False, False),     # Green - prompt
+        Token.Generic.Strong:     ("#000000", True, False),      # Black BOLD - strong
+        Token.Generic.Subheading: ("#267F99", True, False),      # Teal BOLD - subheadings
+        Token.Generic.Traceback:  ("#FF0000", False, False),     # Red - tracebacks
+        
+        # Literals & Text
+        Token.Literal:            ("#098658", False, False),     # Green - literals
+        Token.Literal.Number:     ("#098658", False, False),     # Green - numbers (embedded JS/CSS)
+        Token.Literal.Number.Float:("#098658", False, False),    # Green - 3.14
+        Token.Literal.Number.Hex: ("#098658", False, False),     # Green - hex colors
+        Token.Literal.Number.Integer:("#098658", False, False),  # Green - integers
+        Token.Literal.String:     ("#A31515", False, False),     # Red - string literals
+        Token.Literal.String.Double:("#A31515", False, False),   # Red - "double"
+        Token.Literal.String.Single:("#A31515", False, False),   # Red - 'single'
+        Token.Literal.String.Backtick:("#A31515", False, False), # Red - `template`
+        Token.Literal.String.Escape:("#EE0000", False, False),   # Bright Red - escape chars
+        Token.Text:               ("#000000", False, False),     # Black - plain text
     }
     
     def __init__(self, document, language: str = "python", is_dark: bool = True):
@@ -289,16 +330,19 @@ class PygmentsSyntaxHighlighter(QSyntaxHighlighter):
                 from pygments.lexers.javascript import JavascriptLexer
                 return JavascriptLexer()
             elif language.lower() in ("typescript", "ts"):
-                from pygments.lexers.javascript import TypescriptLexer
-                return TypescriptLexer()
+                from pygments.lexers.javascript import TypeScriptLexer
+                return TypeScriptLexer()
             elif language.lower() == "css":
                 from pygments.lexers.css import CssLexer
                 return CssLexer()
             elif language.lower() == "json":
                 from pygments.lexers.data import JsonLexer
                 return JsonLexer()
+            elif language.lower() == "markdown":
+                from pygments.lexers.markup import MarkdownLexer
+                return MarkdownLexer()
             
-            # Fallback to generic lookup
+            # Fallback to generic lookup (handles all other languages: Java, C++, Go, Rust, etc.)
             return get_lexer_by_name(language, stripall=False)
         except Exception:
             return TextLexer()
@@ -349,27 +393,39 @@ class PygmentsSyntaxHighlighter(QSyntaxHighlighter):
         self.rehighlight()
 
     def highlightBlock(self, text: str):
+        # Get previous state FIRST (before any early returns)
+        prev_state = self.previousBlockState()
+        
         if not text:
-            self.setCurrentBlockState(0)
+            # Preserve state through empty lines inside <script>/<style> blocks
+            self.setCurrentBlockState(prev_state if prev_state in (0, 1, 2) else 0)
             return
             
         # Performance safety: skip highlighting for extremely long lines (e.g. minified JS)
         if len(text) > 5000:
+            # Preserve state even for long lines
+            self.setCurrentBlockState(prev_state if prev_state in (0, 1, 2) else 0)
             return
-            
-        combined = self.previousBlockState()
         
-        # Performance optimization: cache lexer results
         try:
-            tokens = list(lex(text, self._lexer))
-        except Exception as e:
-            # Fallback to plain text if lexing fails
+            # For HTML/Vue/JSX with embedded content, use stateful lexing (returns 3-tuples)
+            if self._language.lower() in ('html', 'vue', 'jsx', 'tsx'):
+                tokens = self._lex_html_with_state(text, prev_state)
+                next_state = tokens[-1][2] if tokens else 0
+            else:
+                # Non-HTML: plain 2-tuple tokens, no state needed
+                raw_tokens = list(lex(text, self._lexer))
+                tokens = [(t[0], t[1]) for t in raw_tokens]
+                next_state = 0
+        except Exception:
+            self.setCurrentBlockState(0)
             return
         
         pos = 0
-        tokens_applied = 0
         
-        for token_type, value in tokens:
+        for token_entry in tokens:
+            token_type = token_entry[0]
+            value = token_entry[1]
             length = len(value)
             
             # Fast path: direct lookup first
@@ -384,10 +440,66 @@ class PygmentsSyntaxHighlighter(QSyntaxHighlighter):
             
             if fmt:
                 self.setFormat(pos, length, fmt)
-                tokens_applied += 1
             pos += length
         
-        self.setCurrentBlockState(0)
+        # Store state for next line (1 = inside script, 2 = inside style, 0 = normal)
+        self.setCurrentBlockState(next_state)
+    
+    def _lex_html_with_state(self, text: str, prev_state: int):
+        """
+        Stateful HTML lexer that properly handles embedded JS/CSS across lines.
+        Returns list of (token_type, value, new_state) tuples.
+        
+        State: 0 = normal HTML, 1 = inside <script>, 2 = inside <style>
+        """
+        from pygments.lexers.html import HtmlLexer
+        from pygments.lexers.javascript import JavascriptLexer
+        from pygments.lexers.css import CssLexer
+        from pygments import lex
+        
+        state = prev_state if prev_state in (0, 1, 2) else 0
+        text_lower = text.lower()
+        
+        # Detect state transitions for NEXT line
+        new_state = state
+        if state == 0:
+            # Normal HTML: watch for opening script/style tags
+            if '<script' in text_lower:
+                # Same-line open+close: <script src="..."></script> — stays HTML
+                new_state = 0 if '</script>' in text_lower else 1
+            elif '<style' in text_lower:
+                new_state = 0 if '</style>' in text_lower else 2
+        elif state == 1:
+            # Inside <script>: watch for closing tag
+            if '</script>' in text_lower:
+                new_state = 0
+        elif state == 2:
+            # Inside <style>: watch for closing tag
+            if '</style>' in text_lower:
+                new_state = 0
+        
+        # Determine if this is a transition line (contains opening/closing tags)
+        # Transition lines use HtmlLexer so the tag itself is colored correctly.
+        # Pure content lines inside script/style always use their own lexer,
+        # even if the line contains '<' (e.g. innerHTML template strings).
+        is_transition = (
+            (state == 0 and ('<script' in text_lower or '<style' in text_lower)) or
+            (state == 1 and '</script>' in text_lower) or
+            (state == 2 and '</style>' in text_lower)
+        )
+        
+        if state == 1 and not is_transition:
+            # Pure JS line inside <script> block — always use JS lexer
+            # (even if line contains '<span>' in a template string)
+            tokens = list(lex(text, JavascriptLexer()))
+        elif state == 2 and not is_transition:
+            # Pure CSS line inside <style> block — always use CSS lexer
+            tokens = list(lex(text, CssLexer()))
+        else:
+            # HTML context: opening/closing tags, attributes, or normal markup
+            tokens = list(lex(text, HtmlLexer()))
+        
+        return [(t[0], t[1], new_state) for t in tokens]
 
 
 # ---------------------------------------------------------------------------
@@ -591,9 +703,9 @@ class CodeEditor(QPlainTextEdit):
             print("[Editor] Skipping theme - light mode")
             return
         
-        # Dracula theme exact colors
-        bg_color = QColor("#1E1E1E")      # VS Code Dark+ background
-        fg_color = QColor("#D4D4D4")      # VS Code Dark+ foreground
+        # Dark Gunmetal theme — matches main window (#1E1E1E everywhere)
+        bg_color = QColor("#1E1E1E")      # Dark Gunmetal - matches main window bg
+        fg_color = QColor("#D4D4D4")      # VS Code light foreground
         
         # CRITICAL: Force Qt to use palette colors
         self.setAutoFillBackground(True)
@@ -605,7 +717,7 @@ class CodeEditor(QPlainTextEdit):
         palette.setColor(QPalette.ColorRole.Base, bg_color)      # Text edit background
         palette.setColor(QPalette.ColorRole.Text, fg_color)       # Text color
         palette.setColor(QPalette.ColorRole.AlternateBase, bg_color)  # Alternating rows
-        palette.setColor(QPalette.ColorRole.Highlight, QColor("#264F78"))  # Selection background
+        palette.setColor(QPalette.ColorRole.Highlight, QColor("#264F78"))  # VS Code selection blue
         palette.setColor(QPalette.ColorRole.HighlightedText, fg_color)  # Selection text
         self.setPalette(palette)
         
@@ -792,9 +904,9 @@ class CodeEditor(QPlainTextEdit):
         )
 
     def line_number_area_paint_event(self, event):
-        gutter_bg = QColor("#2d2d30") if self._is_dark else QColor("#f1f3f4")
-        num_color = QColor("#858585") if self._is_dark else QColor("#6c757d")
-        cur_color = QColor("#c6c6c6") if self._is_dark else QColor("#212529")
+        gutter_bg = QColor("#1E1E1E") if self._is_dark else QColor("#f1f3f4")  # Dark Gunmetal - matches editor bg
+        num_color = QColor("#858585") if self._is_dark else QColor("#6c757d")  # VS Code line number grey
+        cur_color = QColor("#C6C6C6") if self._is_dark else QColor("#212529")  # VS Code active line number
 
         painter = QPainter(self._line_number_area)
         painter.fillRect(event.rect(), gutter_bg)
@@ -947,7 +1059,7 @@ class CodeEditor(QPlainTextEdit):
         
         if not self.isReadOnly():
             sel = QTextEdit.ExtraSelection()
-            color = QColor("#2a2d2e") if self._is_dark else QColor("#f1f3f4")
+            color = QColor("#2A2D2E") if self._is_dark else QColor("#f1f3f4")  # VS Code: editor.lineHighlightBackground
             sel.format.setBackground(color)
             sel.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
             sel.cursor = self.textCursor()
@@ -967,8 +1079,8 @@ class CodeEditor(QPlainTextEdit):
         """Draw vertical indentation guide lines like VS Code."""
         painter = QPainter(self.viewport())
         
-        # Guide line color (very subtle gray)
-        guide_color = QColor("#3a3a3a") if self._is_dark else QColor("#e0e0e0")
+        # Guide line color — VS Code: editorIndentGuide.background
+        guide_color = QColor("#3B3B3B") if self._is_dark else QColor("#e0e0e0")
         painter.setPen(QPen(guide_color, 1, Qt.PenStyle.DotLine))
         
         # Get horizontal offset and char width

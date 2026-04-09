@@ -28,6 +28,7 @@ code,
 }
 
 /* ========== DRACULA THEME COLOR PALETTE ========== */
+/* Exact match: AI_Agentic_IDE_Guide.md §4.1 / §4.2 */
 :root {
     /* Background Colors */
     --dracula-bg: #282a36;
@@ -37,18 +38,23 @@ code,
     --dracula-text: #f8f8f2;
     --dracula-text-faded: #6272a4;
     
-    /* Syntax Colors - EXACT DRACULA */
-    --dracula-keyword: #bd93f9;      /* Purple - keywords, operators */
-    --dracula-string: #50fa7b;       /* Green - strings, text */
-    --dracula-number: #bd93f9;       /* Purple - numbers, literals */
-    --dracula-comment: #6272a4;      /* Blue-gray - comments */
-    --dracula-function: #ffb86c;     /* Orange - function names */
-    --dracula-tag: #ff79c6;          /* Pink - tags, attributes */
-    --dracula-variable: #ff5555;     /* Red - variables, deletion */
-    --dracula-class: #8be9fd;        /* Cyan - class names */
-    --dracula-const: #f1fa8c;        /* Yellow - constants */
+    /* Syntax Colors — Guide §4.1 Color Reference */
+    --dracula-keyword: #ff79c6;      /* Pink - keywords, operators (Guide: Keywords) */
+    --dracula-string: #f1fa8c;       /* Yellow - strings (Guide: Strings) */
+    --dracula-number: #bd93f9;       /* Purple - numbers, literals (Guide: Numbers) */
+    --dracula-comment: #6272a4;      /* Blue-gray - comments (Guide: Comments) */
+    --dracula-function: #50fa7b;     /* Green - function names (Guide: Functions) */
+    --dracula-tag: #ff79c6;          /* Pink - tags (Guide: same as keyword) */
+    --dracula-variable: #f8f8f2;     /* White - variables (Guide: variable=foreground) */
+    --dracula-class: #8be9fd;        /* Cyan - class/type names (Guide: Types/Cyan) */
+    --dracula-const: #bd93f9;        /* Purple - constants (Guide: constant) */
     --dracula-import: #ff79c6;       /* Pink - imports, exports */
     --dracula-builtin: #8be9fd;      /* Cyan - built-in functions */
+    --dracula-operator: #ff79c6;     /* Pink - operators (Guide: Operators) */
+    --dracula-decorator: #ffb86c;    /* Orange - decorators (Guide: Orange Accent) */
+    --dracula-regex: #ffb86c;        /* Orange - regex (Guide: Orange Accent) */
+    --dracula-delimiter: #f8f8f2;    /* White - delimiters (Guide: delimiter) */
+    --dracula-invalid: #ff5555;      /* Red - invalid/errors (Guide: invalid) */
 }
 
 /* ========== MARKDOWN STYLING - MAXIMUM SPECIFICITY ========== */
@@ -68,11 +74,18 @@ html body .md-content * {
     color: inherit !important;
 }
 
-/* Level 3: Exception for code blocks (keep Dracula syntax colors) */
+/* Level 3: Exception — code blocks keep Dracula syntax colors */
 html body .markdown-body .hljs,
 html body .markdown-body pre code,
 html body .markdown-body [class*="language-"] {
-    color: revert-layer !important;  /* Revert to Dracula theme */
+    color: var(--dracula-text) !important;
+}
+
+/* Level 3b: Let hljs child spans use their own syntax colors (not inherit white) */
+html body .markdown-body .hljs [class^="hljs-"],
+html body .markdown-body pre code [class^="hljs-"],
+html body .markdown-body [class*="language-"] [class^="hljs-"] {
+    color: unset !important;
 }
 
 /* Level 4: Specific element overrides - MAXIMUM SPECIFICITY */
@@ -91,26 +104,32 @@ html body .markdown-body i {
     font-family: var(--font-sans) !important;
 }
 
-/* Markdown Main Heading (H1) - Deep Blue */
+/* Markdown Main Heading (H1) - Dracula Purple */
 html body .markdown-body h1,
 html body .md-h1 {
-    color: #0047AB !important;  /* Deep blue for main heading */
+    color: #bd93f9 !important;  /* Dracula purple - headings */
     font-weight: 700 !important;
     font-family: var(--font-sans) !important;
 }
 
-/* Markdown Child Headings (H2-H6) - Lighter Blue */
+/* Markdown H2 - Dracula Cyan */
 html body .markdown-body h2,
+html body .md-h2 {
+    color: #8be9fd !important;  /* Dracula cyan - subheadings */
+    font-weight: 700 !important;
+    font-family: var(--font-sans) !important;
+}
+
+/* Markdown H3-H6 - Dracula Green */
 html body .markdown-body h3,
 html body .markdown-body h4,
 html body .markdown-body h5,
 html body .markdown-body h6,
-html body .md-h2,
 html body .md-h3,
 html body .md-h4,
 html body .md-h5,
 html body .md-h6 {
-    color: #4169E1 !important;  /* Royal blue (lighter) for child headings */
+    color: #50fa7b !important;  /* Dracula green - child headings */
     font-weight: 700 !important;
     font-family: var(--font-sans) !important;
 }
@@ -172,7 +191,7 @@ pre, code,
     font-style: italic;
 }
 
-/* Strings & Text - Green */
+/* Strings & Text - Yellow (Guide §4.1) */
 .hljs-string,
 .hljs-symbol,
 .hljs-bullet,
@@ -180,51 +199,80 @@ pre, code,
     color: var(--dracula-string);
 }
 
-/* Keywords & Reserved Words - Purple */
+/* Keywords & Reserved Words - Pink (Guide §4.1) */
 .hljs-keyword,
-.hljs-selector-tag,
-.hljs-built_in,
-.hljs-selector-id,
-.hljs-selector-class,
-.hljs-literal,
-.hljs-type,
-.hljs-params,
-.hljs-regexp {
+.hljs-selector-tag {
     color: var(--dracula-keyword);
 }
 
-/* Function & Method Names - Orange */
+/* Built-ins & Types - Cyan (Guide §4.1: Types/Cyan) */
+.hljs-built_in,
+.hljs-type,
+.hljs-params {
+    color: var(--dracula-class);
+}
+
+/* Regex & Literals - separate colors per Guide */
+.hljs-regexp {
+    color: var(--dracula-regex);
+}
+
+.hljs-literal {
+    color: var(--dracula-number);
+}
+
+.hljs-selector-id,
+.hljs-selector-class {
+    color: var(--dracula-keyword);
+}
+
+/* Function & Method Names - Green (Guide §4.1) */
 .hljs-title,
 .hljs-section,
-.hljs-meta,
 .hljs-function {
     color: var(--dracula-function);
     font-weight: 600;
 }
 
-/* Tags & Attributes - Pink */
+/* Meta / Decorators - Orange (Guide §4.1: Orange Accent) */
+.hljs-meta {
+    color: var(--dracula-decorator);
+    font-style: italic;
+}
+
+/* Tags & Attributes - Pink / Green (Guide §4.2) */
 .hljs-tag,
-.hljs-attr,
-.hljs-name,
-.hljs-attribute {
+.hljs-name {
     color: var(--dracula-tag);
 }
 
-/* Numbers & Literals - Purple */
-.hljs-number,
-.hljs-literal,
-.hljs-type,
-.hljs-params,
-.hljs-regexp {
+/* attribute.name = Green, attribute.value = Yellow (Guide §4.2) */
+.hljs-attr {
+    color: var(--dracula-function);
+}
+
+.hljs-attribute {
+    color: var(--dracula-string);
+}
+
+/* Numbers & Literals - Purple (Guide §4.1) */
+.hljs-number {
     color: var(--dracula-number);
 }
 
-/* Variables & Deletion - Red */
-.hljs-deletion,
+/* Variables - White (Guide §4.2: variable = foreground) */
 .hljs-variable,
-.hljs-template-variable,
-.hljs-link {
+.hljs-template-variable {
     color: var(--dracula-variable);
+}
+
+/* Deletion - Red */
+.hljs-deletion {
+    color: var(--dracula-invalid);
+}
+
+.hljs-link {
+    color: var(--dracula-class);
 }
 
 /* Emphasis */
@@ -444,21 +492,64 @@ pre::-webkit-scrollbar-thumb:hover {
 }
 
 /* ========== LIGHT MODE OVERRIDES ========== */
-body.light .code-block-container,
-body.light pre,
-body.light code,
-body.light .hljs {
-    background: #f5f5f5 !important;
+/* IMPORTANT: Code blocks ALWAYS stay dark Dracula (#282a36).
+   Only markdown prose text and headings switch to light colors. */
+
+/* Light mode - Markdown prose text becomes dark on white */
+body.light-mode .markdown-body,
+body.light-mode .md-content {
+    color: #1e1e1e !important;
+    background: transparent !important;
+}
+
+body.light-mode .markdown-body p,
+body.light-mode .markdown-body li,
+body.light-mode .markdown-body td,
+body.light-mode .markdown-body th,
+body.light-mode .markdown-body blockquote,
+body.light-mode .markdown-body span:not(.hljs):not([class*="language-"]),
+body.light-mode .markdown-body div:not(.code-block):not(pre),
+body.light-mode .markdown-body strong,
+body.light-mode .markdown-body em {
     color: #1e1e1e !important;
 }
 
-body.light .hljs-string { color: #008000 !important; }
-body.light .hljs-keyword { color: #0000ff !important; }
-body.light .hljs-number { color: #098658 !important; }
-body.light .hljs-comment { color: #008040 !important; }
-body.light .hljs-function { color: #795e26 !important; }
-body.light .hljs-tag { color: #800000 !important; }
-body.light .hljs-attr { color: #ff0000 !important; }
+/* Light mode headings */
+body.light-mode .markdown-body h1,
+body.light-mode .md-h1 {
+    color: #0047AB !important;
+}
+
+body.light-mode .markdown-body h2,
+body.light-mode .md-h2 {
+    color: #2c3e50 !important;
+}
+
+body.light-mode .markdown-body h3,
+body.light-mode .markdown-body h4,
+body.light-mode .markdown-body h5,
+body.light-mode .markdown-body h6,
+body.light-mode .md-h3,
+body.light-mode .md-h4,
+body.light-mode .md-h5,
+body.light-mode .md-h6 {
+    color: #2c3e50 !important;
+}
+
+/* Light mode links */
+body.light-mode .markdown-body a {
+    color: #007acc !important;
+}
+
+/* Light mode inline code - STILL dark background */
+body.light-mode .markdown-body code:not(pre code) {
+    background: #282a36 !important;
+    color: #f1fa8c !important;
+    border-color: #44475a !important;
+}
+
+/* Code blocks ALWAYS dark — do NOT override in light mode */
+/* (No background/color overrides for pre, code, .hljs) */
 
 /* ========== RESPONSIVE TEXT SIZING ========== */
 @media (max-width: 768px) {
