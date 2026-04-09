@@ -41,26 +41,32 @@ def get_preferred_programming_font() -> str:
     
     Uses comprehensive font detection for best available monospace font
     commonly used in professional IDEs and code editors.
+    Cursor IDE prefers: Berkeley Mono, Geist Mono
     """
     # Industry-standard programming fonts (priority order)
-    # Tier 1: Modern purpose-built coding fonts
-    # Tier 2: Classic reliable system fonts
-    # Tier 3: Universal fallbacks
+    # Tier 1: Cursor IDE fonts (Berkeley/Geist Mono)
+    # Tier 2: Modern purpose-built coding fonts
+    # Tier 3: Classic reliable system fonts
+    # Tier 4: Universal fallbacks
     preferred_fonts = [
-        # Tier 1: Premium Programming Fonts (Best for syntax highlighting)
+        # Tier 1: Cursor IDE Premium Fonts (per cursor-ide-design-tokens.md)
+        "Berkeley Mono",       # Cursor's marketing font - premium
+        "Geist Mono",          # Vercel's font - free alternative to Berkeley
+        
+        # Tier 2: Premium Programming Fonts (Best for syntax highlighting)
         "JetBrains Mono",      # Best overall - designed for IDEs
         "Fira Code",           # Best ligatures support
         "Source Code Pro",     # Adobe's professional font
         "Cascadia Code",       # Microsoft's modern terminal font
         "Hack",                # Optimized for readability
         
-        # Tier 2: Classic Programming Fonts
+        # Tier 3: Classic Programming Fonts
         "Consolas",            # Windows standard (excellent ClearType)
         "Monaco",              # macOS classic
         "SF Mono",             # Apple's modern system font
         "Roboto Mono",         # Google's material design font
         
-        # Tier 3: Reliable Fallbacks
+        # Tier 4: Reliable Fallbacks
         "Inconsolata",         # High-quality open source
         "DejaVu Sans Mono",    # Extended character support
         "Lucida Console",      # Windows legacy
@@ -80,140 +86,140 @@ def get_preferred_programming_font() -> str:
 
 
 class PygmentsSyntaxHighlighter(QSyntaxHighlighter):
-    # DRACULA THEME - Industry Standard Dark Theme
-    # Matches ai_chat.html syntax highlighting exactly
+    # CURSOR IDE THEME - Anysphere Dark
+    # Matches cursor-ide-design-tokens.md §5 exactly
     # Works perfectly with: Python, JS/TS, HTML, CSS, Java, C/C++, Rust, Go, SQL, etc.
     DARK_COLORS = {
         # ============================================
-        # DRACULA THEME - EXACT MATCH: AI_Agentic_IDE_Guide.md §4.1/§4.2
-        # Background: #282a36, Foreground: #f8f8f2
-        # Guide ref: keyword=#ff79c6, string=#f1fa8c, function=#50fa7b,
-        #            number=#bd93f9, type=#8be9fd, operator=#ff79c6,
-        #            comment=#6272a4, decorator=#ffb86c, regex=#ffb86c
+        # CURSOR IDE ANYSPHERE DARK - cursor-ide-design-tokens.md §5
+        # Background: #181818, Foreground: #d6d6dd
+        # Syntax ref: keyword=#83d6c5, string=#e394dc, function=#efb080,
+        #            number=#efb080, class=#87c3ff, attribute=#aaa0fa,
+        #            comment=#6d6d6d, operator=#83d6c5, variable=#d6d6dd
         # ============================================
         
-        # Keywords - Dracula Pink (#ff79c6) — Guide §4.1
-        Token.Keyword:            ("#ff79c6", False, False),     # Pink - if, def, class, return
-        Token.Keyword.Constant:   ("#bd93f9", False, False),     # Purple - True, False, None (constants)
-        Token.Keyword.Declaration:("#ff79c6", False, False),     # Pink - var, let, const declarations
-        Token.Keyword.Namespace:  ("#ff79c6", False, False),     # Pink - import, export, package
-        Token.Keyword.Reserved:   ("#ff79c6", False, False),     # Pink - reserved words
-        Token.Keyword.Type:       ("#8be9fd", False, False),     # Cyan - int, void, string, bool (types)
+        # Keywords - Cursor Teal (#83d6c5)
+        Token.Keyword:            ("#83d6c5", False, False),     # Teal - if, def, class, return
+        Token.Keyword.Constant:   ("#efb080", False, False),     # Orange - True, False, None (constants)
+        Token.Keyword.Declaration:("#83d6c5", False, False),     # Teal - var, let, const declarations
+        Token.Keyword.Namespace:  ("#83d6c5", False, False),     # Teal - import, export, package
+        Token.Keyword.Reserved:   ("#83d6c5", False, False),     # Teal - reserved words
+        Token.Keyword.Type:       ("#87c3ff", False, False),     # Light blue - int, void, string, bool (types)
         
         # Variables & Names
-        Token.Name:               ("#f8f8f2", False, False),     # White - default variable names
-        Token.Name.Builtin:       ("#8be9fd", False, False),     # Cyan - built-ins (len, print, console)
-        Token.Name.Builtin.Pseudo:("#bd93f9", False, False),     # Purple - self, this, super
-        Token.Name.Class:         ("#8be9fd", True, False),      # Cyan BOLD - class names (Guide: bold)
-        Token.Name.Decorator:     ("#ffb86c", False, True),      # Orange ITALIC - @decorators (Guide §4.2)
-        Token.Name.Entity:        ("#ffb86c", False, False),     # Orange - HTML entities
-        Token.Name.Exception:     ("#ff5555", False, False),     # Red - exceptions
-        Token.Name.Function:      ("#50fa7b", False, False),     # Green - function names (Guide §4.1)
-        Token.Name.Function.Magic:("#50fa7b", False, False),     # Green - __magic__ methods
-        Token.Name.Label:         ("#8be9fd", False, False),     # Cyan - labels
-        Token.Name.Namespace:     ("#8be9fd", False, False),     # Cyan - namespaces
-        Token.Name.Other:         ("#8be9fd", False, False),     # Cyan - JS/CSS identifiers in embedded code (console, document, window, etc.)
-        Token.Name.Property:      ("#50fa7b", False, False),     # Green - object property access
-        Token.Name.Tag:           ("#ff79c6", False, False),     # Pink - HTML/XML tags (Guide §4.2)
-        Token.Name.Variable:      ("#f8f8f2", False, False),     # White - variable names (Guide §4.2)
-        Token.Name.Variable.Class:("#f8f8f2", False, False),     # White - class vars
-        Token.Name.Variable.Global:("#f8f8f2", False, False),    # White - global vars
-        Token.Name.Variable.Instance:("#f8f8f2", False, False),  # White - instance vars
-        Token.Name.Constant:      ("#bd93f9", False, False),     # Purple - constants (Guide: constant)
-        Token.Name.Attribute:     ("#50fa7b", False, False),     # Green - attribute.name (Guide §4.2)
+        Token.Name:               ("#d6d6dd", False, False),     # Primary text - default variable names
+        Token.Name.Builtin:       ("#87c3ff", False, False),     # Light blue - built-ins (len, print, console)
+        Token.Name.Builtin.Pseudo:("#efb080", False, False),     # Orange - self, this, super
+        Token.Name.Class:         ("#87c3ff", False, False),     # Light blue - class names (NO bold per Cursor)
+        Token.Name.Decorator:     ("#efb080", False, True),      # Orange ITALIC - @decorators
+        Token.Name.Entity:        ("#efb080", False, False),     # Orange - HTML entities
+        Token.Name.Exception:     ("#f14c4c", False, False),     # Red - exceptions (terminal.ansiRed)
+        Token.Name.Function:      ("#efb080", False, False),     # Orange - function names
+        Token.Name.Function.Magic:("#efb080", False, False),     # Orange - __magic__ methods
+        Token.Name.Label:         ("#87c3ff", False, False),     # Light blue - labels
+        Token.Name.Namespace:     ("#87c3ff", False, False),     # Light blue - namespaces
+        Token.Name.Other:         ("#87c3ff", False, False),     # Light blue - JS/CSS identifiers
+        Token.Name.Property:      ("#d6d6dd", False, False),     # Primary text - object property access
+        Token.Name.Tag:           ("#87c3ff", False, False),     # Light blue - HTML/XML tags
+        Token.Name.Variable:      ("#d6d6dd", False, False),     # Primary text - variable names
+        Token.Name.Variable.Class:("#d6d6dd", False, False),     # Primary text - class vars
+        Token.Name.Variable.Global:("#d6d6dd", False, False),    # Primary text - global vars
+        Token.Name.Variable.Instance:("#d6d6dd", False, False),  # Primary text - instance vars
+        Token.Name.Constant:      ("#efb080", False, False),     # Orange - constants
+        Token.Name.Attribute:     ("#aaa0fa", False, False),     # Purple - HTML/JSX attribute.name
         
-        # Strings - Dracula Yellow (#f1fa8c) — Guide §4.1
-        Token.String:             ("#f1fa8c", False, False),     # Yellow - all strings
-        Token.String.Affix:       ("#ff79c6", False, False),     # Pink - f"", r"", b"" prefixes
-        Token.String.Backtick:    ("#f1fa8c", False, False),     # Yellow - `template literals`
-        Token.String.Char:        ("#f1fa8c", False, False),     # Yellow - char literals
-        Token.String.Delimiter:   ("#f1fa8c", False, False),     # Yellow - quote marks
-        Token.String.Doc:         ("#6272a4", False, True),      # Blue-gray ITALIC - docstrings
-        Token.String.Double:      ("#f1fa8c", False, False),     # Yellow - "double quoted"
-        Token.String.Escape:      ("#ffb86c", False, False),     # Orange - \n, \t, \\ (escape sequences)
-        Token.String.Heredoc:     ("#f1fa8c", False, False),     # Yellow - heredocs
-        Token.String.Interpol:    ("#f1fa8c", False, False),     # Yellow - ${expr} interpolations
-        Token.String.Other:       ("#f1fa8c", False, False),     # Yellow - other strings
-        Token.String.Regex:       ("#ffb86c", False, False),     # Orange - /regex/ (Guide §4.1: orange accent)
-        Token.String.Single:      ("#f1fa8c", False, False),     # Yellow - 'single quoted'
-        Token.String.Symbol:      ("#bd93f9", False, False),     # Purple - symbols
+        # Strings - Cursor Pink (#e394dc)
+        Token.String:             ("#e394dc", False, False),     # Pink - all strings
+        Token.String.Affix:       ("#83d6c5", False, False),     # Teal - f"", r"", b"" prefixes
+        Token.String.Backtick:    ("#e394dc", False, False),     # Pink - `template literals`
+        Token.String.Char:        ("#e394dc", False, False),     # Pink - char literals
+        Token.String.Delimiter:   ("#e394dc", False, False),     # Pink - quote marks
+        Token.String.Doc:         ("#6d6d6d", False, True),      # Gray ITALIC - docstrings (comments)
+        Token.String.Double:      ("#e394dc", False, False),     # Pink - "double quoted"
+        Token.String.Escape:      ("#efb080", False, False),     # Orange - \n, \t, \\ (escape sequences)
+        Token.String.Heredoc:     ("#e394dc", False, False),     # Pink - heredocs
+        Token.String.Interpol:    ("#e394dc", False, False),     # Pink - ${expr} interpolations
+        Token.String.Other:       ("#e394dc", False, False),     # Pink - other strings
+        Token.String.Regex:       ("#efb080", False, False),     # Orange - /regex/
+        Token.String.Single:      ("#e394dc", False, False),     # Pink - 'single quoted'
+        Token.String.Symbol:      ("#efb080", False, False),     # Orange - symbols
         
-        # Numbers - Dracula Purple (#bd93f9) — Guide §4.1
-        Token.Number:             ("#bd93f9", False, False),     # Purple - all numbers
-        Token.Number.Bin:         ("#bd93f9", False, False),     # Purple - 0b1010
-        Token.Number.Float:       ("#bd93f9", False, False),     # Purple - 3.14
-        Token.Number.Hex:         ("#bd93f9", False, False),     # Purple - 0xFF
-        Token.Number.Integer:     ("#bd93f9", False, False),     # Purple - 42
-        Token.Number.Integer.Long:("#bd93f9", False, False),     # Purple - long ints
-        Token.Number.Oct:         ("#bd93f9", False, False),     # Purple - 0o777
+        # Numbers - Cursor Orange (#efb080)
+        Token.Number:             ("#efb080", False, False),     # Orange - all numbers
+        Token.Number.Bin:         ("#efb080", False, False),     # Orange - 0b1010
+        Token.Number.Float:       ("#efb080", False, False),     # Orange - 3.14
+        Token.Number.Hex:         ("#efb080", False, False),     # Orange - 0xFF
+        Token.Number.Integer:     ("#efb080", False, False),     # Orange - 42
+        Token.Number.Integer.Long:("#efb080", False, False),     # Orange - long ints
+        Token.Number.Oct:         ("#efb080", False, False),     # Orange - 0o777
         
-        # Operators - Dracula Pink (#ff79c6) — Guide §4.1
-        Token.Operator:           ("#ff79c6", False, False),     # Pink - =, +, -, == operators
-        Token.Operator.Word:      ("#ff79c6", False, False),     # Pink - and, or, not
+        # Operators - Cursor Teal (#83d6c5)
+        Token.Operator:           ("#83d6c5", False, False),     # Teal - =, +, -, == operators
+        Token.Operator.Word:      ("#83d6c5", False, False),     # Teal - and, or, not
         
-        # Punctuation / Delimiters - Dracula White (#f8f8f2) — Guide §4.2: delimiter
-        Token.Punctuation:        ("#f8f8f2", False, False),     # White - brackets, parens, braces
-        Token.Punctuation.Marker: ("#f8f8f2", False, False),     # White - semicolons, commas
+        # Punctuation / Delimiters - Cursor Primary Text (#d6d6dd)
+        Token.Punctuation:        ("#d6d6dd", False, False),     # Primary text - brackets, parens, braces
+        Token.Punctuation.Marker: ("#d6d6dd", False, False),     # Primary text - semicolons, commas
         
-        # Comments - Dracula Blue-gray (#6272a4) ITALIC — Guide §4.1
-        Token.Comment:            ("#6272a4", False, True),      # Blue-gray ITALIC - comments
-        Token.Comment.Hashbang:   ("#6272a4", False, True),      # Blue-gray ITALIC - shebang
-        Token.Comment.Multiline:  ("#6272a4", False, True),      # Blue-gray ITALIC - /* */
-        Token.Comment.Preproc:    ("#6272a4", False, True),      # Blue-gray ITALIC - #pragma
-        Token.Comment.PreprocFile:("#6272a4", False, True),      # Blue-gray ITALIC - includes
-        Token.Comment.Single:     ("#6272a4", False, True),      # Blue-gray ITALIC - // or #
-        Token.Comment.Special:    ("#6272a4", False, True),      # Blue-gray ITALIC - special
+        # Comments - Cursor Gray (#6d6d6d) ITALIC
+        Token.Comment:            ("#6d6d6d", False, True),      # Gray ITALIC - comments
+        Token.Comment.Hashbang:   ("#6d6d6d", False, True),      # Gray ITALIC - shebang
+        Token.Comment.Multiline:  ("#6d6d6d", False, True),      # Gray ITALIC - /* */
+        Token.Comment.Preproc:    ("#6d6d6d", False, True),      # Gray ITALIC - #pragma
+        Token.Comment.PreprocFile:("#6d6d6d", False, True),      # Gray ITALIC - includes
+        Token.Comment.Single:     ("#6d6d6d", False, True),      # Gray ITALIC - // or #
+        Token.Comment.Special:    ("#6d6d6d", False, True),      # Gray ITALIC - special
         
-        # Errors / Invalid - Dracula Red (#ff5555) — Guide §4.2: invalid
-        Token.Error:              ("#ff5555", False, False),     # Red - syntax errors
+        # Errors / Invalid - Cursor Red (#f14c4c) - terminal.ansiRed
+        Token.Error:              ("#f14c4c", False, False),     # Red - syntax errors
         
-        # Types/Classes - Dracula Cyan (#8be9fd) — Guide §4.1
-        Token.Type:               ("#8be9fd", False, False),     # Cyan - type names
+        # Types/Classes - Cursor Light Blue (#87c3ff)
+        Token.Type:               ("#87c3ff", False, False),     # Light blue - type names
         
         # Markup - For HTML/XML/Markdown
-        Token.Generic:            ("#f8f8f2", False, False),     # White - generic markup
-        Token.Generic.Deleted:    ("#ff5555", False, False),     # Red - deleted text
-        Token.Generic.Emph:       ("#f1fa8c", False, True),      # Yellow ITALIC - emphasis
-        Token.Generic.Error:      ("#ff5555", False, False),     # Red - errors
-        Token.Generic.Heading:    ("#bd93f9", True, False),      # Purple BOLD - headings
-        Token.Generic.Inserted:   ("#50fa7b", False, False),     # Green - inserted text
-        Token.Generic.Output:     ("#6272a4", False, False),     # Blue-gray - program output
-        Token.Generic.Prompt:     ("#50fa7b", False, False),     # Green - shell prompt
-        Token.Generic.Strong:     ("#ffb86c", True, False),      # Orange BOLD - strong
-        Token.Generic.Subheading: ("#bd93f9", False, False),     # Purple - subheadings
-        Token.Generic.Traceback:  ("#ff5555", False, False),     # Red - tracebacks
+        Token.Generic:            ("#d6d6dd", False, False),     # Primary text - generic markup
+        Token.Generic.Deleted:    ("#f14c4c", False, False),     # Red - deleted text
+        Token.Generic.Emph:       ("#e394dc", False, True),      # Pink ITALIC - emphasis
+        Token.Generic.Error:      ("#f14c4c", False, False),     # Red - errors
+        Token.Generic.Heading:    ("#87c3ff", False, False),     # Light blue - headings (NO bold per Cursor)
+        Token.Generic.Inserted:   ("#15ac91", False, False),     # Green - inserted text (terminal.ansiGreen)
+        Token.Generic.Output:     ("#6d6d6d", False, False),     # Gray - program output
+        Token.Generic.Prompt:       ("#15ac91", False, False),     # Green - shell prompt (terminal.ansiGreen)
+        Token.Generic.Strong:       ("#efb080", False, False),     # Orange - strong (NO bold per Cursor)
+        Token.Generic.Subheading:   ("#aaa0fa", False, False),     # Purple - subheadings
+        Token.Generic.Traceback:    ("#f14c4c", False, False),     # Red - tracebacks (terminal.ansiRed)
         
         # Literals
-        Token.Literal:            ("#bd93f9", False, False),     # Purple - literal values
-        Token.Literal.Date:       ("#8be9fd", False, True),      # Cyan ITALIC - dates
-        Token.Literal.Number:     ("#bd93f9", False, False),     # Purple - numbers (embedded JS/CSS)
-        Token.Literal.Number.Bin: ("#bd93f9", False, False),     # Purple - 0b1010
-        Token.Literal.Number.Float:("#bd93f9", False, False),    # Purple - 3.14 (embedded JS)
-        Token.Literal.Number.Hex: ("#bd93f9", False, False),     # Purple - #282a36 (CSS hex colors)
-        Token.Literal.Number.Integer:("#bd93f9", False, False),  # Purple - 14 (CSS values)
-        Token.Literal.Number.Integer.Long:("#bd93f9", False, False), # Purple - long ints
-        Token.Literal.Number.Oct: ("#bd93f9", False, False),     # Purple - 0o777
-        Token.Literal.String:     ("#f1fa8c", False, False),     # Yellow - strings (embedded JS)
-        Token.Literal.String.Affix:("#ff79c6", False, False),    # Pink - string prefixes
-        Token.Literal.String.Backtick:("#f1fa8c", False, False), # Yellow - template literals
-        Token.Literal.String.Char:("#f1fa8c", False, False),     # Yellow - char literals
-        Token.Literal.String.Delimiter:("#f1fa8c", False, False),# Yellow - quote marks
-        Token.Literal.String.Doc: ("#6272a4", False, True),      # Blue-gray ITALIC - docstrings
-        Token.Literal.String.Double:("#f1fa8c", False, False),   # Yellow - "double"
-        Token.Literal.String.Escape:("#ffb86c", False, False),   # Orange - escape chars
-        Token.Literal.String.Heredoc:("#f1fa8c", False, False),  # Yellow - heredocs
-        Token.Literal.String.Interpol:("#f1fa8c", False, False), # Yellow - interpolation
-        Token.Literal.String.Other:("#f1fa8c", False, False),    # Yellow - other strings
-        Token.Literal.String.Regex:("#ffb86c", False, False),    # Orange - regex
-        Token.Literal.String.Single:("#f1fa8c", False, False),   # Yellow - 'single'
-        Token.Literal.String.Symbol:("#bd93f9", False, False),   # Purple - symbols
+        Token.Literal:              ("#efb080", False, False),     # Orange - literal values
+        Token.Literal.Date:         ("#87c3ff", False, True),      # Light blue ITALIC - dates
+        Token.Literal.Number:       ("#efb080", False, False),     # Orange - numbers (embedded JS/CSS)
+        Token.Literal.Number.Bin:   ("#efb080", False, False),     # Orange - 0b1010
+        Token.Literal.Number.Float: ("#efb080", False, False),     # Orange - 3.14 (embedded JS)
+        Token.Literal.Number.Hex:   ("#efb080", False, False),     # Orange - CSS hex colors
+        Token.Literal.Number.Integer:   ("#efb080", False, False),  # Orange - CSS values
+        Token.Literal.Number.Integer.Long:("#efb080", False, False), # Orange - long ints
+        Token.Literal.Number.Oct:   ("#efb080", False, False),     # Orange - 0o777
+        Token.Literal.String:       ("#e394dc", False, False),     # Pink - strings (embedded JS)
+        Token.Literal.String.Affix: ("#83d6c5", False, False),     # Teal - string prefixes
+        Token.Literal.String.Backtick:("#e394dc", False, False),    # Pink - template literals
+        Token.Literal.String.Char:  ("#e394dc", False, False),     # Pink - char literals
+        Token.Literal.String.Delimiter:("#e394dc", False, False),  # Pink - quote marks
+        Token.Literal.String.Doc:   ("#6d6d6d", False, True),      # Gray ITALIC - docstrings (comments)
+        Token.Literal.String.Double:("#e394dc", False, False),       # Pink - "double"
+        Token.Literal.String.Escape:("#efb080", False, False),      # Orange - escape chars
+        Token.Literal.String.Heredoc:("#e394dc", False, False),    # Pink - heredocs
+        Token.Literal.String.Interpol:("#e394dc", False, False),    # Pink - interpolation
+        Token.Literal.String.Other: ("#e394dc", False, False),      # Pink - other strings
+        Token.Literal.String.Regex: ("#efb080", False, False),      # Orange - regex
+        Token.Literal.String.Single:("#e394dc", False, False),     # Pink - 'single'
+        Token.Literal.String.Symbol:("#efb080", False, False),     # Orange - symbols
         
         # Text
-        Token.Text:               ("#f8f8f2", False, False),     # White - plain text (foreground)
-        Token.Text.Whitespace:    ("#44475a", False, False),     # Selection bg - whitespace markers
+        Token.Text:                 ("#d6d6dd", False, False),     # Primary text - plain text (foreground)
+        Token.Text.Whitespace:    ("#163761", False, False),     # Selection bg - whitespace markers
         
         # HTML / XML specific
-        Token.Name.Doctype:       ("#ff79c6", False, False),     # Pink - <!DOCTYPE html> (metatag)
+        Token.Name.Doctype:         ("#83d6c5", False, False),     # Teal - <!DOCTYPE html> (metatag)
     }
     
     # Light theme (VS Code Light+) — Full coverage for all token types
@@ -306,10 +312,10 @@ class PygmentsSyntaxHighlighter(QSyntaxHighlighter):
         
         # Set premium programming font
         if is_dark:
-            # Dracula theme font settings
+            # Cursor IDE theme font settings - 12px editor font
             font_name = get_preferred_programming_font()  # Use module-level function
             self._base_format = QTextCharFormat()
-            self._base_format.setFont(QFont(font_name, 11))
+            self._base_format.setFont(QFont(font_name, 12))
         
         self._lexer = self._get_lexer(language)
         self._formats: dict = {}
@@ -703,9 +709,9 @@ class CodeEditor(QPlainTextEdit):
             print("[Editor] Skipping theme - light mode")
             return
         
-        # Dark Gunmetal theme — matches main window (#1E1E1E everywhere)
-        bg_color = QColor("#1E1E1E")      # Dark Gunmetal - matches main window bg
-        fg_color = QColor("#D4D4D4")      # VS Code light foreground
+        # Cursor IDE Anysphere Dark theme — matches cursor-ide-design-tokens.md
+        bg_color = QColor("#181818")      # editor.background - Cursor IDE dark
+        fg_color = QColor("#d6d6dd")      # editor.foreground - Cursor IDE primary text
         
         # CRITICAL: Force Qt to use palette colors
         self.setAutoFillBackground(True)
@@ -717,8 +723,8 @@ class CodeEditor(QPlainTextEdit):
         palette.setColor(QPalette.ColorRole.Base, bg_color)      # Text edit background
         palette.setColor(QPalette.ColorRole.Text, fg_color)       # Text color
         palette.setColor(QPalette.ColorRole.AlternateBase, bg_color)  # Alternating rows
-        palette.setColor(QPalette.ColorRole.Highlight, QColor("#264F78"))  # VS Code selection blue
-        palette.setColor(QPalette.ColorRole.HighlightedText, fg_color)  # Selection text
+        palette.setColor(QPalette.ColorRole.Highlight, QColor("#163761"))  # editor.selectionBackground - Cursor blue
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))  # Selected text - white
         self.setPalette(palette)
         
         # CRITICAL: Ensure viewport also uses the palette
@@ -904,9 +910,9 @@ class CodeEditor(QPlainTextEdit):
         )
 
     def line_number_area_paint_event(self, event):
-        gutter_bg = QColor("#1E1E1E") if self._is_dark else QColor("#f1f3f4")  # Dark Gunmetal - matches editor bg
-        num_color = QColor("#858585") if self._is_dark else QColor("#6c757d")  # VS Code line number grey
-        cur_color = QColor("#C6C6C6") if self._is_dark else QColor("#212529")  # VS Code active line number
+        gutter_bg = QColor("#181818") if self._is_dark else QColor("#f1f3f4")  # editor.background - Cursor dark
+        num_color = QColor("#505050") if self._is_dark else QColor("#6c757d")  # editorLineNumber.foreground
+        cur_color = QColor("#ffffff") if self._is_dark else QColor("#212529")  # editorLineNumber.activeForeground
 
         painter = QPainter(self._line_number_area)
         painter.fillRect(event.rect(), gutter_bg)
@@ -935,13 +941,13 @@ class CodeEditor(QPlainTextEdit):
                 # Draw Syntax Error Marker (Gutter Dot)
                 line_errs = [e for e in self._syntax_errors if e.line == line_idx + 1]
                 if line_errs:
-                    # Pick highest severity color
+                    # Pick highest severity color (Cursor IDE terminal colors)
                     if any(e.severity == "error" for e in line_errs):
-                        color = QColor("#f44747") # Error Red
+                        color = QColor("#f14c4c") # terminal.ansiRed - Error
                     elif any(e.severity == "warning" for e in line_errs):
-                        color = QColor("#cca700") # Warning Gold
+                        color = QColor("#e5b95c") # terminal.ansiYellow - Warning
                     else:
-                        color = QColor("#75beff") # Info Blue
+                        color = QColor("#4c9df3") # terminal.ansiBlue - Info
                         
                     painter.setPen(QPen(color, 5))
                     # Center the dot in the gutter area left of the line numbers
@@ -980,10 +986,10 @@ class CodeEditor(QPlainTextEdit):
             s._lint = True
             fmt = QTextCharFormat()
             
-            # Map severity to color
-            color = QColor("#f44747") # Default error red
-            if err.severity == "warning": color = QColor("#cca700")
-            elif err.severity == "info": color = QColor("#75beff")
+            # Map severity to color (Cursor IDE terminal colors)
+            color = QColor("#f14c4c") # terminal.ansiRed - Error
+            if err.severity == "warning": color = QColor("#e5b95c") # terminal.ansiYellow
+            elif err.severity == "info": color = QColor("#4c9df3") # terminal.ansiBlue
                 
             fmt.setUnderlineColor(color)
             fmt.setUnderlineStyle(QTextCharFormat.UnderlineStyle.WaveUnderline)
@@ -1059,7 +1065,7 @@ class CodeEditor(QPlainTextEdit):
         
         if not self.isReadOnly():
             sel = QTextEdit.ExtraSelection()
-            color = QColor("#2A2D2E") if self._is_dark else QColor("#f1f3f4")  # VS Code: editor.lineHighlightBackground
+            color = QColor("#292929") if self._is_dark else QColor("#f1f3f4")  # editor.lineHighlightBackground - Cursor
             sel.format.setBackground(color)
             sel.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
             sel.cursor = self.textCursor()
@@ -1079,8 +1085,8 @@ class CodeEditor(QPlainTextEdit):
         """Draw vertical indentation guide lines like VS Code."""
         painter = QPainter(self.viewport())
         
-        # Guide line color — VS Code: editorIndentGuide.background
-        guide_color = QColor("#3B3B3B") if self._is_dark else QColor("#e0e0e0")
+        # Guide line color — editorIndentGuide.background
+        guide_color = QColor("#2a2a2a") if self._is_dark else QColor("#e0e0e0")  # sideBar.border - subtle
         painter.setPen(QPen(guide_color, 1, Qt.PenStyle.DotLine))
         
         # Get horizontal offset and char width

@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -73,7 +73,8 @@
     <!-- External Libraries (Local for reliability) -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Fira+Code:wght@400;500&family=JetBrains+Mono:wght@400;500&family=Outfit:wght@400;600;700&display=swap" rel="stylesheet">
+    <!-- Cursor IDE Fonts: Geist Sans (UI), Geist Mono (Code) -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Geist+Mono:wght@400;500;600&family=Fira+Code:wght@400;500&family=JetBrains+Mono:wght@400;500&family=Outfit:wght@400;600;700&display=swap" rel="stylesheet">
     
     <!-- Tailwind CSS CDN (for utility classes in new card components) -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -292,34 +293,36 @@
           overflow: visible !important;
       }
       
-      /* Inline code with syntax highlighting */
+      
+      /* Inline code with Cursor IDE syntax highlighting */
       .inline-code {
-          background: #282a36;
-          color: #f8f8f2;
+          background: #181818;  /* editor.background */
+          color: #d6d6dd;  /* editor.foreground */
           padding: 2px 6px;
           border-radius: 3px;
-          font-family: 'Fira Code', 'Consolas', 'Monaco', monospace;
-          font-size: 0.9em;
-          border: 1px solid #44475a;
+          font-family: 'Geist Mono', 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+          font-size: 12px;  /* Editor font size - 12px */
+          border: 1px solid #2a2a2a;
       }
       
-      .inline-code .hljs-keyword { color: #ff79c6; }      /* Pink - Guide §4.1 */
-      .inline-code .hljs-string { color: #f1fa8c; }        /* Yellow - Guide §4.1 */
-      .inline-code .hljs-number { color: #bd93f9; }        /* Purple - Guide §4.1 */
-      .inline-code .hljs-comment { color: #6272a4; font-style: italic; } /* Blue-gray */
+      /* Cursor IDE Syntax Colors - Anysphere Dark Theme */
+      .inline-code .hljs-keyword { color: #83d6c5; }      /* Keyword - teal */
+      .inline-code .hljs-string { color: #e394dc; }        /* String - pink */
+      .inline-code .hljs-number { color: #efb080; }        /* Number - orange */
+      .inline-code .hljs-comment { color: #6d6d6d; font-style: italic; } /* Comment - gray */
       .inline-code .hljs-function,
-      .inline-code .hljs-title { color: #50fa7b; }         /* Green - Guide §4.1 */
+      .inline-code .hljs-title { color: #efb080; }         /* Function - orange */
       .inline-code .hljs-tag,
-      .inline-code .hljs-name { color: #ff79c6; }          /* Pink - Guide §4.2 */
-      .inline-code .hljs-variable { color: #f8f8f2; }      /* White - Guide §4.2 */
+      .inline-code .hljs-name { color: #87c3ff; }          /* Tag - light blue */
+      .inline-code .hljs-variable { color: #d6d6dd; }      /* Variable - primary text */
       .inline-code .hljs-class,
       .inline-code .hljs-type,
-      .inline-code .hljs-built_in { color: #8be9fd; }      /* Cyan - Guide §4.1 */
-      .inline-code .hljs-attr { color: #50fa7b; }          /* Green - attribute.name */
-      .inline-code .hljs-literal { color: #bd93f9; }       /* Purple - constant */
-      .inline-code .hljs-operator { color: #ff79c6; }      /* Pink - Guide §4.1 */
-      .inline-code .hljs-meta { color: #ffb86c; font-style: italic; } /* Orange - decorator */
-      .inline-code .hljs-regexp { color: #ffb86c; }        /* Orange - regex */
+      .inline-code .hljs-built_in { color: #87c3ff; }      /* Class/Type - light blue */
+      .inline-code .hljs-attr { color: #aaa0fa; }          /* Attribute - purple */
+      .inline-code .hljs-literal { color: #efb080; }       /* Literal - orange */
+      .inline-code .hljs-operator { color: #83d6c5; }      /* Operator - teal */
+      .inline-code .hljs-meta { color: #efb080; font-style: italic; } /* Meta - orange */
+      .inline-code .hljs-regexp { color: #efb080; }        /* Regex - orange */
       
       /* Language-specific inline code styling */
       .inline-code-python { border-left: 2px solid #c678dd; }
@@ -331,16 +334,17 @@
       .inline-code-json { border-left: 2px solid #d19a66; }
       .inline-code-sql { border-left: 2px solid #e5c07b; }
       
-      /* Indexing status bar */
+      /* Indexing status bar - Cursor theme */
       .indexing-bar {
           display: flex;
           align-items: center;
           gap: 7px;
           padding: 4px 14px;
-          background: #0c0c0c;
-          border-bottom: 1px solid #161616;
+          background: #141414;  /* sideBar.background */
+          border-bottom: 1px solid #2a2a2a;
           font-size: 11px;
-          color: #555;
+          color: #6d6d6d;  /* Muted text */
+          font-family: 'Geist Sans', 'Inter', sans-serif;
           transition: opacity 0.4s;
           flex-shrink: 0;
       }
@@ -359,31 +363,33 @@
           50%       { opacity: 0.3; }
       }
       
-      /* AutoGen Multi-Agent Toggle */
+      /* AutoGen Multi-Agent Toggle - Cursor theme */
       #autogen-toggle {
           display: flex;
           align-items: center;
           gap: 6px;
           padding: 6px 12px;
-          background: rgba(255, 255, 255, 0.05);
-          border: 1px solid rgba(255, 255, 255, 0.1);
+          background: #141414;
+          border: 1px solid #2a2a2a;
           border-radius: 6px;
-          color: #9ca3af;
+          color: #6d6d6d;
           cursor: pointer;
           transition: all 0.2s;
           font-size: 12px;
+          font-family: 'Geist Sans', 'Inter', sans-serif;
           margin-right: 8px;
       }
       
       #autogen-toggle:hover {
-          background: rgba(255, 255, 255, 0.08);
-          border-color: rgba(255, 255, 255, 0.2);
+          background: #1a1a1a;
+          border-color: #228df2;
+          color: #d6d6dd;
       }
       
       #autogen-toggle.active {
-          background: rgba(59, 130, 246, 0.15);
-          border-color: rgba(59, 130, 246, 0.4);
-          color: #60a5fa;
+          background: rgba(34, 141, 242, 0.15);
+          border-color: #228df2;
+          color: #228df2;
       }
       
       #autogen-toggle .status-dot {
@@ -1652,6 +1658,7 @@
           overflow-y: auto;
           padding: 6px;
       }
+      
       
       .completion-item {
           display: flex;

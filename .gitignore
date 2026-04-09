@@ -22,8 +22,8 @@ installer_output/
 nul
 
 # Documentation (optional)
-Docs/
-*.md
+# Docs/
+# *.md
 
 # Python cache
 __pycache__/
@@ -45,6 +45,6 @@ opencode-dev/
 vscode-main/
 node_modules/
 claude-code/
-Docs/
+# Docs/
 
 cortex_setup.iss

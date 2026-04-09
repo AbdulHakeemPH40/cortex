@@ -95,16 +95,17 @@ class CleanTabBar(QTabBar):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         d = self._is_dark
-        # Colour palette
-        col_sel_bg    = QColor("#1e1e1e") if d else QColor("#ffffff")
-        col_hover_bg  = QColor("#2a2a2d") if d else QColor("#e0e0e0")
-        col_normal_bg = QColor("#2d2d30") if d else QColor("#ececec")
-        col_accent    = QColor("#007acc") if d else QColor("#0d6efd")
-        col_divider   = QColor("#3e3e42") if d else QColor("#d0d0d0")
-        col_sel_fg    = QColor("#ffffff") if d else QColor("#1a1a1a")
-        col_hover_fg  = QColor("#cccccc") if d else QColor("#333333")
-        col_normal_fg = QColor("#969696") if d else QColor("#6c757d")
-        col_close     = QColor("#cccccc") if d else QColor("#666666")
+        # Cursor IDE Anysphere Dark Theme - Tab Colors
+        col_sel_bg    = QColor("#181818") if d else QColor("#fafafa")  # editor.background
+        col_hover_bg  = QColor("#1f1f1f") if d else QColor("#f0f0f0")  # tab.hoverBackground
+        col_normal_bg = QColor("#141414") if d else QColor("#f3f3f3")  # tab.inactiveBackground
+        col_accent    = QColor("#228df2") if d else QColor("#0078d4")  # cursor.accent
+        col_divider   = QColor("#2a2a2a") if d else QColor("#e5e5e5")  # sideBar.border
+        col_sel_fg    = QColor("#ffffff") if d else QColor("#2c2c2c")  # tab.activeForeground
+        col_hover_fg  = QColor("#d6d6dd") if d else QColor("#333333")  # editor.foreground
+        col_normal_fg = QColor("#6d6d6d") if d else QColor("#616161")  # tab.inactiveForeground
+        col_close     = QColor("#f14c4c") if d else QColor("#d73a49")  # RED close button
+        col_close_hover = QColor("#ff6b6b") if d else QColor("#ff4444")  # Brighter red on hover
 
         for i in range(self.count()):
             rect = self.tabRect(i)
@@ -128,7 +129,6 @@ class CleanTabBar(QTabBar):
 
             # Tab label
             text = self.tabText(i)
-            close_w = 22
             
             # ── Premium Tab Icon ───────────────────────────────────────────────
             icon_x = rect.x() + 10
@@ -144,12 +144,21 @@ class CleanTabBar(QTabBar):
             if text == "Welcome": icon_name = "ai"
             if "Terminal" in text: icon_name = "terminal"
             
-            # Icon Color Mapping
+            # Cursor IDE Syntax Colors for File Icons
             colors = {
-                "python":   "#c678dd", "html": "#e06c75", "css": "#61afef",
-                "javascript": "#d19a66", "typescript": "#61afef", "markdown": "#61afef",
-                "json": "#d19a66", "java": "#e06c75", "rust": "#d19a66", "go": "#61afef",
-                "sql": "#e5c07b", "ai": "#98c379", "terminal": "#858585"
+                "python":   "#83d6c5",  # teal - keyword
+                "html":     "#87c3ff",  # light blue - class/tag
+                "css":      "#87c3ff",  # light blue - class
+                "javascript": "#e394dc", # pink - string
+                "typescript": "#87c3ff", # light blue - class
+                "markdown": "#d6d6dd", # primary text
+                "json":     "#efb080",  # orange - number
+                "java":     "#83d6c5",  # teal
+                "rust":     "#efb080",  # orange
+                "go":       "#87c3ff",  # light blue
+                "sql":      "#83d6c5",  # teal
+                "ai":       "#228df2",  # accent blue
+                "terminal": "#6d6d6d"   # muted
             }
             icon_color = colors.get(icon_name, "#abb2bf")
             
@@ -157,62 +166,87 @@ class CleanTabBar(QTabBar):
             icon_pixmap = make_icon(icon_name, icon_color, icon_size).pixmap(icon_size, icon_size)
             painter.drawPixmap(icon_x, rect.y() + (rect.height() - icon_size)//2, icon_pixmap)
             
-            # Label
-            label_x = icon_x + icon_size + 8
-            label_rect = QRect(label_x, rect.y(), rect.width() - (label_x - rect.x()) - close_w - 4, rect.height())
+            # Reserve space for close button (14px + 2px right padding)
+            btn_reserved = 16  # 14 + 2px right margin
+            
+            # Label - leave space for close button
+            label_x = icon_x + icon_size + 6
+            label_width = rect.width() - (label_x - rect.x()) - btn_reserved - 2
+            label_rect = QRect(label_x, rect.y(), max(0, label_width), rect.height())
+            
+            # Draw label with eliding to prevent overflow
             painter.save()
             fg = col_sel_fg if is_selected else (col_hover_fg if is_hovered else col_normal_fg)
             painter.setPen(fg)
             f = painter.font()
             f.setPointSize(9)
             painter.setFont(f)
+            # Use elided text to prevent overflow into button area
+            from PyQt6.QtGui import QFontMetrics
+            fm = QFontMetrics(f)
+            elided_text = fm.elidedText(text, Qt.TextElideMode.ElideRight, label_width)
             painter.drawText(label_rect,
                              Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
-                             text)
+                             elided_text)
             painter.restore()
 
-            # × close button — only on hovered or selected tab
+            # × close button — ONLY show on hovered or selected tabs
             if is_hovered or is_selected:
-                btn_size = 16
-                btn_x = rect.right() - btn_size - 4
+                # Fixed position from right edge - 2px padding
+                btn_size = 14
+                btn_x = rect.right() - btn_size - 2
                 btn_y = rect.y() + (rect.height() - btn_size) // 2
                 btn_rect = QRect(btn_x, btn_y, btn_size, btn_size)
-
-                # Subtle highlight when cursor is over the × itself
+                
+                # Check if cursor is over the × button
                 cursor_pos = self.mapFromGlobal(self.cursor().pos())
-                if btn_rect.contains(cursor_pos):
-                    painter.save()
-                    a = 35 if d else 30
-                    painter.setBrush(QColor(0, 0, 0, a) if not d else QColor(255, 255, 255, a))
-                    painter.setPen(Qt.PenStyle.NoPen)
-                    painter.drawRoundedRect(btn_rect, 3, 3)
-                    painter.restore()
+                is_close_hovered = btn_rect.contains(cursor_pos)
 
-                painter.save()
-                painter.setPen(col_close)
-                xf = painter.font()
-                xf.setPointSize(10)
-                painter.setFont(xf)
+                # Determine colors
+                if is_close_hovered:
+                    bg_color = QColor("#f14c4c") if d else QColor("#d73a49")  # Red
+                    x_color = QColor("#ffffff")  # White X
+                else:
+                    bg_color = QColor(255, 255, 255, 40) if d else QColor(0, 0, 0, 30)
+                    x_color = QColor("#f14c4c") if d else QColor("#d73a49")  # Red X
+                
+                # CRITICAL: Fill button area with tab background color first
+                bg_fill = col_sel_bg if is_selected else col_hover_bg
+                painter.fillRect(btn_rect, bg_fill)
+                
+                # Draw button background
+                painter.setBrush(bg_color)
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawRoundedRect(btn_rect, 2, 2)
+                
+                # Draw X centered
+                painter.setPen(x_color)
+                font = painter.font()
+                font.setPointSize(10)
+                font.setBold(True)
+                painter.setFont(font)
                 painter.drawText(btn_rect, Qt.AlignmentFlag.AlignCenter, "×")
-                painter.restore()
 
         painter.end()
 
     def mousePressEvent(self, event):
         """Handle × button click to close the tab."""
-        from PyQt6.QtCore import Qt
+        from PyQt6.QtCore import Qt, QRect
         from PyQt6.QtGui import QMouseEvent
         i = self.tabAt(event.pos())
         if i >= 0:
-            rect = self.tabRect(i)
-            btn_size = 16
-            btn_x = rect.right() - btn_size - 4
-            btn_y = rect.y() + (rect.height() - btn_size) // 2
-            from PyQt6.QtCore import QRect
-            btn_rect = QRect(btn_x, btn_y, btn_size, btn_size)
-            if btn_rect.contains(event.pos()):
-                self.tabCloseRequested.emit(i)
-                return
+            # Only check if tab is hovered or selected (matching paint logic)
+            is_selected = (i == self.currentIndex())
+            is_hovered = (i == self._hovered_tab)
+            if is_hovered or is_selected:
+                rect = self.tabRect(i)
+                btn_size = 14
+                btn_x = rect.right() - btn_size - 2  # Match paintEvent
+                btn_y = rect.y() + (rect.height() - btn_size) // 2
+                btn_rect = QRect(btn_x, btn_y, btn_size, btn_size)
+                if btn_rect.contains(event.pos()):
+                    self.tabCloseRequested.emit(i)
+                    return
         super().mousePressEvent(event)
 
 

@@ -6,35 +6,46 @@ EXACT COLORS from ai_chat.html - No white text for unsupported languages
 """
 import re
 
-# ==================== DRACULA COLOR PALETTE ====================
-# Exact match: AI_Agentic_IDE_Guide.md §4.1 / §4.2
-DRACULA_COLORS = {
-    # Background
-    'bg': '#282a36',
-    'bg_light': '#44475a',
-    'bg_current': '#44475a',
+# ==================== CURSOR IDE COLOR PALETTE ====================
+# Anysphere Dark Theme - from cursor-ide-design-tokens.md
+CURSOR_COLORS = {
+    # Backgrounds
+    'bg': '#181818',            # editor.background
+    'bg_sidebar': '#141414',    # sideBar.background
+    'bg_tab_active': '#1a1a1a', # tab.activeBackground
+    'bg_selection': '#163761',  # editor.selectionBackground
+    'bg_line_hl': '#292929',    # editor.lineHighlightBackground
     
     # Text
-    'text': '#f8f8f2',
-    'text_faded': '#6272a4',
+    'text': '#d6d6dd',          # editor.foreground - Primary text
+    'text_muted': '#6d6d6d',    # comment - Muted text
+    'text_line_num': '#505050', # editorLineNumber.foreground
     
-    # Syntax Elements — Guide §4.1 Color Reference
-    'keyword': '#ff79c6',       # Pink - if, def, class, return (Guide: Keywords)
-    'string': '#f1fa8c',        # Yellow - strings (Guide: Strings)
-    'number': '#bd93f9',        # Purple - numbers, literals (Guide: Numbers)
-    'comment': '#6272a4',       # Blue-gray - comments (Guide: Comments)
-    'function': '#50fa7b',      # Green - function names (Guide: Functions)
-    'tag': '#ff79c6',           # Pink - tags (Guide: same as keyword)
-    'variable': '#f8f8f2',      # White - variables (Guide: variable=foreground)
-    'class': '#8be9fd',         # Cyan - class/type names (Guide: Types/Cyan)
-    'const': '#bd93f9',         # Purple - constants (Guide: constant)
-    'import': '#ff79c6',        # Pink - imports, exports
-    'builtin': '#8be9fd',       # Cyan - built-in functions
-    'operator': '#ff79c6',      # Pink - operators (Guide: Operators)
-    'decorator': '#ffb86c',     # Orange - decorators (Guide: Orange Accent)
-    'regex': '#ffb86c',         # Orange - regex (Guide: Orange Accent)
-    'delimiter': '#f8f8f2',     # White - delimiters (Guide: delimiter)
+    # Accent
+    'accent': '#228df2',        # cursor.accent - Primary blue
+    'border': '#2a2a2a',        # sideBar.border
+    
+    # Syntax Elements — cursor-ide-design-tokens.md §5
+    'keyword': '#83d6c5',       # Keyword - teal
+    'string': '#e394dc',        # String - pink
+    'number': '#efb080',        # Number - orange
+    'comment': '#6d6d6d',       # Comment - gray, italic
+    'function': '#efb080',      # Function name - orange
+    'class': '#87c3ff',         # Class/Type - light blue
+    'attribute': '#aaa0fa',     # HTML/JSX attribute - purple
+    'tag': '#87c3ff',           # Tag name - light blue
+    'variable': '#d6d6dd',      # Variable - primary text
+    'operator': '#83d6c5',      # Operator - teal
+    'decorator': '#efb080',     # Decorator - orange
+    'regex': '#efb080',         # Regex - orange
+    'const': '#efb080',         # Constants - orange
+    'builtin': '#87c3ff',       # Built-in - light blue
+    'import': '#83d6c5',        # Import/Export - teal
+    'delimiter': '#d6d6dd',     # Delimiters - primary text
 }
+
+# Keep DRACULA_COLORS for backwards compatibility (alias to Cursor)
+DRACULA_COLORS = CURSOR_COLORS
 
 # ==================== 100+ PROGRAMMING LANGUAGES & FRAMEWORKS ====================
 LANGUAGE_KEYWORDS = {

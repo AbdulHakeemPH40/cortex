@@ -917,44 +917,118 @@ class SyntaxChecker:
         errors = []
         
         # 1. Basic HTML Tag Check
-        tag_stack = []
-        pattern = r'<(/?)(\w+)[^>]*>'
+        # IMPORTANT: Strip <script> and <style> block CONTENT first to prevent
+        # JS template strings like innerHTML='<span>' from being treated as HTML tags.
+        # Also strip HTML comments to avoid false positives.
         
-        for match in re.finditer(pattern, content):
+        # These tags are self-closing / void and never need a closing tag
+        VOID_TAGS = {
+            'br', 'hr', 'img', 'input', 'meta', 'link', 'area', 'base', 'col',
+            'embed', 'param', 'source', 'track', 'wbr', 'command', 'keygen', 'menuitem'
+        }
+        # These tags have OPTIONAL closing in HTML5 — their absence is valid,
+        # and browsers auto-close them. We handle them leniently but still
+        # report genuine mismatches if a wrong tag closes them.
+        # NOTE: html/body/head are NOT here — they ARE real structural tags
+        # and extra/mismatched ones should be caught.
+        OPTIONAL_CLOSE_TAGS = {
+            'p', 'li', 'dt', 'dd', 'td', 'th', 'tr', 'option', 'optgroup',
+            'colgroup', 'caption', 'thead', 'tbody', 'tfoot'
+        }
+        
+        # Strip <script>...</script> and <style>...</style> content (keep tags, blank inner)
+        # This prevents JS template strings like `'<span class="x">'` from polluting the stack
+        stripped = re.sub(
+            r'(<script[^>]*>)(.*?)(</script>)',
+            lambda m: m.group(1) + ' ' + m.group(3),
+            content, flags=re.DOTALL | re.IGNORECASE
+        )
+        stripped = re.sub(
+            r'(<style[^>]*>)(.*?)(</style>)',
+            lambda m: m.group(1) + ' ' + m.group(3),
+            stripped, flags=re.DOTALL | re.IGNORECASE
+        )
+        # Strip HTML comments (e.g. <!-- comment --> containing tags)
+        stripped = re.sub(r'<!--.*?-->', '', stripped, flags=re.DOTALL)
+        
+        tag_stack = []  # list of (tag_name, line_num)
+        pattern = r'<(/?)([a-zA-Z][a-zA-Z0-9]*)[^>]*?/?>'
+        
+        for match in re.finditer(pattern, stripped):
             is_closing = match.group(1) == '/'
             tag_name = match.group(2).lower()
-            if tag_name in ('br', 'hr', 'img', 'input', 'meta', 'link', 'area', 'base', 'col', 'embed', 'param', 'source', 'track', 'wbr'):
+            line_num = content[:match.start()].count('\n') + 1
+            
+            # Skip self-closing tags — they never need a closing counterpart
+            if tag_name in VOID_TAGS:
+                continue
+            # Skip self-closing syntax: <br/>, <img/>
+            if match.group(0).rstrip().endswith('/>'):
                 continue
             
             if is_closing:
-                if tag_stack and tag_stack[-1] == tag_name:
+                if tag_stack and tag_stack[-1][0] == tag_name:
+                    # Perfect match at top of stack
                     tag_stack.pop()
-                elif tag_name in tag_stack:
-                    line_num = content[:match.start()].count('\n') + 1
-                    errors.append(DiagnosticError(file_path, line_num, 0, f"Mismatched closing tag </{tag_name}>", "warning", source="html-tag"))
+                elif tag_name in OPTIONAL_CLOSE_TAGS:
+                    # Optional tag: pop up to it (browser-style auto-close intervening optionals)
+                    while tag_stack and tag_stack[-1][0] != tag_name:
+                        if tag_stack[-1][0] in OPTIONAL_CLOSE_TAGS:
+                            tag_stack.pop()
+                        else:
+                            break
+                    if tag_stack and tag_stack[-1][0] == tag_name:
+                        tag_stack.pop()
+                    # If not found, silently ignore (HTML5 optional close)
+                elif tag_name in [t[0] for t in tag_stack]:
+                    # Tag is deeper in the stack — try to get to it
+                    while tag_stack and tag_stack[-1][0] != tag_name:
+                        blocked = tag_stack[-1]
+                        if blocked[0] in OPTIONAL_CLOSE_TAGS:
+                            tag_stack.pop()  # auto-close optional
+                        else:
+                            # Real unclosed tag blocking — report mismatch
+                            errors.append(DiagnosticError(
+                                file_path, line_num, 0,
+                                f"Mismatched closing tag </{tag_name}> — expected </{blocked[0]}>",
+                                "warning", source="html-tag"
+                            ))
+                            break
+                    if tag_stack and tag_stack[-1][0] == tag_name:
+                        tag_stack.pop()
+                else:
+                    # Tag not in stack at all — extra/unexpected closing tag (real error)
+                    errors.append(DiagnosticError(
+                        file_path, line_num, 0,
+                        f"Unexpected closing tag </{tag_name}> with no matching opening tag",
+                        "warning", source="html-tag"
+                    ))
             else:
-                tag_stack.append(tag_name)
+                tag_stack.append((tag_name, line_num))
         
-        if tag_stack:
-            errors.append(DiagnosticError(file_path, 1, 0, f"Unclosed tags: {', '.join(tag_stack)}", "warning", source="html-tag"))
+        # Report genuinely unclosed tags (exclude optional-close ones)
+        unclosed = [(t, ln) for t, ln in tag_stack if t not in OPTIONAL_CLOSE_TAGS]
+        for tag, ln in unclosed:
+            errors.append(DiagnosticError(
+                file_path, ln, 0,
+                f"Unclosed tag <{tag}>",
+                "warning", source="html-tag"
+            ))
 
         # 2. Check Embedded JavaScript (<script> blocks)
-        script_pattern = re.compile(r'<script[^>]*>(.*?)</script>', re.DOTALL)
+        script_pattern = re.compile(r'<script[^>]*>(.*?)</script>', re.DOTALL | re.IGNORECASE)
         for match in script_pattern.finditer(content):
             inner_js = match.group(1)
             line_offset = content[:match.start()].count('\n')
             if inner_js.strip():
-                # For embedded JS, we strip leading whitespace from the block
-                # to avoid indentation-related syntax errors in node check
                 js_errors = self._check_javascript(file_path, inner_js.lstrip())
                 for e in js_errors:
-                    # Precise line calculation: offset + 1 (for the <script tag itself)
                     e.line += line_offset
                     e.source = f"html-js ({e.source})"
                     errors.append(e)
 
         # 3. Check Embedded CSS (<style> blocks)
-        style_pattern = re.compile(r'<style[^>]*>(.*?)</style>', re.DOTALL)
+        style_pattern = re.compile(r'<style[^>]*>(.*?)</style>', re.DOTALL | re.IGNORECASE)
         for match in style_pattern.finditer(content):
             inner_css = match.group(1)
             line_offset = content[:match.start()].count('\n')
