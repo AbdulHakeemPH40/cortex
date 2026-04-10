@@ -875,6 +875,7 @@ class AIChatWidget(QWidget):
         self._bridge.open_terminal_requested.connect(self.open_terminal_requested.emit)
         self._bridge.search_files_requested.connect(self._on_search_files)
         self._bridge.answer_question_requested.connect(self.answer_question_requested.emit)
+        self._bridge.smart_paste_check_requested.connect(self.smart_paste_check_requested.emit)
         
         # Connect permission response signal from bridge
         self._bridge.permission_response.connect(self.permission_response.emit)

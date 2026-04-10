@@ -1466,6 +1466,7 @@ class CortexMainWindow(QMainWindow):
         editor.inline_edit_submitted.connect(self._on_inline_edit_submitted)
         editor.inline_edit_cancelled.connect(self._on_inline_edit_cancelled)
         editor.inline_diff_requested.connect(self._on_inline_diff_requested)
+        editor.code_copied.connect(self._on_code_copied)
 
     def _open_file_dialog(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open File",
@@ -1585,7 +1586,8 @@ class CortexMainWindow(QMainWindow):
                 editor.inline_edit_submitted.connect(self._on_inline_edit_submitted)
                 editor.inline_edit_cancelled.connect(self._on_inline_edit_cancelled)
                 editor.inline_diff_requested.connect(self._on_inline_diff_requested)
-                
+                editor.code_copied.connect(self._on_code_copied)
+
             self._update_status_file(filepath)
             is_dark = self._theme_manager.is_dark
             if isinstance(editor, CodeEditor):
@@ -2291,76 +2293,73 @@ class CortexMainWindow(QMainWindow):
         self.statusBar().showMessage("✗ Rejected all changes - review files", 5000)
         self._sidebar.clear_changed_files()
 
+    def _on_code_copied(self, text: str, file_path: str, start_line: int, end_line: int):
+        """Store copy metadata so smart paste can use it after focus changes."""
+        self._last_copy_info = {
+            'text': text,
+            'file_path': file_path,
+            'start_line': start_line,
+            'end_line': end_line,
+        }
+
     def _on_smart_paste_check(self, pasted_text: str):
-        """Check if pasted text matches current editor selection. Send result to chat."""
+        """Check if pasted text matches last editor copy. Send result to chat."""
         try:
-            # Get current editor
-            editor = self._editor_tabs.currentWidget()
-            if not isinstance(editor, CodeEditor):
-                # No editor open, just paste normally
+            import json as _json
+
+            # Use stored copy metadata (captured at Ctrl+C time, before focus changed)
+            copy_info = getattr(self, '_last_copy_info', None)
+            if not copy_info or not copy_info.get('text'):
                 self._ai_chat._view.page().runJavaScript(
-                    f"handleSmartPasteResult({{isMatch: false}});"
+                    "handleSmartPasteResult({isMatch: false});"
                 )
                 return
-            
-            # Get selected text from editor
-            selected_text = editor.selectedText()
-            
-            # Normalize texts for comparison (remove extra whitespace)
+
             def normalize(text):
                 return '\n'.join(line.strip() for line in text.strip().split('\n') if line.strip())
-            
-            pasted_normalized = normalize(pasted_text)
-            selected_normalized = normalize(selected_text)
-            
-            # Check if they match (allowing for minor differences)
-            is_match = (pasted_normalized == selected_normalized or 
-                       pasted_normalized in selected_normalized or 
-                       selected_normalized in pasted_normalized)
-            
-            if is_match:
-                # Get file path and line numbers
-                file_path = self._editor_tabs.current_filepath()
-                if file_path:
-                    # Get selection range
-                    start_line, _ = editor.getSelectionStart()
-                    end_line, _ = editor.getSelectionEnd()
-                    
-                    # Convert to 1-indexed
-                    start_line += 1
-                    end_line += 1
-                    
-                    # Build line range string
-                    if start_line == end_line:
-                        line_range = f"{start_line}"
-                    else:
-                        line_range = f"{start_line}-{end_line}"
-                    
-                    # Escape the file path for JavaScript
-                    import json
-                    file_path_js = json.dumps(file_path)
-                    
-                    # Send result to JavaScript
-                    self._ai_chat._view.page().runJavaScript(
-                        f"handleSmartPasteResult({{isMatch: true, filePath: {file_path_js}, lineRange: '{line_range}'}});"
-                    )
-                    log.info(f"Smart paste: matched selection in {file_path} lines {line_range}")
-                else:
-                    # No file path, paste normally
-                    self._ai_chat._view.page().runJavaScript(
-                        f"handleSmartPasteResult({{isMatch: false}});"
-                    )
-            else:
-                # No match, paste normally
+
+            pasted_norm = normalize(pasted_text)
+            copied_norm = normalize(copy_info['text'])
+
+            if not copied_norm or not pasted_norm:
                 self._ai_chat._view.page().runJavaScript(
-                    f"handleSmartPasteResult({{isMatch: false}});"
+                    "handleSmartPasteResult({isMatch: false});"
                 )
-                
+                return
+
+            is_match = (pasted_norm == copied_norm or
+                        pasted_norm in copied_norm or
+                        copied_norm in pasted_norm)
+
+            if is_match and copy_info.get('file_path'):
+                file_path  = copy_info['file_path']
+                start_line = copy_info['start_line']
+                end_line   = copy_info['end_line']
+                file_name  = os.path.basename(file_path)
+                ext        = os.path.splitext(file_path)[1].lstrip('.')
+                line_range = str(start_line) if start_line == end_line else f"{start_line}-{end_line}"
+
+                self._ai_chat._view.page().runJavaScript(
+                    f"handleSmartPasteResult({{isMatch: true, "
+                    f"filePath: {_json.dumps(file_path)}, "
+                    f"fileName: {_json.dumps(file_name)}, "
+                    f"lineRange: {_json.dumps(line_range)}, "
+                    f"code: {_json.dumps(pasted_text)}, "
+                    f"language: {_json.dumps(ext)}}});"
+                )
+                log.info(f"Smart paste matched: {file_name} lines {line_range}")
+                # Clear after use so next paste starts fresh
+                self._last_copy_info = None
+                return
+
+            self._ai_chat._view.page().runJavaScript(
+                "handleSmartPasteResult({isMatch: false});"
+            )
+
         except Exception as e:
             log.error(f"Smart paste check error: {e}")
-            # On error, paste normally
             self._ai_chat._view.page().runJavaScript(
-                f"handleSmartPasteResult({{isMatch: false}});"
+                "handleSmartPasteResult({isMatch: false});"
             )
 
     # ============================================================================

@@ -1285,68 +1285,73 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         };
         input.oninput = function () {
-            input.style.height = 'auto';
-            input.style.height = (input.scrollHeight) + 'px';
+            // Debounced resize via rAF to avoid forced reflow on each keystroke
+            if (input._resizeRaf) cancelAnimationFrame(input._resizeRaf);
+            input._resizeRaf = requestAnimationFrame(function() {
+                input.style.height = 'auto';
+                input.style.height = Math.min(input.scrollHeight, 280) + 'px';
+            });
         };
         
-        // Smart paste handler - converts copied code to file references
-        // Store pending paste text to handle async result from Python
+        // Smart paste handler — fast path for normal text, async only for real code
         window._pendingSmartPasteText = null;
         window._smartPasteTimeout = null;
         
         input.onpaste = function(e) {
             e.preventDefault();
-            
-            // Get pasted content
             var pastedText = (e.clipboardData || window.clipboardData).getData('text');
-            
-            // Check if it looks like code (multiple lines or contains code patterns)
-            var lines = pastedText.split('\n');
-            var isCodeLike = lines.length > 2 || 
-                            /^(function|def|class|import|from|const|let|var|if|for|while|return|public|private|async|await|switch|case|try|catch)\s/.test(pastedText) ||
-                            /[{}\[\]();]/.test(pastedText);
-            
-            if (isCodeLike && bridge) {
-                // Store the text and ask Python to check
+            if (!pastedText) return;
+
+            // Trigger smart paste for any multi-line paste (3+ lines).
+            // Python will verify against the editor selection — single-line or
+            // unmatched text falls back to plain paste automatically.
+            var isMultiLine = pastedText.split('\n').length >= 3;
+
+            if (isMultiLine && bridge) {
+                // Optimistic insert immediately so user sees the text right away,
+                // then upgrade to a chip if Python confirms a match.
+                insertTextAtCursor(input, pastedText);
                 window._pendingSmartPasteText = pastedText;
-                
-                // Set a timeout to handle case where Python doesn't respond
+
+                // Short timeout — Python has 400ms to respond
                 window._smartPasteTimeout = setTimeout(function() {
-                    if (window._pendingSmartPasteText) {
-                        insertTextAtCursor(input, window._pendingSmartPasteText);
-                        window._pendingSmartPasteText = null;
-                    }
-                }, 2000); // 2 second timeout
-                
+                    window._pendingSmartPasteText = null;
+                }, 400);
+
                 bridge.on_check_smart_paste(pastedText);
             } else {
-                // Not code-like, paste normally
+                // Normal text — paste instantly, no delay at all
                 insertTextAtCursor(input, pastedText);
             }
         };
         
         // Handler called by Python with the result
         window.handleSmartPasteResult = function(result) {
-            // Clear the timeout
             if (window._smartPasteTimeout) {
                 clearTimeout(window._smartPasteTimeout);
                 window._smartPasteTimeout = null;
             }
-                    
             var input = document.getElementById('chatInput');
             if (!input) return;
-                    
-            if (result && result.isMatch) {
-                // ── Insert a beautiful file chip instead of raw text ──
-                _insertFileChip(result.fileName || result.filePath.split(/[\/]/).pop(),
-                                result.lineRange || '',
-                                result.code || window._pendingSmartPasteText || '',
-                                result.language || '');
-            } else {
-                // Not matched — paste normally
-                var text = window._pendingSmartPasteText || '';
-                if (text) insertTextAtCursor(input, text);
+
+            if (result && result.isMatch && window._pendingSmartPasteText) {
+                // Remove the optimistically-pasted raw code and replace with a chip
+                var rawCode = window._pendingSmartPasteText;
+                // Remove the raw code from the textarea value
+                var val = input.value;
+                var idx = val.lastIndexOf(rawCode);
+                if (idx !== -1) {
+                    input.value = val.slice(0, idx) + val.slice(idx + rawCode.length);
+                    input.dispatchEvent(new Event('input'));
+                }
+                _insertFileChip(
+                    result.fileName || result.filePath.split(/[\/]/).pop(),
+                    result.lineRange || '',
+                    result.code || rawCode,
+                    result.language || ''
+                );
             }
+            // If no match: raw code is already visible in the textarea — nothing to do
             window._pendingSmartPasteText = null;
         };
         
@@ -1407,7 +1412,23 @@ document.addEventListener('DOMContentLoaded', function () {
             chipsArea.appendChild(chip);
         }
         
-        // Expose so sendMessage can collect chips
+        // Collect chip metadata (read-only, does NOT remove chips)
+        window._collectChipMeta = function() {
+            var chips = document.querySelectorAll('#file-chips-area .file-chip');
+            if (!chips.length) return [];
+            var meta = [];
+            chips.forEach(function(chip) {
+                meta.push({
+                    fileName: chip.dataset.fileName || '',
+                    lineRange: chip.dataset.lineRange || '',
+                    language: chip.dataset.language || '',
+                    code: chip.dataset.code || ''
+                });
+            });
+            return meta;
+        };
+
+// Expose so sendMessage can collect chips
         window._collectChipCode = function() {
             var chips = document.querySelectorAll('#file-chips-area .file-chip');
             if (!chips.length) return '';
@@ -1891,9 +1912,48 @@ function appendMessage(text, sender, shouldSave) {
     content.className = 'message-content';
 
     if (sender === 'user') {
-        content.textContent = text;
-        // User messages: simple single container, no nested wrappers
-        bubble.appendChild(content);
+        // Check if there are chip metadata to render as visual chips
+        var chipMeta = window._pendingChipMeta || [];
+        window._pendingChipMeta = null;
+
+        if (chipMeta.length > 0) {
+            // Build the display text: strip out the code block context from text
+            var displayText = text;
+            // Remove the chip code blocks from display (they look like: `file.py 1-5`\n```lang\n...\n```)
+            chipMeta.forEach(function(cm) {
+                var label = cm.lineRange ? cm.fileName + ' ' + cm.lineRange : cm.fileName;
+                // Build regex to strip the chip context block from display text
+                var escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                var pattern = new RegExp('`' + escapedLabel + '`\\s*```[\\s\\S]*?```\\s*', 'g');
+                displayText = displayText.replace(pattern, '');
+            });
+            displayText = displayText.trim();
+
+            // Render chip elements
+            var chipsContainer = document.createElement('div');
+            chipsContainer.className = 'message-chips-area';
+            chipMeta.forEach(function(cm) {
+                var chipEl = document.createElement('div');
+                chipEl.className = 'message-file-chip';
+                var ext = cm.language || cm.fileName.split('.').pop() || '';
+                var icon = (typeof _getFileIcon === 'function') ? _getFileIcon(ext) : '{ }';
+                var label = cm.lineRange ? cm.fileName + ' ' + cm.lineRange : cm.fileName;
+                chipEl.innerHTML = '<span class="chip-icon">' + icon + '</span>' +
+                    '<span class="chip-label">' + label + '</span>';
+                chipEl.title = cm.code ? cm.code.substring(0, 200) : label;
+                chipsContainer.appendChild(chipEl);
+            });
+            bubble.appendChild(chipsContainer);
+
+            // Add remaining text if any
+            if (displayText) {
+                content.textContent = displayText;
+                bubble.appendChild(content);
+            }
+        } else {
+            content.textContent = text;
+            bubble.appendChild(content);
+        }
     } else {
         var parsedHtml = '';
         try {
@@ -2005,7 +2065,9 @@ function sendMessage() {
     if (!input) return;
     var text = input.value.trim();
 
-    // Prepend any attached file chips as code context
+    // Collect chip metadata for display in user message bubble
+    var chipMeta = (typeof window._collectChipMeta === 'function') ? window._collectChipMeta() : [];
+    // Prepend any attached file chips as code context (full code for AI)
     var chipContext = (typeof window._collectChipCode === 'function') ? window._collectChipCode() : '';
     var fullText = chipContext + text;
 
@@ -2019,10 +2081,12 @@ function sendMessage() {
         return;
     }
 
+    // Store chip metadata for display in the user bubble
+    window._pendingChipMeta = chipMeta;
     if (_isGenerating) {
-        _enqueueMessage(text);
+        _enqueueMessage(fullText);
     } else {
-        _sendNow(text);
+        _sendNow(fullText);
     }
 }
 

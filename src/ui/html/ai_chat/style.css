@@ -560,6 +560,112 @@ button svg,
     border-color: var(--accent-primary);
 }
 
+/* ── File Chip Pills (code context attachments) ── */
+#file-chips-area {
+    display: none;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 6px 4px 2px;
+}
+
+.file-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(0, 120, 212, 0.15);
+    border: 1px solid rgba(0, 120, 212, 0.4);
+    border-radius: 6px;
+    padding: 3px 8px 3px 6px;
+    font-size: 12px;
+    color: #9cdcfe;
+    cursor: default;
+    max-width: 280px;
+    transition: background 0.15s;
+}
+
+.file-chip:hover {
+    background: rgba(0, 120, 212, 0.25);
+}
+
+.chip-icon {
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 10px;
+    font-weight: 700;
+    color: #4ec9b0;
+    letter-spacing: -0.5px;
+    min-width: 18px;
+    text-align: center;
+    background: rgba(78, 201, 176, 0.12);
+    border-radius: 3px;
+    padding: 1px 3px;
+}
+
+.chip-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 200px;
+    color: #9cdcfe;
+    font-family: 'Consolas', monospace;
+    font-size: 12px;
+}
+
+.chip-remove {
+    background: none;
+    border: none;
+    color: #858585;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0 0 0 2px;
+    display: flex;
+    align-items: center;
+    transition: color 0.15s;
+}
+
+.chip-remove:hover {
+    color: #f48771;
+}
+
+/* ── Message file chips (inside user message bubbles) ── */
+.message-chips-area {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+.message-file-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(0,120,212,0.13);
+    border: 1px solid rgba(0,120,212,0.35);
+    border-radius: 6px;
+    padding: 4px 10px 4px 7px;
+    font-size: 12.5px;
+    cursor: default;
+    max-width: 260px;
+    transition: background 0.15s;
+}
+.message-file-chip:hover {
+    background: rgba(0,120,212,0.22);
+}
+.message-file-chip .chip-icon {
+    font-family: 'Consolas', 'Fira Code', monospace;
+    color: #4ec9b0;
+    font-weight: 700;
+    font-size: 12px;
+}
+.message-file-chip .chip-label {
+    font-family: 'Consolas', 'Fira Code', monospace;
+    color: #9cdcfe;
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 200px;
+}
+
 #chatInput {
     width: 100%;
     background: transparent;

@@ -686,6 +686,7 @@ class CodeEditor(QPlainTextEdit):
     inline_edit_submitted = pyqtSignal(str, str, tuple)  # prompt, selection_text, (start, end)
     inline_edit_cancelled = pyqtSignal()
     inline_diff_requested = pyqtSignal()
+    code_copied = pyqtSignal(str, str, int, int)  # text, file_path, start_line, end_line
 
     def _get_preferred_programming_font(self) -> str:
         """Get best available programming font."""
@@ -1158,6 +1159,26 @@ class CodeEditor(QPlainTextEdit):
                                     modifiers & Qt.KeyboardModifier.MetaModifier):
             self._show_inline_overlay()
             return
+
+        # 2b. Ctrl+C — emit code_copied signal with selection metadata before copy
+        if key == Qt.Key.Key_C and modifiers & Qt.KeyboardModifier.ControlModifier:
+            cursor = self.textCursor()
+            if cursor.hasSelection():
+                sel_text, (sl, el) = self._get_selection_info()
+                fp = getattr(self, '_file_path', '') or ''
+                if not fp:
+                    # Try to get from parent tab
+                    try:
+                        from src.ui.components.editor_tabs import EditorTabWidget
+                        p = self.parent()
+                        while p is not None:
+                            if hasattr(p, 'current_filepath'):
+                                fp = p.current_filepath() or ''
+                                break
+                            p = p.parent()
+                    except Exception:
+                        pass
+                self.code_copied.emit(sel_text, fp, sl, el)
         if key == Qt.Key.Key_Escape and self._inline_overlay.isVisible():
             self._hide_inline_overlay()
             return
