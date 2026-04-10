@@ -28,14 +28,23 @@ a = Analysis(
     binaries=winpty_dlls,  # ← ADD THIS
     datas=[
         ('src/ui/html/ai_chat', 'src/ui/html/ai_chat'),
-        # OpenCode file-icons sprite (1096 language/folder icons)
         ('src/ui/html/ai_chat/file-icons/sprite.svg', 'src/ui/html/ai_chat/file-icons'),
         ('src/ui/components/terminal.html', 'src/ui/components'),
         ('src/ui/components/assets', 'src/ui/components/assets'),
         ('src/ui/themes', 'src/ui/themes'),
         ('src/assets', 'src/assets'),
         ('bin/node', 'bin/node'),
-        ('node_modules', 'node_modules'),
+        # LSP servers - essential for language support
+        ('node_modules/pyright', 'node_modules/pyright'),
+        ('node_modules/typescript-language-server', 'node_modules/typescript-language-server'),
+        ('node_modules/bash-language-server', 'node_modules/bash-language-server'),
+        ('node_modules/vscode-langservers-extracted', 'node_modules/vscode-langservers-extracted'),
+        ('node_modules/.bin/pyright-langserver*', 'node_modules/.bin'),
+        ('node_modules/.bin/typescript-language-server*', 'node_modules/.bin'),
+        ('node_modules/.bin/bash-language-server*', 'node_modules/.bin'),
+        ('node_modules/.bin/vscode-html-language-server*', 'node_modules/.bin'),
+        ('node_modules/.bin/vscode-css-language-server*', 'node_modules/.bin'),
+        ('node_modules/.bin/vscode-json-language-server*', 'node_modules/.bin'),
         ('.env', '.'),
     ],
     hiddenimports=[
@@ -48,6 +57,9 @@ a = Analysis(
         'src.ai.providers.mistral_provider',      # Mistral AI support
         'src.ai.providers.siliconflow_provider',
         'src.core.lsp_manager',
+        'src.core.pyright_config',  # Pyright configuration management
+        'tomllib',  # For pyproject.toml parsing (Python 3.11+)
+        'tomli',    # Fallback for older Python versions
     ],
     hookspath=[],
     hooksconfig={},

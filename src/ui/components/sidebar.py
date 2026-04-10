@@ -655,7 +655,7 @@ class FileExplorerPanel(QWidget):
         hlay.addStretch()
 
         collapse_btn = QPushButton()
-        collapse_btn.setIcon(make_button_icon("collapse", self._is_dark, 18))
+        collapse_btn.setIcon(make_button_icon("collapse-all", self._is_dark, 18))
         collapse_btn.setFixedSize(24, 24)
         collapse_btn.setToolTip("Collapse All")
         collapse_btn.setStyleSheet("QPushButton { border:none; background:transparent; } QPushButton:hover { background: #3e3e42; border-radius:3px; }")
@@ -688,20 +688,21 @@ class FileExplorerPanel(QWidget):
         athay.setContentsMargins(0, 0, 0, 0)
         athay.setSpacing(2)
 
+        # ── Explorer Action Icons (High-quality SVG Lucide/Codicon style) ────
         self._btn_new_file = QPushButton()
-        self._btn_new_file.setIcon(make_button_icon("new_file", self._is_dark, 18))
+        self._btn_new_file.setIcon(make_button_icon("new-file", self._is_dark, 18))
         self._btn_new_file.setFixedSize(26, 26)
         self._btn_new_file.setToolTip("New File")
         self._btn_new_file.clicked.connect(self._new_file)
         
         self._btn_new_folder = QPushButton()
-        self._btn_new_folder.setIcon(make_button_icon("new_folder", self._is_dark, 18))
+        self._btn_new_folder.setIcon(make_button_icon("new-folder", self._is_dark, 18))
         self._btn_new_folder.setFixedSize(26, 26)
         self._btn_new_folder.setToolTip("New Folder")
         self._btn_new_folder.clicked.connect(self._new_folder)
 
         self._btn_refresh = QPushButton()
-        self._btn_refresh.setIcon(make_button_icon("refresh", self._is_dark, 18))
+        self._btn_refresh.setIcon(make_button_icon("refresh-explorer", self._is_dark, 18))
         self._btn_refresh.setFixedSize(26, 26)
         self._btn_refresh.setToolTip("Refresh Explorer")
         self._btn_refresh.clicked.connect(self._refresh_explorer)
@@ -875,10 +876,10 @@ class FileExplorerPanel(QWidget):
         )
         self._folder_arrow.setStyleSheet(f"font-size:9px; color:{fg};")
         
-        # Update toolbar icons
-        self._btn_new_file.setIcon(make_button_icon("new_file", is_dark, 18))
-        self._btn_new_folder.setIcon(make_button_icon("new_folder", is_dark, 18))
-        self._btn_refresh.setIcon(make_button_icon("refresh", is_dark, 18))
+        # Update toolbar icons (High-quality SVG Codicon/Lucide style)
+        self._btn_new_file.setIcon(make_button_icon("new-file", is_dark, 18))
+        self._btn_new_folder.setIcon(make_button_icon("new-folder", is_dark, 18))
+        self._btn_refresh.setIcon(make_button_icon("refresh-explorer", is_dark, 18))
         
         btn_qss = f"""
             QPushButton {{ 
@@ -1341,6 +1342,83 @@ class SearchPanel(QWidget):
             self.file_opened.emit(data[0], data[1])
 
 
+class GitPanel(QWidget):
+    """Full-featured Source Control panel — VS Code standard.
+    Wraps GitPanelWidget from git_ui.py with GitManager for complete
+    git integration: staging, commits, diffs, branches, push/pull.
+    """
+    file_opened = pyqtSignal(str)
+
+    def __init__(self, git_manager=None, parent=None):
+        super().__init__(parent)
+        self._is_dark = True
+        self._git_manager = git_manager
+        self._git_widget = None
+        self._no_repo_label = None
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        if self._git_manager:
+            # Full-featured GitPanelWidget from git_ui.py
+            from src.ui.components.git_ui import GitPanelWidget
+            self._git_widget = GitPanelWidget(self._git_manager, self)
+            layout.addWidget(self._git_widget)
+        else:
+            # Fallback placeholder when no GitManager provided
+            self._no_repo_label = QLabel("No repository detected")
+            self._no_repo_label.setWordWrap(True)
+            self._no_repo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._no_repo_label.setStyleSheet("font-size:12px; color:#858585; padding: 20px;")
+            layout.addWidget(self._no_repo_label)
+
+    def set_git_manager(self, git_manager):
+        """Set or replace the GitManager (called when project opens)."""
+        self._git_manager = git_manager
+        # Rebuild UI with the real widget
+        if self._git_widget is None and git_manager is not None:
+            # Remove placeholder
+            if self._no_repo_label:
+                self._no_repo_label.setParent(None)
+                self._no_repo_label.deleteLater()
+                self._no_repo_label = None
+            from src.ui.components.git_ui import GitPanelWidget
+            self._git_widget = GitPanelWidget(git_manager, self)
+            self.layout().addWidget(self._git_widget)
+            self._git_widget.set_theme(self._is_dark)
+        elif self._git_widget is not None:
+            self._git_widget.git = git_manager
+
+    def refresh(self):
+        """Refresh git status display."""
+        if self._git_widget:
+            self._git_widget.refresh()
+
+    def set_repository(self, path: str) -> bool:
+        """Set repository path and refresh."""
+        if self._git_manager:
+            result = self._git_manager.set_repository(path)
+            if result:
+                self.refresh()
+            return result
+        return False
+
+    def set_theme(self, is_dark: bool):
+        self._is_dark = is_dark
+        if self._git_widget:
+            self._git_widget.set_theme(is_dark)
+        if self._no_repo_label:
+            color = "#858585" if is_dark else "#666666"
+            self._no_repo_label.setStyleSheet(f"font-size:12px; color:{color}; padding: 20px;")
+
+    def set_repo_info(self, branch: str = "", changes: list = None):
+        """Legacy API compat — refresh handles this now."""
+        self.refresh()
+
+
 class AIToolsPanel(QWidget):
     """AI quick-action panel in the sidebar."""
     action_requested = pyqtSignal(str)  # action name
@@ -1657,9 +1735,10 @@ class SidebarWidget(QWidget):
     accept_all_requested = pyqtSignal()
     reject_all_requested = pyqtSignal()
 
-    def __init__(self, file_manager=None, parent=None):
+    def __init__(self, file_manager=None, git_manager=None, parent=None):
         super().__init__(parent)
         self._file_manager = file_manager
+        self._git_manager = git_manager
         self._build_ui()
 
     def _build_ui(self):
@@ -1677,7 +1756,14 @@ class SidebarWidget(QWidget):
         icon_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         self._icon_buttons: list[QPushButton] = []
-        self._panels_info = [("files", "Explorer", 0), ("search", "Search", 1), ("ai", "AI Tools", 2), ("git", "Changed Files", 3)]
+        # VS Code-style Activity Bar icons (high-quality SVG templates)
+        self._panels_info = [
+            ("explorer", "Explorer", 0),
+            ("search-panel", "Search", 1),
+            ("source-control", "Source Control", 2),
+            ("ai-panel", "AI Tools", 3),
+            ("changed-files-panel", "Changed Files", 4),
+        ]
         for icon_name, tooltip, idx in self._panels_info:
             btn = QPushButton()
             btn.setIconSize(QSize(24, 24))
@@ -1695,13 +1781,15 @@ class SidebarWidget(QWidget):
         self._stack = QStackedWidget()
         self._explorer = FileExplorerPanel(self._file_manager)
         self._search = SearchPanel()
+        self._git_panel = GitPanel(git_manager=self._git_manager)
         self._ai_tools = AIToolsPanel()
         self._changed_files = ChangedFilesPanel()
 
-        self._stack.addWidget(self._explorer)
-        self._stack.addWidget(self._search)
-        self._stack.addWidget(self._ai_tools)
-        self._stack.addWidget(self._changed_files)
+        self._stack.addWidget(self._explorer)       # 0
+        self._stack.addWidget(self._search)          # 1
+        self._stack.addWidget(self._git_panel)       # 2
+        self._stack.addWidget(self._ai_tools)        # 3
+        self._stack.addWidget(self._changed_files)   # 4
         layout.addWidget(self._stack)
 
         # Connect signals
@@ -1731,6 +1819,8 @@ class SidebarWidget(QWidget):
     def set_project(self, folder_path: str):
         self._explorer.set_project(folder_path)
         self._search.set_root(folder_path)
+        # Initialize git for this project
+        self._git_panel.set_repository(folder_path)
 
     def is_explorer_focused(self) -> bool:
         return self._explorer.is_tree_focused()
@@ -1741,6 +1831,7 @@ class SidebarWidget(QWidget):
     def set_theme(self, is_dark: bool):
         self._explorer.set_theme(is_dark)
         self._search.set_theme(is_dark)
+        self._git_panel.set_theme(is_dark)
         self._ai_tools.set_theme(is_dark)
         self._changed_files.set_theme(is_dark)
         
@@ -1775,9 +1866,10 @@ class SidebarWidget(QWidget):
         self._explorer.restore_expanded_paths(paths)
 
     def refresh(self):
-        """Refresh the file explorer to reflect changes."""
+        """Refresh the file explorer and git panel to reflect changes."""
         if hasattr(self._explorer, '_refresh_explorer'):
             self._explorer._refresh_explorer()
+        self._git_panel.refresh()
 
 
     def get_ai_model(self) -> str:
@@ -1803,4 +1895,4 @@ class SidebarWidget(QWidget):
 
     def show_changed_files_panel(self):
         """Switch to the changed files panel."""
-        self._switch_panel(3)
+        self._switch_panel(4)

@@ -44,6 +44,14 @@ DEFAULT_SETTINGS = {
         "right_panel_width": 320,
         "maximized": False,
     },
+    "lsp": {
+        # Language Server Protocol settings
+        # Note: Python, JS/TS, HTML, CSS, JSON, Bash work out-of-the-box
+        # Java requires additional setup - see JAVA_SETUP.md
+        "enabled": True,
+        "timeout": 5.0,  # Request timeout in seconds
+        "auto_restart": True,  # Auto-restart crashed servers
+    },
     "recent_projects": [],
     "last_project": None,
 }

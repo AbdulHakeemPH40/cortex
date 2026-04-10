@@ -28,6 +28,7 @@ from src.core.codebase_index import get_codebase_index
 from src.ai.stub_agent import get_stub_agent as AIAgent  # Temporary stub
 # from src.ai.code_analyzer import CodeAnalyzer
 # from src.ai.file_edit_tracker import FileEditTracker
+from src.core.git_manager import GitManager
 from src.ui.components.sidebar import SidebarWidget
 from src.ui.components.editor import CodeEditor
 from src.ui.components.ai_chat import AIChatWidget
@@ -569,6 +570,10 @@ class CortexMainWindow(QMainWindow):
         self._file_manager = FileManager()
         self._session_manager = SessionManager()
         
+        # Git manager for source control integration
+        self._git_manager = GitManager()
+        log.info("[GIT] GitManager initialized")
+        
         # TEMPORARY: Using stub agent until OpenHands SDK integration
         self._ai_agent = AIAgent(file_manager=self._file_manager)
         log.info("[AGENT] Stub agent initialized - awaiting OpenHands SDK")
@@ -667,7 +672,7 @@ class CortexMainWindow(QMainWindow):
         self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # --- Left Sidebar ---
-        self._sidebar = SidebarWidget(self._file_manager)
+        self._sidebar = SidebarWidget(self._file_manager, git_manager=self._git_manager)
         self._sidebar.setMinimumWidth(44)
         self._sidebar.setMaximumWidth(700)
         self._main_splitter.addWidget(self._sidebar)

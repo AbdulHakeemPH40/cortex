@@ -198,14 +198,19 @@ class GitManager(QObject):
             log.error(f"Git checkout failed: {stderr}")
         return success
         
-    def commit(self, message: str) -> bool:
-        """Commit staged changes."""
-        success, _, stderr = self._run_git(["commit", "-m", message])
+    def commit(self, message: str, amend: bool = False) -> Tuple[bool, str]:
+        """Commit staged changes. Returns (success, error_message)."""
+        args = ["commit", "-m", message]
+        if amend:
+            args.append("--amend")
+        success, stdout, stderr = self._run_git(args)
         if success:
             self.status_changed.emit()
+            return True, ""
         else:
-            log.error(f"Git commit failed: {stderr}")
-        return success
+            error_msg = stderr.strip() or stdout.strip() or "Unknown error"
+            log.error(f"Git commit failed: {error_msg}")
+            return False, error_msg
         
     def get_commits(self, count: int = 20) -> List[GitCommit]:
         """Get recent commits."""

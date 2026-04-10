@@ -1,4 +1,4 @@
-﻿var bridge = null;
+var bridge = null;
 var term = null;
 var fitAddon = null;
 var currentChatId = null;

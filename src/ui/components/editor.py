@@ -831,6 +831,10 @@ class CodeEditor(QPlainTextEdit):
             # Only set highlighter language if it exists (during init, it doesn't)
             if hasattr(self, '_highlighter'):
                 self._highlighter.set_language(language)
+            
+            # Show Java setup notification for first-time Java users
+            if language.lower() == 'java':
+                self._check_java_setup()
         
         # CRITICAL: Allow highlighter to run by NOT blocking document signals
         # Only prevent content_modified from firing
@@ -1387,6 +1391,161 @@ class CodeEditor(QPlainTextEdit):
             self._inline_overlay.hide()
             self.inline_edit_cancelled.emit()
 
+    def _check_java_setup(self):
+        """Check if Java LSP is available and show setup notification if not."""
+        import shutil
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QApplication
+        
+        # Check if jdtls is available in PATH
+        jdtls_available = shutil.which("jdtls") is not None
+        
+        if not jdtls_available:
+            # Create custom dialog with selectable text
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Java Support Required")
+            dialog.setMinimumWidth(500)
+            
+            layout = QVBoxLayout(dialog)
+            
+            # Title label
+            title_label = QLabel("Java language features require setup.")
+            title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+            layout.addWidget(title_label)
+            
+            # Instruction label
+            inst_label = QLabel("Run these commands in CMD or PowerShell:")
+            layout.addWidget(inst_label)
+            
+            # Warning box for winget not found
+            warn_label = QLabel("⚠ If 'winget' not found, run this first:")
+            warn_label.setStyleSheet("color: #ff9800; font-size: 12px; font-weight: bold;")
+            layout.addWidget(warn_label)
+            
+            fix_text = QLabel('$env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")')
+            fix_text.setStyleSheet("background-color: #2d2d2d; padding: 8px; border-radius: 4px; font-family: Consolas, monospace; border-left: 3px solid #ff9800;")
+            fix_text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            layout.addWidget(fix_text)
+            
+            fix_btn = QPushButton("Copy")
+            fix_btn.clicked.connect(lambda: QApplication.clipboard().setText('$env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")'))
+            layout.addWidget(fix_btn)
+            
+            layout.addSpacing(15)
+            
+            # Command 1: Java JDK
+            cmd1_label = QLabel("1. Install Java 21+ JDK (required by jdtls):")
+            layout.addWidget(cmd1_label)
+            
+            cmd1_text = QLabel("winget install EclipseAdoptium.Temurin.21.JDK")
+            cmd1_text.setStyleSheet("background-color: #2d2d2d; padding: 8px; border-radius: 4px; font-family: Consolas, monospace;")
+            cmd1_text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            layout.addWidget(cmd1_text)
+            
+            cmd1_btn = QPushButton("Copy")
+            cmd1_btn.clicked.connect(lambda: QApplication.clipboard().setText("winget install EclipseAdoptium.Temurin.21.JDK"))
+            layout.addWidget(cmd1_btn)
+            
+            # Manual download note
+            manual_label = QLabel("If winget fails, download from adoptium.net and install manually.")
+            manual_label.setStyleSheet("color: #888; font-size: 11px;")
+            layout.addWidget(manual_label)
+            
+            layout.addSpacing(10)
+            
+            # Command 2: Install Scoop (if not installed)
+            cmd2_label = QLabel("2. Install Scoop (package manager):")
+            layout.addWidget(cmd2_label)
+            
+            cmd2_text = QLabel("iwr -useb get.scoop.sh | iex")
+            cmd2_text.setStyleSheet("background-color: #2d2d2d; padding: 8px; border-radius: 4px; font-family: Consolas, monospace;")
+            cmd2_text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            layout.addWidget(cmd2_text)
+            
+            cmd2_btn = QPushButton("Copy")
+            cmd2_btn.clicked.connect(lambda: QApplication.clipboard().setText("iwr -useb get.scoop.sh | iex"))
+            layout.addWidget(cmd2_btn)
+            
+            layout.addSpacing(10)
+            
+            # Command 3: Refresh PATH (needed after scoop install)
+            cmd3_label = QLabel("3. Refresh PATH (so scoop command works):")
+            layout.addWidget(cmd3_label)
+            
+            cmd3_text = QLabel('$env:Path = [Environment]::GetEnvironmentVariable("Path", "User")')
+            cmd3_text.setStyleSheet("background-color: #2d2d2d; padding: 8px; border-radius: 4px; font-family: Consolas, monospace;")
+            cmd3_text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            layout.addWidget(cmd3_text)
+            
+            cmd3_btn = QPushButton("Copy")
+            cmd3_btn.clicked.connect(lambda: QApplication.clipboard().setText('$env:Path = [Environment]::GetEnvironmentVariable("Path", "User")'))
+            layout.addWidget(cmd3_btn)
+            
+            layout.addSpacing(10)
+            
+            # Command 4: JDTLS
+            cmd4_label = QLabel("4. Install Eclipse JDT Language Server:")
+            layout.addWidget(cmd4_label)
+            
+            cmd4_text = QLabel("scoop install jdtls")
+            cmd4_text.setStyleSheet("background-color: #2d2d2d; padding: 8px; border-radius: 4px; font-family: Consolas, monospace;")
+            cmd4_text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            layout.addWidget(cmd4_text)
+            
+            cmd4_btn = QPushButton("Copy")
+            cmd4_btn.clicked.connect(lambda: QApplication.clipboard().setText("scoop install jdtls"))
+            layout.addWidget(cmd4_btn)
+            
+            layout.addSpacing(10)
+            
+            # Troubleshooting section
+            troubleshoot_title = QLabel("Troubleshooting:")
+            troubleshoot_title.setStyleSheet("color: #ff9800; font-size: 12px; font-weight: bold;")
+            layout.addWidget(troubleshoot_title)
+            
+            troubleshoot_text = QLabel(
+                "• If 'java -version' shows old version → Close & reopen terminal\n"
+                "• If 'scoop' not found → Run step 3 (Refresh PATH)\n"
+                "• If 'jdtls' not found → Reinstall: scoop uninstall jdtls && scoop install jdtls"
+            )
+            troubleshoot_text.setStyleSheet("color: #aaa; font-size: 11px;")
+            layout.addWidget(troubleshoot_text)
+            
+            layout.addSpacing(15)
+            
+            # Complete Guide section
+            guide_title = QLabel("Complete Setup Guide:")
+            guide_title.setStyleSheet("color: #2196F3; font-size: 12px; font-weight: bold;")
+            layout.addWidget(guide_title)
+            
+            guide_text = QLabel(
+                "If PATH is broken (commands not found):\n"
+                "$env:Path = [System.Environment]::GetEnvironmentVariable(\"Path\", \"Machine\") + \";\" + [System.Environment]::GetEnvironmentVariable(\"Path\", \"User\")\n\n"
+                "Fix Python for scoop (if jdtls install fails):\n"
+                "$env:Path = \"C:\\Users\\$env:USERNAME\\OneDrive\\Desktop\\black_box\\venv\\Scripts;$env:Path\"\n\n"
+                "Quick Install (copy all at once):\n"
+                "1. winget install EclipseAdoptium.Temurin.21.JDK\n"
+                "2. iwr -useb get.scoop.sh | iex\n"
+                "3. $env:Path = [Environment]::GetEnvironmentVariable(\"Path\", \"User\")\n"
+                "4. scoop install jdtls\n"
+                "5. Restart IDE"
+            )
+            guide_text.setStyleSheet("color: #888; font-size: 10px; font-family: Consolas, monospace;")
+            guide_text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            layout.addWidget(guide_text)
+            
+            layout.addSpacing(10)
+            
+            # Step 5
+            step5_label = QLabel("5. Restart Cortex IDE, then open any .java file")
+            layout.addWidget(step5_label)
+            
+            # OK button
+            ok_btn = QPushButton("OK")
+            ok_btn.clicked.connect(dialog.close)
+            layout.addWidget(ok_btn)
+            
+            dialog.exec()
+    
     def _on_inline_submit(self, prompt: str):
         self._inline_overlay.set_pending(True)
         self.inline_edit_submitted.emit(

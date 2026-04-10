@@ -44,10 +44,12 @@ def _draw_folder(p: QPainter, s: int, color: str):
 
 
 def _draw_new_file(p: QPainter, s: int, color: str):
-    """Solid High-Fidelity New File: Solid sheet with plus overlay."""
-    p.setPen(Qt.PenStyle.NoPen)
+    """VS Code-style New File: Document with border and plus."""
+    border_color = color if color != "#ffffff" else "#555555"
+    # Border/stroke first
+    _pen(p, border_color, 1.5)
     p.setBrush(QColor(color))
-    # Main Doc
+    # Main Doc with border
     doc = QPainterPath()
     doc.moveTo(s*0.15, s*0.1)
     doc.lineTo(s*0.55, s*0.1)
@@ -57,14 +59,17 @@ def _draw_new_file(p: QPainter, s: int, color: str):
     doc.closeSubpath()
     p.drawPath(doc)
     
-    # Plus Shape (White overlay for contrast)
-    p.setBrush(QColor("#ffffff") if color != "#ffffff" else QColor("#1e1e1e"))
-    pw, ph = s*0.08, s*0.25 # Sharp, bold
+    # Plus Shape with border
+    plus_color = "#ffffff" if color != "#ffffff" else "#1e1e1e"
+    _pen(p, plus_color, 1.0)
+    p.setBrush(QColor(plus_color))
+    pw, ph = s*0.08, s*0.25
     p.drawRect(QRectF(s*0.5, s*0.65, ph, pw)) # Horiz
     p.drawRect(QRectF(s*0.5 + ph/2 - pw/2, s*0.65 - (ph-pw)/2, pw, ph)) # Vert
     
-    # Fold (Solid cutout)
+    # Fold corner
     p.setBrush(QColor(color).lighter(125))
+    p.setPen(Qt.PenStyle.NoPen)
     fold = QPainterPath()
     fold.moveTo(s*0.55, s*0.1)
     fold.lineTo(s*0.55, s*0.4)
@@ -74,12 +79,14 @@ def _draw_new_file(p: QPainter, s: int, color: str):
 
 
 def _draw_new_folder(p: QPainter, s: int, color: str):
-    """Solid High-Fidelity New Folder: Solid folder with plus overlay."""
-    p.setPen(Qt.PenStyle.NoPen)
+    """VS Code-style New Folder: Folder with border and plus."""
+    border_color = color if color != "#ffffff" else "#555555"
+    # Border first
+    _pen(p, border_color, 1.5)
     p.setBrush(QColor(color))
-    
-    # Body
+    # Body with border
     p.drawRoundedRect(QRectF(s*0.05, s*0.25, s*0.9, s*0.65), 1.5, 1.5)
+    # Tab
     tab = QPainterPath()
     tab.moveTo(s*0.1, s*0.25)
     tab.lineTo(s*0.1, s*0.15)
@@ -87,27 +94,89 @@ def _draw_new_folder(p: QPainter, s: int, color: str):
     tab.lineTo(s*0.45, s*0.25)
     p.drawPath(tab)
     
-    # Plus Shape
-    p.setBrush(QColor("#ffffff") if color != "#ffffff" else QColor("#1e1e1e"))
+    # Plus Shape with border
+    plus_color = "#ffffff" if color != "#ffffff" else "#1e1e1e"
+    _pen(p, plus_color, 1.0)
+    p.setBrush(QColor(plus_color))
     pw, ph = s*0.08, s*0.25
     p.drawRect(QRectF(s*0.4, s*0.55, ph, pw)) # Horiz
     p.drawRect(QRectF(s*0.4 + ph/2 - pw/2, s*0.55 - (ph-pw)/2, pw, ph)) # Vert
 
 
 def _draw_refresh(p: QPainter, s: int, color: str):
-    """Solid High-Fidelity Refresh: Bold circular arrow with filled head."""
-    _pen(p, color, 3.0) # Heavyweight orbit
+    """VS Code-style Refresh: Circular arrow with clean border."""
+    # Thinner, cleaner stroke with slight border
+    _pen(p, color, 2.0)
     rect = QRectF(s*0.2, s*0.2, s*0.6, s*0.6)
     p.drawArc(rect, 40 * 16, 280 * 16)
-    # Solid heavy arrow head
+    # Arrow head
     p.setPen(Qt.PenStyle.NoPen)
     p.setBrush(QColor(color))
     arrow = QPainterPath()
-    arrow.moveTo(s*0.8, s*0.15)
-    arrow.lineTo(s*1.0, s*0.4)
-    arrow.lineTo(s*0.65, s*0.45)
+    arrow.moveTo(s*0.78, s*0.18)
+    arrow.lineTo(s*0.95, s*0.38)
+    arrow.lineTo(s*0.62, s*0.42)
     arrow.closeSubpath()
     p.drawPath(arrow)
+
+
+def _draw_refresh_cw(p: QPainter, s: int, color: str):
+    """Lucide-style Refresh CW: Circular arrow clockwise with chevron head."""
+    _pen(p, color, 2.0)
+    # Circular arc (clockwise)
+    rect = QRectF(s*0.25, s*0.25, s*0.5, s*0.5)
+    p.drawArc(rect, 0, 270 * 16)
+    # Arrow head (chevron pointing clockwise)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(color))
+    arrow = QPainterPath()
+    arrow.moveTo(s*0.75, s*0.25)
+    arrow.lineTo(s*0.85, s*0.15)
+    arrow.lineTo(s*0.85, s*0.35)
+    arrow.closeSubpath()
+    p.drawPath(arrow)
+
+
+def _draw_file_plus(p: QPainter, s: int, color: str):
+    """Lucide-style File Plus: Document outline with plus sign."""
+    _pen(p, color, 2.0)
+    # Document body
+    p.drawRoundedRect(QRectF(s*0.25, s*0.1, s*0.5, s*0.7), 2, 2)
+    # Folded corner
+    fold = QPainterPath()
+    fold.moveTo(s*0.55, s*0.1)
+    fold.lineTo(s*0.75, s*0.3)
+    fold.lineTo(s*0.55, s*0.3)
+    fold.closeSubpath()
+    p.setBrush(QColor(color))
+    p.drawPath(fold)
+    # Plus sign at bottom
+    _pen(p, color, 2.5)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(color))
+    p.drawRect(QRectF(s*0.4, s*0.65, s*0.2, s*0.04))  # Horizontal
+    p.drawRect(QRectF(s*0.48, s*0.57, s*0.04, s*0.2)) # Vertical
+
+
+def _draw_folder_plus(p: QPainter, s: int, color: str):
+    """Lucide-style Folder Plus: Folder outline with plus sign."""
+    _pen(p, color, 2.0)
+    # Folder outline
+    path = QPainterPath()
+    path.moveTo(s*0.15, s*0.35)
+    path.lineTo(s*0.15, s*0.25)
+    path.lineTo(s*0.35, s*0.25)
+    path.lineTo(s*0.45, s*0.35)
+    path.lineTo(s*0.85, s*0.35)
+    path.lineTo(s*0.85, s*0.75)
+    path.lineTo(s*0.15, s*0.75)
+    path.closeSubpath()
+    p.drawPath(path)
+    # Plus sign inside
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(color))
+    p.drawRect(QRectF(s*0.42, s*0.48, s*0.16, s*0.04))  # Horizontal
+    p.drawRect(QRectF(s*0.48, s*0.42, s*0.04, s*0.16))  # Vertical
 
 
 def _draw_collapse(p: QPainter, s: int, color: str):
@@ -168,19 +237,42 @@ def _draw_terminal(p: QPainter, s: int, color: str):
 
 
 def _draw_search(p: QPainter, s: int, color: str):
-    """Magnifying glass search icon."""
-    _pen(p, color, 2.0)
-    r = s * 0.28
-    cx, cy = s * 0.38, s * 0.38
-    p.drawEllipse(QPointF(cx, cy), r, r)
-    _pen(p, color, 2.2)
-    lx = cx + r * 0.72
-    ly = cy + r * 0.72
-    p.drawLine(QPointF(lx, ly), QPointF(s * 0.82, s * 0.82))
+    """Solid search icon - thicker stroke for 24px rendering."""
+    _pen(p, color, 2.5)  # Thicker for small size
+    r = s * 0.25
+    p.drawEllipse(QRectF(s*0.45-r, s*0.45-r, r*2, r*2))
+    p.drawLine(QPointF(s*0.65, s*0.65), QPointF(s*0.85, s*0.85))
+
+
+def _draw_sparkles(p: QPainter, s: int, color: str):
+    """Simple sparkles/star icon for AI."""
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(color))
+    cx, cy = s*0.5, s*0.5
+    # Draw a simple plus/star shape
+    p.drawRect(QRectF(cx - s*0.06, s*0.2, s*0.12, s*0.6))   # Vertical
+    p.drawRect(QRectF(s*0.2, cy - s*0.06, s*0.6, s*0.12))   # Horizontal
+
+
+def _draw_git_branch(p: QPainter, s: int, color: str):
+    """Simple git branch icon with circles and lines."""
+    _pen(p, color, 2.5)
+    r = s * 0.08
+    # Top circle
+    p.drawEllipse(QRectF(s*0.5-r, s*0.15-r, r*2, r*2))
+    # Bottom left circle  
+    p.drawEllipse(QRectF(s*0.25-r, s*0.75-r, r*2, r*2))
+    # Bottom right circle
+    p.drawEllipse(QRectF(s*0.75-r, s*0.75-r, r*2, r*2))
+    # Vertical line
+    p.drawLine(QPointF(s*0.5, s*0.23), QPointF(s*0.5, s*0.55))
+    # Branch lines
+    p.drawLine(QPointF(s*0.5, s*0.55), QPointF(s*0.25, s*0.67))
+    p.drawLine(QPointF(s*0.5, s*0.55), QPointF(s*0.75, s*0.67))
 
 
 def _draw_files(p: QPainter, s: int, color: str):
-    """Solid document icon."""
+    """Document with plus icon for New File."""
     p.setPen(Qt.PenStyle.NoPen)
     p.setBrush(QColor(color))
     # Document base
@@ -193,6 +285,14 @@ def _draw_files(p: QPainter, s: int, color: str):
     corner.lineTo(s*0.85, s*0.4)
     corner.closeSubpath()
     p.drawPath(corner)
+    
+    # Plus sign (BIG and visible with stroke)
+    plus_color = "#ffffff" if color != "#ffffff" else "#1e1e1e"
+    _pen(p, plus_color, 1.0)  # Add stroke
+    p.setBrush(QColor(plus_color))
+    # Make plus much bigger and thicker
+    p.drawRect(QRectF(s*0.25, s*0.47, s*0.5, s*0.06))  # Horizontal - THICK
+    p.drawRect(QRectF(s*0.47, s*0.25, s*0.06, s*0.5))  # Vertical - THICK
 
 
 def _draw_ai(p: QPainter, s: int, color: str):
@@ -721,6 +821,127 @@ _SVG_ICONS = {
 }
 
 
+# ── High-Quality UI SVG Templates (Codicon/Lucide style, color-aware) ────────
+# These use {color} placeholder for theme-aware monochrome rendering
+_UI_SVG_TEMPLATES = {
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Activity Bar Icons
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    # Explorer: Two overlapping document pages
+    "explorer": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+        <path d="M9 2h5l4 4v10a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" stroke="{color}" stroke-width="1.5"/>
+        <path d="M14 2v4h4" stroke="{color}" stroke-width="1.5" stroke-linejoin="round" fill="none"/>
+        <path d="M5 8v12a2 2 0 0 0 2 2h8" stroke="{color}" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+    </svg>''',
+
+    # Search: Clean magnifying glass
+    "search-panel": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+        <circle cx="10.5" cy="10.5" r="6.5" stroke="{color}" stroke-width="2"/>
+        <line x1="15.5" y1="15.5" x2="21" y2="21" stroke="{color}" stroke-width="2.5" stroke-linecap="round"/>
+    </svg>''',
+
+    # Source Control: Git branch with nodes
+    "source-control": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="6" y1="3" x2="6" y2="15"/>
+        <circle cx="18" cy="6" r="3"/>
+        <circle cx="6" cy="18" r="3"/>
+        <path d="M18 9a9 9 0 0 1-9 9"/>
+    </svg>''',
+
+    # AI Tools: Four-point sparkle star
+    "ai-panel": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="{color}">
+        <path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8z"/>
+        <circle cx="19" cy="5" r="1.5"/>
+    </svg>''',
+
+    # Changed Files: File with modification dot
+    "changed-files-panel": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="{color}" stroke-width="1.5"/>
+        <path d="M14 2v6h6" stroke="{color}" stroke-width="1.5" stroke-linejoin="round" fill="none"/>
+        <circle cx="12" cy="15" r="3" fill="{color}"/>
+    </svg>''',
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Explorer Toolbar Icons
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    # New File: Document outline with plus sign
+    "new-file": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+        <line x1="12" y1="18" x2="12" y2="12"/>
+        <line x1="9" y1="15" x2="15" y2="15"/>
+    </svg>''',
+
+    # New Folder: Folder outline with plus sign
+    "new-folder": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+        <line x1="12" y1="11" x2="12" y2="17"/>
+        <line x1="9" y1="14" x2="15" y2="14"/>
+    </svg>''',
+
+    # Refresh: Circular arrows
+    "refresh-explorer": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="23 4 23 10 17 10"/>
+        <polyline points="1 20 1 14 7 14"/>
+        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+    </svg>''',
+
+    # Collapse All: Two chevrons pointing inward with center line
+    "collapse-all": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="6 4 12 9 18 4"/>
+        <line x1="4" y1="12" x2="20" y2="12"/>
+        <polyline points="6 20 12 15 18 20"/>
+    </svg>''',
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Additional VS Code-style UI Icons
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    # Close/X icon
+    "close-icon": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round">
+        <line x1="18" y1="6" x2="6" y2="18"/>
+        <line x1="6" y1="6" x2="18" y2="18"/>
+    </svg>''',
+
+    # Ellipsis/More (three dots)
+    "more-actions": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="{color}">
+        <circle cx="12" cy="5" r="2"/>
+        <circle cx="12" cy="12" r="2"/>
+        <circle cx="12" cy="19" r="2"/>
+    </svg>''',
+
+    # Docs/Book icon
+    "docs-panel": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+        <line x1="8" y1="7" x2="16" y2="7"/>
+        <line x1="8" y1="11" x2="14" y2="11"/>
+    </svg>''',
+
+    # Debug/Play-Bug icon
+    "debug-panel": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2C9.24 2 7 4.24 7 7v1H5v3h2v2H5v3h2v1c0 2.76 2.24 5 5 5s5-2.24 5-5v-1h2v-3h-2v-2h2V8h-2V7c0-2.76-2.24-5-5-5z"/>
+        <line x1="12" y1="2" x2="12" y2="22"/>
+    </svg>''',
+
+    # Extensions/Puzzle icon
+    "extensions-panel": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.5">
+        <rect x="3" y="3" width="8" height="8" rx="1.5"/>
+        <rect x="13" y="3" width="8" height="8" rx="1.5"/>
+        <rect x="3" y="13" width="8" height="8" rx="1.5"/>
+        <rect x="13" y="13" width="8" height="8" rx="1.5"/>
+    </svg>''',
+
+    # Testing/Flask icon
+    "testing-panel": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 3h6M10 3v5.2L5 19a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3L14 8.2V3"/>
+        <path d="M7 15h10"/>
+    </svg>''',
+}
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 _DRAWERS = {
@@ -729,8 +950,8 @@ _DRAWERS = {
     "play":     _draw_play,
     "terminal": _draw_terminal,
     "search":   _draw_search,
-    "files":    _draw_files,
-    "ai":       _draw_ai,
+    "sparkles": _draw_sparkles,
+    "git-branch": _draw_git_branch,
     "moon":     _draw_moon,
     "sun":      _draw_sun,
     "python":   _draw_python,
@@ -750,6 +971,10 @@ _DRAWERS = {
     "new_file": _draw_new_file,
     "new_folder": _draw_new_folder,
     "refresh":    _draw_refresh,
+    # Lucide-style professional icons for sidebar
+    "file-plus":  _draw_file_plus,
+    "folder-plus": _draw_folder_plus,
+    "refresh-cw": _draw_refresh_cw,
     "collapse":   _draw_collapse,
     "plus":       _draw_plus,
     "close":      _draw_close,
@@ -995,11 +1220,21 @@ def make_sprite_icon(symbol_id: str, size: int = 20) -> QIcon:
 
 
 def make_icon(name: str, color: str = "#c0c0c0", size: int = 32) -> QIcon:
-    """Return a QIcon. Prioritizes SVG icons, falls back to PNG assets, then QPainter with caching."""
+    """Return a QIcon. Prioritizes UI templates, SVG icons, PNG assets, then QPainter with caching."""
     # 0. Check cache first
     cache_key = (name, color, size)
     if cache_key in _ICON_CACHE:
         return _ICON_CACHE[cache_key]
+
+    # 0.5. Try UI SVG templates (color-aware, high quality)
+    template = _UI_SVG_TEMPLATES.get(name)
+    if template:
+        svg_data = template.replace("{color}", color)
+        px = _svg_icon_hq(svg_data, size)
+        if not px.isNull():
+            icon = QIcon(px)
+            _ICON_CACHE[cache_key] = icon
+            return icon
 
     # 1. Try SVG icons first (VS Code style)
     svg_data = _SVG_ICONS.get(name)
