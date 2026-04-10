@@ -1332,24 +1332,97 @@ document.addEventListener('DOMContentLoaded', function () {
                 clearTimeout(window._smartPasteTimeout);
                 window._smartPasteTimeout = null;
             }
-            
+                    
             var input = document.getElementById('chatInput');
             if (!input) return;
-            
-            var textToInsert;
-            
+                    
             if (result && result.isMatch) {
-                // Insert file reference instead of raw code
-                textToInsert = result.filePath.split(/[\\/]/).pop() + ' ' + result.lineRange;
+                // ── Insert a beautiful file chip instead of raw text ──
+                _insertFileChip(result.fileName || result.filePath.split(/[\/]/).pop(),
+                                result.lineRange || '',
+                                result.code || window._pendingSmartPasteText || '',
+                                result.language || '');
             } else {
-                // Paste normally using the stored text
-                textToInsert = window._pendingSmartPasteText || '';
-            }
-            
-            if (textToInsert) {
-                insertTextAtCursor(input, textToInsert);
+                // Not matched — paste normally
+                var text = window._pendingSmartPasteText || '';
+                if (text) insertTextAtCursor(input, text);
             }
             window._pendingSmartPasteText = null;
+        };
+        
+        // ── File chip helpers ────────────────────────────────────────
+        function _getFileIcon(language) {
+            var icons = {
+                'py':   '{\u00a0}',   // python
+                'js':   'JS',
+                'ts':   'TS',
+                'html': '</>',
+                'css':  '{}',
+                'json': '{}',
+                'md':   '#',
+                'txt':  'TXT',
+                'sh':   '$',
+                'bat':  '$',
+                'cpp':  'C+',
+                'c':    'C',
+                'java': 'Ja',
+                'rs':   'Rs',
+                'go':   'Go',
+            };
+            return icons[language] || '{}';
+        }
+        
+        function _insertFileChip(fileName, lineRange, code, language) {
+            // Get or create the chips container above the textarea
+            var container = document.getElementById('input-container');
+            var chipsArea = document.getElementById('file-chips-area');
+            if (!chipsArea) {
+                chipsArea = document.createElement('div');
+                chipsArea.id = 'file-chips-area';
+                container.insertBefore(chipsArea, container.firstChild);
+            }
+        
+            var label = lineRange ? fileName + ' ' + lineRange : fileName;
+            var icon = _getFileIcon(language);
+        
+            var chip = document.createElement('div');
+            chip.className = 'file-chip';
+            chip.dataset.code = code;
+            chip.dataset.fileName = fileName;
+            chip.dataset.lineRange = lineRange;
+            chip.dataset.language = language;
+            chip.innerHTML =
+                '<span class="chip-icon">' + icon + '</span>' +
+                '<span class="chip-label">' + label + '</span>' +
+                '<button class="chip-remove" title="Remove">&times;</button>';
+        
+            chip.querySelector('.chip-remove').addEventListener('click', function(e) {
+                e.stopPropagation();
+                chip.remove();
+                // Hide chips area if empty
+                if (!chipsArea.children.length) chipsArea.style.display = 'none';
+            });
+        
+            chipsArea.style.display = 'flex';
+            chipsArea.appendChild(chip);
+        }
+        
+        // Expose so sendMessage can collect chips
+        window._collectChipCode = function() {
+            var chips = document.querySelectorAll('#file-chips-area .file-chip');
+            if (!chips.length) return '';
+            var parts = [];
+            chips.forEach(function(chip) {
+                var label = chip.dataset.lineRange
+                    ? chip.dataset.fileName + ' ' + chip.dataset.lineRange
+                    : chip.dataset.fileName;
+                var lang = chip.dataset.language || '';
+                parts.push('`' + label + '`\n```' + lang + '\n' + chip.dataset.code + '\n```');
+                chip.remove();
+            });
+            var area = document.getElementById('file-chips-area');
+            if (area) area.style.display = 'none';
+            return parts.join('\n\n') + '\n\n';
         };
         
         setTimeout(function () { if (input) input.focus(); }, 200);
@@ -1931,7 +2004,12 @@ function sendMessage() {
     var input = document.getElementById('chatInput');
     if (!input) return;
     var text = input.value.trim();
-    if (!text) return;
+
+    // Prepend any attached file chips as code context
+    var chipContext = (typeof window._collectChipCode === 'function') ? window._collectChipCode() : '';
+    var fullText = chipContext + text;
+
+    if (!fullText) return;
 
     input.value = '';
     input.style.height = 'auto';
