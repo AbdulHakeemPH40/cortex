@@ -45,6 +45,6 @@ opencode-dev/
 vscode-main/
 node_modules/
 claude-code/
-# Docs/
+Docs/
 
-cortex_setup.iss
+# cortex_setup.iss

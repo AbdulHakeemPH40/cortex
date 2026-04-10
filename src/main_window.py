@@ -27,6 +27,22 @@ from src.core.codebase_index import get_codebase_index
 # from src.ai.agent import AIAgent
 from src.ai.stub_agent import get_stub_agent as AIAgent  # Temporary stub
 # from src.ai.code_analyzer import CodeAnalyzer
+
+
+class CodeAnalyzer:
+    """Simple prompt builder for AI code actions."""
+
+    def build_explain_prompt(self, code: str, language: str) -> str:
+        return f"Explain this {language} code in detail. Break down what each part does and why:\n\n```{language}\n{code}\n```"
+
+    def build_refactor_prompt(self, code: str, language: str) -> str:
+        return f"Refactor this {language} code to be cleaner, more efficient, and follow best practices. Explain your changes:\n\n```{language}\n{code}\n```"
+
+    def build_test_prompt(self, code: str, language: str) -> str:
+        return f"Write comprehensive unit tests for this {language} code. Include edge cases and error handling:\n\n```{language}\n{code}\n```"
+
+    def build_debug_prompt(self, code: str, error: str, language: str) -> str:
+        return f"Help me debug this {language} code. Error: {error}\n\n```{language}\n{code}\n```\n\nWhat's causing this error and how do I fix it?"
 # from src.ai.file_edit_tracker import FileEditTracker
 from src.core.git_manager import GitManager
 from src.ui.components.sidebar import SidebarWidget
