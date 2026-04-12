@@ -1,14 +1,14 @@
 ; Cortex AI IDE Setup Script
 ; Creates professional Windows installer with Next/Back wizard
 
-#define MyAppName "Cortex AI IDE"
-#define MyAppVersion "1.0.7"
-#define MyAppPublisher "Cortex"
+#define MyAppName "Cortex AI Agent"
+#define MyAppVersion "1.0.11"
+#define MyAppPublisher "Cortex AI"
 #define MyAppURL "https://github.com/cortex-ai"
 #define MyAppExeName "Cortex.exe"
 
 [Setup]
-AppId={{CORTEX-AI-IDE-2024-UNIQUE}}
+AppId=CORTEX-AI-IDE-2024-UNIQUE
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
@@ -53,17 +53,13 @@ Source: "requirements.txt"; DestDir: "{app}"; Flags: ignoreversion
 ; License file (create this if you have one)
 ; Source: "LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
 
+; LSP servers - only pyright is installed
+; To add more, run: npm install -D typescript typescript-language-server bash-language-server vscode-langservers-extracted
+; Then uncomment:
+; Source: "node_modules\typescript-language-server\*"; DestDir: "{app}\node_modules\typescript-language-server"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Source: "node_modules\bash-language-server\*"; DestDir: "{app}\node_modules\bash-language-server"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Source: "node_modules\vscode-langservers-extracted\*"; DestDir: "{app}\node_modules\vscode-langservers-extracted"; Flags: ignoreversion recursesubdirs createallsubdirs
 
-; LSP servers - essential for language support
-Source: "node_modulesypescript-language-server\*"; DestDir: "{app}\node_modules\typescript-language-server"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "node_modules\bash-language-server\*"; DestDir: "{app}\node_modules\bash-language-server"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "node_modules\vscode-langservers-extracted\*"; DestDir: "{app}\node_modules\vscode-langservers-extracted"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "node_modules\.bin\pyright-langserver*"; DestDir: "{app}\node_modules\.bin"; Flags: ignoreversion
-Source: "node_modules\.bin\typescript-language-server*"; DestDir: "{app}\node_modules\.bin"; Flags: ignoreversion
-Source: "node_modules\.bin\bash-language-server*"; DestDir: "{app}\node_modules\.bin"; Flags: ignoreversion
-Source: "node_modules\.bin\vscode-html-language-server*"; DestDir: "{app}\node_modules\.bin"; Flags: ignoreversion
-Source: "node_modules\.bin\vscode-css-language-server*"; DestDir: "{app}\node_modules\.bin"; Flags: ignoreversion
-Source: "node_modules\.bin\vscode-json-language-server*"; DestDir: "{app}\node_modules\.bin"; Flags: ignoreversion
 [Icons]
 ; Start Menu shortcuts
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -87,6 +83,9 @@ WelcomeLabel2=This will install [name] on your computer.%n%nNote: Windows may sh
 ; Optional: Add to PATH (uncomment if needed)
 ; Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}"; Check: NeedsAddPath(ExpandConstant('{app}'))
 
+[UninstallDelete]
+Type: filesandordirs; Name: "{app}"
+
 [Code]
 function NeedsAddPath(Param: string): boolean;
 var
@@ -101,4 +100,3 @@ begin
   end;
   Result := Pos(';' + Param + ';', ';' + OrigPath + ';') = 0;
 end;
-

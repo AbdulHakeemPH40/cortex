@@ -397,15 +397,24 @@ class LSPManager(QObject):
         self.diagnostics_cache: Dict[str, List[Dict]] = {}
         self.doc_versions: Dict[str, int] = {}
         
-        # Smart root detection
+        # Separate bundled binary root from user project root
         if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-            self.project_root = sys._MEIPASS
+            # _MEIPASS = where PyInstaller extracted bin/node, node_modules etc.
+            self._bundled_root = sys._MEIPASS
             self._is_bundled = True
         else:
-            self.project_root = os.getcwd()
+            self._bundled_root = os.getcwd()
             self._is_bundled = False
+
+        # project_root = actual user workspace (updated when a project is opened)
+        self.project_root = os.getcwd()
             
         self._initialized = True
+
+    def set_project_root(self, path: str):
+        """Update LSP workspace root when a project is opened."""
+        self.project_root = path
+        log.info(f"LSP project root updated: {path}")
 
     @classmethod
     def get_instance(cls):
@@ -664,55 +673,69 @@ class LSPManager(QObject):
         return None
 
     def _get_node_path(self) -> str:
-        if self._is_bundled:
-            p = os.path.join(self.project_root, "bin", "node", "node.exe")
-            if os.path.exists(p): return p
+        """Return path to bundled node.exe, or fall back to system node."""
+        p = os.path.join(self._bundled_root, "bin", "node", "node.exe")
+        if os.path.exists(p):
+            return p
         return "node"
 
     def _get_server_bin_path(self, server_bin: str) -> str:
+        """Find a node_modules/.bin entry in the bundled root."""
         exts = ["", ".cmd", ".ps1"] if os.name == 'nt' else [""]
         for ext in exts:
-            p = os.path.join(self.project_root, "node_modules", ".bin", f"{server_bin}{ext}")
-            if os.path.exists(p): return p
+            p = os.path.join(self._bundled_root, "node_modules", ".bin", f"{server_bin}{ext}")
+            if os.path.exists(p):
+                return p
         return server_bin
+
+    def _get_node_module_main(self, package: str, js_entry: str) -> Optional[str]:
+        """Return path to a JS entry point inside a bundled node_module."""
+        p = os.path.join(self._bundled_root, "node_modules", package, js_entry)
+        return p if os.path.exists(p) else None
 
     def _find_server_command(self, lang: str) -> Optional[List[str]]:
         """Map language to professional LSP server command (Bundled or System)."""
         node = self._get_node_path()
         
-        # 1. Node-based servers
         if lang == "python":
+            # Prefer direct JS entry point (works in frozen exe without .cmd)
+            js = self._get_node_module_main("pyright", "dist/pyright-langserver.js")
+            if js:
+                return [node, js, "--stdio"]
             bin_p = self._get_server_bin_path("pyright-langserver")
-            return [node, bin_p, "--stdio"] if node != "node" else [bin_p, "--stdio"]
+            return [bin_p, "--stdio"]  # fallback: .cmd via shell
             
         elif lang == "typescript":
+            js = self._get_node_module_main("typescript-language-server", "lib/cli.mjs")
+            if js:
+                return [node, js, "--stdio"]
             bin_p = self._get_server_bin_path("typescript-language-server")
-            return [node, bin_p, "--stdio"] if node != "node" else [bin_p, "--stdio"]
+            return [bin_p, "--stdio"]
             
         elif lang == "html":
             bin_p = self._get_server_bin_path("vscode-html-language-server")
-            return [node, bin_p, "--stdio"] if node != "node" else [bin_p, "--stdio"]
+            return [bin_p, "--stdio"]
             
         elif lang == "css":
             bin_p = self._get_server_bin_path("vscode-css-language-server")
-            return [node, bin_p, "--stdio"] if node != "node" else [bin_p, "--stdio"]
+            return [bin_p, "--stdio"]
             
         elif lang == "json":
             bin_p = self._get_server_bin_path("vscode-json-language-server")
-            return [node, bin_p, "--stdio"] if node != "node" else [bin_p, "--stdio"]
+            return [bin_p, "--stdio"]
             
-        # 2. Native binary servers (must be in system PATH)
         elif lang == "clangd":
-            # standard LLVM LSP for C/C++/ObjC
             return ["clangd", "--background-index"]
             
         elif lang == "java":
-            # standard Eclipse JDT.LS
             return ["jdtls"]
             
         elif lang == "bash":
+            js = self._get_node_module_main("bash-language-server", "out/server.js")
+            if js:
+                return [node, js, "start"]
             bin_p = self._get_server_bin_path("bash-language-server")
-            return [node, bin_p, "start"]
+            return [bin_p, "start"]
             
         return None
 

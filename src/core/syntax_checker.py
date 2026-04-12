@@ -13,6 +13,9 @@ from dataclasses import dataclass
 from src.utils.logger import get_logger
 from src.core.lsp_manager import get_lsp_manager
 
+# Suppress console windows in frozen exe on Windows
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+
 log = get_logger("syntax_checker")
 
 
@@ -267,7 +270,8 @@ class SyntaxChecker:
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
-                timeout=5
+                timeout=5,
+                creationflags=_NO_WINDOW
             )
             with open('tmp/node_test_input.js', 'w', encoding='utf-8') as dbg:
                 dbg.write(content)
@@ -304,7 +308,8 @@ class SyntaxChecker:
                 ['tsc', '--noEmit', '--skipLibCheck', file_path],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
+                creationflags=_NO_WINDOW
             )
             
             if result.returncode != 0:
@@ -449,7 +454,8 @@ class SyntaxChecker:
                 ['javac', '-Xlint:none', file_path],
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=30,
+                creationflags=_NO_WINDOW
             )
             
             if result.returncode != 0:
@@ -503,7 +509,8 @@ class SyntaxChecker:
                 ['go', 'vet', file_path],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
+                creationflags=_NO_WINDOW
             )
             
             if result.returncode != 0:
@@ -574,7 +581,8 @@ class SyntaxChecker:
                 ['rustc', '--error-format=short', '-Z', 'parse-only', file_path],
                 capture_output=True,
                 text=True,
-                timeout=15
+                timeout=15,
+                creationflags=_NO_WINDOW
             )
             
             if result.returncode != 0:
@@ -644,7 +652,8 @@ class SyntaxChecker:
                 [compiler, '-fsyntax-only', '-w', temp_path],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
+                creationflags=_NO_WINDOW
             )
             
             if result.returncode != 0:
@@ -694,7 +703,8 @@ class SyntaxChecker:
                 ['csc', '-target:library', file_path],
                 capture_output=True,
                 text=True,
-                timeout=15
+                timeout=15,
+                creationflags=_NO_WINDOW
             )
             
             if result.returncode != 0:
@@ -766,7 +776,8 @@ class SyntaxChecker:
                 ['ruby', '-c', file_path],
                 capture_output=True,
                 text=True,
-                timeout=5
+                timeout=5,
+                creationflags=_NO_WINDOW
             )
             
             if result.returncode != 0:
@@ -820,7 +831,8 @@ class SyntaxChecker:
                 ['php', '-l', file_path],
                 capture_output=True,
                 text=True,
-                timeout=5
+                timeout=5,
+                creationflags=_NO_WINDOW
             )
             
             if result.returncode != 0 or 'Parse error' in result.stdout:

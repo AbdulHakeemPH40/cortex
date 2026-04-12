@@ -1,2 +1,10 @@
-a = 0.1 + 0.2
-print(a)
+def add():
+    a = 10
+    b = 20
+    return a , b 
+
+a , b = add()
+result = a + b  
+print(result)
+
+

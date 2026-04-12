@@ -8,6 +8,9 @@ from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
+
+# Suppress console windows for subprocess calls in frozen exe on Windows
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 from PyQt6.QtCore import QObject, pyqtSignal
 from src.utils.logger import get_logger
 
@@ -61,7 +64,8 @@ class GitManager(QObject):
                 ["git", "--version"],
                 capture_output=True,
                 text=True,
-                timeout=5
+                timeout=5,
+                creationflags=_NO_WINDOW
             )
             return result.returncode == 0
         except:
@@ -106,7 +110,8 @@ class GitManager(QObject):
                 text=True,
                 timeout=timeout,
                 encoding='utf-8',
-                errors='replace'
+                errors='replace',
+                creationflags=_NO_WINDOW
             )
             return result.returncode == 0, result.stdout, result.stderr
         except subprocess.TimeoutExpired:

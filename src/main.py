@@ -78,10 +78,35 @@ def main():
     app.setApplicationVersion("1.0.0")
     app.setOrganizationName("Cortex")
 
-    # Set Application Icon (Taskbar/Alt+Tab) - Using focused logo-only version
-    icon_path = os.path.join(os.path.dirname(__file__), "assets", "logo", "taskbar.ico")
-    if os.path.exists(icon_path):
-        app.setWindowIcon(QIcon(icon_path))
+    # Set Application Icon (Taskbar/Alt+Tab)
+    # Uses pre-generated taskbar_rounded.png (run generate_icons.py once to create it)
+    if getattr(sys, 'frozen', False):
+        base = sys._MEIPASS
+    else:
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    logo_dir = os.path.join(base, "src", "assets", "logo")
+
+    # Prefer pre-generated rounded PNG (crisp, no runtime PIL needed)
+    icon_candidates = [
+        os.path.join(logo_dir, "taskbar_rounded.png"),
+        os.path.join(logo_dir, "taskbar.png"),
+        os.path.join(logo_dir, "taskbar.ico"),
+    ]
+
+    icon = QIcon()
+    for candidate in icon_candidates:
+        if os.path.exists(candidate):
+            from PyQt6.QtGui import QPixmap
+            pm = QPixmap(candidate)
+            if not pm.isNull():
+                # Add at multiple sizes for crisp rendering at all DPIs
+                for sz in [16, 32, 48, 64, 128, 256]:
+                    icon.addPixmap(pm.scaled(sz, sz))
+                break
+
+    if not icon.isNull():
+        app.setWindowIcon(icon)
 
     # Global font - try Segoe UI first, fall back to system font
     try:

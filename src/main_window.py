@@ -4,6 +4,7 @@ Full 3-panel layout: Sidebar | Editor Tabs | AI Chat + Terminal
 """
 
 import os
+import sys
 import platform
 from pathlib import Path
 from PyQt6.QtWidgets import (
@@ -667,10 +668,34 @@ class CortexMainWindow(QMainWindow):
         else:
             self.show()
 
-        # Set Window Icon (Title Bar) - Using focused logo-only version
-        logo_path = os.path.join(os.getcwd(), "src", "assets", "logo", "taskbar.ico")
-        if os.path.exists(logo_path):
-            self.setWindowIcon(QIcon(logo_path))
+        # Set Window Icon (Title Bar + Taskbar)
+        # Uses pre-generated taskbar_rounded.png (run generate_icons.py once)
+        if getattr(sys, 'frozen', False):
+            base = sys._MEIPASS
+        else:
+            base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        logo_dir = os.path.join(base, "src", "assets", "logo")
+        if not os.path.isdir(logo_dir):
+            logo_dir = os.path.join(os.getcwd(), "src", "assets", "logo")
+
+        icon_candidates = [
+            os.path.join(logo_dir, "taskbar_rounded.png"),
+            os.path.join(logo_dir, "taskbar.png"),
+            os.path.join(logo_dir, "taskbar.ico"),
+        ]
+
+        icon = QIcon()
+        for candidate in icon_candidates:
+            if os.path.exists(candidate):
+                from PyQt6.QtGui import QPixmap
+                pm = QPixmap(candidate)
+                if not pm.isNull():
+                    for sz in [16, 32, 48, 64, 128, 256]:
+                        icon.addPixmap(pm.scaled(sz, sz))
+                    break
+
+        if not icon.isNull():
+            self.setWindowIcon(icon)
 
     # ------------------------------------------------------------------
     # UI Construction
@@ -1237,7 +1262,7 @@ class CortexMainWindow(QMainWindow):
         for lbl in [self._status_file, self._status_cursor, self._status_lang, self._status_ai]:
             sb.addWidget(lbl)
 
-        sb.addPermanentWidget(QLabel("  Cortex AI Agent v1.0.7  "))
+        sb.addPermanentWidget(QLabel("  Cortex AI Agent v1.0.11  "))
 
     def _update_status_cursor(self, line: int, col: int):
         self._status_cursor.setText(f"Ln {line}, Col {col}")
@@ -1500,6 +1525,12 @@ class CortexMainWindow(QMainWindow):
                                                    str(Path.home()))
         if folder:
             self._project_manager.open(folder)
+            # Update LSP workspace root so pyright analyses the correct project
+            try:
+                from src.core.lsp_manager import get_lsp_manager
+                get_lsp_manager().set_project_root(folder)
+            except Exception:
+                pass
 
     def _new_project(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Folder for New Project",
@@ -1987,7 +2018,8 @@ class CortexMainWindow(QMainWindow):
                     # Try to load original from HEAD (tracked files)
                     git_show = subprocess.run(
                         ['git', '-C', project_root, 'show', f'HEAD:{rel_path}'],
-                        capture_output=True, text=True
+                        capture_output=True, text=True,
+                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
                     )
                     if git_show.returncode == 0:
                         original = git_show.stdout
@@ -1997,7 +2029,8 @@ class CortexMainWindow(QMainWindow):
                         # If untracked, treat original as empty
                         git_ls = subprocess.run(
                             ['git', '-C', project_root, 'ls-files', '--error-unmatch', rel_path],
-                            capture_output=True, text=True
+                            capture_output=True, text=True,
+                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
                         )
                         if git_ls.returncode != 0:
                             original = ''
