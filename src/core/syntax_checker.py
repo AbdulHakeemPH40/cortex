@@ -102,6 +102,8 @@ class SyntaxChecker:
     def __init__(self):
         self._lsp_manager = get_lsp_manager()
         self._opened_files = set()
+        # Resolve bundled node.exe path once (works in frozen .exe and dev)
+        self._node_path = self._lsp_manager._get_node_path()
         self._checkers = {
             'python': self._check_python,
             'javascript': self._check_javascript,
@@ -127,7 +129,12 @@ class SyntaxChecker:
         return self.LANGUAGE_EXTENSIONS.get(ext, 'unknown')
     
     def check_file(self, file_path: str, content: str = None) -> SyntaxResult:
-        """Check a file for syntax errors using LSP + Local fallback."""
+        """Check a file for syntax errors using local fallback only.
+        
+        LSP diagnostics are handled reactively via textDocument/publishDiagnostics
+        notifications — reading the cache here would return STALE results from
+        before Pyright has processed the latest content change.
+        """
         import time
         start_t = time.time()
         
@@ -139,18 +146,12 @@ class SyntaxChecker:
             except Exception as e:
                 return SyntaxResult(file_path, language, [DiagnosticError(file_path, 0, 0, f"Read error: {e}")], False)
 
-        # 1. 🚀 Industry Standard: LSP Analysis
-        errors = self._get_lsp_diagnostics(file_path, content, language)
-        
-        # 2. Local Fallback (Fast Highlighting / AST)
+        # Local Fallback only (fast AST / regex checks)
+        # LSP diagnostics arrive reactively via _handle_lsp_update — no stale cache read
+        errors = []
         checker = self._checkers.get(language, self._check_generic)
         try:
-            local_errors = checker(file_path, content)
-            # Avoid duplicate warnings for the same line if LSP already caught it
-            lsp_lines = {e.line for e in errors}
-            for e in local_errors:
-                if e.line not in lsp_lines:
-                    errors.append(e)
+            errors = checker(file_path, content)
         except Exception as e:
             log.warning(f"Local scanner for {language} failed: {e}")
             
@@ -207,6 +208,8 @@ class SyntaxChecker:
                     line=getattr(e, 'lineno', 1) or 1,
                     column=getattr(e, 'offset', 0) or 0,
                     message=getattr(e, 'msg', str(e)) or str(e),
+                    end_line=getattr(e, 'end_lineno', 0) or 0,
+                    end_column=getattr(e, 'end_offset', 0) or 0,
                     code="syntax-error",
                     source="python-ast"
                 ))
@@ -266,16 +269,13 @@ class SyntaxChecker:
                 temp_path = f.name
                 
             result = subprocess.run(
-                ['node', '--check', temp_path],
+                [self._node_path, '--check', temp_path],
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
                 timeout=5,
                 creationflags=_NO_WINDOW
             )
-            with open('tmp/node_test_input.js', 'w', encoding='utf-8') as dbg:
-                dbg.write(content)
-            
             if result.returncode != 0:
                 errors.extend(self._parse_node_error(result.stderr, file_path))
                 
@@ -300,12 +300,20 @@ class SyntaxChecker:
         return errors
     
     def _check_with_tsc(self, file_path: str, content: str) -> List[DiagnosticError]:
-        """Check TypeScript syntax using tsc."""
+        """Check TypeScript syntax using tsc (bundled or system)."""
         errors = []
         
         try:
+            # Try bundled tsc first, fall back to system tsc
+            tsc_cmd = None
+            tsc_js = self._lsp_manager._get_node_module_main("typescript", "lib/tsc.js")
+            if tsc_js:
+                tsc_cmd = [self._node_path, tsc_js, '--noEmit', '--skipLibCheck', file_path]
+            else:
+                tsc_cmd = ['tsc', '--noEmit', '--skipLibCheck', file_path]
+            
             result = subprocess.run(
-                ['tsc', '--noEmit', '--skipLibCheck', file_path],
+                tsc_cmd,
                 capture_output=True,
                 text=True,
                 timeout=10,

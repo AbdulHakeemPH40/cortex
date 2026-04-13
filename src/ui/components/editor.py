@@ -4,13 +4,15 @@ current-line highlight, and auto-indent.
 """
 import ast
 import os
+import re
 import sys
 from typing import cast, List, Dict, Optional, Tuple, Any
 
 from PyQt6.QtWidgets import (
     QPlainTextEdit, QWidget, QTextEdit, QApplication,
     QFrame, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
-    QToolTip, QListWidget
+    QToolTip, QListWidget, QListWidgetItem, QStyledItemDelegate, QStyleOptionViewItem,
+    QMenu
 )
 from PyQt6.QtCore import (
     Qt, QRect, QSize, pyqtSignal, QSignalBlocker, QPoint, QTimer,
@@ -19,7 +21,7 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import (
     QColor, QPainter, QTextFormat, QFont, QSyntaxHighlighter,
     QTextCharFormat, QKeyEvent, QFontMetrics, QTextOption, QPen, QPalette, 
-    QTextCursor, QHelpEvent
+    QTextCursor, QHelpEvent, QAction, QIcon, QKeySequence, QShortcut
 )
 from pygments import lex
 from pygments.lexers import get_lexer_by_name, TextLexer
@@ -27,6 +29,8 @@ from pygments.token import Token
 from src.config.settings import get_settings
 from src.core.syntax_checker import get_syntax_checker, DiagnosticError
 from src.core.lsp_manager import get_lsp_manager
+from src.core.html_completion import get_html_completion_provider, get_closing_tag
+from src.core.code_formatter import get_code_formatter, FormatResult
 from src.utils.logger import get_logger
 
 
@@ -628,47 +632,225 @@ class InlineEditOverlay(QFrame):
 
 
 # ---------------------------------------------------------------------------
+# Custom delegate for 2-line completion cards
+# ---------------------------------------------------------------------------
+class CompletionItemDelegate(QStyledItemDelegate):
+    """Renders completion items with icon badge, keyword, type, and skeleton preview."""
+    
+    def paint(self, painter, option, index):
+        painter.save()
+        
+        # Colors
+        from PyQt6.QtWidgets import QStyle
+        is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        bg = QColor("#094771") if is_selected else QColor("#252526")
+        text_color = QColor("#ffffff") if is_selected else QColor("#cccccc")
+        dim_color = QColor("#a0c4e8") if is_selected else QColor("#808080")
+        preview_color = QColor("#8ec8f0") if is_selected else QColor("#569cd6")
+        badge_bg = QColor("#0d5e9e") if is_selected else QColor("#333333")
+        
+        # Background
+        painter.fillRect(option.rect, bg)
+        
+        # Get data
+        display_text = index.data(Qt.ItemDataRole.DisplayRole) or ""
+        icon_text = index.data(Qt.ItemDataRole.UserRole) or ""
+        
+        rect = option.rect
+        x = rect.left() + 6
+        y = rect.top()
+        w = rect.width() - 12
+        
+        # Draw icon badge
+        badge_font = QFont("Cascadia Code", 8)
+        badge_font.setBold(True)
+        painter.setFont(badge_font)
+        fm = painter.fontMetrics()
+        badge_w = max(fm.horizontalAdvance(icon_text) + 8, 28)
+        badge_rect = QRect(x, y + 4, badge_w, 18)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(badge_bg)
+        painter.drawRoundedRect(badge_rect, 3, 3)
+        painter.setPen(preview_color)
+        painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, icon_text)
+        
+        text_x = x + badge_w + 8
+        
+        lines = display_text.split('\n')
+        
+        # Line 1: keyword — type
+        main_font = QFont("Cascadia Code", 10)
+        painter.setFont(main_font)
+        painter.setPen(text_color)
+        
+        line1 = lines[0] if lines else ""
+        # Split on " — " to color differently
+        if " — " in line1:
+            parts = line1.split(" — ", 1)
+            keyword = parts[0]
+            type_info = parts[1]
+            
+            painter.setPen(text_color)
+            painter.drawText(text_x, y + 16, keyword)
+            kw_width = painter.fontMetrics().horizontalAdvance(keyword + "  ")
+            
+            dim_font = QFont("Cascadia Code", 9)
+            painter.setFont(dim_font)
+            painter.setPen(dim_color)
+            painter.drawText(text_x + kw_width, y + 16, type_info)
+        else:
+            painter.drawText(text_x, y + 16, line1)
+        
+        # Line 2: skeleton preview (if exists)
+        if len(lines) > 1:
+            preview_font = QFont("Cascadia Code", 8)
+            painter.setFont(preview_font)
+            painter.setPen(preview_color)
+            painter.drawText(text_x, y + 34, lines[1].strip())
+        
+        painter.restore()
+    
+    def sizeHint(self, option, index):
+        display_text = index.data(Qt.ItemDataRole.DisplayRole) or ""
+        if '\n' in display_text:
+            return QSize(0, 44)
+        return QSize(0, 26)
+
+
+# ---------------------------------------------------------------------------
 # Autocomplete Sidebar/Overlay
 # ---------------------------------------------------------------------------
 class CompletionWidget(QWidget):
-    """A floating autocomplete selection widget (VS Code Style)."""
+    """A floating autocomplete popup (VS Code style)."""
     item_selected = pyqtSignal(dict)
     
     def __init__(self, parent=None):
-        super().__init__(parent, Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint)
-        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        super().__init__(None)  # No parent = top-level window
+        self.setWindowFlags(Qt.WindowType.ToolTip)  # Simplest floating window
         
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(1, 1, 1, 1)
+        layout.setSpacing(0)
         
         self.list = QListWidget()
+        self.list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.list.setStyleSheet("""
             QListWidget {
                 background-color: #252526;
                 color: #cccccc;
-                border: 1px solid #454545;
-                font-family: 'Consolas', monospace;
-                font-size: 11px;
+                border: 1px solid #3c3c3c;
+                border-radius: 4px;
+                font-family: 'Cascadia Code', 'Consolas', monospace;
+                font-size: 12px;
+                outline: none;
+            }
+            QListWidget::item {
+                padding: 0px;
+                border: none;
             }
             QListWidget::item:selected {
-                background-color: #094771;
-                color: white;
+                background-color: transparent;
+            }
+            QListWidget::item:hover {
+                background-color: transparent;
             }
         """)
         layout.addWidget(self.list)
-        self.setFixedSize(250, 150)
+        self.list.setItemDelegate(CompletionItemDelegate(self.list))
         self.list.itemActivated.connect(self._on_activated)
+        self._raw_items = []
+
+    # LSP CompletionItemKind mapping (VS Code style)
+    KIND_ICONS = {
+        1:  "📝",   # Text
+        2:  "🔧",   # Method
+        3:  "🔧",   # Function
+        4:  "📦",   # Constructor
+        5:  "🏷️",   # Field
+        6:  "🔧",   # Variable
+        7:  "🏛️",   # Class
+        8:  "🔗",   # Interface
+        9:  "📦",   # Module
+        10: "🏷️",   # Property
+        11: "🔢",   # Unit
+        12: "💰",   # Value
+        13: "📊",   # Enum
+        14: "🔑",   # Keyword
+        15: "📎",   # Snippet
+        16: "🎨",   # Color
+        17: "📁",   # File
+        18: "🔗",   # Reference
+        19: "📁",   # Folder
+        20: "🏷️",   # EnumMember
+        21: "📦",   # Constant
+        22: "🏛️",   # Struct
+        23: "⚡",   # Event
+        24: "🔧",   # Operator
+        25: "📐",   # TypeParameter
+    }
 
     def set_items(self, items: List[Dict]):
         self.list.clear()
         self._raw_items = items
         for item in items:
             label = item.get("label", "")
-            # Add icon based on kind
             kind = item.get("kind", 1)
-            icons = {1: "📝", 2: "🔧", 3: "📦", 5: "🏷️", 6: "🎨"}
-            self.list.addItem(f"{icons.get(kind, '🔹')} {label}")
+            detail = item.get("detail", "")
+            insert_text = item.get("insertText", label)
+            
+            # Create preview: resolve ${N:text} -> text for display
+            preview = re.sub(r'\$\{(\d+):([^}]*)\}', r'\2', insert_text)
+            preview = re.sub(r'\$(\d+)', '', preview)  # Remove bare $1
+            # Collapse newlines into  ↵  for single-line preview
+            preview = preview.replace('\n', ' ↵ ').strip()
+            if len(preview) > 50:
+                preview = preview[:47] + "..."
+            
+            # Build 2-line rich display using custom widget
+            widget_item = QListWidgetItem()
+            
+            # Determine icon and type label
+            if kind == 15:  # Snippet
+                icon = "{ }"
+                type_label = detail or "snippet"
+            elif kind == 3 or kind == 2:  # Function / Method
+                icon = "fn"
+                type_label = detail or "function"
+            elif kind == 7:  # Class
+                icon = "C"
+                type_label = detail or "class"
+            elif kind == 14:  # Keyword
+                icon = "kw"
+                type_label = "keyword"
+            elif kind == 6:  # Variable
+                icon = "x"
+                type_label = detail or "variable"
+            elif kind == 9:  # Module
+                icon = "M"
+                type_label = detail or "module"
+            else:
+                icon = "  "
+                type_label = detail or ""
+            
+            # For snippets: show keyword + skeleton on 2 lines
+            if kind == 15 and preview != label:
+                display_text = f"{label}  —  {type_label}\n  {preview}"
+            elif type_label:
+                display_text = f"{label}  —  {type_label}"
+            else:
+                display_text = label
+            
+            widget_item.setText(display_text)
+            widget_item.setData(Qt.ItemDataRole.UserRole, icon)
+            
+            # Taller row for 2-line items
+            if '\n' in display_text:
+                widget_item.setSizeHint(QSize(0, 42))
+            else:
+                widget_item.setSizeHint(QSize(0, 26))
+            
+            self.list.addItem(widget_item)
         self.list.setCurrentRow(0)
 
     def _on_activated(self, item):
@@ -687,6 +869,7 @@ class CodeEditor(QPlainTextEdit):
     inline_edit_cancelled = pyqtSignal()
     inline_diff_requested = pyqtSignal()
     code_copied = pyqtSignal(str, str, int, int)  # text, file_path, start_line, end_line
+    _completion_results_ready = pyqtSignal(list)  # Thread-safe signal for completion items
 
     def _get_preferred_programming_font(self) -> str:
         """Get best available programming font."""
@@ -737,7 +920,7 @@ class CodeEditor(QPlainTextEdit):
         # Force update to ensure colors are applied immediately
         self.update()
         
-        print(f"[Editor] ✅ Applied dark theme: bg={bg_color.name()}, fg={fg_color.name()}")
+        print(f"[Editor] Applied dark theme: bg={bg_color.name()}, fg={fg_color.name()}")
         print(f"[Editor] Palette Base: {palette.color(QPalette.ColorRole.Base).name()}")
         print(f"[Editor] Palette Text: {palette.color(QPalette.ColorRole.Text).name()}")
 
@@ -773,6 +956,8 @@ class CodeEditor(QPlainTextEdit):
 
         # Line number area
         self._line_number_area = LineNumberArea(self)
+        self._lint_selections = []  # Must be before _highlight_current_line connection
+        self._syntax_errors = []
         self.blockCountChanged.connect(self._update_line_number_area_width)
         self.updateRequest.connect(self._update_line_number_area)
         self.cursorPositionChanged.connect(self._on_cursor_changed)
@@ -799,12 +984,16 @@ class CodeEditor(QPlainTextEdit):
         self._inline_selection_text = ""
         self._inline_selection_range = (0, 0)
         
-        # Syntax Error Detection
-        self._syntax_errors: List[DiagnosticError] = []
+        # Syntax Error Detection — VS Code-style separate diagnostic collections
+        # Each source (LSP, local) has its own collection; they MERGE for display
+        self._lsp_diagnostics: List[DiagnosticError] = []   # From Pyright reactive push
+        self._local_diagnostics: List[DiagnosticError] = [] # From ast.parse / py_compile
+        self._syntax_errors: List[DiagnosticError] = []     # Merged view for rendering
+        self._lint_selections: list = []                     # Stored lint ExtraSelections (survives Qt round-trip)
         self._lint_timer = QTimer(self)
         self._lint_timer.setSingleShot(True)
         self._lint_timer.timeout.connect(self._run_linting)
-        self.document().contentsChanged.connect(lambda: self._lint_timer.start(350))
+        self.document().contentsChanged.connect(self._on_content_changed)
 
         # REACTIVE: Diagnostic Hover Timer (Fast Tooltips)
         self._hover_timer = QTimer(self)
@@ -819,9 +1008,231 @@ class CodeEditor(QPlainTextEdit):
         self._completion_timer = QTimer(self)
         self._completion_timer.setSingleShot(True)
         self._completion_timer.timeout.connect(self._trigger_completion)
-        self._completion_widget = CompletionWidget(self.viewport())
+        self._completion_widget = CompletionWidget(None)  # Top-level window for proper visibility
         self._completion_widget.hide()
         self._completion_widget.item_selected.connect(self._insert_completion)
+        # Thread-safe: LSP callback emits signal → GUI thread receives and shows popup
+        self._completion_results_ready.connect(self._show_completions)
+        
+        # Custom context menu with theme-aware icons
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_context_menu)
+        
+        # Global shortcut for Format Code (Shift+Alt+F)
+        self._format_shortcut = QShortcut(QKeySequence("Shift+Alt+F"), self)
+        self._format_shortcut.activated.connect(self._format_current_code)
+
+    # ── Drag & Drop: redirect external file/folder drops to main window ──
+    def dragEnterEvent(self, event):
+        """Accept text drops normally; redirect file/folder drops."""
+        if event.mimeData().hasUrls():
+            # Check if these are external files (not internal text drag)
+            urls = event.mimeData().urls()
+            has_local = any(u.toLocalFile() for u in urls)
+            if has_local:
+                event.acceptProposedAction()
+                return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            return
+        super().dragMoveEvent(event)
+
+    def dropEvent(self, event):
+        """Redirect file/folder drops to the main window (open as project/file)."""
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            paths = [u.toLocalFile() for u in urls if u.toLocalFile()]
+            if paths:
+                main_win = self.window()
+                if main_win and hasattr(main_win, '_open_folder_programmatic'):
+                    for p in paths:
+                        if os.path.isdir(p):
+                            main_win._open_folder_programmatic(p)
+                            event.acceptProposedAction()
+                            return
+                        elif os.path.isfile(p):
+                            main_win._open_file(p)
+                            event.acceptProposedAction()
+                            return
+        super().dropEvent(event)
+
+    def _show_context_menu(self, position):
+        """Show custom context menu with theme-aware icons."""
+        menu = QMenu(self)
+        
+        # Determine icon color based on theme
+        # In dark mode: use light/white icons
+        # In light mode: use dark/black icons
+        icon_color = "white" if self._is_dark else "black"
+        
+        # Use standard icons from Qt theme - they adapt to the theme
+        # For dark mode, we need to use inverted/light versions
+        
+        # Undo
+        undo_action = QAction("Undo", self)
+        undo_action.setShortcut("Ctrl+Z")
+        undo_action.triggered.connect(self.undo)
+        menu.addAction(undo_action)
+        
+        # Redo
+        redo_action = QAction("Redo", self)
+        redo_action.setShortcut("Ctrl+Y")
+        redo_action.triggered.connect(self.redo)
+        menu.addAction(redo_action)
+        
+        menu.addSeparator()
+        
+        # Cut
+        cut_action = QAction("Cut", self)
+        cut_action.setShortcut("Ctrl+X")
+        cut_action.triggered.connect(self.cut)
+        cut_action.setEnabled(self.textCursor().hasSelection())
+        menu.addAction(cut_action)
+        
+        # Copy
+        copy_action = QAction("Copy", self)
+        copy_action.setShortcut("Ctrl+C")
+        copy_action.triggered.connect(self.copy)
+        copy_action.setEnabled(self.textCursor().hasSelection())
+        menu.addAction(copy_action)
+        
+        # Paste
+        paste_action = QAction("Paste", self)
+        paste_action.setShortcut("Ctrl+V")
+        paste_action.triggered.connect(self.paste)
+        menu.addAction(paste_action)
+        
+        # Delete
+        delete_action = QAction("Delete", self)
+        delete_action.setShortcut("Delete")
+        delete_action.triggered.connect(self._delete_selection)
+        delete_action.setEnabled(self.textCursor().hasSelection())
+        menu.addAction(delete_action)
+        
+        menu.addSeparator()
+        
+        # Format Code
+        format_action = QAction("Format Code", self)
+        format_action.setShortcut("Shift+Alt+F")
+        format_action.triggered.connect(self._format_current_code)
+        menu.addAction(format_action)
+        
+        menu.addSeparator()
+        
+        # Select All
+        select_all_action = QAction("Select All", self)
+        select_all_action.setShortcut("Ctrl+A")
+        select_all_action.triggered.connect(self.selectAll)
+        menu.addAction(select_all_action)
+        
+        # Style the menu for the current theme
+        self._style_context_menu(menu)
+        
+        # Show menu at cursor position
+        menu.exec(self.mapToGlobal(position))
+    
+    def _delete_selection(self):
+        """Delete selected text."""
+        cursor = self.textCursor()
+        if cursor.hasSelection():
+            cursor.removeSelectedText()
+    
+    def _format_current_code(self):
+        """Format the current code in the editor."""
+        if not self._language:
+            return
+        
+        # Get current code
+        code = self.toPlainText()
+        if not code.strip():
+            return
+        
+        # Format the code
+        formatter = get_code_formatter()
+        result = formatter.format_code(code, self._language)
+        
+        if result.success:
+            # Save cursor position
+            cursor = self.textCursor()
+            old_position = cursor.position()
+            
+            # Replace with formatted code
+            self.setPlainText(result.formatted_code)
+            
+            # Restore cursor position (approximate)
+            new_length = len(result.formatted_code)
+            old_length = len(code)
+            if old_length > 0:
+                ratio = old_position / old_length
+                new_position = int(ratio * new_length)
+                cursor.setPosition(min(new_position, new_length))
+                self.setTextCursor(cursor)
+            
+            print(f"[Format] Code formatted successfully for {self._language}")
+        else:
+            print(f"[Format] Failed to format: {result.error_message}")
+            # Show error in status bar if available
+            main_win = self.window()
+            if main_win and hasattr(main_win, 'show_status_message'):
+                main_win.show_status_message(f"Format failed: {result.error_message}", 5000)
+    
+    def _style_context_menu(self, menu: QMenu):
+        """Apply theme-aware styling to context menu."""
+        if self._is_dark:
+            # Dark mode styling
+            menu.setStyleSheet("""
+                QMenu {
+                    background-color: #2d2d2d;
+                    border: 1px solid #3d3d3d;
+                    padding: 5px;
+                }
+                QMenu::item {
+                    color: #d4d4d4;
+                    padding: 6px 25px 6px 25px;
+                    border-radius: 3px;
+                }
+                QMenu::item:selected {
+                    background-color: #094771;
+                    color: #ffffff;
+                }
+                QMenu::item:disabled {
+                    color: #6d6d6d;
+                }
+                QMenu::separator {
+                    height: 1px;
+                    background-color: #3d3d3d;
+                    margin: 5px 10px;
+                }
+            """)
+        else:
+            # Light mode styling
+            menu.setStyleSheet("""
+                QMenu {
+                    background-color: #f5f5f5;
+                    border: 1px solid #d4d4d4;
+                    padding: 5px;
+                }
+                QMenu::item {
+                    color: #333333;
+                    padding: 6px 25px 6px 25px;
+                    border-radius: 3px;
+                }
+                QMenu::item:selected {
+                    background-color: #0078d4;
+                    color: #ffffff;
+                }
+                QMenu::item:disabled {
+                    color: #999999;
+                }
+                QMenu::separator {
+                    height: 1px;
+                    background-color: #d4d4d4;
+                    margin: 5px 10px;
+                }
+            """)
 
     def set_content(self, text: str, language: str = None, file_path: str = ""):
         """Set editor content and file context."""
@@ -861,9 +1272,21 @@ class CodeEditor(QPlainTextEdit):
         # Trigger syntax highlighting via rehighlight() - this is the proper Qt way
         if hasattr(self, '_highlighter'):
             self._highlighter.rehighlight()
+        
+        # CRITICAL: Immediately notify LSP of the editor content so Pyright analyzes
+        # THIS content — not the stale on-disk version. Without this, Pyright's initial
+        # publishDiagnostics reports errors from the on-disk file, causing false errors.
+        if file_path and language:
+            get_lsp_manager().notify_changed(file_path, text, language)
+        
+        # Clear any stale diagnostics from previous file
+        self._lsp_diagnostics = []
+        self._local_diagnostics = []
+        self._syntax_errors = []
+        self._lint_selections = []
             
-        # Initial Diagnostic check (No delay needed on load)
-        QTimer.singleShot(500, self._run_linting)
+        # Initial local syntax check (delayed to not block UI)
+        QTimer.singleShot(300, self._run_linting)
 
     def set_theme(self, is_dark: bool):
         """Set theme and refresh font family."""
@@ -962,85 +1385,187 @@ class CodeEditor(QPlainTextEdit):
             top = bottom
             bottom = top + round(self.blockBoundingRect(block).height())
 
+    def _on_content_changed(self):
+        """Handle editor content change: schedule lint but keep LSP diagnostics.
+        
+        LSP diagnostics are kept until new ones arrive from Pyright.
+        This prevents flickering "no errors" while Pyright analyzes.
+        """
+        # Notify LSP immediately of content changes (don't wait for lint timer)
+        # This ensures Pyright analyzes the current editor content, not stale disk version
+        path = self._file_path or f"virtual_file.{self._language or 'py'}"
+        content = self.toPlainText()
+        get_lsp_manager().notify_changed(path, content, self._language)
+        
+        # Clear stale LSP diagnostics immediately when content changes
+        # New diagnostics will arrive from Pyright after analysis
+        self._lsp_diagnostics = []
+        self._merge_and_render()
+        
+        # Start lint timer for local checker (separate from LSP)
+        self._lint_timer.start(1500)
+
     def _run_linting(self):
-        """Request a fresh syntax check from the engine."""
-        if not self._syntax_checker: return
+        """Request a fresh syntax check from the engine (debounced, non-concurrent, background)."""
+        if not self._syntax_checker:
+            return
+        
+        # Prevent concurrent checks
+        if getattr(self, '_linting_in_progress', False):
+            return
         
         path = self._file_path or f"virtual_file.{self._language or 'py'}"
         content = self.toPlainText()
         
-        # Notify LSP of the latest content change
+        # Skip if content hasn't changed since last check
+        last_hash = getattr(self, '_last_lint_content_hash', None)
+        current_hash = hash(content)
+        if last_hash == current_hash:
+            return
+        
+        self._linting_in_progress = True
+        self._last_lint_content_hash = current_hash
+        
+        # Notify LSP of latest content (fast, non-blocking)
         get_lsp_manager().notify_changed(path, content, self._language)
         
-        # Run core syntax checker (Hybrid: LSP + Local)
-        # Note: Local errors appear immediately, LSP ones usually arrive via signal
-        result = self._syntax_checker.check_file(path, content)
-        self._render_diagnostics(result.errors)
+        # Run syntax check in background thread to avoid UI lag
+        import threading
+        checker = self._syntax_checker
+        def _bg_check():
+            try:
+                result = checker.check_file(path, content)
+                errors = result.errors
+                # Marshal results back to GUI thread
+                QTimer.singleShot(0, lambda: self._on_lint_done(errors))
+            except Exception as e:
+                print(f"[SyntaxChecker] Error: {e}")
+                QTimer.singleShot(0, lambda: self._on_lint_done([]))
+        
+        threading.Thread(target=_bg_check, daemon=True).start()
+    
+    def _on_lint_done(self, errors):
+        """Handle local lint results on the GUI thread.
+        
+        VS Code pattern: local diagnostics go into their own collection,
+        then merge with LSP diagnostics for rendering. This prevents
+        local checker from overwriting Pyright's precise diagnostics.
+        """
+        self._linting_in_progress = False
+        self._local_diagnostics = errors
+        self._merge_and_render()
+    
+    def _merge_and_render(self):
+        """Merge LSP and local diagnostics, deduplicate by line, render.
+        
+        VS Code keeps separate diagnostic collections per source.
+        LSP diagnostics take priority over local ones on the same line
+        because they have precise ranges.
+        """
+        # LSP diagnostics take priority (they have precise ranges)
+        lsp_lines = {e.line for e in self._lsp_diagnostics}
+        
+        merged = list(self._lsp_diagnostics)
+        for e in self._local_diagnostics:
+            if e.line not in lsp_lines:
+                merged.append(e)
+        
+        self._render_diagnostics(merged)
 
     def _render_diagnostics(self, errors: List[DiagnosticError]):
-        """Pure visual rendering of provided diagnostic errors."""
+        """Pure visual rendering of provided diagnostic errors with precise ranges."""
         self._syntax_errors = errors
         
-        # 1. Clear old lint markers but keep other selections (like current line highlight)
-        sels = [s for s in self.extraSelections() if not getattr(s, '_lint', False)]
-        
-        # 2. Create precise squiggles
+        # Build new lint selections
         new_sels = []
         for err in self._syntax_errors:
+            # Skip errors on empty/whitespace-only lines
+            block = self.document().findBlockByNumber(max(0, err.line - 1))
+            if not block.isValid():
+                continue
+            if block.text().strip() == "":
+                continue
+            
             s = QTextEdit.ExtraSelection()
-            s._lint = True
             fmt = QTextCharFormat()
             
             # Map severity to color (Cursor IDE terminal colors)
-            color = QColor("#f14c4c") # terminal.ansiRed - Error
-            if err.severity == "warning": color = QColor("#e5b95c") # terminal.ansiYellow
-            elif err.severity == "info": color = QColor("#4c9df3") # terminal.ansiBlue
+            if err.severity == "warning":
+                color = QColor("#e5b95c")  # terminal.ansiYellow
+            elif err.severity == "info":
+                color = QColor("#4c9df3")  # terminal.ansiBlue
+            else:
+                color = QColor("#f14c4c")  # terminal.ansiRed - Error
                 
             fmt.setUnderlineColor(color)
             fmt.setUnderlineStyle(QTextCharFormat.UnderlineStyle.WaveUnderline)
+            
+            # Subtle background tint for visibility
+            bg_color = QColor(color)
+            bg_color.setAlpha(25)
+            fmt.setBackground(bg_color)
             s.format = fmt
             
-            # Use Precise Word Positioning
-            block = self.document().findBlockByNumber(max(0, err.line - 1))
-            if block.isValid():
-                cur = QTextCursor(block)
-                # Ensure we don't move past the end of the block
-                start_col = min(block.length() - 1, max(0, err.column - 1))
-                cur.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.MoveAnchor, start_col)
-                
-                # Highlight length
-                length = (err.end_column - err.column) if (err.end_column > err.column) else 0
-                if length > 0:
-                    cur.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, length)
-                # Smart selection: try word, but fallback to single char to avoid line overflows
+            # Use precise range from LSP (end_line, end_column)
+            start_block = block
+            cur = QTextCursor(start_block)
+            start_col = min(start_block.length() - 1, max(0, err.column - 1))
+            cur.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.MoveAnchor, start_col)
+            
+            # Determine end position
+            end_line_num = err.end_line if err.end_line > 0 else err.line
+            end_col = err.end_column if err.end_column > 0 else 0
+            
+            has_precise_range = (end_col > err.column and end_line_num == err.line) or (end_line_num > err.line)
+            
+            if has_precise_range:
+                # LSP gave us precise start/end — use it directly
+                end_block = self.document().findBlockByNumber(max(0, end_line_num - 1))
+                if end_block.isValid():
+                    end_pos = end_block.position() + min(end_block.length() - 1, max(0, end_col - 1))
+                    cur.setPosition(end_pos, QTextCursor.MoveMode.KeepAnchor)
+            else:
+                # No precise range — select the word under the error position
                 cur.select(QTextCursor.SelectionType.WordUnderCursor)
-                # If word selection is empty or spans multiple blocks, fallback
-                if cur.selectedText().strip() == "" or cur.blockNumber() != block.blockNumber():
-                    cur.setPosition(block.position() + start_col)
+                if cur.selectedText().strip() == "" or cur.blockNumber() != start_block.blockNumber():
+                    # Fallback: highlight single character
+                    cur.setPosition(start_block.position() + start_col)
                     cur.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, 1)
-                
-                # Enhancing visibility with a subtle background tint
-                bg_color = QColor(color)
-                bg_color.setAlpha(35) # Very subtle (max 255)
-                fmt.setBackground(bg_color)
-                
-                s.cursor = cur
-                new_sels.append(s)
+            
+            # Skip if the selected text is only whitespace (invisible underline)
+            selected_text = cur.selectedText()
+            if selected_text.strip() == "":
+                continue
+            
+            s.cursor = cur
+            new_sels.append(s)
         
-        # Combine with non-lint selections (like current line highlight)
-        self.setExtraSelections(sels + new_sels)
+        # Store lint selections so _highlight_current_line can preserve them
+        self._lint_selections = new_sels
         
-        # Forced update of gutter and viewport for instant feedback
-        if hasattr(self, '_line_number_area'):
-            self._line_number_area.update()
-        self.viewport().update()
+        # Re-apply all selections (lint + current line highlight)
+        self._highlight_current_line()
 
     def _handle_lsp_update(self, file_path: str, raw_diagnostics: List[Dict]):
-        """Reactive handler for LSP background results."""
+        """Reactive handler for LSP background results (e.g., Pyright publishDiagnostics).
+        
+        VS Code pattern: LSP diagnostics go into their own collection,
+        then merge with local diagnostics for rendering.
+        """
         if not self._file_path: return
         
+        # Convert LSP URI (file:///c%3A/...) to local path (C:\...)
+        from urllib.parse import unquote
+        if file_path.startswith("file://"):
+            # Remove file:// prefix and URL decode
+            uri_path = file_path[7:]  # Remove "file://"
+            uri_path = unquote(uri_path)  # Decode %3A to :
+            # Handle Unix-style paths on Windows
+            if uri_path.startswith("/") and len(uri_path) > 1 and uri_path[2] == ":":
+                uri_path = uri_path[1:]  # Remove leading / before drive letter
+            file_path = uri_path.replace("/", os.sep)
+        
         # Only process if it matches our file
-        # Use normpath to ensure cross-platform match (LSP might send / vs \)
         my_path = os.path.normcase(os.path.normpath(self._file_path))
         inc_path = os.path.normcase(os.path.normpath(file_path))
         
@@ -1050,23 +1575,32 @@ class CodeEditor(QPlainTextEdit):
         # Convert raw LSP dicts to DiagnosticError objects
         processed_errors = []
         for d in raw_diagnostics:
+            rng = d.get("range", {})
+            start = rng.get("start", {})
+            end = rng.get("end", {})
+            
+            severity_num = d.get("severity", 1)
+            severity_map = {1: "error", 2: "warning", 3: "info", 4: "info"}
+            
             processed_errors.append(DiagnosticError(
                 file_path=file_path,
                 message=d.get("message", ""),
-                line=d.get("range", {}).get("start", {}).get("line", 0) + 1,
-                column=d.get("range", {}).get("start", {}).get("character", 0) + 1,
-                severity=d.get("severity_label", "error").lower(),
+                line=start.get("line", 0) + 1,
+                column=start.get("character", 0) + 1,
+                end_line=end.get("line", 0) + 1,
+                end_column=end.get("character", 0) + 1,
+                severity=severity_map.get(severity_num, "error"),
                 source="LSP",
-                code=str(d.get("code", "")),
-                end_column=d.get("range", {}).get("end", {}).get("character", 0) + 1
+                code=str(d.get("code", ""))
             ))
-            
-        # Render ONLY. Do NOT call _run_linting here to avoid infinite loops.
-        self._render_diagnostics(processed_errors)
+        
+        # Store in LSP collection and merge with local diagnostics
+        self._lsp_diagnostics = processed_errors
+        self._merge_and_render()
 
     def _highlight_current_line(self):
-        # Keep existing lint selections
-        extra = [s for s in self.extraSelections() if getattr(s, '_lint', False)]
+        # Combine stored lint selections with current-line highlight
+        extra = list(self._lint_selections)
         
         if not self.isReadOnly():
             sel = QTextEdit.ExtraSelection()
@@ -1078,6 +1612,10 @@ class CodeEditor(QPlainTextEdit):
             extra.append(sel)
             
         self.setExtraSelections(extra)
+        
+        # Update gutter for error dots
+        if hasattr(self, '_line_number_area'):
+            self._line_number_area.update()
     
     def paintEvent(self, event):
         """Paint editor with indentation guide lines."""
@@ -1129,6 +1667,11 @@ class CodeEditor(QPlainTextEdit):
         line = cursor.blockNumber() + 1
         col = cursor.columnNumber() + 1
         self.cursor_position_changed.emit(line, col)
+
+    def focusOutEvent(self, event):
+        """Hide completion widget when editor loses focus."""
+        self._completion_widget.hide()
+        super().focusOutEvent(event)
 
     def keyPressEvent(self, event: QKeyEvent):
         key = event.key()
@@ -1201,7 +1744,13 @@ class CodeEditor(QPlainTextEdit):
             self.insertPlainText(indent)
             return
 
-        # 4. Tab handling - VS Code style
+        # 4. Manual IntelliSense trigger (Ctrl+Space) - VS Code style
+        if key == Qt.Key.Key_Space and modifiers & Qt.KeyboardModifier.ControlModifier:
+            self._completion_timer.stop()
+            self._trigger_completion()
+            return
+
+        # 5. Tab handling - VS Code style
         if key == Qt.Key.Key_Tab:
             tab_size = self._settings.get("editor", "tab_size") or 4
             if modifiers == Qt.KeyboardModifier.ShiftModifier:
@@ -1214,10 +1763,29 @@ class CodeEditor(QPlainTextEdit):
             self.insertPlainText(" " * tab_size)
             return
 
-        # 5. Default edit + IntelliSense trigger (Debounced)
+        # 6. Default edit + IntelliSense trigger (Debounced)
         super().keyPressEvent(event)
+        
+        # 7. HTML Auto-close tags
+        if self._language and self._language.lower() == "html" and event.text() == ">":
+            cursor = self.textCursor()
+            position = cursor.position()
+            
+            # Get text before cursor
+            doc = self.document()
+            text_before = doc.toPlainText()[:position]
+            
+            # Check if we need to auto-close
+            closing_tag = get_closing_tag(text_before)
+            if closing_tag:
+                # Insert the closing tag
+                self.insertPlainText(closing_tag)
+                # Move cursor back between tags
+                cursor.setPosition(position)
+                self.setTextCursor(cursor)
+        
         if event.text().isalnum() or event.text() in (".", "_"):
-            self._completion_timer.start(100) # 100ms delay to prevent flood
+            self._completion_timer.start(200) # 200ms delay to prevent flood
 
     def mouseMoveEvent(self, event):
         """Track mouse for instant diagnostic tooltips."""
@@ -1228,7 +1796,12 @@ class CodeEditor(QPlainTextEdit):
             return
         self._last_hover_pos = pos
         
-        # Check if mouse is over an error
+        # Hide tooltip if window not active
+        if not self.window().isActiveWindow():
+            QToolTip.hideText()
+            return
+        
+        # Check if mouse is over an error (with proper column range check)
         cursor = self.cursorForPosition(pos)
         line = cursor.blockNumber() + 1
         col = cursor.columnNumber() + 1
@@ -1236,9 +1809,10 @@ class CodeEditor(QPlainTextEdit):
         found_err = False
         for err in self._syntax_errors:
             if err.line == line:
-                # Small 2-char buffer for visibility
-                end = err.end_column if err.end_column > err.column else err.column + 2
-                if err.column <= col <= end:
+                # Check if column is within the error's precise range
+                err_start = err.column
+                err_end = err.end_column if err.end_column > err.column else err.column + 5
+                if err_start <= col <= err_end:
                     found_err = True
                     break
         
@@ -1250,16 +1824,23 @@ class CodeEditor(QPlainTextEdit):
 
     def _show_hover_diagnostic(self):
         """Triggered by _hover_timer to show tooltip near mouse."""
+        # Don't show tooltip if IDE window is not active
+        if not self.window().isActiveWindow():
+            return
+        
         pos = self._last_hover_pos
         cursor = self.cursorForPosition(pos)
         line = cursor.blockNumber() + 1
         col = cursor.columnNumber() + 1
         
+        # Find the specific error at this position (not just any error on the line)
         for err in self._syntax_errors:
             if err.line == line:
-                end = err.end_column if err.end_column > err.column else err.column + 2
-                if err.column <= col <= end:
-                    icon = "❌" if err.severity == "error" else "⚠️"
+                # Check if column is within the error's range
+                err_start = err.column
+                err_end = err.end_column if err.end_column > err.column else err.column + 5
+                if err_start <= col <= err_end:
+                    icon = "X" if err.severity == "error" else "!"
                     text = f"<div style='background-color:#1e1e1e; color:#cccccc; border:1px solid #3c3c3c; padding:5px;'>"
                     text += f"<b style='color:#f44747'>{icon} {err.severity.capitalize()}</b>: {err.message}"
                     if err.code:
@@ -1355,56 +1936,269 @@ class CodeEditor(QPlainTextEdit):
         self._inline_overlay.focus_prompt()
 
 
+    # Language-specific snippets for when LSP is slow/unavailable
+    SNIPPETS = {
+        "python": [
+            {"label": "def", "insertText": "def ${1:name}(${2:args}):\n    ${3:pass}", "kind": 15, "detail": "function"},
+            {"label": "class", "insertText": "class ${1:Name}:\n    def __init__(self):\n        pass", "kind": 15, "detail": "class"},
+            {"label": "ifmain", "insertText": "if __name__ == \"__main__\":\n    ${1:pass}", "kind": 15, "detail": "snippet"},
+            {"label": "for", "insertText": "for ${1:item} in ${2:iterable}:\n    ${3:pass}", "kind": 15, "detail": "loop"},
+            {"label": "try", "insertText": "try:\n    ${1:pass}\nexcept ${2:Exception} as ${3:e}:\n    ${4:pass}", "kind": 15, "detail": "snippet"},
+            {"label": "import", "insertText": "import ${1:module}", "kind": 15, "detail": "import"},
+            {"label": "from", "insertText": "from ${1:module} import ${2:name}", "kind": 15, "detail": "import"},
+        ],
+        "javascript": [
+            {"label": "func", "insertText": "function ${1:name}(${2:args}) {\n    ${3:// body}\n}", "kind": 15, "detail": "function"},
+            {"label": "arrow", "insertText": "const ${1:name} = (${2:args}) => {\n    ${3:// body}\n}", "kind": 15, "detail": "arrow function"},
+            {"label": "class", "insertText": "class ${1:Name} {\n    constructor() {\n        ${2:// init}\n    }\n}", "kind": 15, "detail": "class"},
+            {"label": "for", "insertText": "for (let ${1:i} = 0; ${1:i} < ${2:length}; ${1:i}++) {\n    ${3:// body}\n}", "kind": 15, "detail": "loop"},
+            {"label": "forof", "insertText": "for (const ${1:item} of ${2:iterable}) {\n    ${3:// body}\n}", "kind": 15, "detail": "for-of"},
+            {"label": "log", "insertText": "console.log(${1:message});", "kind": 15, "detail": "console"},
+            {"label": "import", "insertText": "import { ${2:exports} } from '${1:module}';", "kind": 15, "detail": "import"},
+        ],
+        "typescript": [
+            {"label": "interface", "insertText": "interface ${1:Name} {\n    ${2:prop}: ${3:type};\n}", "kind": 15, "detail": "interface"},
+            {"label": "type", "insertText": "type ${1:Name} = ${2:definition};", "kind": 15, "detail": "type alias"},
+            {"label": "func", "insertText": "function ${1:name}(${2:args}): ${3:void} {\n    ${4:// body}\n}", "kind": 15, "detail": "function"},
+        ],
+        "html": [
+            {"label": "div", "insertText": "<div>${1:content}</div>", "kind": 15, "detail": "tag"},
+            {"label": "span", "insertText": "<span>${1:content}</span>", "kind": 15, "detail": "tag"},
+            {"label": "a", "insertText": "<a href=\"${1:#}\">${2:link}</a>", "kind": 15, "detail": "link"},
+            {"label": "img", "insertText": "<img src=\"${1:url}\" alt=\"${2:description}\" />", "kind": 15, "detail": "image"},
+            {"label": "script", "insertText": "<script>\n${1:// code}\n</script>", "kind": 15, "detail": "script"},
+            {"label": "style", "insertText": "<style>\n${1:/* css */}\n</style>", "kind": 15, "detail": "style"},
+            {"label": "link", "insertText": "<link rel=\"stylesheet\" href=\"${1:style.css}\" />", "kind": 15, "detail": "stylesheet"},
+            {"label": "ul", "insertText": "<ul>\n    <li>${1:item}</li>\n</ul>", "kind": 15, "detail": "list"},
+            {"label": "input", "insertText": "<input type=\"${1:text}\" name=\"${2:name}\" />", "kind": 15, "detail": "form"},
+            {"label": "form", "insertText": "<form action=\"${1:#}\" method=\"${2:post}\">\n    ${3}\n</form>", "kind": 15, "detail": "form"},
+        ],
+        "css": [
+            {"label": "flex", "insertText": "display: flex;\njustify-content: ${1:center};\nalign-items: ${2:center};", "kind": 15, "detail": "flexbox"},
+            {"label": "grid", "insertText": "display: grid;\ngrid-template-columns: ${1:1fr 1fr};\ngap: ${2:1rem};", "kind": 15, "detail": "grid"},
+            {"label": "media", "insertText": "@media (max-width: ${1:768px}) {\n    ${2}\n}", "kind": 15, "detail": "responsive"},
+            {"label": "var", "insertText": "var(--${1:color-primary})", "kind": 15, "detail": "CSS variable"},
+            {"label": "transition", "insertText": "transition: ${1:all} ${2:0.3s} ${3:ease};", "kind": 15, "detail": "animation"},
+            {"label": "transform", "insertText": "transform: ${1:translateX(0)};", "kind": 15, "detail": "transform"},
+        ],
+    }
+
     def _trigger_completion(self):
-        """Request completions from LSP Manager."""
+        """Request completions from LSP Manager with fallback to snippets/words/HTML."""
         cursor = self.textCursor()
         line = cursor.blockNumber() + 1
         col = cursor.columnNumber() + 1
+
+        # Get current word prefix for filtering
+        cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+        prefix = cursor.selectedText().lower()
+        cursor.clearSelection()
         
+        print(f"[Completion] Triggered: lang={self._language}, prefix='{prefix}', file={self._file_path}, line={line}, col={col}")
+
+        # HTML Language: Use built-in HTML completion provider
+        if self._language and self._language.lower() == "html":
+            self._trigger_html_completion(line, col, prefix)
+            return
+
         def on_results(res, err):
-            if err or not res: return
-            items = res.get("items", []) if isinstance(res, dict) else res
-            if not items: return
-            
-            # Show on main thread
-            QTimer.singleShot(0, lambda: self._show_completions(items))
-            
+            """Called from LSP background thread — must marshal to GUI thread."""
+            try:
+                items = []
+                if res:
+                    if isinstance(res, dict):
+                        items = res.get("items", []) or []
+                    elif isinstance(res, list):
+                        items = res
+                
+                print(f"[Completion] LSP returned {len(items)} items, err={err}")
+                
+                # Filter LSP items by prefix for relevance
+                if prefix and items:
+                    items = [i for i in items if i.get("label", "").lower().startswith(prefix)]
+
+                # Fallback: add snippets if LSP returned few/no results
+                if len(items) < 5:
+                    snippets = self.SNIPPETS.get(self._language, [])
+                    if prefix:
+                        snippets = [s for s in snippets if s["label"].lower().startswith(prefix)]
+                    if snippets:
+                        print(f"[Completion] Adding {len(snippets)} snippets for lang={self._language}")
+                    items = snippets + items
+
+                # Fallback: add word-based completions from current document
+                if len(items) < 10 and prefix and len(prefix) >= 2:
+                    existing_labels = {i.get("label", "") for i in items}
+                    words = self._extract_words(prefix)
+                    for w in words:
+                        if w not in existing_labels:
+                            items.append({"label": w, "kind": 1, "detail": "word"})
+
+                print(f"[Completion] Total items to show: {len(items)}")
+                
+                # Emit signal to GUI thread (safe from any thread)
+                final_items = items[:30]
+                self._completion_results_ready.emit(final_items)
+            except Exception as e:
+                print(f"[Completion] ERROR in on_results: {e}")
+                import traceback
+                traceback.print_exc()
+
         get_lsp_manager().get_completions(self._file_path, line, col, self._language, on_results)
+    
+    def _trigger_html_completion(self, line: int, col: int, prefix: str):
+        """Trigger HTML-specific completions using built-in provider."""
+        try:
+            content = self.toPlainText()
+            provider = get_html_completion_provider()
+            completions = provider.get_completions(content, line - 1, col - 1)
+            
+            items = []
+            for comp in completions:
+                # Map HTML completion kinds to LSP kinds
+                kind_map = {
+                    "tag": 10,      # Property
+                    "attribute": 5, # Field
+                    "value": 12,    # Value
+                    "emmet": 15     # Snippet
+                }
+                
+                item = {
+                    "label": comp.label,
+                    "kind": kind_map.get(comp.kind, 1),
+                    "detail": comp.detail,
+                    "documentation": comp.documentation,
+                    "insertText": comp.insert_text
+                }
+                items.append(item)
+            
+            print(f"[Completion] HTML provider returned {len(items)} items")
+            
+            # Filter by prefix if provided
+            if prefix and items:
+                items = [i for i in items if i.get("label", "").lower().startswith(prefix)]
+            
+            self._completion_results_ready.emit(items[:30])
+        except Exception as e:
+            print(f"[Completion] ERROR in HTML completion: {e}")
+            import traceback
+            traceback.print_exc()
+            self._completion_results_ready.emit([])
+
+    def _extract_words(self, exclude_prefix: str) -> List[str]:
+        """Extract unique words from document matching exclude_prefix."""
+        text = self.toPlainText()
+        words = set()
+        pattern = re.compile(r'\b[a-zA-Z_]\w*\b')
+        for m in pattern.finditer(text):
+            w = m.group()
+            if w.lower().startswith(exclude_prefix.lower()) and len(w) > len(exclude_prefix):
+                words.add(w)
+        return sorted(words)[:20]  # Limit to 20 word suggestions
 
     def _show_completions(self, items: List[Dict]):
-        """Display the completion widget near the cursor with boundary checks."""
+        """Display the completion widget near the cursor."""
         if not items:
             self._completion_widget.hide()
             return
+        
+        try:
+            self._completion_widget.set_items(items[:30])
             
-        self._completion_widget.set_items(items[:50]) # Limit to top 50
-        
-        # Calculate position
-        cursor_rect = self.cursorRect()
-        global_pos = self.viewport().mapToGlobal(cursor_rect.bottomLeft())
-        
-        # Boundary Check: Keep on screen
-        screen = QApplication.primaryScreen().geometry()
-        widget_height = self._completion_widget.height()
-        
-        # If it goes off the bottom, flip to top
-        if global_pos.y() + widget_height > screen.height():
-            global_pos = self.viewport().mapToGlobal(cursor_rect.topLeft())
-            global_pos -= QPoint(0, widget_height + 5)
-        else:
-            global_pos += QPoint(0, 5)
+            # Size widget based on content — account for 2-line snippet cards
+            visible = items[:8]
+            total_h = 6
+            for it in visible:
+                insert_text = it.get("insertText", it.get("label", ""))
+                preview = re.sub(r'\$\{(\d+):([^}]*)\}', r'\2', insert_text)
+                preview = re.sub(r'\$(\d+)', '', preview)
+                preview = preview.replace('\n', ' ').strip()
+                label = it.get("label", "")
+                is_snippet = it.get("kind") == 15 and preview != label
+                total_h += 44 if is_snippet else 26
             
-        self._completion_widget.move(global_pos)
-        self._completion_widget.show()
-        self._completion_widget.raise_()
+            w = 380
+            h = total_h
+            self._completion_widget.resize(w, h)
+            
+            # Position below cursor
+            cursor_rect = self.cursorRect()
+            pos = self.viewport().mapToGlobal(cursor_rect.bottomLeft())
+            pos.setY(pos.y() + 4)
+            
+            # Keep on screen
+            screen = QApplication.primaryScreen().availableGeometry()
+            if pos.y() + h > screen.bottom():
+                pos = self.viewport().mapToGlobal(cursor_rect.topLeft())
+                pos.setY(pos.y() - h - 4)
+            if pos.x() + w > screen.right():
+                pos.setX(screen.right() - w)
+            
+            self._completion_widget.move(pos)
+            self._completion_widget.show()
+            print(f"[Completion] POPUP shown at ({pos.x()},{pos.y()}) size=({w},{h}) items={len(items)} visible={self._completion_widget.isVisible()}")
+        except Exception as e:
+            print(f"[Completion] ERROR showing widget: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _insert_completion(self, item: Dict):
-        """Insert the selected completion text into the editor."""
+        """Insert the selected completion text into the editor.
+        
+        Resolves snippet placeholders: ${1:name} -> name
+        Selects the first placeholder so the user can type over it.
+        """
         text = item.get("insertText") or item.get("label")
+        
         cursor = self.textCursor()
-        # Backtrack to the start of the word
+        # Backtrack to the start of the word being typed
         cursor.movePosition(QTextCursor.MoveOperation.StartOfWord, QTextCursor.MoveMode.KeepAnchor)
-        cursor.insertText(text)
+        
+        # Find all ${N:default} placeholders
+        placeholders = list(re.finditer(r'\$\{(\d+):([^}]*)\}', text))
+        
+        if placeholders:
+            # Resolve all placeholders to their default text
+            resolved = text
+            # Track first placeholder position for selection
+            first_ph = placeholders[0]
+            first_default = first_ph.group(2)
+            
+            # Replace from end to start to preserve positions
+            for ph in reversed(placeholders):
+                resolved = resolved[:ph.start()] + ph.group(2) + resolved[ph.end():]
+            
+            # Also remove bare $N references
+            resolved = re.sub(r'\$(\d+)', '', resolved)
+            
+            # Calculate where the first placeholder default text will be
+            # after all replacements
+            first_start_in_resolved = first_ph.start()
+            # Adjust for any replacements before this position — but since
+            # first_ph IS the first one, nothing before it changed
+            
+            cursor.insertText(resolved)
+            
+            # Now select the first placeholder's default text
+            insert_end = cursor.position()
+            # The resolved text was inserted starting where the word was
+            # cursor is now at the end of the inserted text
+            total_len = len(resolved)
+            insert_start = insert_end - total_len
+            
+            sel_start = insert_start + first_start_in_resolved
+            sel_end = sel_start + len(first_default)
+            
+            new_cursor = self.textCursor()
+            new_cursor.setPosition(sel_start)
+            new_cursor.setPosition(sel_end, QTextCursor.MoveMode.KeepAnchor)
+            self.setTextCursor(new_cursor)
+        else:
+            # No placeholders — just insert as-is
+            # Remove any bare $N
+            text = re.sub(r'\$(\d+)', '', text)
+            cursor.insertText(text)
+        
         self.setFocus()
 
     def _hide_inline_overlay(self):

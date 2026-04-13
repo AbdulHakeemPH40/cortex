@@ -86,6 +86,16 @@ def main():
         base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     logo_dir = os.path.join(base, "src", "assets", "logo")
+    if not os.path.isdir(logo_dir):
+        # Fallback: try exe directory
+        exe_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.getcwd()
+        logo_dir = os.path.join(exe_dir, "src", "assets", "logo")
+    if not os.path.isdir(logo_dir):
+        # Fallback: try _internal directory (PyInstaller onedir)
+        exe_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.getcwd()
+        logo_dir = os.path.join(exe_dir, "_internal", "src", "assets", "logo")
+    if not os.path.isdir(logo_dir):
+        logo_dir = os.path.join(os.getcwd(), "src", "assets", "logo")
 
     # Prefer pre-generated rounded PNG (crisp, no runtime PIL needed)
     icon_candidates = [
@@ -98,11 +108,12 @@ def main():
     for candidate in icon_candidates:
         if os.path.exists(candidate):
             from PyQt6.QtGui import QPixmap
+            from PyQt6.QtCore import Qt as QtConst
             pm = QPixmap(candidate)
             if not pm.isNull():
                 # Add at multiple sizes for crisp rendering at all DPIs
                 for sz in [16, 32, 48, 64, 128, 256]:
-                    icon.addPixmap(pm.scaled(sz, sz))
+                    icon.addPixmap(pm.scaled(sz, sz, QtConst.AspectRatioMode.KeepAspectRatio, QtConst.TransformationMode.SmoothTransformation))
                 break
 
     if not icon.isNull():
@@ -136,6 +147,14 @@ def main():
 
     window = CortexMainWindow()
     # window.show() is now called in __init__
+
+    # Handle path argument (from right-click "Open with Cortex IDE" or drag-drop launch)
+    if len(sys.argv) > 1:
+        launch_path = sys.argv[1]
+        if os.path.isdir(launch_path):
+            QTimer.singleShot(200, lambda p=launch_path: window._open_folder_programmatic(p))
+        elif os.path.isfile(launch_path):
+            QTimer.singleShot(200, lambda p=launch_path: window._open_file(p))
 
     log.info("Application ready. Entering event loop...")
     

@@ -110,6 +110,21 @@
         body.light-mode .xterm-viewport {
             scrollbar-color: #a0a0a0 #f0f0f0;
         }
+        
+        /* Selection styling for dark mode */
+        .xterm .xterm-selection div {
+            background-color: rgba(255, 255, 255, 0.3) !important;
+        }
+        
+        /* Selection styling for light mode - target the actual cell elements */
+        body.light-mode .xterm .xterm-selection div {
+            background-color: rgba(0, 120, 212, 0.4) !important;
+        }
+        
+        /* Ensure selected text is visible in light mode */
+        body.light-mode .xterm .xterm-selection div span {
+            background-color: transparent !important;
+        }
     </style>
 </head>
 <body>
@@ -182,6 +197,8 @@
             theme: {
                 background: '#0c0c0c',
                 foreground: '#cccccc',
+                selectionBackground: 'rgba(255, 255, 255, 0.3)',
+                selectionForeground: '#ffffff',
                 black: '#0c0c0c',
                 red: '#c50f1f',
                 green: '#13a10e',
@@ -497,7 +514,9 @@
                     term.options.theme = {
                         background: '#0c0c0c',
                         foreground: '#cccccc',
-                        cursor: '#ffffff'
+                        cursor: '#ffffff',
+                        selectionBackground: 'rgba(255, 255, 255, 0.3)',
+                        selectionForeground: '#ffffff'
                     };
                 } else {
                     document.body.style.backgroundColor = '#ffffff';
@@ -506,6 +525,8 @@
                         background: '#ffffff',
                         foreground: '#0c0c0c',
                         cursor: '#000000',
+                        selectionBackground: 'rgba(0, 120, 212, 0.4)',
+                        selectionForeground: '#000000',
                         black: '#000000',
                         red: '#cd3131',
                         green: '#00bc00',

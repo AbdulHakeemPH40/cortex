@@ -201,7 +201,7 @@ class FileManager(QObject):
             cached = self._file_cache.get(cache_key)
             if cached:
                 elapsed = (time.time() - start_time) * 1000
-                log.debug(f"⚡ RANGE CACHE: {filepath}[{start_line}-{end_line}] in {elapsed:.1f}ms")
+                log.debug(f"RANGE CACHE: {filepath}[{start_line}-{end_line}] in {elapsed:.1f}ms")
                 return cached
         
         # LEVEL 2: Full file cache (VERY FAST)
@@ -215,7 +215,7 @@ class FileManager(QObject):
             
             # Cache this range for next time
             self._file_cache.put(cache_key, range_content)
-            log.debug(f"💾 Extracted from full cache: {filepath}[{start_line}-{end_line}]")
+            log.debug(f"Extracted from full cache: {filepath}[{start_line}-{end_line}]")
             return range_content
         
         # Read from disk (need to load)
@@ -239,7 +239,7 @@ class FileManager(QObject):
                 self._file_cache.put(resolved_path, content)
                 self._file_cache.put(cache_key, range_content)
                 
-                log.debug(f"📄 Small file loaded: {filepath} ({file_size/1024:.1f}KB)")
+                log.debug(f"Small file loaded: {filepath} ({file_size/1024:.1f}KB)")
                 return range_content
             
             # LEVEL 4: Large file - memory-mapped I/O (OPTIMIZED)
@@ -258,7 +258,7 @@ class FileManager(QObject):
                     self._file_cache.put(cache_key, range_content)
                     
                     elapsed = (time.time() - start_time) * 1000
-                    log.info(f"📖 Mmap loaded: {filepath}[{start_line}-{end_line}] ({file_size/1024/1024:.2f}MB) in {elapsed:.1f}ms")
+                    log.info(f"Mmap loaded: {filepath}[{start_line}-{end_line}] ({file_size/1024/1024:.2f}MB) in {elapsed:.1f}ms")
                     return range_content
                 
         except Exception as e:
@@ -282,14 +282,14 @@ class FileManager(QObject):
         if use_cache:
             cached = self._file_cache.get(str(Path(filepath).resolve()))
             if cached:
-                log.debug(f"✅ Cache hit: {filepath}")
+                log.debug(f"Cache hit: {filepath}")
                 return cached
         
         # Auto-enable lazy loading for large files
         path = Path(filepath)
         if path.exists() and path.stat().st_size > 512 * 1024:  # >512KB
             lazy_load = True
-            log.info(f"🎯 Auto-enabled lazy loading for large file: {filepath}")
+            log.info(f"Auto-enabled lazy loading for large file: {filepath}")
         
         # Lazy loading mode - read only viewport
         if lazy_load:
@@ -314,7 +314,7 @@ class FileManager(QObject):
                 with open(path, 'r+b', buffering=0) as f:
                     with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
                         content = mm.read().decode('utf-8', errors='replace')
-                log.info(f"📄 Large file loaded via mmap: {filepath} ({file_size/1024/1024:.2f}MB)")
+                log.info(f"Large file loaded via mmap: {filepath} ({file_size/1024/1024:.2f}MB)")
             else:
                 content = path.read_text(encoding='utf-8', errors='replace')
             
@@ -324,7 +324,7 @@ class FileManager(QObject):
             self._file_cache.put(resolved_path, content)
             self._hash_cache[resolved_path] = self._compute_hash(content)
             
-            log.debug(f"✅ File read and cached: {filepath}")
+            log.debug(f"File read and cached: {filepath}")
             return content
         except Exception as e:
             log.error(f"Cannot read {filepath}: {e}")
@@ -346,14 +346,14 @@ class FileManager(QObject):
             # Start async read for next viewport
             self.read_range(filepath, next_start, next_end)
         
-        log.debug(f"🔮 Prefetched {lookahead_count} viewports ahead for {filepath}")
+        log.debug(f"Prefetched {lookahead_count} viewports ahead for {filepath}")
     
     def prefetch_files(self, filepaths: list[str]):
         """Pre-fetch multiple files in background (predictive loading)."""
         for filepath in filepaths:
             if filepath not in self._file_cache.cache:
                 self.read_async(filepath)
-        log.debug(f"🔮 Prefetching {len(filepaths)} files")
+        log.debug(f"Prefetching {len(filepaths)} files")
     
     def has_file_changed(self, filepath: str) -> bool:
         """Quick check if file changed using hash comparison."""
@@ -553,7 +553,7 @@ class FileManager(QObject):
             # Move to trash instead of permanent delete
             shutil.move(str(path), str(trash_path))
             
-            # ⚡ CACHE CONSISTENCY: Clear all caches for this path
+            # CACHE CONSISTENCY: Clear all caches for this path
             self._open_files.pop(metadata['original_path'], None)
             self._hash_cache.pop(metadata['original_path'], None)
             

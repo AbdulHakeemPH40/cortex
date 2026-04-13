@@ -2,13 +2,13 @@
 ; Creates professional Windows installer with Next/Back wizard
 
 #define MyAppName "Cortex AI Agent"
-#define MyAppVersion "1.0.13"
+#define MyAppVersion "1.0.11"
 #define MyAppPublisher "Cortex AI"
 #define MyAppURL "https://github.com/cortex-ai"
 #define MyAppExeName "Cortex.exe"
 
 [Setup]
-AppId=CORTEX-AI-IDE-2026-UNIQUE
+AppId=CORTEX-AI-IDE-2024-UNIQUE
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
@@ -24,11 +24,8 @@ SetupIconFile=src\assets\logo\logo.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
-PrivilegesRequired=lowest
+PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=dialog
-; When PrivilegesRequired=lowest:
-; - "Install for me only" = no admin prompt, installs to user folder
-; - "Install for all users" = admin prompt, installs to Program Data
 UninstallDisplayIcon={app}\{#MyAppExeName}
 UninstallDisplayName={#MyAppName}
 VersionInfoVersion={#MyAppVersion}

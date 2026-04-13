@@ -64,12 +64,23 @@ class LSPServerInstance(QObject):
         # Message buffering
         self._buffer = b""
         
+        # Deferred notifications queue — sent after server is READY
+        # (LSP spec: server must not process notifications before initialized)
+        self._deferred_notifications: List[Dict] = []
+        
     def _set_state(self, new_state: LSPConnectionState):
         """Update state and emit signal."""
         old_state = self.state
         self.state = new_state
         log.info(f"LSP server {self.name}: {old_state.value} -> {new_state.value}")
         self.state_changed.emit(self.name, new_state.value)
+        
+        # Flush deferred notifications when server becomes ready
+        if new_state == LSPConnectionState.READY and self._deferred_notifications:
+            log.info(f"LSP {self.name}: flushing {len(self._deferred_notifications)} deferred notifications")
+            for notif in self._deferred_notifications:
+                self.send_notification(notif["method"], notif["params"])
+            self._deferred_notifications.clear()
 
     def start(self):
         """Start the LSP server process and reader thread."""
@@ -98,7 +109,7 @@ class LSPServerInstance(QObject):
             self._set_state(LSPConnectionState.INITIALIZING)
             
             # Handshake with standard capabilities
-            self.send_request("initialize", {
+            init_params = {
                 "processId": os.getpid(),
                 "rootUri": self.root_uri,
                 "capabilities": {
@@ -114,8 +125,16 @@ class LSPServerInstance(QObject):
                         "symbol": {"dynamicRegistration": True},
                         "executeCommand": {"dynamicRegistration": True}
                     }
-                }
-            }, self._on_initialized)
+                },
+                "workspaceFolders": [
+                    {
+                        "uri": self.root_uri,
+                        "name": os.path.basename(self.root_uri.rstrip("/"))
+                    }
+                ]
+            }
+            log.info(f"LSP initialize rootUri={self.root_uri}")
+            self.send_request("initialize", init_params, self._on_initialized, timeout=30.0)
             
             return True
         except Exception as e:
@@ -274,6 +293,15 @@ class LSPServerInstance(QObject):
             log.error(f"LSP Transport Write Error in {self.name}: {e}")
             self._handle_connection_error(e)
 
+    def _send_response(self, msg_id, result):
+        """Send a response to a server-initiated request."""
+        payload = {
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": result
+        }
+        self._send(payload)
+
     def _stderr_loop(self):
         """Log LSP server errors."""
         if not self.process or not self.process.stderr: return
@@ -309,8 +337,38 @@ class LSPServerInstance(QObject):
 
     def _handle_message(self, msg: Dict):
         """Route messages with enhanced handler support."""
-        # Clear timeout timer if this is a response to a request
-        if "id" in msg:
+        has_id = "id" in msg
+        has_method = "method" in msg
+        
+        # Server-initiated REQUEST (has both id AND method) — must respond
+        if has_id and has_method:
+            msg_id = msg["id"]
+            method = msg["method"]
+            params = msg.get("params", {})
+            log.debug(f"LSP server request: {method} (id={msg_id})")
+            
+            # Auto-respond to common server requests
+            response_result = None
+            if method == "workspace/configuration":
+                # Return empty config for each requested item
+                items = params.get("items", [])
+                response_result = [{}] * len(items) if items else [{}]
+            elif method == "client/registerCapability":
+                response_result = None  # Acknowledge
+            elif method == "workspace/workspaceFolders":
+                response_result = [{"uri": self.root_uri, "name": "workspace"}]
+            elif method == "window/workDoneProgress/create":
+                response_result = None  # Acknowledge
+            else:
+                log.debug(f"LSP unhandled server request: {method}")
+                response_result = None
+            
+            # Send response back to server
+            self._send_response(msg_id, response_result)
+            return
+        
+        # Client response (has id, no method) — route to callback
+        if has_id and not has_method:
             msg_id = msg["id"]
             if msg_id in self._request_timeouts:
                 self._request_timeouts[msg_id].cancel()
@@ -321,13 +379,13 @@ class LSPServerInstance(QObject):
             if msg_id in self.callbacks:
                 callback = self.callbacks.pop(msg_id)
                 callback(msg.get("result"), msg.get("error"))
+            return
         
-        # Handle server-initiated notifications
-        elif "method" in msg:
+        # Server notification (has method, no id)
+        if has_method and not has_id:
             method = msg["method"]
             params = msg.get("params", {})
             
-            # Route to appropriate handler
             handlers = {
                 "textDocument/publishDiagnostics": self._on_diagnostics,
                 "$/progress": self._on_progress,
@@ -339,11 +397,15 @@ class LSPServerInstance(QObject):
             if handler:
                 handler(params)
             
-            # Emit generic message signal for extensibility
             self.message_received.emit(msg)
     
     def _on_diagnostics(self, params: Dict):
         """Handle diagnostic notifications."""
+        uri = params.get("uri", "")
+        diagnostics = params.get("diagnostics", [])
+        print(f"[LSP DIAGNOSTICS] {uri}: {len(diagnostics)} errors")
+        for d in diagnostics[:3]:
+            print(f"  - {d.get('message', '')[:60]}")
         if self.diagnostics_callback:
             self.diagnostics_callback(params)
     
@@ -412,9 +474,27 @@ class LSPManager(QObject):
         self._initialized = True
 
     def set_project_root(self, path: str):
-        """Update LSP workspace root when a project is opened."""
+        """Update LSP workspace root when a project is opened.
+        
+        Restarts any already-running servers so they use the new root_uri.
+        """
+        old_root = self.project_root
         self.project_root = path
         log.info(f"LSP project root updated: {path}")
+        
+        # Restart running servers with new root_uri
+        if old_root != path and self.servers:
+            running_langs = list(self.servers.keys())
+            for lang in running_langs:
+                server = self.servers.pop(lang, None)
+                if server:
+                    try:
+                        server.stop()
+                    except Exception:
+                        pass
+            # Clear doc versions so files get re-opened with new servers
+            self.doc_versions.clear()
+            log.info(f"LSP servers stopped for root change. Will restart on next request.")
 
     @classmethod
     def get_instance(cls):
@@ -423,7 +503,12 @@ class LSPManager(QObject):
         return cls._instance
 
     def notify_changed(self, file_path: str, content: str, language: str):
-        """Notify document changes with versioning."""
+        """Notify document changes with versioning.
+        
+        If the server isn't ready yet, the didOpen notification is deferred
+        and will be sent automatically when the server becomes READY.
+        This prevents Pyright from analyzing the stale on-disk version.
+        """
         server = self.get_server(language)
         if not server: return
         
@@ -433,14 +518,27 @@ class LSPManager(QObject):
         self.doc_versions[abs_path] = v
         
         if v == 1:
-            server.send_notification("textDocument/didOpen", {
-                "textDocument": {"uri": uri, "languageId": language, "version": v, "text": content}
-            })
+            notif = {
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {"uri": uri, "languageId": language, "version": v, "text": content}
+                }
+            }
         else:
-            server.send_notification("textDocument/didChange", {
-                "textDocument": {"uri": uri, "version": v},
-                "contentChanges": [{"text": content}]
-            })
+            notif = {
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": v},
+                    "contentChanges": [{"text": content}]
+                }
+            }
+        
+        # If server isn't ready, defer notification until initialized
+        if server.state != LSPConnectionState.READY:
+            server._deferred_notifications.append(notif)
+            log.debug(f"LSP {server.name}: deferred {notif['method']} (server not ready)")
+        else:
+            server.send_notification(notif["method"], notif["params"])
 
     def _on_initialized(self, result: Dict, error: Optional[Dict]):
         if error:
@@ -448,14 +546,17 @@ class LSPManager(QObject):
 
     def get_completions(self, file_path: str, line: int, col: int, language: str, callback: Callable):
         server = self.get_server(language)
-        if not server: return
+        if not server:
+            # Still call callback with empty result so fallback snippets can show
+            callback(None, None)
+            return
         uri = Path(os.path.abspath(file_path)).as_uri()
         params = {
             "textDocument": {"uri": uri}, 
             "position": {"line": line - 1, "character": col - 1},
             "context": {"triggerKind": 1} # Invoked
         }
-        server.send_request("textDocument/completion", params, callback)
+        server.send_request("textDocument/completion", params, callback, timeout=10.0)
 
     def get_hover(self, file_path: str, line: int, col: int, language: str, callback: Callable):
         server = self.get_server(language)
@@ -652,11 +753,13 @@ class LSPManager(QObject):
     def get_server(self, language: str) -> Optional[LSPServerInstance]:
         """Get or start the appropriate LSP server for the language."""
         lang = language.lower()
-        if lang in ["js", "ts", "javascript", "typescript"]: lang = "typescript"
+        if lang in ["js", "ts", "javascript", "typescript", "jsx", "tsx"]: lang = "typescript"
         elif lang in ["c", "cpp", "c++", "objc", "objcpp"]: lang = "clangd"
         elif lang in ["java"]: lang = "java"
         elif lang in ["bash", "sh"]: lang = "bash"
-        elif lang in ["json"]: lang = "json"
+        elif lang in ["json", "jsonc"]: lang = "json"
+        elif lang in ["html", "htm"]: lang = "html"
+        elif lang in ["css", "scss", "less"]: lang = "css"
         
         if lang in self.servers: return self.servers[lang]
         
@@ -694,18 +797,21 @@ class LSPManager(QObject):
         return p if os.path.exists(p) else None
 
     def _find_server_command(self, lang: str) -> Optional[List[str]]:
-        """Map language to professional LSP server command (Bundled or System)."""
+        """Map language to professional LSP server command (Bundled or System).
+        
+        For frozen .exe builds, prefer direct JS entry points over .cmd/.bin
+        wrappers since .cmd files don't work without a shell in PyInstaller.
+        """
         node = self._get_node_path()
         
         if lang == "python":
-            # Prefer direct JS entry point (works in frozen exe without .cmd)
             js = self._get_node_module_main("pyright", "dist/pyright-langserver.js")
             if js:
                 return [node, js, "--stdio"]
             bin_p = self._get_server_bin_path("pyright-langserver")
-            return [bin_p, "--stdio"]  # fallback: .cmd via shell
+            return [bin_p, "--stdio"]
             
-        elif lang == "typescript":
+        elif lang in ("typescript", "javascript"):
             js = self._get_node_module_main("typescript-language-server", "lib/cli.mjs")
             if js:
                 return [node, js, "--stdio"]
@@ -713,14 +819,30 @@ class LSPManager(QObject):
             return [bin_p, "--stdio"]
             
         elif lang == "html":
+            # Direct JS entry point for frozen exe
+            js = self._get_node_module_main(
+                "vscode-langservers-extracted",
+                "bin/vscode-html-language-server")
+            if js:
+                return [node, js, "--stdio"]
             bin_p = self._get_server_bin_path("vscode-html-language-server")
             return [bin_p, "--stdio"]
             
         elif lang == "css":
+            js = self._get_node_module_main(
+                "vscode-langservers-extracted",
+                "bin/vscode-css-language-server")
+            if js:
+                return [node, js, "--stdio"]
             bin_p = self._get_server_bin_path("vscode-css-language-server")
             return [bin_p, "--stdio"]
             
         elif lang == "json":
+            js = self._get_node_module_main(
+                "vscode-langservers-extracted",
+                "bin/vscode-json-language-server")
+            if js:
+                return [node, js, "--stdio"]
             bin_p = self._get_server_bin_path("vscode-json-language-server")
             return [bin_p, "--stdio"]
             

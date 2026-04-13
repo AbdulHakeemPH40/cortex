@@ -53,6 +53,7 @@ from src.ui.components.xterm_terminal import XTermWidget
 from src.ui.components.find_replace import FindReplaceDialog
 from src.ui.dialogs.diff_viewer import DiffWindow
 from src.utils.icons import make_icon
+from src.core.live_server import LiveServer
 from src.utils.helpers import detect_language, shorten_path
 from src.utils.logger import get_logger
 from src.utils.notifications import show_task_complete_notification
@@ -586,7 +587,7 @@ class CortexMainWindow(QMainWindow):
         self._project_manager = ProjectManager()
         self._file_manager = FileManager()
         self._session_manager = SessionManager()
-        
+        self._live_server: Optional[LiveServer] = None  # built-in HTML Live Server
         # Git manager for source control integration
         self._git_manager = GitManager()
         log.info("[GIT] GitManager initialized")
@@ -658,23 +659,24 @@ class CortexMainWindow(QMainWindow):
         self._heartbeat_timer.timeout.connect(lambda: None)  # keep event loop alive, no logging
         self._heartbeat_timer.start(2000)
 
-        # Window geometry
-        w = self._settings.get("window", "width") or 1400
-        h = self._settings.get("window", "height") or 900
-        self.resize(w, h)
-        self.setGeometry(100, 100, w, h)
-        if self._settings.get("window", "maximized"):
-            self.showMaximized()
-        else:
-            self.show()
+        # Enable drag and drop of folders/files onto the main window
+        self.setAcceptDrops(True)
 
-        # Set Window Icon (Title Bar + Taskbar)
+        # Set Window Icon (Title Bar + Taskbar) - BEFORE show() to prevent flash
         # Uses pre-generated taskbar_rounded.png (run generate_icons.py once)
         if getattr(sys, 'frozen', False):
             base = sys._MEIPASS
         else:
             base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         logo_dir = os.path.join(base, "src", "assets", "logo")
+        if not os.path.isdir(logo_dir):
+            # Fallback: try exe directory
+            exe_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.getcwd()
+            logo_dir = os.path.join(exe_dir, "src", "assets", "logo")
+        if not os.path.isdir(logo_dir):
+            # Fallback: try _internal directory (PyInstaller onedir)
+            exe_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.getcwd()
+            logo_dir = os.path.join(exe_dir, "_internal", "src", "assets", "logo")
         if not os.path.isdir(logo_dir):
             logo_dir = os.path.join(os.getcwd(), "src", "assets", "logo")
 
@@ -688,14 +690,28 @@ class CortexMainWindow(QMainWindow):
         for candidate in icon_candidates:
             if os.path.exists(candidate):
                 from PyQt6.QtGui import QPixmap
+                from PyQt6.QtCore import Qt
                 pm = QPixmap(candidate)
                 if not pm.isNull():
                     for sz in [16, 32, 48, 64, 128, 256]:
-                        icon.addPixmap(pm.scaled(sz, sz))
+                        icon.addPixmap(pm.scaled(sz, sz, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
                     break
 
         if not icon.isNull():
             self.setWindowIcon(icon)
+            # Also set app-level icon for taskbar grouping
+            from PyQt6.QtWidgets import QApplication
+            QApplication.instance().setWindowIcon(icon)
+
+        # Window geometry
+        w = self._settings.get("window", "width") or 1400
+        h = self._settings.get("window", "height") or 900
+        self.resize(w, h)
+        self.setGeometry(100, 100, w, h)
+        if self._settings.get("window", "maximized"):
+            self.showMaximized()
+        else:
+            self.show()
 
     # ------------------------------------------------------------------
     # UI Construction
@@ -728,7 +744,7 @@ class CortexMainWindow(QMainWindow):
 
         # Editor tabs
         self._editor_tabs = EditorTabWidget()
-        self._editor_tabs.setMinimumSize(400, 300)
+        self._editor_tabs.setMinimumSize(200, 150)
         self._editor_tabs.show()
         self._center_splitter.addWidget(self._editor_tabs)
 
@@ -738,22 +754,22 @@ class CortexMainWindow(QMainWindow):
         self._terminal_tabs.setTabsClosable(True)
         self._terminal_tabs.setDocumentMode(True)
         self._terminal_tabs.setMovable(True)
-        self._terminal_tabs.setVisible(False)
-        self._terminal_tabs.setMinimumHeight(150)
+        self._terminal_tabs.setVisible(True)
+        self._terminal_tabs.setMinimumHeight(240)
         self._terminal_tabs.tabCloseRequested.connect(self._close_terminal_tab)
         
-        # Add a single placeholder/first terminal (HIDDEN initially)
-        self._new_terminal(show_panel=False)
+        # Add a single terminal (VISIBLE on startup)
+        self._new_terminal(show_panel=True)
         
         self._center_splitter.addWidget(self._terminal_tabs)
 
-        self._center_splitter.setSizes([700, 200])
+        self._center_splitter.setSizes([700, 275])
         center_layout.addWidget(self._center_splitter, 1)
         self._main_splitter.addWidget(center_widget)
 
         # --- Right Panel: AI Chat ---
         self._right_panel = QWidget()
-        self._right_panel.setMinimumWidth(280)
+        self._right_panel.setMinimumWidth(50)  # Allow collapsing small
         right_layout = QVBoxLayout(self._right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(0)
@@ -778,13 +794,17 @@ class CortexMainWindow(QMainWindow):
         self._find_replace_dialog.replace_all_requested.connect(self._on_replace_all_requested)
 
         # Splitter sizes for 3 panels: sidebar | editor | AI chat
-        # Always start with compact defaults as per user request
-        sidebar_w = 200 
-        right_w = 300 
+        # VS Code-like defaults: sidebar ~300, AI chat ~350, editor gets the rest
+        sidebar_w = 300
+        right_w = 350
         total_w = (self._settings.get("window", "width") or 1400)
-        center_w = max(400, total_w - sidebar_w - right_w)
+        center_w = max(300, total_w - sidebar_w - right_w)
         self._main_splitter.setSizes([sidebar_w, center_w, right_w])
         self._main_splitter.setHandleWidth(1)
+        # Editor gets most extra space; sidebar and chat grow slowly
+        self._main_splitter.setStretchFactor(0, 0)  # sidebar: fixed
+        self._main_splitter.setStretchFactor(1, 1)  # editor: stretches
+        self._main_splitter.setStretchFactor(2, 0)  # AI chat: fixed
         
         # Limit AI chat panel max width — much more flexible now
         self._right_panel.setMaximumWidth(1200)
@@ -1159,7 +1179,7 @@ class CortexMainWindow(QMainWindow):
         actions = [
             ("📂", "Open Folder\nCtrl+O",   self._open_folder_dialog),
             ("💾", "Save File\nCtrl+S",     self._save_current),
-            ("▶️", "Run Current File",      self._run_file),
+            ("▶️", "Run Current File  (HTML → Live Server)",      self._run_file),
             ("➕", "New Terminal",          lambda: self._new_terminal(show_panel=True)),
         ]
         for icon, tip, slot in actions:
@@ -1262,7 +1282,7 @@ class CortexMainWindow(QMainWindow):
         for lbl in [self._status_file, self._status_cursor, self._status_lang, self._status_ai]:
             sb.addWidget(lbl)
 
-        sb.addPermanentWidget(QLabel("  Cortex AI Agent v1.0.11  "))
+        sb.addPermanentWidget(QLabel("  Cortex AI Agent v1.0.13  "))
 
     def _update_status_cursor(self, line: int, col: int):
         self._status_cursor.setText(f"Ln {line}, Col {col}")
@@ -1291,6 +1311,29 @@ class CortexMainWindow(QMainWindow):
         # Theme button label
         if hasattr(self, '_theme_btn') and self._theme_btn:
             self._theme_btn.setText("☀️" if not is_dark else "🌙")
+        
+        # Apply to editor tabs
+        self._editor_tabs.update_theme(is_dark)
+        
+        # Apply to terminal tab bar
+        if isinstance(self._terminal_tabs.tabBar(), CleanTabBar):
+            self._terminal_tabs.tabBar().set_dark(is_dark)
+        
+        # Style the tab widget panels
+        tab_bg = "#1e1e1e" if is_dark else "#ffffff"
+        tab_border = "#3e3e42" if is_dark else "#dee2e6"
+        tab_style = f"""
+            QTabWidget::pane {{ border: 1px solid {tab_border}; background: {tab_bg}; }}
+            QTabWidget::tab-bar {{ left: 0px; }}
+        """
+        self._editor_tabs.setStyleSheet(tab_style)
+        self._terminal_tabs.setStyleSheet(tab_style)
+        
+        # Apply to all terminal widgets
+        for i in range(self._terminal_tabs.count()):
+            term = self._terminal_tabs.widget(i)
+            if isinstance(term, XTermWidget):
+                term.set_theme(is_dark)
         
         # Apply global syntax highlighting fonts and colors
         self._apply_syntax_highlighting_fonts()
@@ -1524,13 +1567,16 @@ class CortexMainWindow(QMainWindow):
         folder = QFileDialog.getExistingDirectory(self, "Open Folder",
                                                    str(Path.home()))
         if folder:
-            self._project_manager.open(folder)
-            # Update LSP workspace root so pyright analyses the correct project
-            try:
-                from src.core.lsp_manager import get_lsp_manager
-                get_lsp_manager().set_project_root(folder)
-            except Exception:
-                pass
+            self._open_folder_programmatic(folder)
+
+    def _open_folder_programmatic(self, folder: str):
+        """Open a folder as the active project (no dialog, usable from argv/drag-drop)."""
+        self._project_manager.open(folder)
+        try:
+            from src.core.lsp_manager import get_lsp_manager
+            get_lsp_manager().set_project_root(folder)
+        except Exception:
+            pass
 
     def _new_project(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Folder for New Project",
@@ -2611,6 +2657,11 @@ class CortexMainWindow(QMainWindow):
         fp = self._editor_tabs.current_filepath()
         if not fp or not Path(fp).exists():
             return
+        # HTML files → built-in Live Server (no terminal needed)
+        if Path(fp).suffix.lower() in {".html", ".htm"}:
+            self._save_current()
+            self._run_live_server(fp)
+            return
         self._save_current()
         
         self._terminal_tabs.setVisible(True)
@@ -2625,6 +2676,30 @@ class CortexMainWindow(QMainWindow):
             term.execute_command(command)
         else:
             QMessageBox.information(self, "Run", f"Running {lang} is not yet supported.")
+
+    def _run_live_server(self, file_path: str):
+        """Start (or restart) the built-in Live Server for an HTML file."""
+        # Restart if already running
+        if self._live_server and self._live_server.is_running:
+            self._live_server.stop()
+
+        root = str(Path(file_path).parent)
+        try:
+            self._live_server = LiveServer(root, file_path)
+            port = self._live_server.start()
+            url  = self._live_server.get_url(file_path)
+        except Exception as e:
+            QMessageBox.warning(self, "Live Server", f"Could not start Live Server:\n{e}")
+            return
+
+        import webbrowser
+        webbrowser.open(url)
+
+        # Show status in status bar
+        if hasattr(self, '_statusbar_label'):
+            self._statusbar_label.setText(
+                f"Live Server  \u25cf  http://localhost:{port}   —   click \u25b6 to restart"
+            )
 
     def _build_run_command(self, file_path: str, lang: str) -> str | None:
         """Build a run command for the current file based on language."""
@@ -2646,7 +2721,12 @@ class CortexMainWindow(QMainWindow):
         if lang in {"javascript", "jsx"}:
             return f'node {quote(file_path)}'
         if lang in {"typescript", "tsx"}:
-            return f'ts-node {quote(file_path)}'
+            # Compile with tsc and run with node (faster than npx ts-node)
+            js_out = os.path.join(build_dir, stem + ".js")
+            if is_windows:
+                return f'tsc {quote(file_path)} --outDir {quote(build_dir)}; if ($LASTEXITCODE -eq 0) {{ node {quote(js_out)} }}'
+            else:
+                return f'tsc {quote(file_path)} --outDir {quote(build_dir)} && node {quote(js_out)}'
         if lang == "bash":
             return f'bash {quote(file_path)}'
         if lang == "batch":
@@ -3880,6 +3960,13 @@ class CortexMainWindow(QMainWindow):
         self._ai_agent.set_project_root(folder_path)
         self._current_project_path = folder_path  # Track current project
         
+        # Update LSP manager workspace root so completions/diagnostics work
+        try:
+            from src.core.lsp_manager import get_lsp_manager
+            get_lsp_manager().set_project_root(folder_path)
+        except Exception:
+            pass
+        
         # Reset codebase index for new project
         self._codebase_index = None
         
@@ -3952,8 +4039,13 @@ class CortexMainWindow(QMainWindow):
 
     def _on_project_closed(self):
         """Handle project close - show welcome page and clean up."""
-        log.info("🚪 Project closed - showing welcome page")
-        
+        log.info("Project closed - showing welcome page")
+
+        # Stop Live Server if running
+        if self._live_server and self._live_server.is_running:
+            self._live_server.stop()
+            self._live_server = None
+
         # Clear all state
         self._current_project_path = None
         self.setWindowTitle("Cortex AI Agent")
@@ -4041,26 +4133,33 @@ class CortexMainWindow(QMainWindow):
     #     self._theme_btn.setText("☀️" if theme == "light" else "🌙")
 
     def _restore_session(self):
-        # Restore last project 
+        # Restore last project — skip if it no longer exists (blank state)
         log.info("Restoring last session project...")
-        self._project_manager.restore_last()
-        
-        # Restore open files 
+        restored = self._project_manager.restore_last()
+
+        if not restored:
+            # No valid project to restore — show clean blank state, no stale tabs
+            log.info("No project to restore — showing blank start state.")
+            # Remove any tabs that sneak in during build (stale welcome)
+            self._show_welcome()
+            return
+
+        # Restore open files only if project was successfully restored
         session = self._session_manager.load()
         if session:
             log.info(f"Restoring {len(session.get('open_files', []))} files...")
             for fp in session.get("open_files", []):
                 if Path(fp).exists():
                     self._open_file(fp)
-                    
+
         # Focus the active file
-        active = session.get("active_file")
-        if active and Path(active).exists():
-            # Find the tab and select it
-            for i in range(self._editor_tabs.count()):
-                if self._editor_tabs._files.get(i) == active:
-                    self._editor_tabs.setCurrentIndex(i)
-                    break
+        if session:
+            active = session.get("active_file")
+            if active and Path(active).exists():
+                for i in range(self._editor_tabs.count()):
+                    if self._editor_tabs._files.get(i) == active:
+                        self._editor_tabs.setCurrentIndex(i)
+                        break
 
 
 
@@ -4368,12 +4467,61 @@ class CortexMainWindow(QMainWindow):
             term = self._terminal_tabs.widget(i)
             if isinstance(term, XTermWidget):
                 term._kill_process()
+
+        # 5. Stop Live Server if running
+        if self._live_server and self._live_server.is_running:
+            self._live_server.stop()
                 
         event.accept()
 
+    def dragEnterEvent(self, event):
+        """Accept drag of folders or files from Explorer onto the window."""
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        """Handle drop of folders/files — open as project or file."""
+        for url in event.mimeData().urls():
+            path = url.toLocalFile()
+            if os.path.isdir(path):
+                self._open_folder_programmatic(path)
+                event.acceptProposedAction()
+                return
+            elif os.path.isfile(path):
+                self._open_file(path)
+                event.acceptProposedAction()
+                return
+
     def resizeEvent(self, event):
-        """Handle window resize to update welcome panel font sizes responsively."""
+        """Handle window resize — responsive layout + welcome font scaling.
+
+        VS Code behaviour:
+        - All three panels stay visible and simply shrink proportionally.
+        - Only at very small widths (<700px) does the AI chat auto-hide.
+        - Sidebar keeps its width; editor absorbs most resize delta.
+        """
         super().resizeEvent(event)
+        w = event.size().width()
+
+        if hasattr(self, '_main_splitter'):
+            sizes = self._main_splitter.sizes()
+            sidebar_w = sizes[0] if sizes else 300
+            right_w   = sizes[2] if len(sizes) > 2 else 350
+
+            if w < 700:
+                # Very small window: collapse AI chat only, keep sidebar
+                self._main_splitter.setSizes([sidebar_w, max(150, w - sidebar_w), 0])
+            elif right_w == 0 and w >= 700:
+                # Restore AI chat when window grows back above threshold
+                restore_right = 350
+                self._main_splitter.setSizes([sidebar_w, max(200, w - sidebar_w - restore_right), restore_right])
+
         if hasattr(self, '_welcome_widget') and self._welcome_widget is not None:
             self._apply_welcome_theme(self._theme_manager.is_dark)
 

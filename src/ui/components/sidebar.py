@@ -478,12 +478,50 @@ class VsCodeFileTree(QTreeView):
         event.acceptProposedAction()
 
     def dropEvent(self, event):
-        """Handle drops: move files into target directory."""
+        """Handle drops: external folder = open as project, internal = move files."""
         if event.mimeData().hasUrls():
             urls = event.mimeData().urls()
-            paths = [url.toLocalFile() for url in urls]
+            paths = [url.toLocalFile() for url in urls if url.toLocalFile()]
             
-            # Find drop target
+            if not paths:
+                super().dropEvent(event)
+                return
+
+            # Detect if this is an EXTERNAL drop (from Windows Explorer / Desktop)
+            # by checking if the source is outside the current project root
+            explorer = self._find_explorer()
+            project_root = explorer._root_path if explorer else None
+            
+            if project_root:
+                # Normalize for comparison
+                norm_root = os.path.normcase(os.path.normpath(project_root))
+                
+                # Check if ANY dropped path is outside the project
+                is_external = False
+                for p in paths:
+                    norm_p = os.path.normcase(os.path.normpath(p))
+                    if not norm_p.startswith(norm_root):
+                        is_external = True
+                        break
+                
+                if is_external:
+                    # External drop: open folder as project or open file
+                    # Delegate to the main window
+                    main_win = self.window()
+                    if main_win and hasattr(main_win, '_open_folder_programmatic'):
+                        for p in paths:
+                            if os.path.isdir(p):
+                                main_win._open_folder_programmatic(p)
+                                event.acceptProposedAction()
+                                return
+                            elif os.path.isfile(p):
+                                main_win._open_file(p)
+                                event.acceptProposedAction()
+                                return
+                    event.acceptProposedAction()
+                    return
+
+            # Internal drop: move files within project
             index = self.indexAt(event.position().toPoint())
             target_dir = None
             if index.isValid():
@@ -493,21 +531,17 @@ class VsCodeFileTree(QTreeView):
                 else:
                     target_dir = str(Path(path).parent)
             else:
-                explorer = self._find_explorer()
-                target_dir = explorer._root_path if explorer else None
+                target_dir = project_root
 
             if target_dir and paths:
-                explorer = self._find_explorer()
                 if explorer and self._file_manager:
                     from PyQt6.QtWidgets import QMessageBox
                     
-                    # Confirm drop operation
                     target_name = Path(target_dir).name
-                    verb = "move"
                     item_count = len(paths)
                     item_desc = f"'{Path(paths[0]).name}'" if item_count == 1 else f"these {item_count} items"
                     
-                    msg = f"Are you sure you want to {verb} {item_desc} into '{target_name}'?\n\nThis action can be undone with Ctrl+Z."
+                    msg = f"Are you sure you want to move {item_desc} into '{target_name}'?\n\nThis action can be undone with Ctrl+Z."
                     reply = QMessageBox.question(
                         self, 'Confirm Move', msg,
                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -516,12 +550,10 @@ class VsCodeFileTree(QTreeView):
                     
                     if reply == QMessageBox.StandardButton.Yes:
                         for p in paths:
-                            # Prevent moving into self or child
                             if target_dir.startswith(p):
                                 continue
                             self._file_manager.move(p, target_dir)
                         event.acceptProposedAction()
-                        
                     return
 
         super().dropEvent(event)
