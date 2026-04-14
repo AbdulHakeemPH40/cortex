@@ -2386,26 +2386,30 @@ function stopGeneration() {
 
     // ── Stop all running terminal cards (clear spinner) ──────────────
     document.querySelectorAll('.term-card.term-running').forEach(function(card) {
-        // Switch card class to stopped (reuse error styling without red tint)
         card.classList.remove('term-running');
         card.classList.add('term-stopped');
         card.dataset.status = 'stopped';
 
-        // Replace spinner with a grey stopped icon
-        var iconEl = card.querySelector('.term-status-icon');
-        if (iconEl) {
-            iconEl.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(148,163,184,0.7)" stroke-width="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>';
-        }
-
-        // Update title
-        var titleEl = card.querySelector('.term-title-text');
-        if (titleEl) titleEl.textContent = 'Stopped';
-
-        // Update badge
-        var badgeEl = card.querySelector('.term-badge');
-        if (badgeEl) {
-            badgeEl.className = 'term-badge term-badge-stopped';
-            badgeEl.textContent = 'Stopped';
+        // New card-container structure
+        if (card.classList.contains('card-container')) {
+            var statusSpan = document.getElementById(card.id + '-status');
+            if (statusSpan) {
+                statusSpan.style.cssText = 'font-size:10px;color:rgba(148,163,184,0.7);';
+                statusSpan.textContent = 'Stopped';
+                statusSpan.onclick = null;
+            }
+            var titleEl2 = card.querySelector('.term-title-text');
+            if (titleEl2) titleEl2.textContent = 'Run in terminal';
+        } else {
+            // Old structure
+            var iconEl = card.querySelector('.term-status-icon');
+            if (iconEl) {
+                iconEl.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(148,163,184,0.7)" stroke-width="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>';
+            }
+            var titleEl = card.querySelector('.term-title-text');
+            if (titleEl) titleEl.textContent = 'Stopped';
+            var badgeEl = card.querySelector('.term-badge');
+            if (badgeEl) { badgeEl.className = 'term-badge term-badge-stopped'; badgeEl.textContent = 'Stopped'; }
         }
     });
 
@@ -6956,35 +6960,12 @@ window.showDirectoryTree = function(rootPath, items) {
 
 function buildTerminalCard(command, output, status, exitCode, cardId) {
     var card = document.createElement('div');
-    card.className = 'term-card term-' + status;
-    card.id = cardId || ('term-' + Date.now());
+    var id = cardId || ('term-' + Date.now());
+    card.className = 'card-container expanded term-card term-' + status;
+    card.id = id;
     card.dataset.command = command;
     card.dataset.status  = status;
-    card.dataset.expanded = 'true';  // start expanded
-
-    // Status icon
-    var headerIcon = {
-        'running': '<span class="todo-spinner" style="width:13px;height:13px;border-width:2px;"></span>',
-        'success': '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>',
-        'error':   '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>'
-    }[status] || '<span class="todo-spinner" style="width:13px;height:13px;border-width:2px;"></span>';
-
-    // Header title — changes based on status
-    var titleText = (status === 'running') ? 'Running in terminal' : 'Run in terminal';
-
-    // Right-side badge
-    var badgeHtml = '';
-    if (status === 'running') {
-        badgeHtml = '<span class="term-badge term-badge-running">Background</span>';
-    } else if (status === 'success') {
-        badgeHtml = '<span class="term-badge term-badge-done">Done</span>';
-    } else if (status === 'error') {
-        badgeHtml = '<span class="term-badge term-badge-failed">Failed</span>';
-    }
-
-    var exitCodeHtml = (status === 'error' && exitCode !== undefined && exitCode !== null)
-        ? '<span class="term-exit-code">Exit ' + exitCode + '</span>'
-        : '';
+    card.dataset.expanded = 'true';
 
     // Parse command if passed as JSON string
     var displayCmd = command;
@@ -6995,47 +6976,68 @@ function buildTerminalCard(command, output, status, exitCode, cardId) {
         } catch(e) {}
     }
 
-    var formattedCmd = formatTerminalCommand(displayCmd);
     var esc = (displayCmd || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
-    var outputId = (cardId || card.id) + '-output';
-    var outputHtml = output
-        ? '<div class="term-output-body" id="' + outputId + '" style="display:block;">'
-              + '<pre class="term-output-text">' + escapeHtml(output) + '</pre>'
-          + '</div>'
-        : '';
+    // Copy button (always in header)
+    var copyBtn = '<button class="term-hdr-btn" title="Copy command" onclick="event.stopPropagation();_copyTermCmd(\'' + esc + '\')">' +
+        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>' +
+    '</button>';
 
-    var chevronSvg = '<svg class="term-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="transition:transform 0.2s ease;transform:rotate(90deg);"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+    // Right-side status area (with id for later updates)
+    var rightInner;
+    if (status === 'running') {
+        rightInner = '<span class="term-status-right" style="color:rgba(255,255,255,0.35);font-size:10px;" id="' + id + '-status">Running...</span>';
+    } else if (status === 'success') {
+        rightInner = '<span class="term-status-right" style="font-size:10px;opacity:0.5;cursor:pointer;" id="' + id + '-status" onclick="event.stopPropagation();openTerminalPanel(\'' + esc + '\')">View Output \u2197</span>';
+    } else if (status === 'error') {
+        rightInner = '<span class="term-status-right" style="font-size:10px;color:#ef4444;" id="' + id + '-status">Failed</span>';
+    } else {
+        rightInner = '<span class="term-status-right" id="' + id + '-status"></span>';
+    }
+
+    // Chevron icon
+    var chevronSvg = '<svg class="chevron term-chevron" fill="currentColor" viewBox="0 0 20 20"><path d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"/></svg>';
+
+    // Terminal viewport - always show command, output only when present
+    var outputContent = output || '';
+    var viewportContent = '$ ' + escapeHtml(displayCmd);
+    if (outputContent) {
+        viewportContent += '\n' + escapeHtml(outputContent);
+    }
+    var viewportBody = '<div class="terminal-viewport" id="' + id + '-viewport">' + viewportContent + '</div>';
 
     card.innerHTML =
-        '<div class="term-header" onclick="toggleTermCard(this)">' +
-            '<span class="term-status-icon">' + headerIcon + '</span>' +
-            '<span class="term-title"><span class="term-title-text">' + titleText + '</span></span>' +
-            badgeHtml +
-            exitCodeHtml +
+        '<div class="card-header" onclick="toggleCard(this)">' +
             chevronSvg +
+            '<span class="term-title-text">Run in terminal</span>' +
+            '<span class="ml-auto" style="display:flex;align-items:center;gap:6px;">' +
+                copyBtn +
+                rightInner +
+            '</span>' +
         '</div>' +
-        '<div class="term-body">' +
-            '<pre class="term-command">' + formattedCmd + '</pre>' +
-        '</div>' +
-        (outputHtml || '') +
-        '<div class="term-footer">' +
-            '<span></span>' +
-            '<button class="term-view-btn" onclick="event.stopPropagation();openTerminalPanel(\'' + esc + '\')">' +
-                '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" ' +
-                    'stroke="currentColor" stroke-width="2">' +
-                    '<polyline points="15 3 21 3 21 9"/>' +
-                    '<path d="M21 3L9 15"/>' +
-                    '<polyline points="9 21 3 21 3 15"/>' +
-                '</svg>' +
-                ' View in terminal' +
-            '</button>' +
+        '<div class="card-body">' +
+            viewportBody +
         '</div>';
 
     return card;
 }
 
-// Toggle terminal card expand / collapse
+// Copy terminal command to clipboard
+function _copyTermCmd(cmd) {
+    if (!cmd) return;
+    navigator.clipboard.writeText(cmd).then(function() {
+        showToast && showToast('Command copied');
+    }).catch(function() {
+        var ta = document.createElement('textarea');
+        ta.value = cmd;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+    });
+}
+
+// Toggle terminal card expand / collapse (legacy .term-card style)
 function toggleTermCard(headerEl) {
     var card = headerEl.closest('.term-card');
     if (!card) return;
@@ -7058,6 +7060,149 @@ function toggleTermCard(headerEl) {
         card.dataset.expanded = 'true';
     }
 }
+
+// Toggle card expand / collapse (new .card-container style from new_aichat.html)
+function toggleCard(header) {
+    header.parentElement.classList.toggle('expanded');
+}
+
+// ============================================================
+// FILE OPERATION CARDS (Create/Edit with animation)
+// Matches new_aichat.html reference design
+// ============================================================
+
+var _fileOpCards = {}; // Track active file operation cards
+
+/**
+ * Show a file operation card with pulse animation (Creating/Editing)
+ * @param {string} cardId - Unique ID for this operation
+ * @param {string} filePath - Path of the file being operated on
+ * @param {string} opType - 'create' or 'edit'
+ */
+function showFileOperationCard(cardId, filePath, opType) {
+    console.log('[FileOpCard] showFileOperationCard called:', cardId, filePath, opType);
+    var messages = document.getElementById('chatMessages');
+    if (!messages) { console.error('[FileOpCard] chatMessages not found!'); return; }
+
+    // Remove existing card with same ID
+    if (_fileOpCards[cardId]) {
+        var existing = document.getElementById(cardId);
+        if (existing) existing.remove();
+    }
+
+    var isCreate = opType === 'create';
+    var label = isCreate ? 'Create file' : 'Edit file';
+    var iconColor = isCreate ? 'text-blue-500' : 'text-yellow-500';
+
+    var card = document.createElement('div');
+    card.className = 'card-container';
+    card.id = cardId;
+    card.innerHTML =
+        '<div class="flex items-center p-3 gap-3">' +
+            '<svg class="w-4 h-4 ' + iconColor + ' pulse-timer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">' +
+                '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>' +
+            '</svg>' +
+            '<span class="text-gray-400">' + label + '</span>' +
+        '</div>';
+
+    messages.appendChild(card);
+    messages.scrollTop = messages.scrollHeight;
+
+    _fileOpCards[cardId] = {
+        element: card,
+        filePath: filePath,
+        opType: opType,
+        startTime: Date.now()
+    };
+}
+
+/**
+ * Complete a file operation card - transform to file list display
+ * @param {string} cardId - The operation card ID
+ * @param {string} filePath - Path of the completed file
+ * @param {number} lineCount - Number of lines in the file
+ * @param {string} opType - 'create' or 'edit'
+ */
+function completeFileOperationCard(cardId, filePath, lineCount, opType) {
+    console.log('[FileOpCard] completeFileOperationCard called:', cardId, filePath, lineCount, opType);
+    var card = document.getElementById(cardId);
+    if (!card) { console.error('[FileOpCard] Card NOT FOUND by id:', cardId); return; }
+    console.log('[FileOpCard] Card found, transforming to completed state');
+
+    var isCreate = opType === 'create';
+    var fileName = filePath.split(/[\\/]/).pop() || filePath;
+    var statusBadge = isCreate
+        ? '<span class="status-tag text-add">A Created</span>'
+        : '<span class="status-tag text-mod">M Modified</span>';
+    var icon = isCreate ? '🐍' : '📝';
+
+    // Transform card to expanded file list display
+    card.className = 'card-container expanded';
+    card.innerHTML =
+        '<div class="card-header" onclick="toggleCard(this)">' +
+            '<svg class="chevron" fill="currentColor" viewBox="0 0 20 20"><path d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"/></svg>' +
+            '<span>' + (isCreate ? 'Created file' : 'Edited file') + '</span>' +
+        '</div>' +
+        '<div class="card-body">' +
+            '<div class="list-row">' +
+                '<span>' + icon + ' ' + escapeHtml(fileName) + '</span>' +
+                statusBadge +
+            '</div>' +
+            '<div class="list-row" style="font-size:11px;padding-left:24px;color:#22c55e;">' +
+                escapeHtml(filePath) + ' · ' + lineCount + ' lines' +
+            '</div>' +
+        '</div>';
+
+    delete _fileOpCards[cardId];
+}
+
+/**
+ * Show file creation card - starts with animation, completes when done
+ * Called from Python when Write tool starts
+ */
+function showFileCreatingCard(filePath) {
+    var cardId = 'file-op-' + Date.now();
+    showFileOperationCard(cardId, filePath, 'create');
+    return cardId;
+}
+
+/**
+ * Show file editing card - starts with animation, completes when done
+ * Called from Python when Edit tool starts
+ */
+function showFileEditingCard(filePath) {
+    var cardId = 'file-op-' + Date.now();
+    showFileOperationCard(cardId, filePath, 'edit');
+    return cardId;
+}
+
+/**
+ * Complete file creation - transform card to show created file
+ * Called from Python when Write tool completes
+ */
+function completeFileCreatingCard(cardId, filePath, content) {
+    console.log('[FileOpCard] completeFileCreatingCard called:', cardId, filePath, 'contentLen:', (content||'').length);
+    var lineCount = content ? content.split('\n').length : 0;
+    completeFileOperationCard(cardId, filePath, lineCount, 'create');
+}
+
+/**
+ * Complete file editing - transform card to show edited file
+ * Called from Python when Edit tool completes
+ */
+function completeFileEditingCard(cardId, filePath, original, newContent) {
+    console.log('[FileOpCard] completeFileEditingCard called:', cardId, filePath, 'newContentLen:', (newContent||'').length);
+    var lineCount = newContent ? newContent.split('\n').length : 0;
+    completeFileOperationCard(cardId, filePath, lineCount, 'edit');
+}
+
+// Expose file operation card functions to window so Python runJavaScript can call them
+window.showFileOperationCard    = showFileOperationCard;
+window.completeFileCreatingCard = completeFileCreatingCard;
+window.completeFileEditingCard  = completeFileEditingCard;
+window.showFileCreatingCard     = showFileCreatingCard;
+window.showFileEditingCard      = showFileEditingCard;
+console.log('[FileOpCard] Window functions exposed:', typeof window.showFileOperationCard, typeof window.completeFileCreatingCard, typeof window.completeFileEditingCard);
 
 function formatTerminalCommand(command) {
     if (!command) return '';
@@ -7103,46 +7248,69 @@ function updateTerminalCard(cardId, status, exitCode, output) {
     var card = document.getElementById(cardId);
     if (!card) return;
 
-    card.className = 'term-card term-' + status;
     card.dataset.status = status;
 
-    // Update status icon
+    // ── NEW card-container structure (built by buildTerminalCard) ──
+    if (card.classList.contains('card-container')) {
+        // Update card class
+        card.className = 'card-container expanded term-card term-' + status;
+
+        // Update title text
+        var titleEl = card.querySelector('.term-title-text');
+        if (titleEl) titleEl.textContent = 'Run in terminal';
+
+        // Update right-side status span
+        var statusSpan = document.getElementById(cardId + '-status');
+        var cmd = card.dataset.command || '';
+        // Parse command if JSON
+        var displayCmd = cmd;
+        try { var p = JSON.parse(cmd); if (p.command) displayCmd = p.command; } catch(e) {}
+        var esc = displayCmd.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+        if (statusSpan) {
+            if (status === 'success') {
+                statusSpan.style.cssText = 'font-size:10px;opacity:0.5;cursor:pointer;';
+                statusSpan.style.color = '';
+                statusSpan.textContent = 'View Output \u2197';
+                statusSpan.onclick = function(e) { e.stopPropagation(); openTerminalPanel(displayCmd); };
+            } else if (status === 'error') {
+                statusSpan.style.cssText = 'font-size:10px;color:#ef4444;';
+                statusSpan.textContent = 'Failed' + (exitCode !== undefined && exitCode !== 0 ? ' (exit ' + exitCode + ')' : '');
+                statusSpan.onclick = null;
+            } else if (status === 'stopped') {
+                statusSpan.style.cssText = 'font-size:10px;color:rgba(148,163,184,0.7);';
+                statusSpan.textContent = 'Stopped';
+                statusSpan.onclick = null;
+            }
+        }
+
+        // Update terminal viewport content
+        if (output) {
+            var viewport = document.getElementById(cardId + '-viewport');
+            if (viewport) {
+                viewport.textContent = '$ ' + displayCmd + '\n' + output;
+            }
+        }
+        return;
+    }
+
+    // ── OLD term-card structure (legacy fallback) ──
+    card.className = 'term-card term-' + status;
+
     var iconEl = card.querySelector('.term-status-icon');
     if (iconEl) {
         if (status === 'success') iconEl.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>';
         if (status === 'error')   iconEl.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
     }
 
-    // Update title text
     var titleTextEl = card.querySelector('.term-title-text');
-    if (titleTextEl) {
-        titleTextEl.textContent = (status === 'running') ? 'Running in terminal' : 'Run in terminal';
-    }
+    if (titleTextEl) titleTextEl.textContent = 'Run in terminal';
 
-    // Update badge
     var badgeEl = card.querySelector('.term-badge');
     if (status === 'success') {
         if (badgeEl) { badgeEl.className = 'term-badge term-badge-done'; badgeEl.textContent = 'Done'; }
-        else {
-            var b = document.createElement('span');
-            b.className = 'term-badge term-badge-done'; b.textContent = 'Done';
-            var chevron = card.querySelector('.term-chevron');
-            if (chevron) card.querySelector('.term-header').insertBefore(b, chevron);
-        }
     } else if (status === 'error') {
         if (badgeEl) { badgeEl.className = 'term-badge term-badge-failed'; badgeEl.textContent = 'Failed'; }
-    }
-
-    // Update exit code
-    if (status === 'error' && exitCode !== undefined) {
-        var existingExit = card.querySelector('.term-exit-code');
-        if (!existingExit) {
-            var exitEl = document.createElement('span');
-            exitEl.className = 'term-exit-code';
-            exitEl.textContent = 'Exit ' + exitCode;
-            var chevronEl = card.querySelector('.term-chevron');
-            if (chevronEl) card.querySelector('.term-header').insertBefore(exitEl, chevronEl);
-        }
     }
 
     if (output) {

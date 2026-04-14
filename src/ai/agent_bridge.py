@@ -910,6 +910,10 @@ class CortexAgentBridge(QObject):
     # Permission request — emitted before a dangerous bash command runs.
     # JS shows an Accept/Reject card; Python waits via threading.Event.
     permission_requested = pyqtSignal(str, str, str)  # command, warning, files_json
+    # File operation cards — show animated cards during create/edit operations
+    file_creating_started = pyqtSignal(str)  # file_path
+    file_editing_started = pyqtSignal(str)   # file_path
+    file_operation_completed = pyqtSignal(str, str, str, str)  # card_id, file_path, content, op_type
 
     # ── Internal state ──────────────────────────────────────────
     def __init__(self, **kwargs):
@@ -1463,6 +1467,15 @@ Example: LS(path="src/")
         full_path = args["file_path"]
         is_new = not os.path.exists(full_path)
 
+        # Emit signal to show "Creating file..." card with animation
+        card_id = None
+        try:
+            import uuid
+            card_id = f"file-op-{uuid.uuid4().hex[:8]}"
+            self.file_creating_started.emit(full_path)
+        except Exception as e:
+            log.debug(f"[BRIDGE] Failed to emit file_creating_started: {e}")
+
         if _REAL_FILE_WRITE_TOOL is not None:
             try:
                 raw = await _REAL_FILE_WRITE_TOOL.call(
@@ -1472,6 +1485,9 @@ Example: LS(path="src/")
                 op_type = data.get("type", "create" if is_new else "update")
                 # Emit UI signals
                 self.file_generated.emit(full_path, content)
+                # Emit completion signal for card animation
+                if card_id:
+                    self.file_operation_completed.emit(card_id, full_path, content, "create")
                 self._tool_ctx.mark_file_modified(full_path)
                 return ToolResult(tool_id=tool_id, result={
                     "path": full_path, "type": op_type, "written": True,
@@ -1487,6 +1503,9 @@ Example: LS(path="src/")
             with open(full_path, "w", encoding="utf-8") as f:
                 f.write(content)
             self.file_generated.emit(full_path, content)
+            # Emit completion signal for card animation
+            if card_id:
+                self.file_operation_completed.emit(card_id, full_path, content, "create")
             self._tool_ctx.mark_file_modified(full_path)
             return ToolResult(tool_id=tool_id, result={
                 "path": full_path, "type": "create" if is_new else "update", "written": True,
@@ -1510,6 +1529,22 @@ Example: LS(path="src/")
             )
             log.info("[BRIDGE] CortexDiffBridge open_diff callback registered")
 
+        # Emit signal to show "Editing file..." card with animation
+        card_id = None
+        original_content = None
+        try:
+            import uuid
+            card_id = f"file-op-{uuid.uuid4().hex[:8]}"
+            # Read original content for later comparison
+            try:
+                with open(full_path, "r", encoding="utf-8") as f:
+                    original_content = f.read()
+            except Exception:
+                pass
+            self.file_editing_started.emit(full_path)
+        except Exception as e:
+            log.debug(f"[BRIDGE] Failed to emit file_editing_started: {e}")
+
         if _REAL_FILE_EDIT_TOOL is not None:
             try:
                 raw = await _REAL_FILE_EDIT_TOOL.call(
@@ -1519,6 +1554,10 @@ Example: LS(path="src/")
                 actual_old = data.get("oldString", old_string)
                 actual_new = data.get("newString", new_string)
                 self.file_edited_diff.emit(full_path, actual_old, actual_new)
+                # Emit completion signal for card animation
+                if card_id:
+                    new_content = original_content.replace(actual_old, actual_new, 1) if original_content else actual_new
+                    self.file_operation_completed.emit(card_id, full_path, new_content, "edit")
                 self._tool_ctx.mark_file_modified(full_path)
                 await self._refresh_git_diff_stats(full_path)
                 return ToolResult(tool_id=tool_id, result={
@@ -1538,6 +1577,9 @@ Example: LS(path="src/")
             with open(full_path, "w", encoding="utf-8") as f:
                 f.write(new_content)
             self.file_edited_diff.emit(full_path, old_string, new_string)
+            # Emit completion signal for card animation
+            if card_id:
+                self.file_operation_completed.emit(card_id, full_path, new_content, "edit")
             self._tool_ctx.mark_file_modified(full_path)
             await self._refresh_git_diff_stats(full_path)
             return ToolResult(tool_id=tool_id, result={"path": full_path, "edited": True})

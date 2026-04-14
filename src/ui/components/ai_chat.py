@@ -1443,6 +1443,42 @@ class AIChatWidget(QWidget):
         p = json.dumps(path)
         self._view.page().runJavaScript(f"if(window.addChangedFile) addChangedFile({p}, {added}, {removed}, 'M');")
 
+    # ============================================================
+    # FILE OPERATION CARDS (Create/Edit with animation)
+    # ============================================================
+    
+    def show_file_creating_card(self, file_path: str) -> str:
+        """Show a 'Creating file...' card with pulse animation. Returns card ID."""
+        import uuid
+        card_id = f"file-op-{uuid.uuid4().hex[:8]}"
+        p = json.dumps(file_path)
+        js = f"if(window.showFileOperationCard) window.showFileOperationCard({json.dumps(card_id)}, {p}, 'create'); else console.error('[FileOpCard] window.showFileOperationCard NOT FOUND!');"
+        log.debug(f"[FileOpCard] Calling JS showFileOperationCard with card_id={card_id}")
+        self._view.page().runJavaScript(js)
+        return card_id
+    
+    def show_file_editing_card(self, file_path: str) -> str:
+        """Show an 'Editing file...' card with pulse animation. Returns card ID."""
+        import uuid
+        card_id = f"file-op-{uuid.uuid4().hex[:8]}"
+        p = json.dumps(file_path)
+        js = f"if(window.showFileOperationCard) window.showFileOperationCard({json.dumps(card_id)}, {p}, 'edit'); else console.error('[FileOpCard] window.showFileOperationCard NOT FOUND!');"
+        log.debug(f"[FileOpCard] Calling JS showFileOperationCard(edit) with card_id={card_id}")
+        self._view.page().runJavaScript(js)
+        return card_id
+    
+    def complete_file_creating_card(self, card_id: str, file_path: str, content: str):
+        """Transform 'Creating...' card to show completed file with line count."""
+        js = f"if(window.completeFileCreatingCard) window.completeFileCreatingCard({json.dumps(card_id)}, {json.dumps(file_path)}, {json.dumps(content)}); else console.error('[FileOpCard] window.completeFileCreatingCard NOT FOUND!');"
+        log.debug(f"[FileOpCard] Calling JS completeFileCreatingCard with card_id={card_id}, contentLen={len(content)}")
+        self._view.page().runJavaScript(js)
+    
+    def complete_file_editing_card(self, card_id: str, file_path: str, original: str, new_content: str):
+        """Transform 'Editing...' card to show completed edit with line count."""
+        js = f"if(window.completeFileEditingCard) window.completeFileEditingCard({json.dumps(card_id)}, {json.dumps(file_path)}, {json.dumps(original)}, {json.dumps(new_content)}); else console.error('[FileOpCard] window.completeFileEditingCard NOT FOUND!');"
+        log.debug(f"[FileOpCard] Calling JS completeFileEditingCard with card_id={card_id}, newContentLen={len(new_content)}")
+        self._view.page().runJavaScript(js)
+
     def emit_directory_tree(self, root_path: str, listing_text: str):
         """Send hierarchical tree data to JS for tree card rendering."""
         items = self._parse_listing(root_path, listing_text)

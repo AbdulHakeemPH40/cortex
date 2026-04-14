@@ -7,7 +7,7 @@
     /* Background Colors - Multi-layered Metallic Palette */
     --bg-main: #1E1E1E;              /* Dark Gunmetal - Main workspace */
     --bg-sidebar: #121212;           /* Onyx - Sidebar/Header */
-    --bg-card: #252525;              /* Metallic Grey - Component cards */
+    --bg-card: #1c1c1c;              /* Dark card - Component cards */
     --bg-code: #000000;              /* Pure black - Terminal/code */
     --bg-elevated: #2A2A2A;          /* Elevated metallic - User bubbles */
     

@@ -1464,6 +1464,10 @@ class CortexMainWindow(QMainWindow):
         self._ai_agent.file_edited_diff.connect(self._on_file_edited_diff_for_js)
         self._ai_agent.file_edited_diff.connect(self._on_inline_edit_diff)
         self._ai_agent.file_edited_diff.connect(self._ai_chat.on_file_edited_diff)  # populate Changed Files panel with +/- counts
+        # File operation cards — animated create/edit cards
+        self._ai_agent.file_creating_started.connect(self._on_file_creating_started)
+        self._ai_agent.file_editing_started.connect(self._on_file_editing_started)
+        self._ai_agent.file_operation_completed.connect(self._on_file_operation_completed)
         self._ai_agent.tool_activity.connect(self._ai_chat.show_tool_activity)
         self._ai_agent.directory_contents.connect(self._ai_chat.show_directory_contents)
         self._ai_agent.directory_contents.connect(self._on_directory_contents_for_tree)
@@ -2281,6 +2285,54 @@ class CortexMainWindow(QMainWindow):
             self._sidebar.add_changed_file(file_path, edit_type)
         except Exception as e:
             log.debug(f"Sidebar update skipped: {e}")
+
+    # ============================================================
+    # FILE OPERATION CARDS (Create/Edit with animation)
+    # ============================================================
+    
+    def _on_file_creating_started(self, file_path: str):
+        """Show 'Creating file...' card with pulse animation."""
+        try:
+            card_id = self._ai_chat.show_file_creating_card(file_path)
+            if not hasattr(self, '_file_op_cards'):
+                self._file_op_cards = {}
+            self._file_op_cards[file_path] = card_id
+            log.debug(f"[FileOp] Started creating card ({card_id}) for: {file_path}")
+        except Exception as e:
+            log.debug(f"[FileOp] Failed to show creating card: {e}")
+
+    def _on_file_editing_started(self, file_path: str):
+        """Show 'Editing file...' card with pulse animation."""
+        try:
+            card_id = self._ai_chat.show_file_editing_card(file_path)
+            if not hasattr(self, '_file_op_cards'):
+                self._file_op_cards = {}
+            self._file_op_cards[file_path] = card_id
+            log.debug(f"[FileOp] Started editing card ({card_id}) for: {file_path}")
+        except Exception as e:
+            log.debug(f"[FileOp] Failed to show editing card: {e}")
+
+    def _on_file_operation_completed(self, _unused_card_id: str, file_path: str, content: str, op_type: str):
+        """Transform operation card to show completed file."""
+        try:
+            # Use the card_id stored when the card was first created (from show_file_*_card)
+            # The card_id from agent_bridge is different — it was generated before the JS card was made.
+            real_card_id = getattr(self, '_file_op_cards', {}).get(file_path)
+            if not real_card_id:
+                log.debug(f"[FileOp] No stored card_id for {file_path}, skipping completion")
+                return
+            if op_type == "create":
+                self._ai_chat.complete_file_creating_card(real_card_id, file_path, content)
+            else:
+                original = ""
+                if hasattr(self, '_diff_data_store') and file_path in self._diff_data_store:
+                    original, _ = self._diff_data_store[file_path]
+                self._ai_chat.complete_file_editing_card(real_card_id, file_path, original, content)
+            # Clean up stored card_id
+            self._file_op_cards.pop(file_path, None)
+            log.debug(f"[FileOp] Completed {op_type} card for: {file_path}")
+        except Exception as e:
+            log.debug(f"[FileOp] Failed to complete operation card: {e}")
 
     def _on_ai_question_requested(self, tool_call_id: str, question: str, metadata: dict):
         """Handle AI asking a question that requires user response in chat."""
