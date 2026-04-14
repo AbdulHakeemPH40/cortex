@@ -468,17 +468,17 @@
    ================================================ */
 
 .term-card {
-    background: #161618;
+    background: #131315;
     border: 1px solid rgba(255, 255, 255, 0.07);
     border-radius: 8px;
     margin-bottom: 12px;
     overflow: hidden;
     font-size: 13px;
-    transition: border-color 0.2s ease;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .term-card:hover {
-    border-color: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.13);
 }
 
 .term-header {
@@ -494,9 +494,9 @@
 }
 
 .term-chevron {
-    margin-left: auto;
     flex-shrink: 0;
     transition: transform 0.2s ease;
+    opacity: 0.4;
 }
 
 .term-header:hover {
@@ -507,29 +507,291 @@
     font-size: 14px;
     line-height: 1;
     flex-shrink: 0;
-    transition: transform 0.2s ease;
-}
-
-.term-card:hover .term-status-icon {
-    opacity: 0.9;
+    display: flex;
+    align-items: center;
 }
 
 .term-title {
-    font-size: 13px;
+    font-size: 12.5px;
     color: var(--text-main);
     font-weight: 500;
     flex: 1;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .term-title::before {
     content: '>';
-    font-size: 12px;
-    opacity: 0.4;
+    font-size: 11px;
+    opacity: 0.35;
     font-family: 'Geist Mono', monospace;
     font-weight: 700;
+    flex-shrink: 0;
+}
+
+/* Status badge — appears on the right of the header (e.g. "Background", "Done", "Failed") */
+.term-badge {
+    font-size: 10px;
+    font-weight: 500;
+    padding: 2px 8px;
+    border-radius: 4px;
+    letter-spacing: 0.3px;
+    flex-shrink: 0;
+    margin-right: 6px;
+}
+
+.term-badge-running {
+    color: rgba(148, 163, 184, 0.85);
+    background: rgba(148, 163, 184, 0.08);
+    border: 1px solid rgba(148, 163, 184, 0.15);
+}
+
+.term-badge-done {
+    color: rgba(34, 197, 94, 0.9);
+    background: rgba(34, 197, 94, 0.07);
+    border: 1px solid rgba(34, 197, 94, 0.15);
+}
+
+.term-badge-failed {
+    color: rgba(248, 113, 113, 0.9);
+    background: rgba(248, 113, 113, 0.07);
+    border: 1px solid rgba(248, 113, 113, 0.15);
+}
+
+.term-badge-stopped {
+    color: rgba(148, 163, 184, 0.7);
+    background: rgba(148, 163, 184, 0.07);
+    border: 1px solid rgba(148, 163, 184, 0.15);
+}
+
+/* ── Terminal sent-to-terminal notification bar ──────────────────────── */
+#terminal-notify {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 14px;
+    margin: 0 0 6px 0;
+    background: rgba(59, 130, 246, 0.07);
+    border: 1px solid rgba(59, 130, 246, 0.18);
+    border-radius: 6px;
+    font-size: 11.5px;
+    color: rgba(148, 190, 255, 0.9);
+    animation: termNotifyIn 0.2s ease;
+    overflow: hidden;
+}
+
+#terminal-notify .tn-icon {
+    flex-shrink: 0;
+    opacity: 0.75;
+}
+
+#terminal-notify .tn-cmd {
+    font-family: 'Geist Mono', 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
+    font-size: 11px;
+    color: rgba(200, 220, 255, 0.85);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 260px;
+}
+
+#terminal-notify .tn-dismiss {
+    margin-left: auto;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: rgba(148, 163, 184, 0.5);
+    font-size: 13px;
+    line-height: 1;
+    padding: 0 2px;
+    flex-shrink: 0;
+}
+
+#terminal-notify .tn-dismiss:hover {
+    color: rgba(148, 163, 184, 0.9);
+}
+
+@keyframes termNotifyIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ──────────────────────────────────────────────────
+   DANGEROUS-COMMAND PERMISSION CARD
+   Shown when AI wants to run rm, git reset --hard, etc.
+   ────────────────────────────────────────────────── */
+
+.perm-card {
+    background: #1a1a1e;
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    border-radius: 8px;
+    overflow: hidden;
+    font-size: 13px;
+    animation: permIn 0.18s ease;
+    width: 100%;
+    max-width: 460px;
+}
+
+@keyframes permIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Header row — icon + question + buttons */
+.perm-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    background: rgba(239, 68, 68, 0.06);
+    border-bottom: 1px solid rgba(239, 68, 68, 0.15);
+}
+
+.perm-icon {
+    color: rgba(239, 68, 68, 0.85);
+    flex-shrink: 0;
+}
+
+.perm-question {
+    flex: 1;
+    font-weight: 500;
+    color: var(--text-main, #e2e8f0);
+    font-size: 12.5px;
+}
+
+/* Accept / Reject buttons */
+.perm-btns {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.perm-btn {
+    border-radius: 5px;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 4px 12px;
+    cursor: pointer;
+    transition: opacity 0.15s;
+}
+
+.perm-btn:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.perm-reject {
+    background: transparent;
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    color: rgba(148, 163, 184, 0.85);
+}
+
+.perm-reject:hover:not(:disabled) {
+    border-color: rgba(148, 163, 184, 0.55);
+    color: #e2e8f0;
+}
+
+.perm-accept {
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    color: #0f172a;
+}
+
+.perm-accept:hover:not(:disabled) {
+    background: #fff;
+}
+
+/* File rows */
+.perm-files {
+    padding: 6px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.perm-file-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 3px 0;
+}
+
+.perm-file-icon {
+    color: rgba(148, 163, 184, 0.55);
+    flex-shrink: 0;
+}
+
+.perm-file-name {
+    flex: 1;
+    color: rgba(200, 215, 235, 0.9);
+    font-size: 12px;
+    font-family: 'Geist Mono', 'JetBrains Mono', 'Consolas', monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.perm-file-badge {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    padding: 1px 6px;
+    border-radius: 3px;
+    flex-shrink: 0;
+}
+
+.perm-badge-delete {
+    color: rgba(239, 68, 68, 0.9);
+    background: rgba(239, 68, 68, 0.1);
+}
+
+.perm-badge-git {
+    color: rgba(251, 146, 60, 0.9);
+    background: rgba(251, 146, 60, 0.1);
+}
+
+.perm-badge-drop {
+    color: rgba(239, 68, 68, 0.9);
+    background: rgba(239, 68, 68, 0.1);
+}
+
+.perm-badge-modify {
+    color: rgba(250, 204, 21, 0.9);
+    background: rgba(250, 204, 21, 0.08);
+}
+
+/* Warning line at bottom */
+.perm-warning {
+    padding: 7px 12px;
+    font-size: 11px;
+    color: rgba(148, 163, 184, 0.65);
+    font-style: italic;
+}
+
+/* Post-decision states */
+.perm-card.perm-accepted .perm-header {
+    background: rgba(34, 197, 94, 0.06);
+    border-bottom-color: rgba(34, 197, 94, 0.15);
+}
+
+.perm-card.perm-accepted .perm-icon,
+.perm-card.perm-accepted .perm-question {
+    color: rgba(34, 197, 94, 0.85);
+}
+
+.perm-card.perm-rejected .perm-header {
+    background: rgba(100, 116, 139, 0.06);
+    border-bottom-color: rgba(100, 116, 139, 0.15);
+}
+
+.perm-card.perm-rejected .perm-icon,
+.perm-card.perm-rejected .perm-question {
+    color: rgba(148, 163, 184, 0.7);
 }
 
 .term-exit-code {
@@ -650,40 +912,38 @@
 .term-view-btn {
     display: flex;
     align-items: center;
-    gap: 6px;
-    background: rgba(59, 130, 246, 0.1);
-    border: 1px solid rgba(59, 130, 246, 0.2);
-    color: var(--accent-primary);
+    gap: 5px;
+    background: transparent;
+    border: none;
+    color: rgba(99, 160, 246, 0.85);
     font-size: 11px;
     cursor: pointer;
-    padding: 5px 12px;
-    border-radius: 6px;
-    transition: all 0.2s ease;
+    padding: 4px 6px;
+    border-radius: 4px;
+    transition: color 0.15s ease, background 0.15s ease;
+    font-family: inherit;
 }
 
 .term-view-btn:hover {
-    background: rgba(59, 130, 246, 0.18);
-    border-color: rgba(59, 130, 246, 0.4);
-    transform: translateY(-1px);
+    color: #63a0f6;
+    background: rgba(59, 130, 246, 0.08);
 }
 
 /* Running state */
 .term-card.term-running {
-    border-color: rgba(59, 130, 246, 0.25);
+    border-color: rgba(59, 130, 246, 0.2);
+    border-left: 2px solid rgba(59, 130, 246, 0.55);
 }
 
-.term-card.term-running .term-status-icon {
-    animation: termIconPulse 1.2s ease-in-out infinite;
+.term-card.term-running .term-title {
+    color: rgba(200, 220, 255, 0.9);
 }
 
-@keyframes termRunningPulse {
-    0%, 100% { border-color: rgba(59, 130, 246, 0.15); }
-    50% { border-color: rgba(59, 130, 246, 0.35); }
-}
-
-@keyframes termIconPulse {
-    0%, 100% { opacity: 0.7; transform: scale(1); }
-    50% { opacity: 1; transform: scale(1.15); }
+.term-card.term-running .term-status-icon .todo-spinner {
+    border-top-color: rgba(99, 160, 246, 0.9);
+    border-right-color: rgba(99, 160, 246, 0.25);
+    border-bottom-color: rgba(99, 160, 246, 0.25);
+    border-left-color: rgba(99, 160, 246, 0.25);
 }
 
 /* Success state */
@@ -702,6 +962,16 @@
 
 .term-card.term-error .term-header {
     background: rgba(255, 255, 255, 0.025);
+}
+
+/* Stopped state (force-cancelled by user) */
+.term-card.term-stopped {
+    border-color: rgba(148, 163, 184, 0.15);
+    border-left-color: rgba(148, 163, 184, 0.3);
+}
+
+.term-card.term-stopped .term-title {
+    color: rgba(148, 163, 184, 0.75);
 }
 
 /* Collapsed state */

@@ -99,8 +99,7 @@ class ChatBridge(QObject):
     terminal_output = pyqtSignal(str)
     terminal_resize = pyqtSignal(int, int)
     open_terminal_requested = pyqtSignal()  # Request to open terminal panel
-    
-    # Navigation
+    run_in_terminal_requested = pyqtSignal(str)  # Request to open terminal and run command
     navigate_to_line = pyqtSignal(str, int)  # file_path, line_number
     
     # Smart paste signal
@@ -460,6 +459,21 @@ class ChatBridge(QObject):
         log.info("Open terminal requested from chat")
         self.open_terminal_requested.emit()
 
+    @pyqtSlot(str)
+    def on_run_in_terminal(self, command: str):
+        """Open terminal panel and run the given command inside it."""
+        log.info(f"Run in terminal requested: {command[:80]}")
+        self.run_in_terminal_requested.emit(command)
+
+    # Permission response from user (Accept / Reject on dangerous-command card)
+    permission_decided = pyqtSignal(str)  # 'accept' or 'reject'
+
+    @pyqtSlot(str)
+    def on_permission_respond(self, decision: str):
+        """Called from JS when user clicks Accept or Reject on a permission card."""
+        log.info(f"[BRIDGE] Permission card response: {decision}")
+        self.permission_decided.emit(decision)
+
     # â”€â”€ CHAT PERSISTENCE: File-based storage fallback â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     
     @pyqtSlot(str, str, result=str)
@@ -722,6 +736,8 @@ class AIChatWidget(QWidget):
 
     # Terminal panel signal
     open_terminal_requested = pyqtSignal()  # Request main window to open terminal panel
+    run_in_terminal_requested = pyqtSignal(str)  # Request to open terminal and run command
+    permission_decided = pyqtSignal(str)  # 'accept'/'reject' from permission card
 
     # Smart paste signal - emitted when user pastes code, to check if it matches editor selection
     smart_paste_check_requested = pyqtSignal(str)  # pasted_text
@@ -873,6 +889,8 @@ class AIChatWidget(QWidget):
         self._bridge.accept_file_edit_requested.connect(self.accept_file_edit_requested.emit)
         self._bridge.reject_file_edit_requested.connect(self.reject_file_edit_requested.emit)
         self._bridge.open_terminal_requested.connect(self.open_terminal_requested.emit)
+        self._bridge.run_in_terminal_requested.connect(self.run_in_terminal_requested.emit)
+        self._bridge.permission_decided.connect(self.permission_decided.emit)
         self._bridge.search_files_requested.connect(self._on_search_files)
         self._bridge.answer_question_requested.connect(self.answer_question_requested.emit)
         self._bridge.smart_paste_check_requested.connect(self.smart_paste_check_requested.emit)
@@ -1236,6 +1254,15 @@ class AIChatWidget(QWidget):
         """Show the thinking indicator."""
         self._view.page().runJavaScript("if(window.showThinking) window.showThinking();")
 
+    def _on_permission_request(self, command: str, warning: str, files_json: str):
+        """Show a permission-request card in the chat UI before a dangerous command runs."""
+        import json as _json
+        safe_cmd  = _json.dumps(command)
+        safe_warn = _json.dumps(warning)
+        self._view.page().runJavaScript(
+            f"if(window.showPermissionCard) window.showPermissionCard({safe_cmd}, {safe_warn}, {files_json});"
+        )
+
     def hide_thinking(self):
         """Hide the thinking indicator."""
         self._view.page().runJavaScript("if(window.hideThinking) window.hideThinking();")
@@ -1258,6 +1285,7 @@ class AIChatWidget(QWidget):
             formatted_todo = {
                 'id': todo.get('id', todo.get('description', '')),
                 'content': todo.get('content', todo.get('description', '')),
+                'activeForm': todo.get('activeForm', todo.get('content', todo.get('description', ''))),
                 'status': status_mapping.get(todo.get('status', 'PENDING').lower(), todo.get('status', 'PENDING'))
             }
             formatted_todos.append(formatted_todo)

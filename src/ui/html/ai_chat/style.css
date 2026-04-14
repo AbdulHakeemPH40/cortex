@@ -1215,14 +1215,35 @@ button svg,
    CODE BLOCKS
    ================================================ */
 
+/* Wrapper — handles border, radius, margin. Header lives here, NOT inside pre. */
+.code-block-wrapper {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    margin: 12px 0;
+    overflow: hidden;          /* clips child radius edges cleanly */
+    max-width: 100%;
+}
+
+/* pre inside wrapper strips its own border/radius/margin (wrapper owns those) */
+.code-block-wrapper pre[data-lang] {
+    border: none;
+    border-radius: 0;
+    margin: 0;
+    background: transparent;
+}
+
+/* Standalone pre (no wrapper) keeps original styling */
 pre[data-lang] {
     background: var(--bg-code);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     padding: 14px;
     margin: 12px 0;
-    overflow-x: auto; /* Allows horizontal scrolling INSIDE the bubble only */
-    max-width: 100%; /* Don't exceed bubble width */
+    overflow-x: auto;
+    max-width: 100%;
 }
 
 /* Code block header (language label + action buttons) */
@@ -1231,10 +1252,10 @@ pre[data-lang] {
     align-items: center;
     justify-content: space-between;
     padding: 7px 12px;
-    margin: -14px -14px 10px -14px;  /* bleed to pre edges */
+    /* No negative margins — header is outside the scrollable pre */
     background: rgba(255, 255, 255, 0.04);
     border-bottom: 1px solid rgba(255, 255, 255, 0.07);
-    border-radius: var(--radius-md) var(--radius-md) 0 0;
+    flex-shrink: 0;
     user-select: none;
 }
 

@@ -216,6 +216,7 @@ function saveProjectChats(chatList) {
 // Initialize chats as empty - will be loaded when project is set
 var chats = [];
 
+var _stopRequested = false; // Set by stopGeneration to suppress the Python-fired onComplete
 var currentAssistantMessage = null;
 var currentContent = "";
 var renderPending = false;
@@ -1597,13 +1598,12 @@ function clearTodosAndChangedFiles() {
         cfsSection.style.display = 'none';
         console.log('[DEBUG] Changed Files section display set to none');
     }
+    // Hide cfs-body but DO NOT wipe its innerHTML — that would destroy the static
+    // #cfs-list element, causing renderChangedFileRow to fail (getElementById returns null)
     var cfsBody = document.getElementById('cfs-body');
-    if (cfsBody) {
-        cfsBody.style.display = 'none';
-        cfsBody.innerHTML = '';
-    }
+    if (cfsBody) cfsBody.style.display = 'none';
     var cfsList = document.getElementById('cfs-list');
-    if (cfsList) cfsList.innerHTML = '';
+    if (cfsList) cfsList.innerHTML = '';  // only clear the row content, not the container
     var cfsCount = document.getElementById('cfs-count');
     if (cfsCount) cfsCount.textContent = '0';
     var cfsStatus = document.getElementById('cfs-status-text');
@@ -2373,7 +2373,7 @@ function stopGeneration() {
     } else {
         console.error('[STOP] Bridge or on_stop not available');
     }
-    
+
     // Hide the stop button and update terminal status
     var terminalOutput = document.getElementById('inline-terminal-output');
     if (terminalOutput) {
@@ -2383,8 +2383,50 @@ function stopGeneration() {
             cancelBtn.style.display = 'none';
         }
     }
-    
-    onComplete(); // Reset UI state
+
+    // ── Stop all running terminal cards (clear spinner) ──────────────
+    document.querySelectorAll('.term-card.term-running').forEach(function(card) {
+        // Switch card class to stopped (reuse error styling without red tint)
+        card.classList.remove('term-running');
+        card.classList.add('term-stopped');
+        card.dataset.status = 'stopped';
+
+        // Replace spinner with a grey stopped icon
+        var iconEl = card.querySelector('.term-status-icon');
+        if (iconEl) {
+            iconEl.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(148,163,184,0.7)" stroke-width="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>';
+        }
+
+        // Update title
+        var titleEl = card.querySelector('.term-title-text');
+        if (titleEl) titleEl.textContent = 'Stopped';
+
+        // Update badge
+        var badgeEl = card.querySelector('.term-badge');
+        if (badgeEl) {
+            badgeEl.className = 'term-badge term-badge-stopped';
+            badgeEl.textContent = 'Stopped';
+        }
+    });
+
+    // Mark stop so the Python-fired onComplete is ignored
+    _stopRequested = true;
+
+    // Immediate UI cleanup (don't call onComplete - Python will fire it later)
+    removeThinkingIndicator();
+    hideThinking();
+    collapseActivitySection();
+    collapseFecContainer();
+    currentAssistantMessage = null;
+    currentContent          = '';
+    _taskSummaryBuffer      = '';
+    _inTaskSummary          = false;
+    _isGenerating           = false;
+    var sendBtn = document.getElementById('sendBtn');
+    var stopBtn = document.getElementById('stopBtn');
+    if (sendBtn) sendBtn.style.display = 'flex';
+    if (stopBtn) stopBtn.style.display  = 'none';
+    _onGenerationComplete();
 }
 
 // --- Workflow State (Internal) ---
@@ -4232,6 +4274,13 @@ function collapseFecContainer() {
 }
 
 function onComplete() {
+    // If the user already clicked Stop, Python's late-firing onComplete is a no-op
+    if (_stopRequested) {
+        _stopRequested = false;
+        console.log('[CHAT] onComplete: suppressed (stop was requested)');
+        return;
+    }
+
     removeThinkingIndicator();
     hideThinking();
     collapseActivitySection();  // Collapse (not remove) the Working section to show summary
@@ -5971,16 +6020,17 @@ function addChangedFile(filePath, added, removed, editType) {
         if (prev.status !== 'pending') {
             prev.status   = 'pending';
             prev.editType = editType;
-            var row = document.querySelector('.cfs-row[data-path="' + filePath + '"]');
-            if (row) {
-                row.classList.remove('cfs-accepted', 'cfs-rejected');
-                var rightEl = row.querySelector('.cfs-row-right');
+            // Use getElementById to avoid CSS selector failures on Windows paths
+            var rightEl2 = document.getElementById('cfs-row-right-' + _escapeId(filePath));
+            if (rightEl2) {
                 var esc2 = filePath.replace(/'/g, "\\'");
-                if (rightEl) rightEl.innerHTML =
+                rightEl2.innerHTML =
                     '<button class="cfs-row-reject-btn" onclick="event.stopPropagation();rejectChangedFile(\'' + esc2 + '\', this)" title="Reject changes">' +
                         '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
                     '</button>' +
                     '<button class="cfs-row-accept-btn" onclick="event.stopPropagation();acceptChangedFile(\'' + esc2 + '\', this)" title="Accept changes">Accept</button>';
+                var row2 = rightEl2.closest('.cfs-row');
+                if (row2) row2.classList.remove('cfs-accepted', 'cfs-rejected');
             }
         }
         _cfsShowAndExpand();
@@ -6022,16 +6072,16 @@ function resolveFilePath(filePath) {
 function acceptChangedFile(filePath, btn) {
     if (!_changedFiles[filePath]) return;
     _changedFiles[filePath].status = 'accepted';
-    var row = document.querySelector('.cfs-row[data-path="' + filePath + '"]');
-    if (row) {
-        row.classList.add('cfs-accepted');
-        var rightEl = row.querySelector('.cfs-row-right');
-        if (rightEl) rightEl.innerHTML = '<span class="cfs-row-applied">Accepted</span>';
+
+    // Use getElementById with the escaped ID — avoids CSS selector failures
+    // caused by Windows backslashes in data-path attribute queries.
+    var rightEl = document.getElementById('cfs-row-right-' + _escapeId(filePath));
+    if (rightEl) {
+        rightEl.innerHTML = '<span class="cfs-row-applied">Accepted</span>';
+        var row = rightEl.closest('.cfs-row');
+        if (row) { row.classList.add('cfs-accepted'); row.classList.remove('cfs-rejected'); }
     }
-    // Resolve relative path before sending to bridge
     var resolvedPath = resolveFilePath(filePath);
-    // Convert backslashes to forward slashes for Windows paths
-    // This prevents backslash escape character issues in PyQt bridge
     var safePath = resolvedPath.replace(/\\/g, '/');
     console.log('[DEBUG] Accepting file:', safePath);
     if (window.bridge) bridge.on_accept_file_edit(safePath);
@@ -6042,15 +6092,15 @@ function acceptChangedFile(filePath, btn) {
 function rejectChangedFile(filePath, btn) {
     if (!_changedFiles[filePath]) return;
     _changedFiles[filePath].status = 'rejected';
-    var row = document.querySelector('.cfs-row[data-path="' + filePath + '"]');
-    if (row) {
-        row.classList.add('cfs-rejected');
-        var rightEl = row.querySelector('.cfs-row-right');
-        if (rightEl) rightEl.innerHTML = '<span class="cfs-row-rejected-label">Rejected</span>';
+
+    // Use getElementById — same reason as acceptChangedFile (backslash-safe).
+    var rightEl = document.getElementById('cfs-row-right-' + _escapeId(filePath));
+    if (rightEl) {
+        rightEl.innerHTML = '<span class="cfs-row-rejected">Rejected</span>';
+        var row = rightEl.closest('.cfs-row');
+        if (row) { row.classList.add('cfs-rejected'); row.classList.remove('cfs-accepted'); }
     }
-    // Resolve relative path before sending to bridge
     var resolvedPath = resolveFilePath(filePath);
-    // Convert backslashes to forward slashes for Windows paths
     var safePath = resolvedPath.replace(/\\/g, '/');
     console.log('[DEBUG] Rejecting file:', safePath);
     if (window.bridge) bridge.on_reject_file_edit(safePath);
@@ -6090,9 +6140,20 @@ function _refreshCfsHeader() {
     if (countEl) countEl.textContent = total;
 
     if (pending > 0) {
-        if (statusEl) statusEl.style.display = 'none';
-        if (bulkEl)   bulkEl.style.display   = 'flex';
+        // Some files still awaiting decision — show bulk action buttons
+        if (bulkEl) bulkEl.style.display = 'flex';
+        if (statusEl) {
+            // Show a summary alongside the bulk buttons
+            if (accepted > 0 || rejected > 0) {
+                statusEl.style.display = '';
+                statusEl.textContent = 'Partially Accepted';
+                statusEl.style.color = 'var(--text-muted, #8b949e)';
+            } else {
+                statusEl.style.display = 'none';
+            }
+        }
     } else if (total > 0) {
+        // All files have a decision — hide bulk buttons, show final status
         if (bulkEl) bulkEl.style.display = 'none';
         if (statusEl) {
             statusEl.style.display = '';
@@ -6103,8 +6164,8 @@ function _refreshCfsHeader() {
                 statusEl.textContent = 'Rejected';
                 statusEl.style.color = 'var(--red, #f87171)';
             } else {
-                statusEl.textContent = accepted + ' accepted, ' + rejected + ' rejected';
-                statusEl.style.color = 'var(--green-bright, #22c55e)';
+                statusEl.textContent = 'Partially Accepted';
+                statusEl.style.color = 'var(--text-muted, #8b949e)';
             }
         }
     }
@@ -6312,7 +6373,8 @@ function renderCustomTagsInto(msgEl, fullText) {
 function injectCodeBlockHeader(codeEl) {
     var pre = codeEl.parentElement;
     if (!pre || pre.tagName !== 'PRE') return;
-    if (pre.querySelector('.code-header')) return; // already injected
+    // Skip if already wrapped (idempotent)
+    if (pre.closest('.code-block-wrapper')) return;
 
     // Get language from data attribute or class
     var lang = pre.dataset.lang || '';
@@ -6360,10 +6422,13 @@ function injectCodeBlockHeader(codeEl) {
         };
     }
 
-    // Insert header BEFORE the code element, inside pre
-    pre.insertBefore(header, codeEl);
-    // Remove default top padding (header handles it)
-    pre.style.paddingTop = '0';
+    // Wrap pre in a container so the header is OUTSIDE the scrollable pre.
+    // This prevents the header from scrolling with long code lines.
+    var wrapper = document.createElement('div');
+    wrapper.className = 'code-block-wrapper';
+    pre.parentNode.insertBefore(wrapper, pre);
+    wrapper.appendChild(pre);
+    wrapper.insertBefore(header, pre); // header above pre, not inside it
 }
 
 // ================================================================
@@ -6897,17 +6962,31 @@ function buildTerminalCard(command, output, status, exitCode, cardId) {
     card.dataset.status  = status;
     card.dataset.expanded = 'true';  // start expanded
 
+    // Status icon
     var headerIcon = {
-        'running': '<span class="todo-spinner" style="width:12px;height:12px;border-width:1.5px;"></span>',
-        'success': '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>',
-        'error':   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>'
-    }[status] || '<span class="todo-spinner" style="width:12px;height:12px;border-width:1.5px;"></span>';
+        'running': '<span class="todo-spinner" style="width:13px;height:13px;border-width:2px;"></span>',
+        'success': '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>',
+        'error':   '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>'
+    }[status] || '<span class="todo-spinner" style="width:13px;height:13px;border-width:2px;"></span>';
+
+    // Header title — changes based on status
+    var titleText = (status === 'running') ? 'Running in terminal' : 'Run in terminal';
+
+    // Right-side badge
+    var badgeHtml = '';
+    if (status === 'running') {
+        badgeHtml = '<span class="term-badge term-badge-running">Background</span>';
+    } else if (status === 'success') {
+        badgeHtml = '<span class="term-badge term-badge-done">Done</span>';
+    } else if (status === 'error') {
+        badgeHtml = '<span class="term-badge term-badge-failed">Failed</span>';
+    }
 
     var exitCodeHtml = (status === 'error' && exitCode !== undefined && exitCode !== null)
-        ? '<span class="term-exit-code">Exit Code: ' + exitCode + '</span>'
+        ? '<span class="term-exit-code">Exit ' + exitCode + '</span>'
         : '';
 
-    // Parse command if passed as JSON string (e.g. from tool_activity info)
+    // Parse command if passed as JSON string
     var displayCmd = command;
     if (command && command.trim().startsWith('{')) {
         try {
@@ -6917,20 +6996,22 @@ function buildTerminalCard(command, output, status, exitCode, cardId) {
     }
 
     var formattedCmd = formatTerminalCommand(displayCmd);
+    var esc = (displayCmd || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
-    var outputId = (cardId || 'term-' + Date.now()) + '-output';
+    var outputId = (cardId || card.id) + '-output';
     var outputHtml = output
         ? '<div class="term-output-body" id="' + outputId + '" style="display:block;">'
               + '<pre class="term-output-text">' + escapeHtml(output) + '</pre>'
           + '</div>'
         : '';
 
-    var chevronSvg = '<svg class="term-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="opacity:0.45;transition:transform 0.2s ease;transform:rotate(90deg);flex-shrink:0;"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+    var chevronSvg = '<svg class="term-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="transition:transform 0.2s ease;transform:rotate(90deg);"><polyline points="9 18 15 12 9 6"></polyline></svg>';
 
     card.innerHTML =
         '<div class="term-header" onclick="toggleTermCard(this)">' +
             '<span class="term-status-icon">' + headerIcon + '</span>' +
-            '<span class="term-title">Run in terminal</span>' +
+            '<span class="term-title"><span class="term-title-text">' + titleText + '</span></span>' +
+            badgeHtml +
             exitCodeHtml +
             chevronSvg +
         '</div>' +
@@ -6939,7 +7020,8 @@ function buildTerminalCard(command, output, status, exitCode, cardId) {
         '</div>' +
         (outputHtml || '') +
         '<div class="term-footer">' +
-            '<button class="term-view-btn" onclick="event.stopPropagation();openTerminalPanel()">' +
+            '<span></span>' +
+            '<button class="term-view-btn" onclick="event.stopPropagation();openTerminalPanel(\'' + esc + '\')">' +
                 '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" ' +
                     'stroke="currentColor" stroke-width="2">' +
                     '<polyline points="15 3 21 3 21 9"/>' +
@@ -7024,19 +7106,42 @@ function updateTerminalCard(cardId, status, exitCode, output) {
     card.className = 'term-card term-' + status;
     card.dataset.status = status;
 
+    // Update status icon
     var iconEl = card.querySelector('.term-status-icon');
     if (iconEl) {
-        if (status === 'success') iconEl.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>';
-        if (status === 'error')   iconEl.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
+        if (status === 'success') iconEl.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+        if (status === 'error')   iconEl.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
     }
 
+    // Update title text
+    var titleTextEl = card.querySelector('.term-title-text');
+    if (titleTextEl) {
+        titleTextEl.textContent = (status === 'running') ? 'Running in terminal' : 'Run in terminal';
+    }
+
+    // Update badge
+    var badgeEl = card.querySelector('.term-badge');
+    if (status === 'success') {
+        if (badgeEl) { badgeEl.className = 'term-badge term-badge-done'; badgeEl.textContent = 'Done'; }
+        else {
+            var b = document.createElement('span');
+            b.className = 'term-badge term-badge-done'; b.textContent = 'Done';
+            var chevron = card.querySelector('.term-chevron');
+            if (chevron) card.querySelector('.term-header').insertBefore(b, chevron);
+        }
+    } else if (status === 'error') {
+        if (badgeEl) { badgeEl.className = 'term-badge term-badge-failed'; badgeEl.textContent = 'Failed'; }
+    }
+
+    // Update exit code
     if (status === 'error' && exitCode !== undefined) {
-        var titleEl = card.querySelector('.term-title');
-        if (titleEl && !card.querySelector('.term-exit-code')) {
+        var existingExit = card.querySelector('.term-exit-code');
+        if (!existingExit) {
             var exitEl = document.createElement('span');
             exitEl.className = 'term-exit-code';
-            exitEl.textContent = 'Exit Code: ' + exitCode;
-            titleEl.insertAdjacentElement('afterend', exitEl);
+            exitEl.textContent = 'Exit ' + exitCode;
+            var chevronEl = card.querySelector('.term-chevron');
+            if (chevronEl) card.querySelector('.term-header').insertBefore(exitEl, chevronEl);
         }
     }
 
@@ -7045,16 +7150,13 @@ function updateTerminalCard(cardId, status, exitCode, output) {
         var existingOutput = document.getElementById(outputId);
         if (existingOutput) {
             existingOutput.querySelector('.term-output-text').textContent = output;
-            // Make sure it's visible (card may be expanded)
             if (card.dataset.expanded !== 'false') existingOutput.style.display = 'block';
         } else {
             var outputDiv = document.createElement('div');
             outputDiv.className = 'term-output-body';
             outputDiv.id = outputId;
-            // Show if card is expanded, hide if collapsed
             outputDiv.style.display = card.dataset.expanded === 'false' ? 'none' : 'block';
             outputDiv.innerHTML = '<pre class="term-output-text">' + escapeHtml(output) + '</pre>';
-            // Insert before footer so layout stays correct
             var footer = card.querySelector('.term-footer');
             if (footer) card.insertBefore(outputDiv, footer);
             else card.appendChild(outputDiv);
@@ -7062,11 +7164,177 @@ function updateTerminalCard(cardId, status, exitCode, output) {
     }
 }
 
-function openTerminalPanel() {
-    if (window.bridge && bridge.on_open_terminal) {
-        bridge.on_open_terminal();
-    } else if (window.showTerminal) {
-        window.showTerminal();
+function openTerminalPanel(command) {
+    if (command && command.trim()) {
+        // Open terminal AND send the command to it
+        if (window.bridge && bridge.on_run_in_terminal) {
+            bridge.on_run_in_terminal(command);
+        } else if (window.bridge && bridge.on_open_terminal) {
+            bridge.on_open_terminal();
+        } else if (window.showTerminal) {
+            window.showTerminal();
+        }
+        // Show notification above the input box
+        _showTerminalSentNotification(command);
+    } else {
+        // Just open terminal panel
+        if (window.bridge && bridge.on_open_terminal) {
+            bridge.on_open_terminal();
+        } else if (window.showTerminal) {
+            window.showTerminal();
+        }
+    }
+}
+
+// Show a small notification bar above the chat input when a command
+// is sent to the terminal via "View in terminal".
+var _termNotifyTimer = null;
+function _showTerminalSentNotification(command) {
+    var el = document.getElementById('terminal-notify');
+    if (!el) return;
+
+    // Truncate for display
+    var displayCmd = command.length > 60 ? command.slice(0, 57) + '...' : command;
+
+    el.innerHTML =
+        '<svg class="tn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'
+            + '<polyline points="15 3 21 3 21 9"/>'
+            + '<path d="M21 3L9 15"/>'
+            + '<polyline points="9 21 3 21 3 15"/>'
+        + '</svg>'
+        + '<span>Sent to terminal:&nbsp;</span>'
+        + '<span class="tn-cmd">' + escapeHtml(displayCmd) + '</span>'
+        + '<button class="tn-dismiss" onclick="_dismissTerminalNotify()" title="Dismiss">&times;</button>';
+
+    el.style.display = 'flex';
+
+    // Auto-dismiss after 4 seconds
+    if (_termNotifyTimer) clearTimeout(_termNotifyTimer);
+    _termNotifyTimer = setTimeout(_dismissTerminalNotify, 4000);
+}
+
+function _dismissTerminalNotify() {
+    var el = document.getElementById('terminal-notify');
+    if (el) el.style.display = 'none';
+    if (_termNotifyTimer) { clearTimeout(_termNotifyTimer); _termNotifyTimer = null; }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// DANGEROUS-COMMAND PERMISSION CARD
+// Shown in the chat when the AI agent wants to run a destructive
+// command (rm -rf, git reset --hard, etc.).
+// ─────────────────────────────────────────────────────────────────
+
+var _currentPermissionCardId = null;
+
+/**
+ * Called from Python (via runJavaScript) when the agent is about to
+ * run a dangerous command and needs user approval.
+ *
+ * @param {string} command     The full command string
+ * @param {string} warning     Human-readable risk note
+ * @param {Array}  files       Array of affected path strings
+ */
+window.showPermissionCard = function(command, warning, files) {
+    if (!Array.isArray(files)) {
+        try { files = JSON.parse(files); } catch(e) { files = []; }
+    }
+
+    var cardId = 'perm-card-' + Date.now();
+    _currentPermissionCardId = cardId;
+
+    // Determine operation type from command for display label
+    var opType = 'MODIFY';
+    var cmdLower = command.toLowerCase();
+    if (/\brm\b|\bdel\b|Remove-Item|rmdir/i.test(command))  opType = 'DELETE';
+    else if (/\bgit\s+reset|git\s+clean|git\s+push.*force/i.test(command)) opType = 'GIT';
+    else if (/\bdrop\b|\btruncate\b/i.test(command))         opType = 'DROP';
+
+    // Build file rows
+    var fileRowsHtml = '';
+    if (files && files.length) {
+        files.forEach(function(f) {
+            var name = f.split(/[\/\\]/).pop() || f;
+            fileRowsHtml +=
+                '<div class="perm-file-row">'
+                    + '<svg class="perm-file-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'
+                        + '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>'
+                        + '<polyline points="14 2 14 8 20 8"/>'
+                    + '</svg>'
+                    + '<span class="perm-file-name">' + escapeHtml(name) + '</span>'
+                    + '<span class="perm-file-badge perm-badge-' + opType.toLowerCase() + '">'
+                        + opType
+                    + '</span>'
+                + '</div>';
+        });
+    }
+
+    // Build card HTML (matches screenshot design)
+    var shortCmd = command.length > 70 ? command.slice(0, 67) + '...' : command;
+    var html =
+        '<div class="perm-card" id="' + cardId + '">'
+            + '<div class="perm-header">'
+                + '<svg class="perm-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'
+                    + '<polyline points="3 6 5 6 21 6"/>'
+                    + '<path d="M19 6l-1 14H6L5 6"/>'
+                    + '<path d="M10 11v6"/><path d="M14 11v6"/>'
+                    + '<path d="M9 6V4h6v2"/>'
+                + '</svg>'
+                + '<span class="perm-question">' + escapeHtml(_permissionLabel(command)) + '</span>'
+                + '<div class="perm-btns">'
+                    + '<button class="perm-btn perm-reject" onclick="respondPermission(\'' + cardId + '\', \'reject\')">Reject</button>'
+                    + '<button class="perm-btn perm-accept" onclick="respondPermission(\'' + cardId + '\', \'accept\')">Accept</button>'
+                + '</div>'
+            + '</div>'
+            + (fileRowsHtml ? '<div class="perm-files">' + fileRowsHtml + '</div>' : '')
+            + '<div class="perm-warning">' + escapeHtml(warning) + '</div>'
+        + '</div>';
+
+    // Inject as an AI message
+    var messages = document.getElementById('chatMessages');
+    if (messages) {
+        var wrapper = document.createElement('div');
+        wrapper.className = 'message-bubble assistant';
+        wrapper.innerHTML = html;
+        messages.appendChild(wrapper);
+        messages.scrollTop = messages.scrollHeight;
+    }
+};
+
+/** Convert a command string into a brief question label. */
+function _permissionLabel(cmd) {
+    if (/\brm\b|\bdel\b|Remove-Item|rmdir/i.test(cmd))       return 'Delete files?';
+    if (/git\s+reset\s+--hard/i.test(cmd))                    return 'Discard uncommitted changes?';
+    if (/git\s+push.*--force/i.test(cmd))                     return 'Force-push (may overwrite remote)?';
+    if (/git\s+clean/i.test(cmd))                             return 'Remove untracked files?';
+    if (/\b(DROP|TRUNCATE)\s+(TABLE|DATABASE)/i.test(cmd))    return 'Drop database objects?';
+    return 'Run potentially dangerous command?';
+}
+
+/**
+ * Called by the Accept / Reject buttons on the permission card.
+ * Hides the card and notifies Python.
+ */
+function respondPermission(cardId, decision) {
+    var card = document.getElementById(cardId);
+    if (card) {
+        // Disable buttons to prevent double-click
+        card.querySelectorAll('.perm-btn').forEach(function(b) { b.disabled = true; });
+
+        // Update visual state
+        var isAccept = (decision === 'accept');
+        var label = card.querySelector('.perm-question');
+        if (label) {
+            label.textContent = isAccept ? '\u2713 Accepted' : '\u2715 Rejected';
+        }
+        var btnsEl = card.querySelector('.perm-btns');
+        if (btnsEl) btnsEl.style.display = 'none';
+        card.classList.add(isAccept ? 'perm-accepted' : 'perm-rejected');
+    }
+
+    // Notify Python bridge
+    if (window.bridge && bridge.on_permission_respond) {
+        bridge.on_permission_respond(decision);
     }
 }
 
@@ -7103,12 +7371,13 @@ function updateTodos(todos, mainTask) {
     var existingIds = new Set(currentTodoList.map(function(t) { return t.id; }));
     var newTodos = todos.filter(function(t) { return !existingIds.has(t.id); });
     
-    // Update status of existing todos if changed
+    // Update status and text of existing todos if changed
     todos.forEach(function(todo) {
         var existing = currentTodoList.find(function(t) { return t.id === todo.id; });
         if (existing) {
             existing.status = todo.status;
             existing.content = todo.content;
+            if (todo.activeForm) existing.activeForm = todo.activeForm;
         }
     });
     
@@ -7122,23 +7391,35 @@ function updateTodos(todos, mainTask) {
     var completed = currentTodoList.filter(function(t) { return t.status === 'COMPLETE'; }).length;
     if (countEl) countEl.textContent = completed + '/' + total;
 
+    // Preview: prefer the currently-active item's activeForm, then first non-done
     if (previewEl) {
+        var activeItem  = currentTodoList.find(function(t) { return t.status === 'IN_PROGRESS'; });
         var firstPending = currentTodoList.find(function(t) {
             return t.status !== 'COMPLETE' && t.status !== 'CANCELLED';
         });
-        previewEl.textContent = (firstPending || currentTodoList[0]).content;
+        var previewItem = activeItem || firstPending || currentTodoList[0];
+        var previewText = (previewItem.status === 'IN_PROGRESS' && previewItem.activeForm)
+            ? previewItem.activeForm
+            : previewItem.content;
+        previewEl.textContent = previewText;
     }
 
     list.innerHTML = '';
     currentTodoList.forEach(function(todo) {
         var item = document.createElement('div');
-        var statusCls = 'todo-' + todo.status.toLowerCase().replace('_', '');
+        // COMPLETE → todo-complete, IN_PROGRESS → todo-inprogress, PENDING → todo-pending
+        var statusCls = 'todo-' + todo.status.toLowerCase().replace(/_/g, '');
         item.className = 'todo-item ' + statusCls;
         item.dataset.id = todo.id;
 
+        // Show activeForm (present-continuous) while the task is in-progress
+        var displayText = (todo.status === 'IN_PROGRESS' && todo.activeForm)
+            ? todo.activeForm
+            : todo.content;
+
         var iconHtml = buildTodoIcon(todo.status);
         item.innerHTML = iconHtml +
-            '<span class="todo-text">' + escapeHtml(todo.content) + '</span>';
+            '<span class="todo-text">' + escapeHtml(displayText) + '</span>';
 
         list.appendChild(item);
     });
@@ -7378,7 +7659,9 @@ function showPermissionCard(toolName, details, callback) {
 }
 
 // Expose to Python bridge
-window.showPermissionCard = showPermissionCard;
+// NOTE: window.showPermissionCard is already set above (line ~7238) with the
+// correct (command, warning, files) signature used by the Python bridge.
+// DO NOT override it here.
 
 
 // -- INTERACTIVE QUESTION SUPPORT (STOP-AND-WAIT PIPELINE) ----------
@@ -7666,7 +7949,7 @@ window.permissionRemember = {};
  * @param {string} requestId - The permission request ID
  * @param {string} html - The HTML content of the permission card
  */
-window.showPermissionCard = function(requestId, html) {
+window._showPermissionCardLegacy = function(requestId, html) {
     console.log('[Permission] Showing permission card:', requestId);
     
     // Create message container

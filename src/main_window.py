@@ -788,6 +788,7 @@ class CortexMainWindow(QMainWindow):
         self._ai_chat.accept_file_edit_requested.connect(self._on_accept_file_edit)
         self._ai_chat.reject_file_edit_requested.connect(self._on_reject_file_edit)
         self._ai_chat.open_terminal_requested.connect(self._show_terminal_panel)
+        self._ai_chat.run_in_terminal_requested.connect(self._show_terminal_and_run)
         self._ai_chat.set_code_context_callback(self._get_code_context)
         # load_full_chat_requested is handled internally by AIChatWidget now
         self._ai_chat.toggle_autogen_requested.connect(self._on_toggle_autogen)
@@ -1470,6 +1471,9 @@ class CortexMainWindow(QMainWindow):
         self._ai_agent.thinking_stopped.connect(self._ai_chat.hide_thinking)
         self._ai_agent.todos_updated.connect(self._ai_chat.update_todos)
         self._ai_agent.tool_summary_ready.connect(self._ai_chat.show_tool_summary)
+        # Permission gate: agent → chat UI shows card; user response → agent continues
+        self._ai_agent.permission_requested.connect(self._ai_chat._on_permission_request)
+        self._ai_chat.permission_decided.connect(self._ai_agent.on_permission_respond)
         
         # Phase 4: TEMPORARILY DISABLED - todo_manager, title_generator were deleted
         # self._todo_manager.task_added.connect(self._on_todo_task_added)
@@ -2991,6 +2995,21 @@ class CortexMainWindow(QMainWindow):
         term = self._current_terminal()
         if term:
             term.setFocus()
+
+    def _show_terminal_and_run(self, command: str):
+        """Show terminal panel and execute command (called from 'View in terminal' with a command)."""
+        self._terminal_tabs.setVisible(True)
+        if self._terminal_tabs.count() == 0:
+            self._new_terminal()
+        # Ensure the terminal panel has a visible height
+        sizes = self._center_splitter.sizes()
+        if len(sizes) > 1 and sizes[1] < 40:
+            self._center_splitter.setSizes([max(100, sizes[0]), 220])
+        term = self._current_terminal()
+        if term:
+            term.setFocus()
+            if command and command.strip():
+                term.execute_command(command.strip())
 
     def _toggle_terminal(self):
         visible = self._terminal_tabs.isVisible()

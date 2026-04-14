@@ -47,6 +47,13 @@ if _AGENT_SRC not in sys.path:
 
 from src.utils.logger import get_logger
 from src.ai.streaming import get_streaming_emitter
+from src.ai.session_task import (
+    SessionTaskRegistry,
+    SessionTaskState,
+    StopTaskError,
+    generate_session_task_id,
+    stop_session_task,
+)
 
 log = get_logger("agent_bridge")
 
@@ -128,6 +135,36 @@ _REAL_GREP_TOOL       = _load_agent_tool("tools.GrepTool.GrepTool",          "Gr
 
 
 # ============================================================
+# IMPORT REAL AbortController from src/agent/src/utils
+# Used to signal running tools when the user presses Stop.
+# ============================================================
+try:
+    from utils.abortController import (
+        AbortController  as _AgentAbortController,
+        create_abort_controller as _create_abort_controller,
+    )
+    _HAS_REAL_ABORT = True
+    log.info("[BRIDGE] Real AbortController loaded from utils.abortController")
+except ImportError as _e:
+    _HAS_REAL_ABORT = False
+    log.warning(f"[BRIDGE] Real AbortController not available: {_e}")
+
+    class _AgentAbortController:  # type: ignore[no-redef]
+        """Minimal fallback — no-op abort."""
+        class signal:
+            aborted = False
+            reason  = None
+            @staticmethod
+            def addEventListener(*a, **kw): pass
+            @staticmethod
+            def removeEventListener(*a, **kw): pass
+        def abort(self, reason=None): pass
+
+    def _create_abort_controller(max_listeners: int = 50) -> "_AgentAbortController":  # type: ignore[misc]
+        return _AgentAbortController()
+
+
+# ============================================================
 # DIFF HOOKS — useDiffData + useDiffInIDE integration
 # ============================================================
 
@@ -174,8 +211,8 @@ class _GlobLimits:
     max_results = 1000
 
 
-class _AbortController:
-    signal = None
+# _AbortController stub removed — CortexToolContext now uses the real
+# AbortController imported from utils.abortController above.
 
 
 class CortexToolContext:
@@ -196,7 +233,7 @@ class CortexToolContext:
             "maxTokens": 50_000,
         }
         self.glob_limits = _GlobLimits()
-        self.abort_controller = _AbortController()
+        self.abort_controller = _create_abort_controller()  # real AbortController; reset per request
         self.dynamic_skill_dir_triggers: set = set()
         self.nested_memory_attachment_triggers: set = set()
         self.user_modified = False
@@ -255,6 +292,65 @@ _STUB_PARENT_MESSAGE = type("_Msg", (), {"uuid": None})()
 # ============================================================
 # BRIDGE-NATIVE TOOLS  (no real agent equivalent exists)
 # ============================================================
+# Destructive-command helpers (used by BridgeBashTool)
+# ============================================================
+
+def _get_destructive_warning(command: str) -> 'Optional[str]':
+    """Return a human-readable warning if the command is destructive, else None."""
+    try:
+        from src.agent.src.tools.BashTool.destructiveCommandWarning import get_destructive_command_warning
+        return get_destructive_command_warning(command)
+    except Exception:
+        pass
+    # Inline fallback: simple regex for the most common dangerous patterns
+    import re as _re
+    PATTERNS = [
+        (_re.compile(r'(^|[;&|]\s*)rm\s+-[a-zA-Z]*[rR]', _re.I), 'Note: may recursively remove files'),
+        (_re.compile(r'(^|[;&|]\s*)rm\s+-[a-zA-Z]*f', _re.I), 'Note: may force-remove files'),
+        (_re.compile(r'(^|[;&|]\s*)rm\s+\S', _re.I), 'Note: may delete files'),
+        (_re.compile(r'(^|[;&|]\s*)rmdir\b', _re.I), 'Note: may remove a directory'),
+        (_re.compile(r'\bdel\b.*\b/[sS]\b', _re.I), 'Note: may delete files recursively (Windows)'),
+        (_re.compile(r'(^|[;&|]\s*)del\b', _re.I), 'Note: may delete files (Windows cmd)'),
+        (_re.compile(r'\bRemove-Item\b.*-Recurse', _re.I), 'Note: may recursively delete files (PowerShell)'),
+        (_re.compile(r'\bRemove-Item\b', _re.I), 'Note: may delete files (PowerShell)'),
+        (_re.compile(r'\bgit\s+reset\s+--hard\b'), 'Note: may discard uncommitted changes'),
+        (_re.compile(r'\bgit\s+push\b.*--force\b'), 'Note: may overwrite remote history'),
+        (_re.compile(r'\b(DROP|TRUNCATE)\s+(TABLE|DATABASE)\b', _re.I), 'Note: may destroy database objects'),
+    ]
+    for pat, msg in PATTERNS:
+        if pat.search(command):
+            return msg
+    return None
+
+
+def _extract_affected_paths(command: str) -> list:
+    """Extract up to 5 path-like arguments from a shell command for display."""
+    import shlex as _shlex
+    import re as _re
+    try:
+        parts = _shlex.split(command)
+    except ValueError:
+        parts = command.split()
+    SKIP = {
+        'rm', 'rmdir', 'del', 'Remove-Item', 'git', 'kubectl', 'terraform',
+        'reset', 'push', 'clean', 'hard', '--hard', '--force', '-rf', '-f',
+        '-r', '-fr', '-Force', '-Recurse', '-Path', '-LiteralPath',
+        'DROP', 'TRUNCATE', 'DELETE', 'FROM', 'TABLE', 'powershell.exe',
+        'powershell', 'cmd', 'cmd.exe',
+    }
+    paths = []
+    for p in parts:
+        if p.startswith('-') or p in SKIP:
+            continue
+        # Accept if it looks like a file/path (contains / \ . or has an extension)
+        if _re.search(r'[/\\.]', p) or _re.search(r'\.[a-z]{1,5}$', p, _re.I):
+            paths.append(p)
+        elif p not in SKIP and len(p) > 1:
+            paths.append(p)
+    return paths[:5]
+
+
+# ============================================================
 
 class BridgeBashTool:
     """
@@ -284,31 +380,98 @@ class BridgeBashTool:
 
     async def execute(self, args: Dict) -> ToolResult:
         import subprocess as _sp
+        import threading as _threading
         command = args.get("command", "")
         timeout = int(args.get("timeout", 30))
         cwd = self._bridge._project_root or os.getcwd()
-        try:
-            proc = _sp.run(
-                command, shell=True,
-                capture_output=True, text=True,
-                cwd=cwd, timeout=timeout,
+
+        # ── Dangerous-command permission gate ────────────────────────────────
+        warning = _get_destructive_warning(command)
+        if warning and not self._bridge._stop_requested:
+            affected = _extract_affected_paths(command)
+            import json as _json
+            # Create a fresh event for this request
+            evt = _threading.Event()
+            self._bridge._permission_event  = evt
+            self._bridge._permission_granted = False
+            self._bridge.permission_requested.emit(
+                command, warning, _json.dumps(affected)
             )
-            output = proc.stdout
-            if proc.stderr:
-                output += f"\n[stderr]\n{proc.stderr}"
+            # Wait without blocking the event loop
+            granted = await asyncio.to_thread(evt.wait, 60.0)  # 60 s timeout
+            self._bridge._permission_event = None
+            if not granted or not self._bridge._permission_granted:
+                return ToolResult(
+                    tool_id="", result=None, success=False,
+                    error="User rejected the command — not executed."
+                )
+        # ───────────────────────────────────────────────────────────────
+
+        proc = None
+        try:
+            if os.name == 'nt':
+                # Windows: use PowerShell so .ps1 scripts execute correctly
+                # (cmd.exe triggers Windows file-association dialog for .ps1).
+                # asyncio.create_subprocess_exec keeps the event loop responsive
+                # so stop/cancel requests are delivered immediately.
+                proc = await asyncio.create_subprocess_exec(
+                    'powershell.exe',
+                    '-ExecutionPolicy', 'Bypass',
+                    '-NonInteractive',
+                    '-Command', command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=cwd,
+                    creationflags=_sp.CREATE_NO_WINDOW,
+                )
+            else:
+                proc = await asyncio.create_subprocess_shell(
+                    command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=cwd,
+                )
+
+            try:
+                stdout_b, stderr_b = await asyncio.wait_for(
+                    proc.communicate(), timeout=timeout
+                )
+            except asyncio.TimeoutError:
+                # Kill the process; communicate() drains remaining I/O
+                try:
+                    proc.kill()
+                    await proc.communicate()
+                except Exception:
+                    pass
+                return ToolResult(tool_id="", result=None, success=False,
+                                  error=f"Command timed out after {timeout}s")
+
+            stdout = (stdout_b.decode('utf-8', errors='replace') if stdout_b else "")
+            stderr = (stderr_b.decode('utf-8', errors='replace') if stderr_b else "")
+            output = stdout
+            if stderr:
+                output += f"\n[stderr]\n{stderr}"
             return ToolResult(
                 tool_id="",
                 result={
                     "command": command,
-                    "stdout": proc.stdout,
-                    "stderr": proc.stderr,
+                    "stdout": stdout,
+                    "stderr": stderr,
                     "returncode": proc.returncode,
                     "output": output or "(no output)",
                 },
             )
-        except _sp.TimeoutExpired:
-            return ToolResult(tool_id="", result=None, success=False,
-                              error=f"Command timed out after {timeout}s")
+
+        except asyncio.CancelledError:
+            # Task was cancelled — kill subprocess so it doesn't linger
+            if proc is not None:
+                try:
+                    proc.kill()
+                    await proc.communicate()
+                except Exception:
+                    pass
+            raise
+
         except Exception as e:
             return ToolResult(tool_id="", result=None, success=False, error=str(e))
 
@@ -493,11 +656,12 @@ def _get_tool_definitions() -> List[Dict]:
 # ============================================================
 
 _TOOL_TO_ACTIVITY_NAME: Dict[str, str] = {
-    "Read":  "read_file",
-    "Write": "write_file",
-    "Edit":  "edit_file",
-    "Bash":  "run_command",
-    "Glob":  "list_directory",
+    "Read":      "read_file",
+    "Write":     "write_file",
+    "Edit":      "edit_file",
+    "Bash":      "run_command",
+    "Glob":      "list_directory",
+    "TodoWrite": "todo_write",
     "Grep":  "search",
     "LS":    "list_directory",
 }
@@ -529,6 +693,10 @@ class AgentWorker(QThread):
         self._stop_req    = False
         self._queue: Optional[asyncio.Queue] = None
         self._loop:  Optional[asyncio.AbstractEventLoop] = None
+        # Tracks the asyncio.Task currently running _handle_chat.
+        # Assigned right after asyncio.create_task(); used by stop_generation()
+        # (via stop_session_task) to cancel mid-execution.
+        self._current_chat_task: Optional[asyncio.Task] = None
 
     # ── QThread entry ──────────────────────────────────────────
 
@@ -548,22 +716,126 @@ class AgentWorker(QThread):
     # ── Message queue ──────────────────────────────────────────
 
     async def _process_queue(self):
+        """
+        Event loop for the agent worker thread.
+
+        Architecture (converted from LocalMainSessionTask.ts startBackgroundSession):
+          - Each chat message creates a cancellable asyncio.Task (_handle_chat).
+          - While the task runs we concurrently watch the queue for a stop/new-chat
+            message using asyncio.wait(FIRST_COMPLETED).  This is the Python
+            equivalent of the TS AbortController.abort() / kill() pattern —
+            CancelledError propagates through every await in the call chain,
+            including mid-tool-execution.
+          - Only _is_running=False (set by AgentWorker.stop()) exits the outer loop.
+        """
         self._queue = asyncio.Queue()
-        while self._is_running and not self._stop_req:
+
+        while self._is_running:
+            # ── Phase 1: Wait for the next queued message ─────────────────────
             try:
                 msg = await asyncio.wait_for(self._queue.get(), timeout=0.1)
-                await self._dispatch(msg)
             except asyncio.TimeoutError:
                 continue
             except Exception as exc:
                 log.error(f"[WORKER] Queue error: {exc}")
                 self.error_occurred.emit(str(exc))
+                continue
 
-    async def _dispatch(self, msg: Dict):
-        if msg.get("type") == "chat":
-            await self._handle_chat(msg)
-        elif msg.get("type") == "stop":
-            self._stop_req = True
+            if msg.get("type") == "stop":
+                # stop_generation() already called task.cancel() via
+                # stop_session_task(); this message is just a queue flush.
+                log.info("[WORKER] Stop message received (task cancel already in flight)")
+                continue
+
+            if msg.get("type") != "chat":
+                continue
+
+            # ── Phase 2: Run the chat task (cancellable) ──────────────────────
+            self._current_chat_task = asyncio.create_task(
+                self._handle_chat(msg)
+            )
+
+            # Register the asyncio.Task in the session registry so that
+            # stop_session_task() (called from the Qt main thread) can cancel it.
+            task_id = msg.get("task_id")
+            if task_id:
+                ts = self.bridge._task_registry.get(task_id)
+                if ts:
+                    ts.asyncio_task = self._current_chat_task
+
+            # ── Phase 3: Concurrently watch task + queue ──────────────────────
+            # Mirrors the TS pattern: the running query holds an AbortSignal;
+            # a stop command triggers abort() → CancelledError here.
+            while self._is_running and not self._current_chat_task.done():
+                get_fut: asyncio.Task = asyncio.ensure_future(self._queue.get())
+                try:
+                    done, _ = await asyncio.wait(
+                        {get_fut, self._current_chat_task},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                except Exception as exc:
+                    get_fut.cancel()
+                    log.error(f"[WORKER] asyncio.wait error: {exc}")
+                    break
+
+                # ── Task finished naturally ────────────────────────────────
+                if self._current_chat_task in done:
+                    get_fut.cancel()
+                    break
+
+                # ── New queue message arrived while task running ───────────
+                if get_fut in done:
+                    try:
+                        next_msg = get_fut.result()
+                    except Exception:
+                        continue
+
+                    if next_msg.get("type") == "stop":
+                        log.info(
+                            "[WORKER] Stop message received while running — "
+                            "cancelling chat task"
+                        )
+                        await self._cancel_active_task()
+                        break
+
+                    elif next_msg.get("type") == "chat":
+                        # New prompt arrived before the old one finished.
+                        # Cancel old, then re-queue the new message so the
+                        # outer loop starts it fresh.
+                        log.info(
+                            "[WORKER] New chat arrived while running — "
+                            "cancelling old task and re-queuing new one"
+                        )
+                        await self._cancel_active_task()
+                        await self._queue.put(next_msg)
+                        break
+                    # else: ignore unknown message types while running
+
+            # ── Phase 4: Await final cleanup ──────────────────────────────────
+            if (
+                self._current_chat_task is not None
+                and not self._current_chat_task.done()
+            ):
+                try:
+                    await self._current_chat_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            self._current_chat_task = None
+
+    async def _cancel_active_task(self) -> None:
+        """Cancel the current chat asyncio.Task and wait for cleanup."""
+        task = self._current_chat_task
+        if task is None or task.done():
+            self._current_chat_task = None
+            return
+        log.info("[WORKER] Cancelling active chat task")
+        task.cancel()
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=5.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+            pass
+        self._current_chat_task = None
+        log.info("[WORKER] Active chat task cancelled")
 
     async def _handle_chat(self, msg: Dict):
         self.thinking_started.emit()
@@ -573,11 +845,20 @@ class AgentWorker(QThread):
                 msg.get("context", {}),
                 msg.get("images", []),
             )
-            if response:
+            # Only emit if the response wasn't cut short by a stop request
+            if response and not self.bridge._stop_requested:
                 self.response_ready.emit(response)
+        except asyncio.CancelledError:
+            # Task was cancelled via asyncio.Task.cancel() from stop_session_task().
+            # This is an intentional stop — do NOT emit error_occurred.
+            log.info("[WORKER] Chat task cancelled (CancelledError) — stop was requested")
+            raise  # Re-raise so asyncio correctly marks the task as cancelled
         except Exception as exc:
-            log.error(f"[WORKER] Chat error: {exc}")
-            self.error_occurred.emit(str(exc))
+            if not self.bridge._stop_requested:
+                log.error(f"[WORKER] Chat error: {exc}")
+                self.error_occurred.emit(str(exc))
+            else:
+                log.info(f"[WORKER] Exception during stopped chat (suppressed): {exc}")
         finally:
             self.thinking_stopped.emit()
 
@@ -626,6 +907,9 @@ class CortexAgentBridge(QObject):
     todos_updated           = pyqtSignal(list, str)
     tool_summary_ready      = pyqtSignal(dict)
     user_question_requested = pyqtSignal(str, list)
+    # Permission request — emitted before a dangerous bash command runs.
+    # JS shows an Accept/Reject card; Python waits via threading.Event.
+    permission_requested = pyqtSignal(str, str, str)  # command, warning, files_json
 
     # ── Internal state ──────────────────────────────────────────
     def __init__(self, **kwargs):
@@ -639,7 +923,15 @@ class CortexAgentBridge(QObject):
         self._interaction_mode: str = "default"
         self._conversation_history: List[ChatMessage] = []
         self._enhancement_data: Dict = {}
-        self._streaming     = None
+        self._streaming      = None
+        self._current_todos:  List = []   # Persisted todo list for TodoWrite
+        self._stop_requested: bool = False  # Set to interrupt the streaming loop
+        # Permission gate — used by BridgeBashTool to pause until user accepts/rejects
+        self._permission_event: 'threading.Event' = None   # lazily created
+        self._permission_granted: bool = False
+        # Session task registry — converted from AppStateStore.ts tasks map.
+        # Tracks the active asyncio.Task for proper cancellation on stop.
+        self._task_registry: SessionTaskRegistry = SessionTaskRegistry()
 
         log.info("[BRIDGE] Initialising Cortex Agent Bridge")
 
@@ -892,6 +1184,13 @@ Example: LS(path="src/")
                 for chunk in provider.chat_stream(
                     messages, model=model, max_tokens=8000, tools=tool_defs
                 ):
+                    # Respect a stop request from the user — break out of the stream
+                    if self._stop_requested:
+                        log.info("[BRIDGE] Stream interrupted by stop request")
+                        break
+                    # Yield to the event loop so stop/cancel signals are delivered
+                    # between streaming chunks (chat_stream is a sync generator).
+                    await asyncio.sleep(0)
                     if isinstance(chunk, str) and chunk.startswith("__TOOL_CALL_DELTA__:"):
                         delta_list = json.loads(chunk[20:])
                         for td in delta_list:
@@ -908,6 +1207,11 @@ Example: LS(path="src/")
                         turn_text    += chunk
                         full_response += chunk
                         self.response_chunk.emit(chunk)
+
+                # If stop was requested, abort the entire agentic loop immediately
+                if self._stop_requested:
+                    log.info("[BRIDGE] Agentic loop aborted by stop request")
+                    break
 
                 # Assemble pending tool calls
                 pending = []
@@ -986,6 +1290,10 @@ Example: LS(path="src/")
                     batches.append(current_parallel)
 
                 for batch in batches:
+                    # Check stop before each tool batch — fast exit if cancelled
+                    if self._stop_requested:
+                        log.info("[BRIDGE] Tool batch skipped — stop requested")
+                        break
                     if len(batch) == 1:
                         # Single tool — run directly
                         t_name, t_id, t_args = batch[0]
@@ -999,14 +1307,22 @@ Example: LS(path="src/")
                             for t_name, t_id, t_args in batch
                         ]
                         await asyncio.gather(*tasks)
+                    # Check stop after each tool batch too
+                    if self._stop_requested:
+                        log.info("[BRIDGE] Aborting remaining tool batches — stop requested")
+                        break
 
                 log.info(f"[BRIDGE] Tool results sent — continuing to turn {turn + 2}")
+                # Emit a paragraph break before the next turn's text so the UI
+                # doesn't run the continuation sentence directly onto the previous
+                # turn's last word (e.g. "fix this.Now let me check...").
+                self.response_chunk.emit("\n\n")
 
             return full_response
 
         except Exception as exc:
             log.error(f"[BRIDGE] _call_llm failed: {exc}", exc_info=True)
-            return f"Error: {exc}"
+            raise  # Let _handle_chat route this through error_occurred → onError in JS
 
     async def _execute_single_tool(
         self, tool_name: str, tool_id: str, args: Dict,
@@ -1021,7 +1337,11 @@ Example: LS(path="src/")
             if not os.path.isabs(fpath) and self._project_root:
                 fpath = os.path.join(self._project_root, fpath)
             activity = "create_file" if not os.path.exists(fpath) else "write_file"
-        self.tool_activity.emit(activity, json.dumps(args)[:500], "running")
+
+        # TodoWrite is a silent background tool — no tool-activity card in UI
+        _silent = (tool_name == "TodoWrite")
+        if not _silent:
+            self.tool_activity.emit(activity, json.dumps(args)[:500], "running")
 
         result = await self._dispatch_tool(tool_name, tool_id, args)
 
@@ -1033,10 +1353,12 @@ Example: LS(path="src/")
             )
             # Bash tool: use larger truncation so output shows in UI card
             ui_limit = 2000 if tool_name == "Bash" else 500
-            self.tool_activity.emit(activity, result_str[:ui_limit], "complete")
+            if not _silent:
+                self.tool_activity.emit(activity, result_str[:ui_limit], "complete")
         else:
             result_str = f"Error: {result.error}"
-            self.tool_activity.emit(activity, result_str[:500], "error")
+            if not _silent:
+                self.tool_activity.emit(activity, result_str[:500], "error")
 
         # Feed result back to LLM
         messages.append(
@@ -1083,6 +1405,8 @@ Example: LS(path="src/")
                 result = await self._ls_tool.execute(args)
                 result.tool_id = tool_id
                 return result
+            elif tool_name == "TodoWrite":
+                return await self._dispatch_todo_write(tool_id, args)
             else:
                 return ToolResult(tool_id=tool_id, result=None, success=False,
                                   error=f"Unknown tool: {tool_name!r}")
@@ -1314,6 +1638,36 @@ Example: LS(path="src/")
             "pattern": pattern, "matches": output or "(no matches)",
         })
 
+    async def _dispatch_todo_write(self, tool_id: str, args: Dict) -> ToolResult:
+        """
+        Handle the TodoWrite agent tool.
+
+        Stores the current todo list on the bridge and emits `todos_updated`
+        so the UI panel refreshes in real time.
+        """
+        todos = args.get("todos", [])
+
+        # If every item is completed/cancelled, treat the list as cleared
+        all_done = bool(todos) and all(
+            t.get("status") in ("completed", "cancelled") for t in todos
+        )
+
+        old_todos = list(self._current_todos)
+        new_todos = todos  # keep full list so UI shows completed state briefly
+
+        self._current_todos = [] if all_done else list(new_todos)
+
+        # Emit to update_todos() in ai_chat.py → window.updateTodos() in JS
+        self.todos_updated.emit(new_todos, "")
+
+        log.info(f"[TODO] TodoWrite dispatched: {len(new_todos)} items, all_done={all_done}")
+
+        return ToolResult(tool_id=tool_id, result={
+            "oldTodos": old_todos,
+            "newTodos": new_todos,
+            "allDone":  all_done,
+        })
+
     # ── Worker signal handlers ─────────────────────────────────
 
     def _on_response_ready(self, response: str):
@@ -1340,7 +1694,25 @@ Example: LS(path="src/")
 
     def process_message(self, message: str, images: List[str] = None):
         """Entry point: called by ai_chat.py when the user sends a message."""
-        log.info(f"[BRIDGE] process_message: {message[:80]}...")
+        self._stop_requested = False  # Clear any previous stop before handling new request
+        # Fresh AbortController so tools from the previous (aborted) request can't
+        # accidentally cancel this new one.
+        self._tool_ctx.abort_controller = _create_abort_controller()
+
+        # Generate a unique task ID for this request.
+        # Converted from LocalMainSessionTask.ts generateMainSessionTaskId().
+        task_id = generate_session_task_id()
+        log.info(f"[BRIDGE] process_message task_id={task_id}: {message[:80]}...")
+
+        # Register the task in the registry.  The asyncio.Task is set later
+        # by the worker thread (after asyncio.create_task in _process_queue).
+        self._task_registry.register(
+            SessionTaskState(
+                task_id=task_id,
+                description=message[:100],
+                abort_controller=self._tool_ctx.abort_controller,
+            )
+        )
 
         # Save user turn to history
         self._conversation_history.append(
@@ -1352,14 +1724,48 @@ Example: LS(path="src/")
             "content": message,
             "images":  images or [],
             "context": {
+                **self._enhancement_data,
                 "active_file": self._active_file,
                 "cursor_pos":  self._cursor_pos,
             },
+            "task_id": task_id,   # Passed to worker so it can link asyncio.Task
         })
 
     def stop_generation(self):
         log.info("[BRIDGE] stop_generation")
+        self._stop_requested = True          # Interrupt the streaming loop immediately
+
+        # If a permission gate is open, deny it automatically on stop
+        if self._permission_event is not None and not self._permission_event.is_set():
+            self._permission_granted = False
+            self._permission_event.set()
+
+        # Use stop_session_task() to cancel the asyncio.Task via task.cancel().
+        # Converted from stopTask.ts stopTask() → taskImpl.kill().
+        # CancelledError propagates through ALL awaits in the call chain,
+        # including mid-tool-execution — no polling required.
+        active = self._task_registry.get_active()
+        if active:
+            try:
+                stop_session_task(active.task_id, self._task_registry)
+            except StopTaskError as exc:
+                log.info(f"[BRIDGE] StopTaskError (expected if task not started): {exc}")
+
+        # Also queue a stop message so the worker's inner asyncio.wait loop
+        # (Phase 3 of _process_queue) wakes up and processes the cancellation.
         self._worker.queue_message({"type": "stop"})
+
+    def on_permission_respond(self, decision: str):
+        """Called when user clicks Accept or Reject on a permission card.
+        decision: 'accept' or 'reject'
+        """
+        import threading as _threading
+        log.info(f"[BRIDGE] Permission response: {decision}")
+        self._permission_granted = (decision == 'accept')
+        if self._permission_event is not None:
+            # _permission_event may have been created in the async worker thread.
+            # threading.Event.set() is always thread-safe.
+            self._permission_event.set()
 
     def set_project_root(self, path: str):
         self._project_root = path
