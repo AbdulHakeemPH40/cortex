@@ -7,6 +7,7 @@ import os
 import sys
 import platform
 from pathlib import Path
+from typing import Optional
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSplitter,
     QTabWidget, QLabel, QPushButton, QStatusBar, QFileDialog,
@@ -24,10 +25,13 @@ from src.core.project_manager import ProjectManager
 from src.core.file_manager import FileManager
 from src.core.session_manager import SessionManager
 from src.core.codebase_index import get_codebase_index
-# TEMPORARILY COMMENTED - Will be replaced with OpenHands SDK integration
-# from src.ai.agent import AIAgent
-from src.ai.stub_agent import get_stub_agent as AIAgent  # Temporary stub
-# from src.ai.code_analyzer import CodeAnalyzer
+# Agent bridge - connects Cortex to agent module
+try:
+    from src.ai.agent_bridge import get_agent_bridge as AIAgent
+    HAS_AGENT_BRIDGE = True
+except ImportError:
+    from src.ai.stub_agent import get_stub_agent as AIAgent  # Fallback stub
+    HAS_AGENT_BRIDGE = False
 
 
 class CodeAnalyzer:
@@ -592,9 +596,12 @@ class CortexMainWindow(QMainWindow):
         self._git_manager = GitManager()
         log.info("[GIT] GitManager initialized")
         
-        # TEMPORARY: Using stub agent until OpenHands SDK integration
+        # Agent bridge connects Cortex to agent module
         self._ai_agent = AIAgent(file_manager=self._file_manager)
-        log.info("[AGENT] Stub agent initialized - awaiting OpenHands SDK")
+        if HAS_AGENT_BRIDGE:
+            log.info("[AGENT] Agent bridge initialized - full integration active")
+        else:
+            log.info("[AGENT] Stub agent initialized - bridge not available")
         
         # Phase 1, 2, 3 Integration: TEMPORARILY DISABLED
         # log.info("[INIT] Initializing Phase 1, 2, 3 components...")
@@ -755,7 +762,7 @@ class CortexMainWindow(QMainWindow):
         self._terminal_tabs.setDocumentMode(True)
         self._terminal_tabs.setMovable(True)
         self._terminal_tabs.setVisible(True)
-        self._terminal_tabs.setMinimumHeight(240)
+        self._terminal_tabs.setMinimumHeight(120)
         self._terminal_tabs.tabCloseRequested.connect(self._close_terminal_tab)
         
         # Add a single terminal (VISIBLE on startup)
@@ -796,7 +803,7 @@ class CortexMainWindow(QMainWindow):
         # Splitter sizes for 3 panels: sidebar | editor | AI chat
         # VS Code-like defaults: sidebar ~300, AI chat ~350, editor gets the rest
         sidebar_w = 300
-        right_w = 350
+        right_w = 475
         total_w = (self._settings.get("window", "width") or 1400)
         center_w = max(300, total_w - sidebar_w - right_w)
         self._main_splitter.setSizes([sidebar_w, center_w, right_w])
@@ -1455,6 +1462,7 @@ class CortexMainWindow(QMainWindow):
         # self._ai_agent.file_edited_diff.connect(self._file_tracker.add_edit)
         self._ai_agent.file_edited_diff.connect(self._on_file_edited_diff_for_js)
         self._ai_agent.file_edited_diff.connect(self._on_inline_edit_diff)
+        self._ai_agent.file_edited_diff.connect(self._ai_chat.on_file_edited_diff)  # populate Changed Files panel with +/- counts
         self._ai_agent.tool_activity.connect(self._ai_chat.show_tool_activity)
         self._ai_agent.directory_contents.connect(self._ai_chat.show_directory_contents)
         self._ai_agent.directory_contents.connect(self._on_directory_contents_for_tree)
@@ -1508,6 +1516,19 @@ class CortexMainWindow(QMainWindow):
         
         # Connect AI Agent back to UI for interactive questions
         self._ai_agent.user_question_requested.connect(self._on_ai_question_requested)
+
+        # ========== CortexDiffBridge: wire accept/reject signals ==========
+        # This connects useDiffInIDE.py's CortexDiffBridge to Cortex's FEC card
+        # accept/reject signals so the agent can await user confirmation of edits.
+        try:
+            import importlib as _il
+            _diff_ide_mod = _il.import_module("agent.src.hooks.useDiffInIDE")
+            _cdb = _diff_ide_mod.CortexDiffBridge.instance()
+            _cdb.register_accept_signal(self._ai_chat.accept_file_edit_requested)
+            _cdb.register_reject_signal(self._ai_chat.reject_file_edit_requested)
+            log.info("[CortexDiffBridge] Accept/Reject signals wired")
+        except Exception as _cdb_err:
+            log.warning(f"[CortexDiffBridge] Signal wiring skipped: {_cdb_err}")
 
         # Terminal tab changes
         self._terminal_tabs.currentChanged.connect(self._on_terminal_tab_changed)
@@ -2289,50 +2310,99 @@ class CortexMainWindow(QMainWindow):
             log.info(f"Navigated to line {line_number} in {file_path}")
 
     def _on_accept_file_edit(self, file_path: str):
-        """Handle user accepting a file edit from the chat UI."""
+        """Accept AI edit — the file is already written to disk, just acknowledge."""
         if file_path == "__ALL__":
             self._on_accept_all_files()
             return
-        # Normalize path (convert forward slashes to backslashes on Windows)
         file_path = os.path.normpath(file_path)
-        log.info(f"User accepted file edit: {file_path}")
-        
-        # For new files (type "C"), we need to create them first
-        edit_info = self._file_tracker.get_edit(file_path)
-        if edit_info and edit_info.edit_type == "C":
-            # This is a newly created file - write it to disk first
-            from pathlib import Path
-            path = Path(file_path)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                path.write_text(edit_info.new_content, encoding="utf-8")
-                log.info(f"Created new file: {file_path}")
-            except Exception as e:
-                log.error(f"Failed to create file: {e}")
-                self.statusBar().showMessage(f"✗ Failed to create {path.name}", 3000)
-                return
-        
-        # Open the file in editor
+        log.info(f"[Accept] User accepted edit: {file_path}")
+
+        # Open/refresh the file in the editor so the user sees the accepted state
         self._open_file(file_path)
-        # Future: Could add to git staging or show success notification
         self.statusBar().showMessage(f"✓ Accepted changes to {Path(file_path).name}", 3000)
-        # Remove from sidebar panel
+
+        # Clean up tracking state
+        if hasattr(self, '_diff_data_store'):
+            norm = os.path.normcase(file_path)
+            self._diff_data_store.pop(file_path, None)
+            self._diff_data_store.pop(norm, None)
+        if hasattr(self, '_file_snapshots'):
+            self._file_snapshots.pop(file_path, None)
+
         self._sidebar.remove_changed_file(file_path)
 
     def _on_reject_file_edit(self, file_path: str):
-        """Handle user rejecting a file edit from the chat UI."""
+        """Reject AI edit — write original content back to disk and reload editor."""
         if file_path == "__ALL__":
             self._on_reject_all_files()
             return
-        # Normalize path (convert forward slashes to backslashes on Windows)
         file_path = os.path.normpath(file_path)
-        log.info(f"User rejected file edit: {file_path}")
-        # Open the file in editor for review
-        self._open_file(file_path)
-        # Future: Could restore from pre-edit snapshot
-        self.statusBar().showMessage(f"✗ Rejected changes to {Path(file_path).name} - review file", 5000)
-        # Remove from sidebar panel
+        log.info(f"[Reject] User rejected edit: {file_path}")
+
+        original = self._get_original_content(file_path)
+
+        if original is not None:
+            try:
+                Path(file_path).write_text(original, encoding='utf-8')
+                log.info(f"[Reject] Reverted {file_path} ({len(original)} chars)")
+            except Exception as e:
+                log.error(f"[Reject] Failed to revert {file_path}: {e}")
+                self.statusBar().showMessage(f"✗ Revert failed for {Path(file_path).name}: {e}", 5000)
+                return
+
+            # Reload in editor so editor shows the reverted content
+            self._open_file(file_path)
+            self.statusBar().showMessage(f"↩ Reverted {Path(file_path).name} to original", 3000)
+        else:
+            # No original found — just open the file so user can review manually
+            log.warning(f"[Reject] No original content for {file_path} — opening for review")
+            self._open_file(file_path)
+            self.statusBar().showMessage(
+                f"⚠ No original content found for {Path(file_path).name} — review manually", 5000
+            )
+
+        # Clean up tracking state
+        if hasattr(self, '_diff_data_store'):
+            norm = os.path.normcase(file_path)
+            self._diff_data_store.pop(file_path, None)
+            self._diff_data_store.pop(norm, None)
+        if hasattr(self, '_file_snapshots'):
+            self._file_snapshots.pop(file_path, None)
+
         self._sidebar.remove_changed_file(file_path)
+
+    def _get_original_content(self, file_path: str) -> Optional[str]:
+        """
+        Look up the original (pre-AI-edit) content for a file.
+        Priority: _diff_data_store → _file_snapshots → diff_cache.json
+        """
+        norm = os.path.normcase(os.path.normpath(file_path))
+
+        # 1. In-memory diff store (most reliable — set by _on_file_edited_diff_for_js)
+        if hasattr(self, '_diff_data_store'):
+            for key, (original, _modified) in self._diff_data_store.items():
+                if os.path.normcase(os.path.normpath(key)) == norm:
+                    if original:  # empty string means new file
+                        return original
+
+        # 2. File snapshot taken when file was first opened
+        if hasattr(self, '_file_snapshots'):
+            for key, content in self._file_snapshots.items():
+                if os.path.normcase(os.path.normpath(key)) == norm:
+                    return content
+
+        # 3. Persisted diff cache
+        try:
+            cache = self._load_diff_cache()
+            for key, entry in cache.items():
+                if os.path.normcase(os.path.normpath(key)) == norm:
+                    orig = entry.get('original', '')
+                    if orig:
+                        return orig
+        except Exception:
+            pass
+
+        return None
     
     def _on_load_full_chat_requested(self, conversation_id: str):
         """Load full chat messages from SQLite database."""
@@ -2361,15 +2431,49 @@ class CortexMainWindow(QMainWindow):
             )
 
     def _on_accept_all_files(self):
-        """Handle user accepting all pending file edits."""
-        log.info("User accepted all file edits")
+        """Accept all pending AI edits — files already on disk, just clean up state."""
+        log.info("[Accept All] User accepted all file edits")
+        # Refresh each tracked file in editor
+        for file_path in list(getattr(self, '_diff_data_store', {}).keys()):
+            try:
+                norm = os.path.normpath(file_path)
+                if os.path.isfile(norm):
+                    self._open_file(norm)
+            except Exception:
+                pass
+        if hasattr(self, '_diff_data_store'):
+            self._diff_data_store.clear()
+        if hasattr(self, '_file_snapshots'):
+            self._file_snapshots.clear()
         self.statusBar().showMessage("✓ Accepted all changes", 3000)
         self._sidebar.clear_changed_files()
 
     def _on_reject_all_files(self):
-        """Handle user rejecting all pending file edits."""
-        log.info("User rejected all file edits")
-        self.statusBar().showMessage("✗ Rejected all changes - review files", 5000)
+        """Reject all pending AI edits — revert each file to its original content."""
+        log.info("[Reject All] User rejected all file edits")
+        reverted, failed = 0, 0
+        for file_path in list(getattr(self, '_diff_data_store', {}).keys()):
+            try:
+                norm = os.path.normpath(file_path)
+                original = self._get_original_content(norm)
+                if original is not None and os.path.isfile(norm):
+                    Path(norm).write_text(original, encoding='utf-8')
+                    self._open_file(norm)
+                    reverted += 1
+                    log.info(f"[Reject All] Reverted {norm}")
+                else:
+                    failed += 1
+            except Exception as e:
+                log.error(f"[Reject All] Failed to revert {file_path}: {e}")
+                failed += 1
+        if hasattr(self, '_diff_data_store'):
+            self._diff_data_store.clear()
+        if hasattr(self, '_file_snapshots'):
+            self._file_snapshots.clear()
+        msg = f"↩ Reverted {reverted} file(s)"
+        if failed:
+            msg += f" ({failed} could not be reverted)"
+        self.statusBar().showMessage(msg, 5000)
         self._sidebar.clear_changed_files()
 
     def _on_code_copied(self, text: str, file_path: str, start_line: int, end_line: int):
@@ -2534,7 +2638,9 @@ class CortexMainWindow(QMainWindow):
                     break
         
         if approved:
-            self._ai_integration.grant_permission(request_id, scope, remember)
+            # Use _ai_agent instead of removed _ai_integration
+            if hasattr(self._ai_agent, 'grant_permission'):
+                self._ai_agent.grant_permission(request_id, scope, remember)
             
             # If we found the matching tool_call_id, trigger user_responded with "allow"
             if tool_call_id_match:
@@ -2542,9 +2648,11 @@ class CortexMainWindow(QMainWindow):
                 if remember:
                     response_str = f"always:{scope}" if scope else "always"
                 log.info(f"Auto-responding to pending tool: {tool_call_id_match} with {response_str}")
-                self._ai_agent.user_responded(tool_call_id_match, response_str)
+                self._ai_agent.user_responded(response_str)
         else:
-            self._ai_integration.deny_permission(request_id, "User denied via UI")
+            # Use _ai_agent instead of removed _ai_integration
+            if hasattr(self._ai_agent, 'deny_permission'):
+                self._ai_agent.deny_permission(request_id, "User denied via UI")
             
             # If we found the matching tool_call_id, trigger user_responded with "deny"
             if tool_call_id_match:
@@ -3755,12 +3863,9 @@ class CortexMainWindow(QMainWindow):
 
         full_context = "\n\n".join(context)
         
-        # NEW: Set session for AI Integration Layer
-        session_id = getattr(self._ai_chat, '_current_conversation_id', 'default-session')
-        self._ai_integration.set_session(
-            session_id=session_id,
-            workspace_path=self._project_manager.root
-        )
+        # NOTE: _ai_integration was removed - using _ai_agent directly
+        # session_id = getattr(self._ai_chat, '_current_conversation_id', 'default-session')
+        # self._ai_integration.set_session(...)  # Removed - not needed
         
         # Start AI processing immediately for responsiveness
         # But wait - we need to see if enhancement layer (Intent/Routing) is fast enough

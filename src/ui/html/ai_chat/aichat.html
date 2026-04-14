@@ -648,12 +648,12 @@
       /* CLEAN PERMISSION CARD - Windsurf Style */
       
       .permission-card {
-          background: var(--bg-secondary, #1a1a1a);
-          border: 1px solid var(--border-primary, #2a2a2a);
-          border-radius: 12px;
-          padding: 16px;
-          margin: 12px 0;
-          animation: fadeIn 0.3s ease;
+          background: #161618;
+          border: 1px solid rgba(255, 255, 255, 0.07);
+          border-radius: 8px;
+          padding: 14px;
+          margin: 10px 0;
+          animation: fadeIn 0.2s ease;
           position: relative;
           z-index: 10000;
           display: block;
@@ -1390,23 +1390,24 @@
           to { opacity: 1; transform: translateY(0); }
       }
       
-      /* --- AI Thinking Animation (Cursor/Windsurf style) --- */
+      /* --- AI Thinking Animation (Clean minimal) --- */
       .thinking-message {
           display: flex;
           align-items: center;
-          gap: 16px;
-          padding: 16px 20px;
-          margin: 12px 0;
-          background: transparent;
-          border-left: 3px solid var(--accent-blue, #3b82f6);
-          animation: fadeIn 0.3s ease;
+          gap: 14px;
+          padding: 14px 16px;
+          margin: 10px 0;
+          background: #161618;
+          border: 1px solid rgba(255, 255, 255, 0.07);
+          border-radius: 8px;
+          animation: fadeIn 0.2s ease;
       }
       
       /* Pulsing Orb Animation */
       .thinking-orb {
           position: relative;
-          width: 32px;
-          height: 32px;
+          width: 28px;
+          height: 28px;
           flex-shrink: 0;
       }
       
@@ -1415,11 +1416,10 @@
           top: 50%;
           left: 50%;
           transform: translate(-50%, -50%);
-          width: 12px;
-          height: 12px;
+          width: 10px;
+          height: 10px;
           background: var(--accent-blue, #3b82f6);
           border-radius: 50%;
-          box-shadow: 0 0 12px var(--accent-blue, #3b82f6);
           animation: orbPulse 1.5s ease-in-out infinite;
       }
       
@@ -1430,9 +1430,9 @@
           transform: translate(-50%, -50%);
           width: 100%;
           height: 100%;
-          border: 2px solid var(--accent-blue, #3b82f6);
+          border: 1.5px solid var(--accent-blue, #3b82f6);
           border-radius: 50%;
-          opacity: 0.4;
+          opacity: 0.3;
           animation: orbRipple 2s ease-out infinite;
       }
       
@@ -1460,14 +1460,25 @@
       
       .thinking-title {
           font-weight: 500;
-          font-size: 14px;
-          color: var(--text-main, #e5e5e5);
+          font-size: 13px;
+          letter-spacing: -0.1px;
+          color: #d0d0d8;
+          animation: silverWaveThink 1.8s ease-in-out infinite;
+      }
+      
+      @keyframes silverWaveThink {
+          0%   { opacity: 0.5; color: #909098; }
+          25%  { opacity: 0.85; color: #c8c8d0; }
+          50%  { opacity: 1; color: #f0f0f4; }
+          75%  { opacity: 0.85; color: #c8c8d0; }
+          100% { opacity: 0.5; color: #909098; }
       }
       
       .thinking-subtitle {
-          font-size: 12px;
-          color: var(--text-secondary, #a3a3a3);
-          animation: textPulse 2s ease-in-out infinite;
+          font-size: 11.5px;
+          color: #8a8a92;
+          animation: silverWaveThink 2.2s ease-in-out infinite;
+          animation-delay: 0.3s;
       }
       
       @keyframes textPulse {
@@ -1483,13 +1494,13 @@
       
       /* Timer with pulse animation */
       .thinking-timer {
-          font-size: 13px;
-          font-weight: 600;
-          color: var(--accent-blue, #3b82f6);
-          animation: timerPulse 1s ease-in-out infinite;
+          font-size: 12px;
+          font-weight: 500;
+          color: var(--text-dim, #666);
           font-variant-numeric: tabular-nums;
-          min-width: 40px;
+          min-width: 30px;
           text-align: right;
+          opacity: 0.6;
       }
       
       @keyframes timerPulse {
@@ -2833,7 +2844,7 @@
                         </div>
                     </div>
                 </div>
-                <div class="cfs-body" id="cfs-body" style="display:none;">
+                <div class="cfs-body" id="cfs-body">
                     <div class="cfs-list" id="cfs-list"></div>
                 </div>
             </div>

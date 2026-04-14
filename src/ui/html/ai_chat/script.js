@@ -1725,6 +1725,7 @@ function loadChat(id) {
             }
         });
         _refreshCfsHeader();
+        _cfsShowAndExpand(); // ensure body is visible after restore
     }
     
     // Restore todos if present
@@ -1968,6 +1969,12 @@ function appendMessage(text, sender, shouldSave) {
         }
         // Ensure we never set undefined
         content.innerHTML = parsedHtml || text || '';
+        
+        // Style ⊙Thought · Xs patterns from DeepSeek reasoning output
+        content.innerHTML = content.innerHTML.replace(
+            /([\u2299⊙]Thought\s*[·\xB7]\s*\d+s)/g,
+            '<span class="thought-timer">$1</span>'
+        );
 
         bubble.appendChild(content);
         
@@ -2120,9 +2127,8 @@ function showThinkingAnimation() {
             <div class="thinking-orb-core"></div>
         </div>
         <div class="thinking-content">
-            <span class="thinking-title">Cortex is working</span>
+            <span class="thinking-title">Working</span>
             <span class="thinking-subtitle" id="thinking-main-text">Analyzing your request...</span>
-            <span class="thinking-status" id="thinking-status" style="font-size: 11px; color: #666; margin-top: 4px; display: block;"></span>
         </div>
         <span class="thinking-timer" id="thinking-timer">0s</span>
     `;
@@ -2263,15 +2269,16 @@ function renderPermissionBlock(permData) {
     card.className = 'permission-card';
     
     card.innerHTML = `
-        <div class="permission-header">Tool Execution</div>
-        <div class="permission-tool">
-            <span class="tool-icon">${getToolIcon(toolName)}</span>
-            <span class="tool-name">${escapeHtml(toolName)}</span>
-            <span class="tool-info">${escapeHtml(toolInfo)}</span>
+        <div class="permission-header" style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+            <span style="display:inline-flex;align-items:center;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;background:rgba(139,92,246,0.12);color:#a78bfa;border:1px solid rgba(139,92,246,0.2);">${getToolIcon(toolName)}</span>
+            <span style="font-weight:500;font-size:13px;color:var(--text-main);">${escapeHtml(toolName)}</span>
         </div>
-        <div class="permission-actions">
-            <button class="permission-allow" onclick="handlePermissionAllow()">Allow</button>
-            <button class="permission-deny" onclick="handlePermissionDeny()">Deny</button>
+        <div class="permission-tool" style="font-family:'Geist Mono','JetBrains Mono',monospace;font-size:11.5px;color:var(--text-secondary);background:#111113;padding:8px 12px;border-radius:6px;border:1px solid rgba(255,255,255,0.05);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+            ${escapeHtml(toolInfo)}
+        </div>
+        <div class="permission-actions" style="display:flex;gap:8px;margin-top:10px;">
+            <button class="permission-allow" onclick="handlePermissionAllow()" style="background:var(--green);color:#fff;padding:5px 14px;border-radius:6px;font-size:11px;font-weight:600;border:none;cursor:pointer;transition:all 0.15s;">Allow</button>
+            <button class="permission-deny" onclick="handlePermissionDeny()" style="background:rgba(255,255,255,0.06);color:var(--text-secondary);padding:5px 14px;border-radius:6px;font-size:11px;font-weight:500;border:1px solid rgba(255,255,255,0.08);cursor:pointer;transition:all 0.15s;">Deny</button>
         </div>
     `;
     
@@ -2405,14 +2412,31 @@ function showToolActivity(type, info, status) {
     var container = document.getElementById('chatMessages');
     if (!container) return;
 
+    // When any real tool action starts, freeze/stop the Think indicator
+    // so Think and tool actions never show as simultaneously active
+    if (status === 'running') {
+        hideThinking();
+    }
+
     // Update thinking indicator with current activity
     var statusEl = document.getElementById('thinking-status');
     if (statusEl) {
         var activityText = '';
-        if (type === 'read_file') activityText = 'Reading: ' + info;
-        else if (type === 'list_directory') activityText = 'Exploring: ' + info;
-        else if (type === 'run_command') activityText = 'Running: ' + info;
-        else if (type === 'git_status') activityText = 'Checking git status...';
+        // Helper: extract readable label from JSON info string
+        var _parseInfoLabel = function(raw) {
+            if (!raw) return '';
+            if (raw.trim().startsWith('{')) {
+                try {
+                    var p = JSON.parse(raw);
+                    return p.command || p.file_path || p.path || raw;
+                } catch(e) {}
+            }
+            return raw;
+        };
+        if (type === 'read_file')      activityText = 'Reading: '   + _parseInfoLabel(info);
+        else if (type === 'list_directory') activityText = 'Exploring: ' + _parseInfoLabel(info);
+        else if (type === 'run_command')    activityText = 'Running: '   + _parseInfoLabel(info);
+        else if (type === 'git_status')     activityText = 'Checking git status...';
         else activityText = type + '...';
         statusEl.textContent = activityText;
     }
@@ -2438,17 +2462,51 @@ function showToolActivity(type, info, status) {
             currentAssistantMessage.appendChild(cardsEl);
         }
 
-        // Parse file path from info (e.g., "hakeem.html (200 lines)")
-        var filePath = info ? info.split(' ')[0] : '';
+        // Parse file path from info - robust extraction for Python dict / JSON / plain string
+        var filePath = '';
+        var rawInfo = info || '';
+        // 1) Regex-first: match 'path': '...' or "path": "..." (handles all Python dict formats)
+        var reMatch = rawInfo.match(/['"](?:path|PATH|file|FILE)['"]\s*:\s*['"]([^'"]+)['"]/i);
+        if (reMatch) {
+            filePath = reMatch[1];
+        } else {
+            // 2) JSON / Python dict parse
+            var parsedFec = null;
+            try { parsedFec = JSON.parse(rawInfo); } catch(e) {
+                try {
+                    parsedFec = JSON.parse(rawInfo.replace(/'/g,'"').replace(/True/g,'true').replace(/False/g,'false').replace(/None/g,'null'));
+                } catch(e2) {}
+            }
+            if (parsedFec) {
+                var pv = parsedFec.path || (parsedFec.PATH && (parsedFec.PATH.path || parsedFec.PATH)) || parsedFec.file || null;
+                if (pv && typeof pv === 'string') filePath = pv;
+            }
+        }
+        if (!filePath) filePath = rawInfo.split(' ')[0]; // last fallback: first word
         
-        // Check if card already exists for this file
-        var existingCard = cardsEl.querySelector('[data-path*="' + filePath + '"]');
+        // Check if card already exists - match by data-path containing the resolved filename
+        var existingCard = null;
+        var allCards = cardsEl.querySelectorAll('.fec[data-path]');
+        var fileNameResolved = filePath ? filePath.split('/').pop().split('\\').pop() : '';
+        for (var ci = 0; ci < allCards.length; ci++) {
+            var cp = allCards[ci].dataset.path || '';
+            var cpName = cp.split('/').pop().split('\\').pop();
+            if (cpName && fileNameResolved && cpName === fileNameResolved && allCards[ci].dataset.status !== 'applied') {
+                existingCard = allCards[ci];
+                break;
+            }
+        }
         if (existingCard) {
-            // Update existing card status
+            // Update existing pending card → show OK
             if (status === 'complete') {
                 existingCard.classList.remove('fec-pending');
                 existingCard.classList.add('fec-applied');
                 existingCard.dataset.status = 'applied';
+                var rightEl = existingCard.querySelector('.fec-right');
+                if (rightEl) rightEl.innerHTML = '<span class="fec-status-text fec-status-applied">OK</span>';
+                // Also freeze the action label text (stop implying ongoing)
+                var labelEl = existingCard.querySelector('.fec-action-label');
+                if (labelEl) labelEl.style.opacity = '0.4';
             }
         } else {
             // Create new file activity card
@@ -2458,23 +2516,31 @@ function showToolActivity(type, info, status) {
             card.dataset.status = status === 'running' ? 'pending' : 'applied';
             
             var fileName = filePath ? filePath.split('/').pop().split('\\').pop() : 'unknown';
-            var ext = fileName ? fileName.split('.').pop().toLowerCase() : 'default';
+            var ext = (fileName && fileName.includes('.')) ? fileName.split('.').pop().toLowerCase() : '';
             var extClass = 'fec-ext-' + (ext || 'default');
-            
-            var icon = type === 'read_file' ? 'READ' : type === 'edit_file' ? 'EDIT' : 'NEW';
-            var actionText = type === 'read_file' ? 'Reading' : type === 'edit_file' ? 'Editing' : 'Creating';
-            
-            card.innerHTML = 
+
+            // Action label + icon per type
+            var actionLabel = type === 'read_file' ? 'Reading'
+                           : type === 'edit_file'  ? 'Editing'
+                           : type === 'create_file' ? 'Creating'
+                           : 'Writing';
+            var actionColor = type === 'read_file'  ? '#60a5fa'
+                           : type === 'edit_file'   ? '#fbbf24'
+                           : type === 'create_file' ? '#a78bfa'
+                           : '#4ade80';
+
+            var escapedPath = filePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            card.innerHTML =
                 '<div class="fec-left">' +
-                    '<span class="fec-ext-badge ' + extClass + '">' + ext.toUpperCase() + '</span>' +
-                    '<button class="fec-name" onclick="openFileInEditor(\'' + filePath.replace(/'/g, "\\'") + '\')">' +
-                        fileName +
+                    '<span class="fec-ext-badge ' + extClass + '">' + (ext ? ext.toUpperCase() : 'FILE') + '</span>' +
+                    '<button class="fec-name" onclick="openFileInEditor(\'' + escapedPath + '\')">'+
+                        escapeHtml(fileName) +
                     '</button>' +
-                    '<span style="color:#666;margin-left:8px;font-size:11px;">' + actionText + '</span>' +
+                    '<span class="fec-action-label" style="font-size:11px;color:' + actionColor + ';margin-left:8px;opacity:0.7;">' + actionLabel + '</span>' +
                 '</div>' +
                 '<div class="fec-right">' +
-                    (status === 'running' ? 
-                        '<span class="fec-status-text fec-status-pending">...</span>' :
+                    (status === 'running' ?
+                        '<span style="width:10px;height:10px;border:1.5px solid transparent;border-top-color:' + actionColor + ';border-radius:50%;display:inline-block;animation:spin 0.8s linear infinite;"></span>' :
                         '<span class="fec-status-text fec-status-applied">OK</span>'
                     ) +
                 '</div>';
@@ -2510,17 +2576,33 @@ function showToolActivity(type, info, status) {
         if (status === 'running') {
             var cardId = 'term-cmd-' + Date.now();
             currentAssistantMessage.dataset.lastTermCardId = cardId;
-            var card = buildTerminalCard(info, '', 'running', null, cardId);
+            // Parse actual command from info JSON: {"command": "...", "timeout": N}
+            var cmdStr = info;
+            try {
+                var infoObj = JSON.parse(info);
+                if (infoObj.command) cmdStr = infoObj.command;
+            } catch(e) {}
+            var card = buildTerminalCard(cmdStr, '', 'running', null, cardId);
             cardsEl.appendChild(card);
         } else {
             var lastId = currentAssistantMessage.dataset.lastTermCardId;
             if (lastId) {
-                updateTerminalCard(
-                    lastId,
-                    status === 'error' ? 'error' : 'success',
-                    status === 'error' ? 1 : 0,
-                    ''
-                );
+                var termSt   = status === 'error' ? 'error' : 'success';
+                var termExit = 0;
+                var termOut  = '';
+                // Parse output from result JSON: {"command":..., "stdout":..., "returncode":..., "output":...}
+                try {
+                    var resObj = JSON.parse(info);
+                    if (resObj.output)         termOut  = resObj.output;
+                    else if (resObj.stdout)    termOut  = resObj.stdout + (resObj.stderr ? '\n[stderr]\n' + resObj.stderr : '');
+                    if (resObj.returncode !== undefined && resObj.returncode !== 0) {
+                        termExit = resObj.returncode;
+                        termSt   = 'error';
+                    }
+                } catch(e) {
+                    termOut = info || '';
+                }
+                updateTerminalCard(lastId, termSt, termExit, termOut);
             }
         }
 
@@ -2543,7 +2625,7 @@ function showToolActivity(type, info, status) {
         // Create collapsible header
         var header = document.createElement('div');
         header.className = 'activity-header';
-        header.innerHTML = '<span class="activity-icon running">?</span> <span class="activity-title">Exploring</span> <span class="activity-toggle">?</span>';
+        header.innerHTML = '<span class="activity-icon running"><span class="todo-spinner" style="width:10px;height:10px;"></span></span> <span class="activity-title">Exploring</span> <svg class="activity-toggle" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>';
         header.style.cursor = 'pointer';
         
         // Click handler for toggle
@@ -2553,7 +2635,8 @@ function showToolActivity(type, info, status) {
             var isCollapsed = section.classList.toggle('collapsed');
             var toggle = this.querySelector('.activity-toggle');
             if (toggle) {
-                toggle.textContent = isCollapsed ? '?' : '?';
+                toggle.style.transform = isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
+                toggle.style.transition = 'transform 0.2s ease';
             }
         };
         
@@ -2570,15 +2653,18 @@ function showToolActivity(type, info, status) {
     var list = currentActivitySection.querySelector('.activity-list');
     if (!list) return;
     
-    // Check if this item already exists (match by type and base filename)
+    // Check if this item already exists (match by type and resolved path)
     var existingItem = null;
     var items = list.querySelectorAll('.activity-item');
-    var baseInfo = info.split(' ')[0].split('(')[0]; // Get base filename without extras
+    // Extract base path from info using same regex used in fec card
+    var reMatchAct = info ? info.match(/['"]((?:path|PATH|file|FILE))['"]\s*:\s*['"]([^'"]+)['"]/i) : null;
+    var baseInfo = reMatchAct ? reMatchAct[2].split(/[\\/]/).pop() : (info || '').split(' ')[0].split('(')[0];
     
     for (var i = 0; i < items.length; i++) {
         var itemType = items[i].getAttribute('data-type');
         var itemInfo = items[i].getAttribute('data-info');
-        var itemBaseInfo = itemInfo ? itemInfo.split(' ')[0].split('(')[0] : '';
+        var reMatchItem = itemInfo ? itemInfo.match(/['"]((?:path|PATH|file|FILE))['"]\s*:\s*['"]([^'"]+)['"]/i) : null;
+        var itemBaseInfo = reMatchItem ? reMatchItem[2].split(/[\\/]/).pop() : (itemInfo || '').split(' ')[0].split('(')[0];
         
         // Match by type and base filename
         if (itemType === type && baseInfo && itemBaseInfo && 
@@ -2627,8 +2713,9 @@ function showToolActivity(type, info, status) {
         
         var icon = getFileIcon(type, info);
         var label = formatActivityLabel(type, info, status);
+        var opBadge = getActivityOpBadge(type);
         
-        item.innerHTML = icon + '<span class="activity-text">' + label + '</span>';
+        item.innerHTML = opBadge + icon + '<span class="activity-text">' + label + '</span>';
         
         if (status === 'complete') {
             var badge = getStatusBadge(type, info);
@@ -2659,7 +2746,7 @@ function showToolActivity(type, info, status) {
     if (status === 'complete') {
         var iconEl = currentActivitySection.querySelector('.activity-icon');
         if (iconEl) {
-            iconEl.textContent = 'Done';
+            iconEl.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color:#4ade80;"><polyline points="20 6 9 17 4 12"></polyline></svg>';
             iconEl.className = 'activity-icon complete';
         }
     }
@@ -2832,9 +2919,9 @@ function getFileIcon(type, info) {
             'create_dir': '<span class="file-icon folder">DIR</span>',
             'delete': '<span class="file-icon delete">DEL</span>',
             'delete_dir': '<span class="file-icon delete">DEL</span>',
-            'move': '<span class="file-icon move">?</span>',
-            'copy': '<span class=\"file-icon copy\">COPY</span>',
-            'rename': '<span class="file-icon rename">?</span>'
+            'move': '<span class="file-icon move">MOV</span>',
+            'copy': '<span class="file-icon copy">COPY</span>',
+            'rename': '<span class="file-icon rename">REN</span>'
         };
         return icons[opType] || '<span class="file-icon terminal">RUN</span>';
     }
@@ -2879,7 +2966,48 @@ function formatActivityLabel(type, info, status) {
     var labelText = isEdit ? 'Editing...' : (isCreate ? 'Creating...' : (isDelete ? 'Deleting...' : 'Running'));
     var runningPrefix = status === 'running' ? '<span class="running-label">' + labelText + '</span> ' : '';
     
-    var displayInfo = escapeHtml(info);
+    // --- Parse JSON/Python-dict args to extract human-readable display info ---
+    var displayInfo = info;
+    var parsed = null;
+    try {
+        // First: try standard JSON parse
+        parsed = JSON.parse(info);
+    } catch(e1) {
+        try {
+            // Second: convert Python dict repr (single quotes) to JSON
+            var jsonStr = info
+                .replace(/'/g, '"')
+                .replace(/True/g, 'true')
+                .replace(/False/g, 'false')
+                .replace(/None/g, 'null');
+            parsed = JSON.parse(jsonStr);
+        } catch(e2) {
+            // Not parseable - use raw string
+        }
+    }
+    if (parsed) {
+        // Handle nested: {"PATH":{"path":"file"}} or {"path":"file"}
+        var pathVal = parsed.path || (parsed.PATH && (parsed.PATH.path || parsed.PATH)) || parsed.file || null;
+        if (pathVal && typeof pathVal === 'string') {
+            displayInfo = pathVal.replace(/\\/g, '/').split('/').pop() || pathVal;
+        } else if (parsed.pattern) {
+            displayInfo = parsed.pattern;
+        } else if (parsed.command) {
+            displayInfo = parsed.command;
+        } else if (parsed.entries && Array.isArray(parsed.entries)) {
+            var dir = parsed.path || '.';
+            displayInfo = dir.replace(/\\/g, '/').split('/').pop() || dir;
+            displayInfo += ' (' + parsed.entries.length + ' items)';
+        } else {
+            var keys = Object.keys(parsed);
+            if (keys.length === 1) {
+                var v = parsed[keys[0]];
+                if (typeof v === 'string') displayInfo = v.replace(/\\/g, '/').split('/').pop() || v;
+            }
+        }
+    }
+    
+    displayInfo = escapeHtml(displayInfo);
     
     // Parse +X -Y pattern if present
     var diffMatch = displayInfo.match(/\+(\d+)\s-(\d+)$/);
@@ -2898,20 +3026,20 @@ function formatActivityLabel(type, info, status) {
         return status === 'running' ? runningPrefix + displayInfo : displayInfo + checkmark;
     }
     if (isCreate) {
-        var action = type === 'create_directory' ? 'Created directory' : 'Created file';
+        var action = type === 'create_directory' ? 'Created dir' : 'Created file';
         return status === 'running' ? runningPrefix + displayInfo : action + ' ' + displayInfo + ' Done';
     }
     if (isDelete) {
-        var action = type === 'delete_directory' ? 'Deleted directory' : 'Deleted file';
+        var action = type === 'delete_directory' ? 'Deleted dir' : 'Deleted file';
         return status === 'running' ? runningPrefix + displayInfo : action + ' ' + displayInfo + ' Done';
     }
     if (type === 'list_directory') {
-        return status === 'running' ? 'Exploring ' + displayInfo : 'Exploring ' + displayInfo;
+        return status === 'running' ? 'Exploring ' + displayInfo : 'Explored ' + displayInfo;
     }
     if (type === 'run_command') {
-        return runningPrefix + '<code>' + displayInfo + '</code>' + (status === 'complete' ? ' ?' : '');
+        return runningPrefix + '<code>' + displayInfo + '</code>' + (status === 'complete' ? ' Done' : '');
     }
-    if (type === 'search_code') {
+    if (type === 'search_code' || type === 'grep_code' || type === 'search') {
         return 'Grepped code <code>' + displayInfo + '</code>';
     }
     if (type === 'git_status') {
@@ -2939,6 +3067,34 @@ function getStatusBadge(type, info) {
     return '';
 }
 
+// Returns the animated operation badge pill for an activity item type
+function getActivityOpBadge(type) {
+    var label = '';
+    switch (type) {
+        case 'read_file':       label = 'Read';    break;
+        case 'edit_file':
+        case 'write_file':
+        case 'inject_after':
+        case 'add_import':      label = 'Edit';    break;
+        case 'create_file':     label = 'Create';  break;
+        case 'create_directory':label = 'Create';  break;
+        case 'delete_file':
+        case 'delete_directory':label = 'Delete';  break;
+        case 'list_directory':  label = 'Explore'; break;
+        case 'search':
+        case 'grep_code':
+        case 'search_files':
+        case 'search_codebase': label = 'Search';  break;
+        case 'run_command':     label = 'Run';     break;
+        default:
+            if (type && type.startsWith('terminal')) label = 'Run';
+            break;
+    }
+    if (!label) return '';
+    return '<span class="activity-op">' + label + '</span>';
+}
+
+
 // Render directory contents HTML (used for both live display and restoration)
 function renderDirectoryContents(path, contents) {
     var container = document.getElementById('chatMessages');
@@ -2947,74 +3103,89 @@ function renderDirectoryContents(path, contents) {
     var lines = contents.split('\n').filter(function(l) { return l.trim(); });
     if (lines.length === 0) return;
     
-    // Create a simple file list container (no header, no full path)
-    var list = document.createElement('div');
-    list.className = 'simple-file-list';
-    list.style.cssText = 'margin: 8px 0; padding: 8px 12px; background: var(--bg-secondary, #1e1e2e); border-radius: 6px; border: 1px solid var(--border-color, #3d3d5c);';
-    
     // Normalize base path
     var basePath = path.replace(/\\/g, '/');
     if (!basePath.endsWith('/')) basePath += '/';
     
+    // Get short folder name for display
+    var shortPath = basePath.replace(/\/$/, '').split('/').pop() || basePath;
+    
+    // Create card-container structure — starts COLLAPSED; user can expand
+    var card = document.createElement('div');
+    card.className = 'dir-tree-card';  // no 'expanded' — collapsed by default
+    
+    // Card header with chevron + folder name
+    var header = document.createElement('div');
+    header.className = 'card-header';
+    header.innerHTML = 
+        '<svg class="card-chevron" width="14" height="14" viewBox="0 0 20 20" fill="currentColor" style="transform:rotate(-90deg);transition:transform 0.2s;">' +
+            '<path d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"/>' +
+        '</svg>' +
+        '<span style="display:inline-flex;align-items:center;margin-right:6px;">' + (FILE_ICONS.folder ? FILE_ICONS.folder(14) : '') + '</span>' +
+        '<span class="card-title" style="font-size:13px;color:var(--text-main);font-weight:500;">' + escapeHtml(shortPath) + '</span>' +
+        '<span style="margin-left:auto;font-size:11px;color:var(--text-secondary);">' + lines.length + ' items</span>';
+    
+    header.style.cursor = 'pointer';
+    header.onclick = function(e) {
+        e.stopPropagation();
+        var expanded = card.classList.toggle('expanded');
+        var chev = header.querySelector('.card-chevron');
+        if (chev) chev.style.transform = expanded ? 'rotate(0deg)' : 'rotate(-90deg)';
+    };
+    card.appendChild(header);
+    
+    // Card body with file/folder items
+    var body = document.createElement('div');
+    body.className = 'card-body';
+    
     lines.forEach(function(line) {
         if (!line.trim()) return;
         
-        var item = document.createElement('div');
-        item.style.cssText = 'display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; color: var(--text-secondary, #b0b0b0); cursor: pointer; transition: background 0.15s;';
-        item.onmouseover = function() { this.style.background = 'rgba(255,255,255,0.05)'; };
-        item.onmouseout = function() { this.style.background = 'transparent'; };
-        
-        // Check if it's a folder (ends with / or has ?? in the line from backend)
-        var isFolder = line.includes('??') || line.trim().endsWith('/');
+        // Check if it's a folder
+        var isFolder = line.includes('\uD83D\uDCC1') || line.trim().endsWith('/');
         
         // Extract just the name (remove emoji and size info)
-        var name = line.replace(/[????]/g, '').replace(/\s*\([^)]*\)/g, '').replace(/\s*\d+B$/, '').trim();
+        var name = line.replace(/[\uD83D\uDCC1\uD83D\uDCC4]/g, '').replace(/\s*\([^)]*\)/g, '').replace(/\s*\d+B$/, '').trim();
+        if (isFolder) name = name.replace(/\/$/, '');
+        if (!name) return;
         
-        var icon;
+        var item = document.createElement('div');
+        item.className = 'dir-item';
+        
+        // Get icon
+        var iconHtml;
         if (isFolder) {
-            // Use blue macOS-style folder icon (SVG)
-            icon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z" fill="#4A90D9"/></svg>';
-            // Remove trailing slash from display name
-            name = name.replace(/\/$/, '');
+            iconHtml = FILE_ICONS.folder ? FILE_ICONS.folder(16) : '<span class="file-icon folder">DIR</span>';
+        } else if (name.includes('.')) {
+            var ext = name.split('.').pop().toLowerCase();
+            iconHtml = getFileExtensionIcon(ext);
         } else {
-            // Get file extension for icon
-            if (name.includes('.')) {
-                var ext = name.split('.').pop().toLowerCase();
-                icon = getFileExtensionIcon(ext);
-            } else {
-                icon = 'PAT';
-            }
+            iconHtml = FILE_ICONS.default ? FILE_ICONS.default(16) : '<span class="file-icon">FILE</span>';
         }
         
         // Build full path for click handler
         var fullPath = basePath + name;
         var escapedPath = fullPath.replace(/'/g, "\\'");
         
-        console.log('[DEBUG] renderDirectoryContents - Folder:', name, 'Full path:', fullPath);
-        
-        // Add click handler
         if (isFolder) {
-            item.onclick = function() { 
-                console.log('[DEBUG] Opening folder in explorer:', escapedPath);
-                openFolderInExplorer(escapedPath); 
-            };
+            item.onclick = function() { openFolderInExplorer(escapedPath); };
         } else {
-            item.onclick = function() { 
-                console.log('[DEBUG] Opening file:', escapedPath);
-                openFileInEditor(escapedPath); 
-            };
+            item.onclick = function() { openFileInEditor(escapedPath); };
         }
         
-        var iconSpan = '<span style="font-size: 14px; display: inline-flex; align-items: center;">' + icon + '</span>';
-        item.innerHTML = iconSpan + '<span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + escapeHtml(name) + '</span>';
-        list.appendChild(item);
+        item.innerHTML = 
+            '<span class="dir-item-icon">' + iconHtml + '</span>' +
+            '<span class="dir-item-name">' + escapeHtml(name) + '</span>';
+        body.appendChild(item);
     });
+    
+    card.appendChild(body);
     
     // Append to the current assistant message bubble
     if (currentAssistantMessage) {
-        currentAssistantMessage.appendChild(list);
+        currentAssistantMessage.appendChild(card);
     } else {
-        container.appendChild(list);
+        container.appendChild(card);
     }
     smartScroll(container);
 }
@@ -3133,6 +3304,9 @@ function showThinking() {
     var container = document.getElementById('chatMessages');
     if (!container) return;
 
+    // Hide the standalone thinking-message bubble once real activity starts
+    hideThinkingAnimation();
+
     // Show agent mode indicator with animated Think mode
     if (window.showAgentMode && window.setAgentMode) {
         window.showAgentMode();
@@ -3161,13 +3335,13 @@ function showThinking() {
         var header = document.createElement('div');
         header.className = 'activity-header';
         header.innerHTML =
-            '<svg class="activity-spinner" viewBox="0 0 24 24" width="16" height="16"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2" opacity="0.2"/><path d="M12 2 A 10 10 0 1 1 2 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>' +
-            '<span class="activity-title">Working <span class="activity-mention">@</span></span>' +
-            '<span class="activity-toggle">?</span>';
+            '<svg class="activity-spinner" viewBox="0 0 24 24" width="14" height="14"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2" opacity="0.15"/><path d="M12 2 A 10 10 0 1 1 2 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>' +
+            '<span class="activity-title"><span class="activity-text-shimmer">Working</span></span>' +
+            '<svg class="activity-toggle" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>';
         header.onclick = function() {
             currentActivitySection.classList.toggle('collapsed');
             var t = header.querySelector('.activity-toggle');
-            if (t) t.textContent = currentActivitySection.classList.contains('collapsed') ? '?' : '?';
+            if (t) t.style.transform = currentActivitySection.classList.contains('collapsed') ? 'rotate(-90deg)' : 'rotate(0deg)';
         };
 
         var list = document.createElement('div');
@@ -3198,7 +3372,8 @@ function showThinking() {
     var thinkingItem = document.createElement('div');
     thinkingItem.className = 'activity-item thinking';
     thinkingItem.id = 'thinking-indicator';
-    thinkingItem.innerHTML = '<span class="thinking-dots">...</span> <span class="activity-text">Thinking</span>';
+    thinkingItem.setAttribute('data-type', 'think');
+    thinkingItem.innerHTML = '<span class="activity-op">Think</span><span class="thinking-dots">...</span> <span class="activity-text">Thinking</span>';
     list.appendChild(thinkingItem);
 
     // Update thinking duration every second
@@ -3222,9 +3397,23 @@ function hideThinking() {
     var item = document.getElementById('thinking-indicator');
     if (item) {
         item.removeAttribute('id');             // de-register so no stale id lingers
-        item.className = 'activity-item';       // removes 'thinking' ? stops blink
+        item.className = 'activity-item complete'; // mark complete → stops ALL running animations
         var dotsEl = item.querySelector('.thinking-dots');
-        if (dotsEl) dotsEl.textContent = '.'; // freeze to static bullet
+        if (dotsEl) {
+            dotsEl.textContent = '·';           // freeze to static bullet
+            dotsEl.style.animation = 'none'; // stop dotsWave even if class stays
+            dotsEl.style.opacity = '0.4';
+        }
+        var textEl = item.querySelector('.activity-text');
+        if (textEl) {
+            textEl.style.animation = 'none'; // stop silverWave
+            textEl.style.color = 'var(--text-dim)';
+        }
+        var opEl = item.querySelector('.activity-op');
+        if (opEl) {
+            opEl.style.animation = 'none';   // stop badgePulse
+            opEl.style.opacity = '0.4';
+        }
     }
     
     // Hide agent mode indicator
@@ -3239,6 +3428,90 @@ function clearActivitySection() {
         currentActivitySection.remove();
         currentActivitySection = null;
     }
+}
+
+// Collapse (not remove) the activity section on completion — shows only summary header
+function collapseActivitySection() {
+    if (!currentActivitySection) return;
+
+    var section = currentActivitySection;
+
+    // Count items for summary
+    var items = section.querySelectorAll('.activity-item');
+    var total = items.length;
+
+    // Build summary label  e.g. "Explored  · 3 steps"
+    var reads = 0, edits = 0, explores = 0, thoughts = 0, searches = 0;
+    items.forEach(function(it) {
+        var t = it.getAttribute('data-type') || '';
+        if (t === 'read_file') reads++;
+        else if (t === 'edit_file' || t === 'write_file') edits++;
+        else if (t === 'list_directory') explores++;
+        else if (t === 'think' || it.classList.contains('thinking')) thoughts++;
+        else if (t === 'search_code' || t === 'grep_code' || t === 'search_codebase') searches++;
+    });
+
+    var parts = [];
+    if (reads > 0)    parts.push(reads + ' read');
+    if (edits > 0)    parts.push(edits + ' edit');
+    if (explores > 0) parts.push(explores + ' explore');
+    if (searches > 0) parts.push(searches + ' search');
+    if (thoughts > 0) parts.push(thoughts + ' thought');
+    var summaryLabel = parts.length ? parts.join(' · ') : (total + ' steps');
+
+    // Update header: stop spinner, update text, rotate chevron
+    var headerEl = section.querySelector('.activity-header');
+    if (headerEl) {
+        // Stop the spinning SVG (.activity-spinner) and replace with static check icon
+        var spinnerEl = headerEl.querySelector('.activity-spinner');
+        if (spinnerEl) {
+            spinnerEl.style.animation = 'none';
+            spinnerEl.style.opacity = '0.45';
+        }
+        // Also handle legacy .activity-icon if present
+        var iconEl = headerEl.querySelector('.activity-icon');
+        if (iconEl) {
+            iconEl.className = 'activity-icon complete';
+            iconEl.style.animation = 'none';
+            iconEl.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 21l-4.35-4.35"/><circle cx="11" cy="11" r="8"/></svg>';
+        }
+        var titleEl = headerEl.querySelector('.activity-title');
+        if (titleEl) titleEl.textContent = 'Explored';
+
+        // Add summary count chip
+        var existingChip = headerEl.querySelector('.activity-summary-chip');
+        if (!existingChip) {
+            var chip = document.createElement('span');
+            chip.className = 'activity-summary-chip';
+            chip.textContent = summaryLabel;
+            // Insert before the chevron toggle
+            var toggle = headerEl.querySelector('.activity-toggle');
+            if (toggle) headerEl.insertBefore(chip, toggle);
+            else headerEl.appendChild(chip);
+        }
+
+        // Rotate chevron to point right (collapsed state)
+        var toggle2 = headerEl.querySelector('.activity-toggle');
+        if (toggle2) toggle2.style.transform = 'rotate(-90deg)';
+    }
+
+    // Collapse the list
+    section.classList.add('collapsed');
+
+    // Force-stop animations on ALL remaining running items inside
+    section.querySelectorAll('.activity-item.running, .activity-item.thinking').forEach(function(it) {
+        it.className = 'activity-item complete';
+        var el;
+        el = it.querySelector('.thinking-dots');
+        if (el) { el.style.animation = 'none'; el.style.opacity = '0.4'; el.textContent = '·'; }
+        el = it.querySelector('.activity-text');
+        if (el) { el.style.animation = 'none'; el.style.color = 'var(--text-dim)'; }
+        el = it.querySelector('.activity-op');
+        if (el) { el.style.animation = 'none'; el.style.opacity = '0.4'; }
+    });
+
+    // Null the reference so the next response gets a fresh section
+    currentActivitySection = null;
 }
 
 function updateActivityHeader(count, status) {
@@ -3696,6 +3969,7 @@ function updateStreamingUI() {
             .replace(/<tasklist>[\s\S]*?<\/tasklist>/g, '')
             .replace(/<plan>[\s\S]*?<\/plan>/g, '')
             .replace(/<permission>[\s\S]*?<\/permission>/g, '')
+            .replace(/[\u2299\u229a\u25ce\u29bf\u2609]Thought\s*[\u00B7\u00b7\.\xB7]\s*\d+s\s*/g, '') // strip DeepSeek ⊙Thought · Xs
             .trim();
 
         // -- 2. Parse markdown --------------------------------------------
@@ -3891,10 +4165,77 @@ function processInlineMarkdown(text) {
         .replace(/`([^`]+)`/g, '<code>$1</code>');
 }
 
+// Wrap fec-cards-container in a collapsed summary group on task completion
+function collapseFecContainer() {
+    if (!currentAssistantMessage) return;
+    var containers = currentAssistantMessage.querySelectorAll('.fec-cards-container');
+    containers.forEach(function(container) {
+        // Skip already-wrapped containers
+        if (container.parentElement && container.parentElement.classList.contains('fec-group')) return;
+
+        var cards = container.querySelectorAll('.fec');
+        if (cards.length === 0) return;
+
+        // --- Force-complete ALL pending cards (stop spinner → show OK) ---
+        cards.forEach(function(card) {
+            if (card.dataset.status !== 'applied') {
+                card.classList.remove('fec-pending');
+                card.classList.add('fec-applied');
+                card.dataset.status = 'applied';
+                var rightEl = card.querySelector('.fec-right');
+                if (rightEl) rightEl.innerHTML = '<span class="fec-status-text fec-status-applied">OK</span>';
+                var labelEl = card.querySelector('.fec-action-label');
+                if (labelEl) labelEl.style.opacity = '0.4';
+            }
+        });
+
+        // Count by type for summary label
+        var reads = 0, edits = 0, creates = 0, writes = 0;
+        cards.forEach(function(c) {
+            var action = (c.querySelector('.fec-action-label') || {}).textContent || '';
+            if (action === 'Reading')  reads++;
+            else if (action === 'Editing')  edits++;
+            else if (action === 'Creating') creates++;
+            else writes++;
+        });
+        var parts = [];
+        if (reads)   parts.push(reads   + (reads   === 1 ? ' file read'    : ' files read'));
+        if (edits)   parts.push(edits   + (edits   === 1 ? ' file edited'   : ' files edited'));
+        if (creates) parts.push(creates + (creates === 1 ? ' file created'  : ' files created'));
+        if (writes)  parts.push(writes  + (writes  === 1 ? ' file written'  : ' files written'));
+        var summary = parts.join(' · ') || (cards.length + ' files');
+
+        // Build wrapper
+        var group = document.createElement('div');
+        group.className = 'fec-group fec-group-collapsed';
+
+        // Summary header row
+        var groupHeader = document.createElement('div');
+        groupHeader.className = 'fec-group-header';
+        groupHeader.innerHTML =
+            '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.5;flex-shrink:0;"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>' +
+            '<span class="fec-group-label">' + escapeHtml(summary) + '</span>' +
+            '<svg class="fec-group-chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-left:auto;opacity:0.4;transform:rotate(-90deg);transition:transform 0.2s;"><polyline points="6 9 12 15 18 9"></polyline></svg>';
+
+        groupHeader.style.cursor = 'pointer';
+        groupHeader.onclick = function() {
+            var isCollapsed = group.classList.toggle('fec-group-collapsed');
+            var chev = groupHeader.querySelector('.fec-group-chevron');
+            if (chev) chev.style.transform = isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
+        };
+
+        // Wrap container in group
+        container.parentElement.insertBefore(group, container);
+        group.appendChild(groupHeader);
+        group.appendChild(container);
+    });
+}
+
 function onComplete() {
     removeThinkingIndicator();
     hideThinking();
-    clearActivitySection();  // Remove the Working section
+    collapseActivitySection();  // Collapse (not remove) the Working section to show summary
+    collapseFecContainer();     // Collapse file read/write/create cards into summary
 
     // Clear any pending debounced render before final render
     if (window._streamRenderTimeout) {
@@ -3912,6 +4253,7 @@ function onComplete() {
             .replace(/<tasklist>[\s\S]*?<\/tasklist>/g, '')
             .replace(/<plan>[\s\S]*?<\/plan>/g, '')
             .replace(/<permission>[\s\S]*?<\/permission>/g, '')
+            .replace(/[\u2299⊙]Thought\s*[\u00B7·\.\s]\s*\d+s\s*/g, '') // strip DeepSeek ⊙Thought · Xs
             .trim();
 
         console.log('[CHAT] onComplete: displayText length:', displayText ? displayText.length : 0);
@@ -3940,6 +4282,11 @@ function onComplete() {
             
             // CRITICAL FIX: Ensure contentDiv is visible and has content
             contentDiv.innerHTML = finalHtml || displayText || '';
+            // Hide any ⊙Thought · Xs patterns that slipped through
+            contentDiv.innerHTML = contentDiv.innerHTML.replace(
+                /([\u2299\u229a\u25ce\u29bf⊙⊚◎⦿]Thought\s*[\u00B7\u00b7\.\xB7]\s*\d+s)/g,
+                '<span class="thought-timer">$1</span>'
+            );
             contentDiv.style.display = 'block';  // Force visibility
             contentDiv.style.visibility = 'visible';
             
@@ -5518,15 +5865,14 @@ document.addEventListener('DOMContentLoaded', function() {
     // Expose global toggleChangedFiles for header onclick
     window.toggleChangedFiles = function() {
         var section = document.getElementById('changed-files-section');
-        var body    = document.getElementById('cfs-body');
-        if (!section || !body) return;
-        window._cfsCollapsed = !window._cfsCollapsed;
-        if (window._cfsCollapsed) {
-            section.classList.remove('expanded');
-            body.style.display = 'none';
+        if (!section) return;
+        // Use DOM state (expanded class) as source of truth
+        if (section.classList.contains('expanded')) {
+            section.classList.remove('expanded'); // CSS hides cfs-body automatically
+            window._cfsCollapsed = true;
         } else {
-            section.classList.add('expanded');
-            body.style.display = 'block';
+            section.classList.add('expanded');    // CSS shows cfs-body automatically
+            window._cfsCollapsed = false;
         }
     };
 
@@ -5574,16 +5920,21 @@ function renderChangedFileRow(filePath, added, removed, editType, status) {
     row.className = 'cfs-row' + (status === 'accepted' ? ' cfs-accepted' : '');
     row.dataset.path = filePath;
     
-    // Footer section shows only status (no individual Accept/Reject buttons)
-    // User uses "Accept All" / "Reject All" buttons in footer header
+    // Right side: Accept button (pending) | Accepted label | Rejected label
     var rightContent = '';
     if (status === 'accepted') {
-        rightContent = '<span class="cfs-row-applied">Applied</span>';
+        rightContent = '<span class="cfs-row-applied">Accepted</span>';
     } else if (status === 'rejected') {
         rightContent = '<span class="cfs-row-rejected">Rejected</span>';
     } else {
-        // Pending - show status text, user can use Accept All/Reject All in header
-        rightContent = '<span class="cfs-row-pending">Pending</span>';
+        // Pending — show Accept button + small Reject icon
+        rightContent =
+            '<button class="cfs-row-reject-btn" onclick="event.stopPropagation();rejectChangedFile(\'' + esc + '\', this)" title="Reject changes">' +
+                '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+            '</button>' +
+            '<button class="cfs-row-accept-btn" onclick="event.stopPropagation();acceptChangedFile(\'' + esc + '\', this)" title="Accept changes">' +
+                'Accept' +
+            '</button>';
     }
     
     row.innerHTML =
@@ -5612,27 +5963,48 @@ function addChangedFile(filePath, added, removed, editType) {
     editType = editType || 'M';
 
     if (_changedFiles[filePath]) {
-        _changedFiles[filePath].added   = added;
-        _changedFiles[filePath].removed = removed;
+        var prev = _changedFiles[filePath];
+        prev.added   = added;
+        prev.removed = removed;
+        // If the file was previously accepted/rejected and is being edited again,
+        // reset to pending and refresh the row's right-side content
+        if (prev.status !== 'pending') {
+            prev.status   = 'pending';
+            prev.editType = editType;
+            var row = document.querySelector('.cfs-row[data-path="' + filePath + '"]');
+            if (row) {
+                row.classList.remove('cfs-accepted', 'cfs-rejected');
+                var rightEl = row.querySelector('.cfs-row-right');
+                var esc2 = filePath.replace(/'/g, "\\'");
+                if (rightEl) rightEl.innerHTML =
+                    '<button class="cfs-row-reject-btn" onclick="event.stopPropagation();rejectChangedFile(\'' + esc2 + '\', this)" title="Reject changes">' +
+                        '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+                    '</button>' +
+                    '<button class="cfs-row-accept-btn" onclick="event.stopPropagation();acceptChangedFile(\'' + esc2 + '\', this)" title="Accept changes">Accept</button>';
+            }
+        }
+        _cfsShowAndExpand();
         _refreshCfsHeader();
         return;
     }
 
     _changedFiles[filePath] = { added: added, removed: removed, status: 'pending', editType: editType };
     renderChangedFileRow(filePath, added, removed, editType, 'pending');
-    
-    // Show the Changed Files section when first file is added
-    var section = document.getElementById('changed-files-section');
-    if (section && Object.keys(_changedFiles).length === 1) {
-        section.style.display = 'block';
-        // Expand the section
-        window._cfsCollapsed = false;
-        section.classList.add('expanded');
-        var body = document.getElementById('cfs-body');
-        if (body) body.style.display = 'block';
-    }
-    
+
+    // Always show + expand the section whenever a new file is added
+    _cfsShowAndExpand();
+
     _refreshCfsHeader();
+}
+
+// Centralised helper: make the Changed Files section visible and expanded
+function _cfsShowAndExpand() {
+    var section = document.getElementById('changed-files-section');
+    if (section) {
+        section.style.display = 'flex';
+        section.classList.add('expanded'); // CSS rule shows cfs-body automatically
+    }
+    window._cfsCollapsed = false;
 }
 
 function resolveFilePath(filePath) {
@@ -5654,7 +6026,7 @@ function acceptChangedFile(filePath, btn) {
     if (row) {
         row.classList.add('cfs-accepted');
         var rightEl = row.querySelector('.cfs-row-right');
-        if (rightEl) rightEl.innerHTML = '<span class="cfs-row-applied">Applied</span>';
+        if (rightEl) rightEl.innerHTML = '<span class="cfs-row-applied">Accepted</span>';
     }
     // Resolve relative path before sending to bridge
     var resolvedPath = resolveFilePath(filePath);
@@ -5688,24 +6060,18 @@ function rejectChangedFile(filePath, btn) {
 
 function acceptAllChanges(e) {
     if (e) e.stopPropagation();
-    console.log('[DEBUG] Accept All clicked, files:', Object.keys(_changedFiles));
     Object.keys(_changedFiles).forEach(function(p) {
         if (_changedFiles[p].status === 'pending') {
-            console.log('[DEBUG] Accepting file:', p);
-            var btn = document.querySelector('.cfs-row[data-path="' + p + '"] .cfs-row-accept-btn');
-            if (btn) acceptChangedFile(p, btn);
+            acceptChangedFile(p, null); // btn not needed
         }
     });
 }
 
 function rejectAllChanges(e) {
     if (e) e.stopPropagation();
-    console.log('[DEBUG] Reject All clicked, files:', Object.keys(_changedFiles));
     Object.keys(_changedFiles).forEach(function(p) {
         if (_changedFiles[p].status === 'pending') {
-            console.log('[DEBUG] Rejecting file:', p);
-            var btn = document.querySelector('.cfs-row[data-path="' + p + '"] .cfs-row-reject-btn');
-            if (btn) rejectChangedFile(p, btn);
+            rejectChangedFile(p, null); // btn not needed
         }
     });
 }
@@ -5730,9 +6096,16 @@ function _refreshCfsHeader() {
         if (bulkEl) bulkEl.style.display = 'none';
         if (statusEl) {
             statusEl.style.display = '';
-            if (rejected === 0)        { statusEl.textContent = 'Accepted'; statusEl.style.color = '#555'; }
-            else if (accepted === 0)   { statusEl.textContent = 'Rejected'; statusEl.style.color = '#444'; }
-            else { statusEl.textContent = accepted + ' accepted, ' + rejected + ' rejected'; statusEl.style.color = '#555'; }
+            if (rejected === 0) {
+                statusEl.textContent = 'Accepted';
+                statusEl.style.color = 'var(--green-bright, #22c55e)';
+            } else if (accepted === 0) {
+                statusEl.textContent = 'Rejected';
+                statusEl.style.color = 'var(--red, #f87171)';
+            } else {
+                statusEl.textContent = accepted + ' accepted, ' + rejected + ' rejected';
+                statusEl.style.color = 'var(--green-bright, #22c55e)';
+            }
         }
     }
 }
@@ -6263,24 +6636,7 @@ function selectActiveMentionItem() {
 
 // -- TOKEN COUNTER ------------------------------------------------
 function updateTokenCounter() {
-    var input = document.getElementById('chatInput');
-    if (!input) return;
-    var text = input.value;
-    var estimate = Math.ceil(text.length / 4);
-    var counter = document.getElementById('token-counter');
-    if (!counter) {
-        counter = document.createElement('span');
-        counter.id = 'token-counter';
-        counter.className = 'token-counter';
-        var container = document.getElementById('input-container');
-        if (container) container.appendChild(counter);
-    }
-    if (estimate > 10) {
-        counter.textContent = '~' + estimate + ' tokens';
-        counter.style.display = 'inline';
-    } else {
-        counter.style.display = 'none';
-    }
+    // Token counter removed — not displayed
 }
 
 // -- SCROLL JUMP BUTTON -------------------------------------------
@@ -6411,15 +6767,27 @@ function buildProjectTreeCard(rootPath, items) {
     card.className = 'ptree-card';
     card.dataset.root = rootPath;
 
+    // Clean root path for display - show just folder name
+    var displayPath = rootPath.replace(/\\/g, '/');
+    var folderName = displayPath.replace(/\/$/, '').split('/').pop() || displayPath;
+
     var rootEl = document.createElement('div');
     rootEl.className = 'ptree-root';
-    rootEl.textContent = rootPath;
+    rootEl.innerHTML = 
+        '<span class="ptree-root-icon">' + (FILE_ICONS.folder ? FILE_ICONS.folder(15) : '') + '</span>' +
+        '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(folderName) + '</span>' +
+        '<span class="ptree-root-count">' + items.length + ' items</span>' +
+        '<svg class="ptree-root-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="transform:rotate(-90deg);transition:transform 0.2s;"><polyline points="6 9 12 15 18 9"></polyline></svg>';
     rootEl.dataset.path = rootPath;
-    rootEl.title = 'Open folder';
+    rootEl.title = rootPath;
     rootEl.onclick = function() {
-        if (window.bridge) bridge.on_open_folder(this.dataset.path);
+        var isCollapsed = card.classList.toggle('collapsed');
+        var chev = rootEl.querySelector('.ptree-root-chevron');
+        if (chev) chev.style.transform = isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
     };
     card.appendChild(rootEl);
+    // Start collapsed — contents hidden by default
+    card.classList.add('collapsed');
 
     var list = document.createElement('div');
     list.className = 'ptree-list';
@@ -6433,9 +6801,10 @@ function buildProjectTreeCard(rootPath, items) {
         var row = document.createElement('div');
         row.className = 'ptree-item' + (isLast ? ' ptree-last' : '');
         row.style.paddingLeft = (depth * 16) + 'px';  // Indent based on depth
+        row.dataset.depth = depth;
 
         // Determine the branch connector
-        var branch = isLast ? '+--' : '+--';
+        var branch = isLast ? '\u2514\u2500' : '\u251C\u2500';
 
         // Use SVG icons instead of emoji
         var icon = item.isDir
@@ -6526,37 +6895,51 @@ function buildTerminalCard(command, output, status, exitCode, cardId) {
     card.id = cardId || ('term-' + Date.now());
     card.dataset.command = command;
     card.dataset.status  = status;
+    card.dataset.expanded = 'true';  // start expanded
 
     var headerIcon = {
-        'running': '?',
-        'success': '<span style="color:#22c55e">?</span>',
-        'error':   '<span style="color:#ef4444">?</span>'
-    }[status] || '?';
+        'running': '<span class="todo-spinner" style="width:12px;height:12px;border-width:1.5px;"></span>',
+        'success': '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>',
+        'error':   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>'
+    }[status] || '<span class="todo-spinner" style="width:12px;height:12px;border-width:1.5px;"></span>';
 
     var exitCodeHtml = (status === 'error' && exitCode !== undefined && exitCode !== null)
         ? '<span class="term-exit-code">Exit Code: ' + exitCode + '</span>'
         : '';
 
-    var formattedCmd = formatTerminalCommand(command);
+    // Parse command if passed as JSON string (e.g. from tool_activity info)
+    var displayCmd = command;
+    if (command && command.trim().startsWith('{')) {
+        try {
+            var parsed = JSON.parse(command);
+            if (parsed.command) displayCmd = parsed.command;
+        } catch(e) {}
+    }
+
+    var formattedCmd = formatTerminalCommand(displayCmd);
 
     var outputId = (cardId || 'term-' + Date.now()) + '-output';
-    // Output div always visible (no dropdown)
-    var outputHtml = '<div class="term-output-body" id="' + outputId + '" style="display:block; max-height: 200px; overflow-y: auto;">' +
-              '<pre class="term-output-text">' + (output ? escapeHtml(output) : '') + '</pre>' +
-          '</div>';
+    var outputHtml = output
+        ? '<div class="term-output-body" id="' + outputId + '" style="display:block;">'
+              + '<pre class="term-output-text">' + escapeHtml(output) + '</pre>'
+          + '</div>'
+        : '';
+
+    var chevronSvg = '<svg class="term-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="opacity:0.45;transition:transform 0.2s ease;transform:rotate(90deg);flex-shrink:0;"><polyline points="9 18 15 12 9 6"></polyline></svg>';
 
     card.innerHTML =
-        '<div class="term-header">' +
+        '<div class="term-header" onclick="toggleTermCard(this)">' +
             '<span class="term-status-icon">' + headerIcon + '</span>' +
             '<span class="term-title">Run in terminal</span>' +
             exitCodeHtml +
+            chevronSvg +
         '</div>' +
         '<div class="term-body">' +
             '<pre class="term-command">' + formattedCmd + '</pre>' +
         '</div>' +
         (outputHtml || '') +
-        '<div class="term-footer" style="justify-content: flex-end; border-top: 1px solid #1a1a1a;">' +
-            '<button class="term-view-btn" onclick="openTerminalPanel()">' +
+        '<div class="term-footer">' +
+            '<button class="term-view-btn" onclick="event.stopPropagation();openTerminalPanel()">' +
                 '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" ' +
                     'stroke="currentColor" stroke-width="2">' +
                     '<polyline points="15 3 21 3 21 9"/>' +
@@ -6568,6 +6951,30 @@ function buildTerminalCard(command, output, status, exitCode, cardId) {
         '</div>';
 
     return card;
+}
+
+// Toggle terminal card expand / collapse
+function toggleTermCard(headerEl) {
+    var card = headerEl.closest('.term-card');
+    if (!card) return;
+    var body    = card.querySelector('.term-body');
+    var output  = card.querySelector('.term-output-body');
+    var footer  = card.querySelector('.term-footer');
+    var chevron = headerEl.querySelector('.term-chevron');
+    var isExpanded = card.dataset.expanded !== 'false';
+    if (isExpanded) {
+        if (body)   body.style.display   = 'none';
+        if (output) output.style.display = 'none';
+        if (footer) footer.style.display = 'none';
+        if (chevron) chevron.style.transform = 'rotate(0deg)';
+        card.dataset.expanded = 'false';
+    } else {
+        if (body)   body.style.display   = 'block';
+        if (output) output.style.display = 'block';
+        if (footer) footer.style.display = 'flex';
+        if (chevron) chevron.style.transform = 'rotate(90deg)';
+        card.dataset.expanded = 'true';
+    }
 }
 
 function formatTerminalCommand(command) {
@@ -6619,8 +7026,8 @@ function updateTerminalCard(cardId, status, exitCode, output) {
 
     var iconEl = card.querySelector('.term-status-icon');
     if (iconEl) {
-        if (status === 'success') iconEl.innerHTML = '<span style="color:#22c55e">?</span>';
-        if (status === 'error')   iconEl.innerHTML = '<span style="color:#ef4444">?</span>';
+        if (status === 'success') iconEl.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+        if (status === 'error')   iconEl.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
     }
 
     if (status === 'error' && exitCode !== undefined) {
@@ -6638,13 +7045,19 @@ function updateTerminalCard(cardId, status, exitCode, output) {
         var existingOutput = document.getElementById(outputId);
         if (existingOutput) {
             existingOutput.querySelector('.term-output-text').textContent = output;
+            // Make sure it's visible (card may be expanded)
+            if (card.dataset.expanded !== 'false') existingOutput.style.display = 'block';
         } else {
             var outputDiv = document.createElement('div');
             outputDiv.className = 'term-output-body';
             outputDiv.id = outputId;
-            outputDiv.style.display = 'none';
+            // Show if card is expanded, hide if collapsed
+            outputDiv.style.display = card.dataset.expanded === 'false' ? 'none' : 'block';
             outputDiv.innerHTML = '<pre class="term-output-text">' + escapeHtml(output) + '</pre>';
-            card.appendChild(outputDiv);
+            // Insert before footer so layout stays correct
+            var footer = card.querySelector('.term-footer');
+            if (footer) card.insertBefore(outputDiv, footer);
+            else card.appendChild(outputDiv);
         }
     }
 }

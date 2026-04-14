@@ -122,6 +122,9 @@ class BaseProvider(ABC):
                 m["name"] = msg.name
             if msg.tool_calls:
                 m["tool_calls"] = msg.tool_calls
+                # When assistant has tool_calls, content can be null
+                if not msg.content:
+                    m["content"] = None
             if msg.tool_call_id:
                 m["tool_call_id"] = msg.tool_call_id
             formatted.append(m)

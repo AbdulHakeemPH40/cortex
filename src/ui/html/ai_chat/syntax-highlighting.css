@@ -402,24 +402,28 @@ pre, code,
 
 /* ========== CODE HEADER STYLING ========== */
 .code-header {
-    background: var(--dracula-bg-light);
-    padding: 8px 14px;
+    background: #1e1e2e;
+    padding: 7px 14px;
     display: flex;
     justify-content: space-between;
     align-items: center;
     font-size: 11px;
-    color: var(--dracula-text-faded);
-    border-bottom: 1px solid var(--dracula-keyword);
+    color: rgba(255,255,255,0.4);
+    border-bottom: 1px solid rgba(255,255,255,0.06);
     font-family: var(--font-mono);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
 }
 
-.code-header .lang-label {
+/* Match both .lang-label AND .code-lang (JS uses .code-lang) */
+.code-header .lang-label,
+.code-header .code-lang {
+    font-size: 10px;
     font-weight: 700;
-    color: var(--dracula-string);
+    color: rgba(255,255,255,0.35);
     text-transform: uppercase;
     letter-spacing: 1px;
+    background: rgba(255,255,255,0.05);
+    padding: 2px 8px;
+    border-radius: 3px;
 }
 
 /* ========== COPY/RUN BUTTONS ========== */
@@ -428,16 +432,17 @@ pre, code,
 .code-copy-btn,
 .code-insert-btn,
 .code-run-btn {
-    background: var(--dracula-keyword);
-    border: 1px solid var(--dracula-keyword);
-    color: var(--dracula-bg);
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: rgba(255,255,255,0.55);
     cursor: pointer;
-    font-size: 11px;
-    padding: 5px 10px;
-    border-radius: 3px;
-    transition: all 0.2s;
+    font-size: 10px;
+    padding: 3px 10px;
+    border-radius: 4px;
+    transition: all 0.15s;
     font-family: var(--font-mono);
     font-weight: 600;
+    letter-spacing: 0.3px;
 }
 
 .copy-btn:hover,
@@ -445,9 +450,9 @@ pre, code,
 .code-copy-btn:hover,
 .code-insert-btn:hover,
 .code-run-btn:hover {
-    background: var(--dracula-string);
-    border-color: var(--dracula-string);
-    color: var(--dracula-bg);
+    background: rgba(255,255,255,0.12);
+    border-color: rgba(255,255,255,0.2);
+    color: rgba(255,255,255,0.9);
 }
 
 /* ========== LINE NUMBERS ========== */

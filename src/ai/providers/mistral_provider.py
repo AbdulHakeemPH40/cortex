@@ -8,6 +8,7 @@ import os
 import json
 import time
 from typing import List, Dict, Any, Generator, Optional, Callable
+from src.ai.providers import BaseProvider, ProviderType
 from src.utils.logger import get_logger
 
 log = get_logger("mistral_provider")
@@ -50,10 +51,11 @@ MISTRAL_SYSTEM_PROMPT = """You are a strict coding agent. You MUST follow these 
 Response format must be valid JSON only."""
 
 
-class MistralProvider:
+class MistralProvider(BaseProvider):
     """Mistral AI API Provider with DeepSeek migration optimizations"""
     
     def __init__(self):
+        super().__init__(ProviderType.MISTRAL)
         self.api_key = os.getenv("MISTRAL_API_KEY", "")
         self.base_url = "https://api.mistral.ai/v1"
         self._token_count = {"input": 0, "output": 0}
@@ -98,6 +100,21 @@ class MistralProvider:
         elif "embed" in model_id:
             return "Embedding"
         return "General"
+        
+    @property
+    def available_models(self):
+        """Return list of available models for this provider."""
+        from src.ai.providers import ModelInfo
+        return [
+            ModelInfo("mistral-large-latest", "Mistral Large", "mistral", 128000, 8192, True, False, 2.0, 6.0),
+            ModelInfo("mistral-medium-latest", "Mistral Medium", "mistral", 128000, 8192, True, False, 0.9, 0.9),
+            ModelInfo("mistral-small-latest", "Mistral Small", "mistral", 128000, 8192, True, False, 0.2, 0.6),
+            ModelInfo("codestral-latest", "Codestral", "mistral", 128000, 8192, True, False, 0.2, 0.6),
+        ]
+        
+    def validate_api_key(self) -> bool:
+        """Validate the current API key."""
+        return bool(self.api_key)
     
     def calculate_cost(self, model: str, input_tokens: int, output_tokens: int) -> Dict[str, float]:
         """Calculate cost for token usage"""

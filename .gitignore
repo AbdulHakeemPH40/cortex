@@ -1,6 +1,6 @@
 # Environment
 .env
-.env.example
+# .env.example is intentionally tracked (safe template for contributors)
 venv/
 .venv/
 env/
@@ -18,12 +18,15 @@ reset_settings.py
 
 # Temp
 tmp/
-installer_output/
 nul
 
+# Test cache
+.pytest_cache/
+.mypy_cache/
+
 # Documentation (optional)
-# Docs/
-# *.md
+Docs/
+*.md
 
 # Python cache
 __pycache__/
@@ -31,16 +34,14 @@ __pycache__/
 *.pyo
 *.pyd
 
-# Build artifacts
+# Build artifacts / installer output
 build/
 dist/
+installer_output/
 *.exe
 *.dll
 *.pak
 *.bin
-
-# Installer
-installer_output/
 opencode-dev/
 vscode-main/
 node_modules/
