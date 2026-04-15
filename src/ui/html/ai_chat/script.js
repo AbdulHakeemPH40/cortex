@@ -4510,6 +4510,7 @@ function _startRateLimitRetry(seconds) {
             _rateLimitRetryTimer = null;
             // Retry without duplicating the user bubble
             _isGenerating = true;
+            _stopRequested = false;  // Clear stop flag on rate-limit retry
             var sendBtn = document.getElementById('sendBtn');
             var stopBtn = document.getElementById('stopBtn');
             if (sendBtn) sendBtn.style.display = 'none';
@@ -7887,6 +7888,7 @@ window.toggleTodoSection = toggleTodoSection;
 
 function _sendNow(text) {
     _isGenerating = true;
+    _stopRequested = false;  // Clear any previous stop so the new response is not suppressed
     
     // Check if there are attached images
     var hasImages = _attachedImages.length > 0;
