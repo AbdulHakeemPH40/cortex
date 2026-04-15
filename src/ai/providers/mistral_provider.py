@@ -237,8 +237,13 @@ class MistralProvider(BaseProvider):
     
     def chat_with_retry(self, messages: List[Dict[str, str]], model: str = "mistral-medium-latest",
                        stream: bool = True, max_retries: int = 3, 
-                       validate_json: bool = False, **kwargs) -> Generator[str, None, None]:
-        """Chat with retry logic and optional JSON validation"""
+                       validate_json: bool = False, retry_callback=None, **kwargs) -> Generator[str, None, None]:
+        """Chat with retry logic and optional JSON validation.
+
+        retry_callback(attempt, max_retries, error_type) is called just before
+        each retry so the caller can show UI feedback (e.g. 'API timeout, retrying 2/3...').
+        error_type is 'timeout', 'rate_limit', or 'error'.
+        """
         
         # Only enforce strict JSON prompt when NO tools are provided
         # When tools are present, let Mistral use tool_calls format
@@ -275,8 +280,16 @@ class MistralProvider(BaseProvider):
                 last_error = e
                 error_str = str(e).lower()
                 
+                # Classify the error type for callback + logging
+                if "timed out" in error_str or "timeout" in error_str or "read timed" in error_str:
+                    error_type = 'timeout'
+                elif "429" in error_str or "rate limit" in error_str or "too many requests" in error_str:
+                    error_type = 'rate_limit'
+                else:
+                    error_type = 'error'
+
                 # SPECIAL HANDLING FOR 429 RATE LIMIT ERRORS
-                if "429" in error_str or "rate limit" in error_str or "too many requests" in error_str:
+                if error_type == 'rate_limit':
                     log.warning(f"[Mistral] Rate limited (attempt {attempt + 1}/{max_retries})")
                     
                     # Exponential backoff with longer delays for rate limits
@@ -284,15 +297,25 @@ class MistralProvider(BaseProvider):
                     log.info(f"[Mistral] Waiting {backoff_seconds}s before retry due to rate limit...")
                     
                     if attempt < max_retries - 1:
+                        if retry_callback:
+                            try:
+                                retry_callback(attempt + 2, max_retries, 'rate_limit')
+                            except Exception:
+                                pass
                         time.sleep(backoff_seconds)
                         continue
                     else:
                         # Final attempt failed - provide clear error
                         raise Exception(f"Mistral API rate limit exceeded. Please wait {backoff_seconds} seconds before trying again. (429 Too Many Requests)")
                 
-                # Standard error handling
+                # Standard error handling (timeouts, network errors, etc.)
                 log.error(f"[Mistral] Attempt {attempt + 1} failed: {e}")
                 if attempt < max_retries - 1:
+                    if retry_callback:
+                        try:
+                            retry_callback(attempt + 2, max_retries, error_type)
+                        except Exception:
+                            pass
                     time.sleep(self._retry_delay * (attempt + 1))
                 else:
                     raise last_error
@@ -327,22 +350,18 @@ class MistralProvider(BaseProvider):
             log.info(f"[MISTRAL] Sending {len(kwargs['tools'])} tools to API")
             
             # DYNAMICALLY POPULATE allowed tool names from registered tools
-            # This ensures we don't reject tools that are legitimately registered
-            # but aren't in our hardcoded whitelist
             self._allowed_tool_names = set()
+            tool_names = []
             for tool in kwargs['tools']:
                 tool_name = tool.get('function', {}).get('name', '')
                 if tool_name:
                     self._allowed_tool_names.add(tool_name)
-            log.info(f"[MISTRAL] Updated allowed tools list to {len(self._allowed_tool_names)} names")
+                    tool_names.append(tool_name)
+                    if not self._validate_tool_name(tool_name):
+                        log.warning(f"[MISTRAL] Unusual tool name (possible hallucination): {tool_name}")
             
-            # Validate tool names to prevent hallucinations
-            for tool in kwargs['tools']:
-                tool_name = tool.get('function', {}).get('name', '')
-                if not self._validate_tool_name(tool_name):
-                    log.warning(f"[MISTRAL] Unusual tool name (possible hallucination): {tool_name}")
-                
-                log.info(f"[MISTRAL DEBUG] Tool: {tool_name}")
+            # Log all tool names in a single line instead of one per tool
+            log.debug(f"[MISTRAL] Tools: {', '.join(tool_names)}")
         
         url = f"{self.base_url}/chat/completions"
         
@@ -380,7 +399,7 @@ class MistralProvider(BaseProvider):
                                         import re
                                         # Remove replacement characters and control chars, BUT preserve \n (0x0a) and \t (0x09)
                                         content = re.sub(r'[\ufffd\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]', '', content)
-                                        if content.strip():  # Only yield if there's actual content
+                                        if content:  # yield even whitespace/newlines for proper markdown
                                             yield content
                                     
                                     # Handle tool calls with validation
@@ -439,15 +458,15 @@ class MistralProvider(BaseProvider):
             raise
     
     def chat(self, messages: List[Dict[str, str]], model: str = "mistral-medium-latest",
-             stream: bool = True, **kwargs) -> Generator[str, None, None]:
+             stream: bool = True, retry_callback=None, **kwargs) -> Generator[str, None, None]:
         """Standard chat interface with retry logic"""
-        yield from self.chat_with_retry(messages, model, stream, **kwargs)
+        yield from self.chat_with_retry(messages, model, stream, retry_callback=retry_callback, **kwargs)
     
-    def chat_stream(self, messages, model, temperature=0.7, max_tokens=2000, tools=None, **kwargs):
+    def chat_stream(self, messages, model, temperature=0.7, max_tokens=2000, tools=None, retry_callback=None, **kwargs):
         """Stream chat completion - delegates to chat()"""
         formatted_messages = self._format_messages_for_mistral(messages)
         # FIX: Pass tools parameter to chat() method
-        yield from self.chat(formatted_messages, model, stream=True, tools=tools, **kwargs)
+        yield from self.chat(formatted_messages, model, stream=True, tools=tools, retry_callback=retry_callback, **kwargs)
     
     def _format_messages_for_mistral(self, messages) -> List[Dict[str, Any]]:
         """Convert ChatMessage objects to Mistral-compatible format"""

@@ -355,11 +355,24 @@ body:not(.light-mode) {
     animation: fadeIn 0.2s ease;
     display: block; /* Ensure block-level for proper text-align */
     width: 100%; /* Full width container */
+    will-change: transform, opacity; /* GPU acceleration for animations */
+    contain: layout style; /* CSS containment for better performance */
 }
 
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(4px); }
     to { opacity: 1; transform: translateY(0); }
+}
+
+/* Performance: Reduce paint areas for message content */
+.message-content {
+    contain: layout style paint;
+}
+
+/* Optimize scrolling container */
+#chatMessages {
+    overflow-anchor: auto; /* Enable scroll anchoring for smooth scrolling */
+    contain: layout;
 }
 
 .message-bubble.user {
@@ -2256,4 +2269,141 @@ body.loaded #loading-overlay {
         max-width: 100px;
         padding: 4px 6px;
     }
+}
+
+/* ================================================
+   MEMORY SAVING ANIMATION
+   ================================================ */
+
+.memory-save-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 12px 20px;
+    margin: 10px auto;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    width: fit-content;
+    animation: memory-slide-in 0.3s ease-out;
+}
+
+.memory-save-indicator .memory-icon {
+    font-size: 20px;
+    animation: memory-pulse 1.5s ease-in-out infinite;
+}
+
+.memory-save-indicator .memory-text {
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+.memory-save-indicator .memory-dots {
+    display: flex;
+    gap: 2px;
+}
+
+.memory-save-indicator .memory-dots span {
+    color: var(--text-dim);
+    font-size: 18px;
+    animation: memory-dot-bounce 1.4s ease-in-out infinite;
+}
+
+.memory-save-indicator .memory-dots span:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.memory-save-indicator .memory-dots span:nth-child(3) {
+    animation-delay: 0.4s;
+}
+
+.memory-saved-confirmation {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 18px;
+    margin: 10px auto;
+    background: var(--green-bg);
+    border: 1px solid var(--green);
+    border-radius: var(--radius-lg);
+    width: fit-content;
+    animation: memory-slide-in 0.3s ease-out;
+}
+
+.memory-saved-confirmation .memory-check {
+    color: var(--green-bright);
+    font-size: 16px;
+    font-weight: bold;
+}
+
+.memory-saved-confirmation .memory-saved-text {
+    color: var(--green-bright);
+    font-size: 13px;
+    font-weight: 500;
+}
+
+@keyframes memory-slide-in {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes memory-pulse {
+    0%, 100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+    50% {
+        transform: scale(1.1);
+        opacity: 0.8;
+    }
+}
+
+@keyframes memory-dot-bounce {
+    0%, 60%, 100% {
+        transform: translateY(0);
+    }
+    30% {
+        transform: translateY(-4px);
+    }
+}
+
+/* ── Suggestion Chips (clickable action buttons from LLM suggestions) ── */
+.suggestion-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    margin: 4px 0;
+    background: rgba(0, 71, 171, 0.12);
+    border: 1px solid rgba(0, 71, 171, 0.3);
+    border-radius: 20px;
+    color: #6bb3ff;
+    font-size: 13px;
+    font-family: var(--font-sans, 'Inter', sans-serif);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    line-height: 1.4;
+}
+.suggestion-chip:hover {
+    background: rgba(0, 71, 171, 0.22);
+    border-color: rgba(0, 71, 171, 0.5);
+    color: #8ec8ff;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0, 71, 171, 0.15);
+}
+.suggestion-chip:active {
+    transform: translateY(0);
+    background: rgba(0, 71, 171, 0.3);
+}
+.suggestion-chip svg {
+    flex-shrink: 0;
+    opacity: 0.7;
 }

@@ -934,9 +934,9 @@ class AIChatWidget(QWidget):
         self._pending_project_info = None
         layout.addWidget(self._view)
         
-        # DEFERRED LOAD: Wait for cache clearing to complete before loading page
+        # DEFERRED LOAD: Minimal delay for cache clearing to flush
         from PyQt6.QtCore import QTimer
-        QTimer.singleShot(500, self._delayed_load_page)
+        QTimer.singleShot(50, self._delayed_load_page)
         
     def run_javascript(self, script: str):
         """Execute JavaScript in the chat context."""
@@ -973,8 +973,8 @@ class AIChatWidget(QWidget):
             _log.info(f"[AI_CHAT] Page loaded successfully, applying theme (is_dark={self._is_dark})")
             # Use set_theme with retry logic
             self.set_theme(self._is_dark)
-            # Apply pending project info after page load
-            if self._pending_project_info:
+            # Apply pending project info after page load (only if not already applied)
+            if self._pending_project_info and not getattr(self, '_project_info_applied', False):
                 name, path, chats_json = self._pending_project_info
                 self._apply_project_info(name, path, chats_json)
         else:
@@ -1192,21 +1192,21 @@ class AIChatWidget(QWidget):
         import logging as _log
         self._is_dark = is_dark
         js_bool = 'true' if is_dark else 'false'
-        _log.info(f"[AI_CHAT] Setting theme to {'dark' if is_dark else 'light'} (attempt {retry_count + 1})")
+        
+        # Only log on first attempt to reduce log spam
+        if retry_count == 0:
+            _log.info(f"[AI_CHAT] Setting theme to {'dark' if is_dark else 'light'}")
         
         def on_js_result(result):
-            _log.info(f"[AI_CHAT] set_theme result: {result}")
-            if result is None and retry_count < 10:
-                _log.warning(f"[AI_CHAT] setTheme not found, retrying in 300ms... (attempt {retry_count + 1}/10)")
-                from PyQt6.QtCore import QTimer
-                QTimer.singleShot(300, lambda: self.set_theme(is_dark, retry_count + 1))
-            elif result == 'success':
+            if result == 'success':
                 _log.info(f"[AI_CHAT] Theme set successfully to {'dark' if is_dark else 'light'}")
+            elif retry_count < 5:  # Reduced from 10 retries to 5
+                # Retry with increasing delay: 200ms, 400ms, 600ms...
+                delay = 200 * (retry_count + 1)
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(delay, lambda: self.set_theme(is_dark, retry_count + 1))
             else:
-                _log.warning(f"[AI_CHAT] setTheme returned unexpected result: {result}, retrying...")
-                if retry_count < 10:
-                    from PyQt6.QtCore import QTimer
-                    QTimer.singleShot(300, lambda: self.set_theme(is_dark, retry_count + 1))
+                _log.warning(f"[AI_CHAT] setTheme failed after {retry_count + 1} attempts")
         
         js_code = f"""
         (function() {{
@@ -1215,11 +1215,9 @@ class AIChatWidget(QWidget):
                     window.setTheme({js_bool});
                     return 'success';
                 }} else {{
-                    console.error('[PY_BRIDGE] setTheme not found on window!');
                     return 'not_found';
                 }}
             }} catch (e) {{
-                console.error('[PY_BRIDGE] setTheme error:', e.message);
                 return 'error: ' + e.message;
             }}
         }})()
@@ -1328,6 +1326,21 @@ class AIChatWidget(QWidget):
         """Append a system notification message to the chat view."""
         self._view.page().runJavaScript(f"if(window.appendMessage) window.appendMessage({json.dumps(message)}, 'system');")
 
+    def on_agent_status_update(self, status_type: str, message: str):
+        """Show an inline recovery-status note in chat (compacting / retrying)."""
+        safe_type = json.dumps(status_type)
+        safe_msg  = json.dumps(message)
+        self._view.page().runJavaScript(
+            f"if(window.onAgentStatus) window.onAgentStatus({safe_type}, {safe_msg});"
+        )
+
+    def on_turn_limit_hit(self, pending_todos: list):
+        """Show a 'Continue?' banner when the agent has unfinished todos."""
+        safe_todos = json.dumps(pending_todos)
+        self._view.page().runJavaScript(
+            f"if(window.onTurnLimitHit) window.onTurnLimitHit({safe_todos});"
+        )
+
     def show_permission_card(self, request_id: str, html_card: str):
         """Display a permission card in the chat (OpenCode enhancement)."""
         import json
@@ -1357,13 +1370,13 @@ class AIChatWidget(QWidget):
         import json
         safe_name = json.dumps(name)
         safe_path = json.dumps(path)
-        log.info(f'?? set_project_info called: name={name}, path={path}, chats_json length={len(chats_json)}')
+        log.info(f'set_project_info called: name={name}, path={path}, chats_json length={len(chats_json)}')
         # Ensure chats_json is passed correctly to JS (avoid double-stringified data)
         try:
             # Parse it first if it's a string, then JSON-ify properly for the JS call
             chats_data = json.loads(chats_json) if isinstance(chats_json, str) else chats_json
             safe_chats = json.dumps(chats_data)
-            log.info(f'? Parsed {len(chats_data) if isinstance(chats_data, list) else 0} chats for JS')
+            log.info(f'Parsed {len(chats_data) if isinstance(chats_data, list) else 0} chats for JS')
         except Exception as e:
             log.warning(f'Failed to parse chats_json: {e}')
             safe_chats = "[]"
@@ -1373,11 +1386,17 @@ class AIChatWidget(QWidget):
             f"else if(window.trySetProjectInfo) window.trySetProjectInfo({safe_name}, {safe_path}); "
             f"else window._pendingProjectInfoWithChats = {{ name: {safe_name}, path: {safe_path}, chatsJson: {safe_chats} }};"
         )
-        log.info(f'?? Calling JavaScript: trySetProjectInfoWithChats(...)')
-        self._view.page().runJavaScript(js_code)
-
-        # Retry once after the webview is fully initialized
-        QTimer.singleShot(800, lambda: self._view.page().runJavaScript(js_code))
+        log.info(f'Calling JavaScript: trySetProjectInfoWithChats(...)')
+        self._project_info_applied = True
+        
+        # Smart retry: only retry if JS function wasn't available on first call
+        def _on_first_result(result):
+            if result is None:
+                # JS function wasn't found, retry once after 500ms
+                log.info('[AI_CHAT] JS function not ready, scheduling single retry...')
+                QTimer.singleShot(500, lambda: self._view.page().runJavaScript(js_code))
+        
+        self._view.page().runJavaScript(js_code, _on_first_result)
 
     def clear_chat(self):
         """Clear the chat window."""
@@ -1388,6 +1407,7 @@ class AIChatWidget(QWidget):
         # Always remember latest project info in case the page isn't loaded yet
         self._pending_project_info = (name, path, chats_json)
         self._current_project_path = path
+        self._project_info_applied = False  # Reset for new project
         if not getattr(self, '_page_loaded', False):
             log.info('Chat page not loaded yet; deferring project info')
             return

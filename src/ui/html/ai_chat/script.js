@@ -11,12 +11,76 @@ var _lastUserHasImages = false;
 var _lastUserImageData = null;
 var _rateLimitRetryTimer = null;
 var _rateLimitRetryRemaining = 0;
+var _currentDiffGroup = null; // {id, el} – active group container for current AI turn
+var _currentFileOpGroup = null; // {id, el} – active file op group for current AI turn
 
 // Initialize batch buffer when DOM is ready
 document.addEventListener('DOMContentLoaded', function() {
     _terminalBatchBuffer = '';
     _terminalFlushTimeout = null;
+    
+    // Initialize message virtualization for long conversations
+    initMessageVirtualization();
 });
+
+// ============================================
+// MESSAGE VIRTUALIZATION for long conversations
+// ============================================
+var _virtualizationConfig = {
+    enabled: true,
+    maxVisibleMessages: 100,  // Max messages to render at once
+    messageBuffer: 20,        // Extra messages to keep above/below viewport
+    totalMessages: 0,
+    renderedRange: { start: 0, end: 0 }
+};
+
+function initMessageVirtualization() {
+    var container = document.getElementById('chatMessages');
+    if (!container) return;
+    
+    // Use IntersectionObserver for efficient viewport detection
+    if ('IntersectionObserver' in window) {
+        _virtualizationConfig.observer = new IntersectionObserver(function(entries) {
+            entries.forEach(function(entry) {
+                if (entry.target.classList.contains('message-bubble')) {
+                    entry.target.dataset.inViewport = entry.isIntersecting ? 'true' : 'false';
+                }
+            });
+        }, {
+            root: container,
+            rootMargin: '100px 0px', // Buffer zone
+            threshold: 0.1
+        });
+    }
+}
+
+function updateVirtualization() {
+    if (!_virtualizationConfig.enabled) return;
+    
+    var container = document.getElementById('chatMessages');
+    if (!container) return;
+    
+    var messages = container.querySelectorAll('.message-bubble');
+    var total = messages.length;
+    
+    if (total <= _virtualizationConfig.maxVisibleMessages) return; // No need to virtualize
+    
+    // Simple virtualization: hide messages far from viewport
+    // Full virtualization would require more complex scroll position tracking
+    for (var i = 0; i < messages.length; i++) {
+        var msg = messages[i];
+        var shouldHide = i < _virtualizationConfig.renderedRange.start || 
+                        i > _virtualizationConfig.renderedRange.end;
+        
+        if (shouldHide && !msg.dataset.inViewport) {
+            msg.style.display = 'none';
+            msg.dataset.virtualized = 'true';
+        } else {
+            msg.style.display = '';
+            msg.dataset.virtualized = 'false';
+        }
+    }
+}
 
 // Get storage key based on current project
 function getStorageKey() {
@@ -867,6 +931,11 @@ function initBridge() {
             bridge = window.bridge;
             console.log('[CHAT] Bridge initialized successfully');
             
+            // Expose memory animation functions to bridge
+            window.showMemorySaving = showMemorySavingAnimation;
+            window.hideMemorySaving = hideMemorySavingAnimation;
+            window.showMemorySaved = showMemorySavedConfirmation;
+            
             // Re-fetch project info if it was set before bridge was ready
             if (currentProjectPath) {
                 console.log('[CHAT] Bridge ready, reloading project chats for:', currentProjectPath);
@@ -1513,31 +1582,49 @@ function loadChatHistory() {
 function renderHistoryList() {
     var list = document.getElementById('chat-history-list');
     if (!list) return;
-    list.innerHTML = '';
-    chats.forEach(function (chat) {
-        var item = document.createElement('div');
-        item.className = 'history-item' + (chat.id === currentChatId ? ' active' : '');
-        
-        var titleSpan = document.createElement('span');
-        titleSpan.className = 'title-text'; // Add class for proper ellipsis
-        titleSpan.textContent = chat.title;
-        
-        var deleteBtn = document.createElement('button');
-        deleteBtn.className = 'delete-chat-btn';
-        deleteBtn.title = 'Delete Chat';
-        deleteBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>';
-        
-        deleteBtn.onclick = function(e) {
+    
+    // Use DocumentFragment for batch DOM insertion
+    var fragment = document.createDocumentFragment();
+    var html = '';
+    
+    // Build HTML string for better performance with large lists
+    for (var i = 0; i < chats.length; i++) {
+        var chat = chats[i];
+        var isActive = chat.id === currentChatId ? ' active' : '';
+        html += '<div class="history-item' + isActive + '" data-chat-id="' + chat.id + '">' +
+            '<span class="title-text">' + escapeHtml(chat.title) + '</span>' +
+            '<button class="delete-chat-btn" title="Delete Chat" data-chat-id="' + chat.id + '">' +
+            '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+            '<polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>' +
+            '</button></div>';
+    }
+    
+    list.innerHTML = html;
+    
+    // Attach event listeners using event delegation for better performance
+    list.onclick = function(e) {
+        var deleteBtn = e.target.closest('.delete-chat-btn');
+        if (deleteBtn) {
             e.stopPropagation();
-            deleteChat(chat.id);
-        };
-
-        item.appendChild(titleSpan);
-        item.appendChild(deleteBtn);
+            var chatId = deleteBtn.getAttribute('data-chat-id');
+            if (chatId) deleteChat(chatId);
+            return;
+        }
         
-        item.onclick = function () { loadChat(chat.id); };
-        list.appendChild(item);
-    });
+        var item = e.target.closest('.history-item');
+        if (item) {
+            var chatId = item.getAttribute('data-chat-id');
+            if (chatId) loadChat(chatId);
+        }
+    };
+}
+
+// Helper function to escape HTML entities
+function escapeHtml(text) {
+    if (!text) return '';
+    var div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }
 
 function deleteChat(id) {
@@ -1587,26 +1674,24 @@ function startNewChat() {
 // Clear TODOs and Changed Files when switching projects or starting new chat
 function clearTodosAndChangedFiles() {
     console.log('[DEBUG] === CLEARING TODOs and Changed Files ===');
-    
-    // Clear TODO section
+
+    // Reset footer #todo-section
     var todoSection = document.getElementById('todo-section');
     if (todoSection) {
         todoSection.style.display = 'none';
-        console.log('[DEBUG] TODO section display set to none');
+        todoSection.classList.remove('expanded');
     }
     var todoBody = document.getElementById('todo-body');
-    if (todoBody) {
-        todoBody.style.display = 'none';
-        todoBody.innerHTML = '';
-    }
+    if (todoBody) todoBody.style.display = 'none';
     var todoList = document.getElementById('todo-list');
     if (todoList) todoList.innerHTML = '';
-    var todoPreview = document.getElementById('todo-preview-text');
-    if (todoPreview) todoPreview.textContent = '';
     var todoCount = document.getElementById('todo-progress-count');
     if (todoCount) todoCount.textContent = '0/0';
+    var todoPreview = document.getElementById('todo-preview-text');
+    if (todoPreview) todoPreview.textContent = '';
     currentTodoList = [];
-    
+    console.log('[DEBUG] TODO section reset');
+
     // Clear Changed Files section
     var cfsSection = document.getElementById('changed-files-section');
     if (cfsSection) {
@@ -1777,9 +1862,18 @@ function loadChat(id) {
 function clearMessages() {
     var container = document.getElementById('chatMessages');
     if (!container) return;
-    container.innerHTML = '';
+    
+    // Use faster DOM clearing method
+    while (container.firstChild) {
+        container.removeChild(container.firstChild);
+    }
+    
     currentAssistantMessage = null;
     currentContent = "";
+    
+    // Reset virtualization state
+    _virtualizationConfig.renderedRange = { start: 0, end: 0 };
+    _virtualizationConfig.totalMessages = 0;
     
     // Also clear TODOs and Changed Files when clearing messages
     clearTodosAndChangedFiles();
@@ -1795,7 +1889,7 @@ function clearMessages() {
     if (!isLoading && (!chat || (chat.loaded !== false && chat.messages.length === 0))) {
         var emptyState = document.createElement('div');
         emptyState.id = 'empty-state';
-        emptyState.innerHTML = `<svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto 20px auto; display: block; opacity: 0.6;"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-2.54Z"></path><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-2.54Z"></path></svg><p>Start a new conversation with Cortex AI</p>`;
+        emptyState.innerHTML = '<svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto 20px auto; display: block; opacity: 0.6;"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-2.54Z"></path><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-2.54Z"></path></svg><p>Start a new conversation with Cortex AI</p>';
         container.appendChild(emptyState);
     }
 }
@@ -1920,8 +2014,152 @@ window.handleFullChatLoad = function(conversationId, chatData) {
     console.log('[CHAT] Chat loaded successfully:', conversationId);
 };
 
+// ════════════════════════════════════════════════════════════════════════════
+// MEMORY SAVING ANIMATION
+// ════════════════════════════════════════════════════════════════════════════
+
+var _memorySaveIndicator = null;
+
+function showMemorySavingAnimation() {
+    // Show a memory saving indicator with animated brain icon
+    var container = document.getElementById('chatMessages');
+    if (!container) return;
+    
+    // Remove existing indicator if any
+    hideMemorySavingAnimation();
+    
+    _memorySaveIndicator = document.createElement('div');
+    _memorySaveIndicator.className = 'memory-save-indicator';
+    _memorySaveIndicator.innerHTML = 
+        '<span class="memory-icon">🧠</span>' +
+        '<span class="memory-text">Saving to memory...</span>' +
+        '<span class="memory-dots"><span>.</span><span>.</span><span>.</span></span>';
+    
+    container.appendChild(_memorySaveIndicator);
+    smartScroll(container);
+}
+
+function hideMemorySavingAnimation() {
+    // Hide the memory saving indicator
+    if (_memorySaveIndicator) {
+        _memorySaveIndicator.remove();
+        _memorySaveIndicator = null;
+    }
+}
+
+function showMemorySavedConfirmation(memoryName) {
+    // Show a confirmation that memory was saved successfully
+    var container = document.getElementById('chatMessages');
+    if (!container) return;
+    
+    var confirmation = document.createElement('div');
+    confirmation.className = 'memory-saved-confirmation';
+    confirmation.innerHTML = 
+        '<span class="memory-check">✓</span>' +
+        '<span class="memory-saved-text">Memory saved: ' + escapeHtml(memoryName || 'Session insights') + '</span>';
+    
+    container.appendChild(confirmation);
+    
+    // Auto-remove after 3 seconds
+    setTimeout(function() {
+        confirmation.style.opacity = '0';
+        confirmation.style.transition = 'opacity 0.5s';
+        setTimeout(function() {
+            confirmation.remove();
+        }, 500);
+    }, 3000);
+    
+    smartScroll(container);
+}
+
+// Build a message bubble element WITHOUT appending to DOM (for batch rendering)
+function _buildMessageBubble(text, sender) {
+    if (!text || text === 'undefined' || String(text).trim() === '') return null;
+    text = String(text);
+    
+    var bubble = document.createElement('div');
+    bubble.className = 'message-bubble ' + sender;
+    
+    if (sender === 'user') {
+        var chipMeta = window._pendingChipMeta || [];
+        window._pendingChipMeta = null;
+        
+        if (chipMeta.length > 0) {
+            var displayText;
+            if (window._pendingUserDisplayText !== undefined) {
+                displayText = window._pendingUserDisplayText;
+                window._pendingUserDisplayText = undefined;
+            } else {
+                displayText = text;
+                for (var i = 0; i < chipMeta.length; i++) {
+                    var cm = chipMeta[i];
+                    var label = cm.lineRange ? cm.fileName + ' ' + cm.lineRange : cm.fileName;
+                    var escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    var pattern = new RegExp('`' + escapedLabel + '`\\s*```[\\s\\S]*?```\\s*', 'g');
+                    displayText = displayText.replace(pattern, '');
+                }
+                displayText = displayText.trim();
+            }
+            var chipsHtml = '<div class="message-chips-area">';
+            for (var j = 0; j < chipMeta.length; j++) {
+                var cm = chipMeta[j];
+                var ext = cm.language || cm.fileName.split('.').pop() || '';
+                var icon = (typeof window._getFileIcon === 'function') ? window._getFileIcon(ext) : '{ }';
+                var lbl = cm.lineRange ? cm.fileName + ' ' + cm.lineRange : cm.fileName;
+                chipsHtml += '<div class="message-file-chip" title="' + (cm.code ? cm.code.substring(0, 200) : lbl) + '">' +
+                    '<span class="chip-icon">' + icon + '</span><span class="chip-label">' + lbl + '</span></div>';
+            }
+            chipsHtml += '</div>';
+            bubble.insertAdjacentHTML('beforeend', chipsHtml);
+            if (displayText) {
+                var content = document.createElement('div');
+                content.className = 'message-content';
+                content.textContent = displayText;
+                bubble.appendChild(content);
+            }
+        } else {
+            var content = document.createElement('div');
+            content.className = 'message-content';
+            content.textContent = text;
+            bubble.appendChild(content);
+        }
+    } else {
+        var parsedHtml = '';
+        try {
+            var normalizedText = normalizeMarkdownText(text);
+            if (typeof marked !== 'undefined' && marked.parse) {
+                parsedHtml = marked.parse(normalizedText) || '';
+            } else {
+                parsedHtml = formatMarkdownFallback(normalizedText);
+            }
+        } catch (e) {
+            parsedHtml = formatMarkdownFallback(text);
+        }
+        parsedHtml = parsedHtml.replace(
+            /([\u2299\u2299]Thought\s*[\u00b7\xB7]\s*\d+s)/g,
+            '<span class="thought-timer">$1</span>'
+        );
+        var content = document.createElement('div');
+        content.className = 'message-content';
+        content.innerHTML = parsedHtml || text || '';
+        bubble.appendChild(content);
+    }
+    return bubble;
+}
+
 function appendMessage(text, sender, shouldSave) {
     console.log('[CHAT] appendMessage called:', sender, 'length:', text ? text.length : 0);
+    
+    // Check if this is a memory saved message
+    if (text && typeof text === 'string' && text.startsWith('[Memory saved:')) {
+        var memoryMatch = text.match(/\[Memory saved:\s*(.+?)\]/);
+        if (memoryMatch) {
+            hideMemorySavingAnimation();
+            showMemorySavedConfirmation(memoryMatch[1]);
+            return null; // Don't show the raw [Memory saved: ...] text
+        }
+    }
+    
     var container = document.getElementById('chatMessages');
     if (!container) return null;
 
@@ -1935,20 +2173,18 @@ function appendMessage(text, sender, shouldSave) {
     var emptyState = document.getElementById('empty-state');
     if (emptyState) emptyState.remove();
 
+    // Use DocumentFragment for batch DOM operations
+    var fragment = document.createDocumentFragment();
     var bubble = document.createElement('div');
     bubble.className = 'message-bubble ' + sender;
-    var content = document.createElement('div');
-    content.className = 'message-content';
-
+    
     if (sender === 'user') {
         // Check if there are chip metadata to render as visual chips
         var chipMeta = window._pendingChipMeta || [];
         window._pendingChipMeta = null;
 
         if (chipMeta.length > 0) {
-            // Determine display text:
-            // 1. For new sends: use _pendingUserDisplayText (just the typed text, no code block)
-            // 2. For history restore: fall back to regex-stripping the code blocks from text
+            // Determine display text
             var displayText;
             if (window._pendingUserDisplayText !== undefined) {
                 displayText = window._pendingUserDisplayText;
@@ -1956,67 +2192,79 @@ function appendMessage(text, sender, shouldSave) {
             } else {
                 // History restore path: strip code-block context via regex
                 displayText = text;
-                chipMeta.forEach(function(cm) {
+                for (var i = 0; i < chipMeta.length; i++) {
+                    var cm = chipMeta[i];
                     var label = cm.lineRange ? cm.fileName + ' ' + cm.lineRange : cm.fileName;
                     var escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
                     var pattern = new RegExp('`' + escapedLabel + '`\\s*```[\\s\\S]*?```\\s*', 'g');
                     displayText = displayText.replace(pattern, '');
-                });
+                }
                 displayText = displayText.trim();
             }
 
-            // Render chip elements
-            var chipsContainer = document.createElement('div');
-            chipsContainer.className = 'message-chips-area';
-            chipMeta.forEach(function(cm) {
-                var chipEl = document.createElement('div');
-                chipEl.className = 'message-file-chip';
+            // Render chip elements using innerHTML for better performance
+            var chipsHtml = '<div class="message-chips-area">';
+            for (var j = 0; j < chipMeta.length; j++) {
+                var cm = chipMeta[j];
                 var ext = cm.language || cm.fileName.split('.').pop() || '';
                 var icon = (typeof window._getFileIcon === 'function') ? window._getFileIcon(ext) : '{ }';
                 var label = cm.lineRange ? cm.fileName + ' ' + cm.lineRange : cm.fileName;
-                chipEl.innerHTML = '<span class="chip-icon">' + icon + '</span>' +
-                    '<span class="chip-label">' + label + '</span>';
-                chipEl.title = cm.code ? cm.code.substring(0, 200) : label;
-                chipsContainer.appendChild(chipEl);
-            });
-            bubble.appendChild(chipsContainer);
+                chipsHtml += '<div class="message-file-chip" title="' + (cm.code ? cm.code.substring(0, 200) : label) + '">' +
+                    '<span class="chip-icon">' + icon + '</span>' +
+                    '<span class="chip-label">' + label + '</span></div>';
+            }
+            chipsHtml += '</div>';
+            
+            // Use insertAdjacentHTML for better performance than innerHTML
+            bubble.insertAdjacentHTML('beforeend', chipsHtml);
 
             // Add remaining text if any
             if (displayText) {
+                var content = document.createElement('div');
+                content.className = 'message-content';
                 content.textContent = displayText;
                 bubble.appendChild(content);
             }
         } else {
+            var content = document.createElement('div');
+            content.className = 'message-content';
             content.textContent = text;
             bubble.appendChild(content);
         }
     } else {
         var parsedHtml = '';
         try {
+            var normalizedText = normalizeMarkdownText(text);
             if (typeof marked !== 'undefined' && marked.parse) {
-                parsedHtml = marked.parse(text) || '';
+                parsedHtml = marked.parse(normalizedText) || '';
             } else {
-                parsedHtml = formatMarkdownFallback(text);
+                parsedHtml = formatMarkdownFallback(normalizedText);
             }
         } catch (e) {
             console.warn('[MARKDOWN] Parse error in appendMessage (using fallback):', e.message);
             parsedHtml = formatMarkdownFallback(text);
         }
-        // Ensure we never set undefined
-        content.innerHTML = parsedHtml || text || '';
         
-        // Style ⊙Thought · Xs patterns from DeepSeek reasoning output
-        content.innerHTML = content.innerHTML.replace(
+        // Style ⊙Thought · Xs patterns before inserting
+        parsedHtml = parsedHtml.replace(
             /([\u2299⊙]Thought\s*[·\xB7]\s*\d+s)/g,
             '<span class="thought-timer">$1</span>'
         );
-
+        
+        // Create content div
+        var content = document.createElement('div');
+        content.className = 'message-content';
+        content.innerHTML = parsedHtml || text || '';
         bubble.appendChild(content);
         
-        // Apply syntax highlighting to code blocks in assistant messages
+        // Defer syntax highlighting to next frame for better responsiveness
         if (sender === 'assistant' && window.hljs) {
-            content.querySelectorAll('pre code').forEach(function(block) {
-                if (!block.dataset.highlighted) {
+            requestAnimationFrame(function() {
+                var codeBlocks = content.querySelectorAll('pre code');
+                for (var k = 0; k < codeBlocks.length; k++) {
+                    var block = codeBlocks[k];
+                    if (block.dataset.highlighted) continue;
+                    
                     var pre = block.parentElement;
                     var dataLang = pre ? pre.getAttribute('data-lang') : '';
                     var classMatch = block.className.match(/language-(\w+)/);
@@ -2047,12 +2295,16 @@ function appendMessage(text, sender, shouldSave) {
         }
     }
 
-    container.appendChild(bubble);
-    smartScroll(container);
+    fragment.appendChild(bubble);
+    container.appendChild(fragment);
     
-    if (sender === 'assistant' && window.MathJax && window.MathJax.typeset) {
-        window.MathJax.typeset([bubble]);
-    }
+    // Defer scroll and MathJax to next frame
+    requestAnimationFrame(function() {
+        smartScroll(container);
+        if (sender === 'assistant' && window.MathJax && window.MathJax.typeset) {
+            window.MathJax.typeset([bubble]);
+        }
+    });
 
     if (shouldSave) {
         var chat = chats.find(function (c) { return c.id == currentChatId; });
@@ -2574,27 +2826,56 @@ function showToolActivity(type, info, status) {
         statusEl.textContent = activityText;
     }
 
-    // -- File read/edit cards (IMMEDIATE VISIBLE CARDS) --------------
-    if (type === 'read_file' || type === 'edit_file' || type === 'write_file') {
-        if (!currentAssistantMessage) {
-            currentAssistantMessage = document.createElement('div');
-            currentAssistantMessage.className = 'message-bubble assistant';
-            var ce = document.createElement('div');
-            ce.className = 'message-content';
-            currentAssistantMessage.appendChild(ce);
-            currentContent = "";
-            container.appendChild(currentAssistantMessage);
-            var es = document.getElementById('empty-state');
-            if (es) es.remove();
+    // -- File read/edit cards (INSIDE ACTIVITY SECTION) --------------
+    if (type === 'read_file' || type === 'edit_file' || type === 'write_file' || type === 'create_file') {
+        // Ensure activity section exists first
+        if (!currentActivitySection || !document.body.contains(currentActivitySection)) {
+            currentActivitySection = document.createElement('div');
+            currentActivitySection.className = 'activity-section';
+            fileCount = 0;
+                
+            // Create collapsible header
+            var header = document.createElement('div');
+            header.className = 'activity-header';
+            header.innerHTML = '<span class="activity-icon running"><span class="todo-spinner" style="width:10px;height:10px;"></span></span> <span class="activity-title">Exploring</span> <svg class="activity-toggle" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>';
+            header.style.cursor = 'pointer';
+                
+            // Click handler for toggle
+            header.onclick = function(e) {
+                e.stopPropagation();
+                var section = this.parentElement;
+                var isCollapsed = section.classList.toggle('collapsed');
+                var toggle = this.querySelector('.activity-toggle');
+                if (toggle) {
+                    toggle.style.transform = isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
+                    toggle.style.transition = 'transform 0.2s ease';
+                }
+            };
+                
+            currentActivitySection.appendChild(header);
+                
+            // Create activity list
+            var list = document.createElement('div');
+            list.className = 'activity-list';
+            currentActivitySection.appendChild(list);
+                
+            container.appendChild(currentActivitySection);
         }
-
-        var cardsEl = currentAssistantMessage.querySelector('.fec-cards-container');
+            
+        // Create or get FEC cards container INSIDE activity section
+        var cardsEl = currentActivitySection.querySelector('.fec-cards-container');
         if (!cardsEl) {
             cardsEl = document.createElement('div');
             cardsEl.className = 'fec-cards-container';
-            currentAssistantMessage.appendChild(cardsEl);
+            // Insert after activity-list
+            var activityList = currentActivitySection.querySelector('.activity-list');
+            if (activityList) {
+                activityList.parentNode.insertBefore(cardsEl, activityList.nextSibling);
+            } else {
+                currentActivitySection.appendChild(cardsEl);
+            }
         }
-
+    
         // Parse file path from info - robust extraction for Python dict / JSON / plain string
         var filePath = '';
         var rawInfo = info || '';
@@ -2616,7 +2897,7 @@ function showToolActivity(type, info, status) {
             }
         }
         if (!filePath) filePath = rawInfo.split(' ')[0]; // last fallback: first word
-        
+            
         // Check if card already exists - match by data-path containing the resolved filename
         var existingCard = null;
         var allCards = cardsEl.querySelectorAll('.fec[data-path]');
@@ -2647,11 +2928,11 @@ function showToolActivity(type, info, status) {
             card.className = 'fec fec-' + (status === 'running' ? 'pending' : 'applied');
             card.dataset.path = filePath;
             card.dataset.status = status === 'running' ? 'pending' : 'applied';
-            
+                
             var fileName = filePath ? filePath.split('/').pop().split('\\').pop() : 'unknown';
             var ext = (fileName && fileName.includes('.')) ? fileName.split('.').pop().toLowerCase() : '';
             var extClass = 'fec-ext-' + (ext || 'default');
-
+    
             // Action label + icon per type
             var actionLabel = type === 'read_file' ? 'Reading'
                            : type === 'edit_file'  ? 'Editing'
@@ -2661,12 +2942,12 @@ function showToolActivity(type, info, status) {
                            : type === 'edit_file'   ? '#fbbf24'
                            : type === 'create_file' ? '#a78bfa'
                            : '#4ade80';
-
+    
             var escapedPath = filePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
             card.innerHTML =
                 '<div class="fec-left">' +
                     '<span class="fec-ext-badge ' + extClass + '">' + (ext ? ext.toUpperCase() : 'FILE') + '</span>' +
-                    '<button class="fec-name" onclick="openFileInEditor(\'' + escapedPath + '\')">'+
+                    '<button class="fec-name" onclick="openFileInEditor(\'' + escapedPath + '\')"'+'>'+ 
                         escapeHtml(fileName) +
                     '</button>' +
                     '<span class="fec-action-label" style="font-size:11px;color:' + actionColor + ';margin-left:8px;opacity:0.7;">' + actionLabel + '</span>' +
@@ -2677,10 +2958,44 @@ function showToolActivity(type, info, status) {
                         '<span class="fec-status-text fec-status-applied">OK</span>'
                     ) +
                 '</div>';
-            
+                
             cardsEl.appendChild(card);
         }
-
+    
+        // Update activity section stats
+        if (!currentActivitySection.stats) {
+            currentActivitySection.stats = { reads: 0, edits: 0, other: 0 };
+        }
+        if (type === 'read_file') {
+            currentActivitySection.stats.reads++;
+            fileCount++;
+        } else if (['write_file', 'edit_file', 'create_file'].includes(type)) {
+            currentActivitySection.stats.edits++;
+            fileCount++;
+        }
+            
+        // Update header with summary
+        var headerEl = currentActivitySection.querySelector('.activity-title');
+        if (headerEl && fileCount > 0) {
+            var stats = currentActivitySection.stats || { reads: 0, edits: 0 };
+            var summary = 'Exploring ' + fileCount + ' file' + (fileCount > 1 ? 's' : '');
+            if (status === 'complete') {
+                var details = [];
+                if (stats.reads > 0) details.push(stats.reads + ' read' + (stats.reads > 1 ? 's' : ''));
+                if (stats.edits > 0) details.push(stats.edits + ' edit' + (stats.edits > 1 ? 's' : ''));
+                if (details.length > 0) {
+                    summary += ' (' + details.join(', ') + ')';
+                }
+                // Update icon to complete
+                var iconEl = currentActivitySection.querySelector('.activity-icon');
+                if (iconEl) {
+                    iconEl.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color:#4ade80;"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+                    iconEl.className = 'activity-icon complete';
+                }
+            }
+            headerEl.textContent = summary;
+        }
+    
         smartScroll(container);
         return;
     }
@@ -3815,87 +4130,10 @@ function getCfcFileIcon(ext) {
 }
 
 // ================================================
-// TODO LIST MANAGEMENT - Cursor/Qoder Style
+// TODO LIST MANAGEMENT
 // ================================================
 
 var currentTodoList = [];
-
-/**
- * Update todos using NEW Cursor IDE card design
- * @param {Array} todos - Array of todo objects {id, content, status}
- * @param {string} mainTask - Optional main task description
- */
-function updateTodos(todos, mainTask) {
-    console.log('[TODO] updateTodos called, todos count:', todos ? todos.length : 0);
-    if (!todos || !Array.isArray(todos)) {
-        console.log('[TODO] Invalid todos data, returning');
-        return;
-    }
-
-    // If empty todos received, don't clear existing ones
-    if (todos.length === 0) {
-        console.log('[TODO] Empty todos received');
-        if (currentTodoList.length === 0) {
-            // Remove any existing todo card
-            var existingCard = document.getElementById('todo-card-container');
-            if (existingCard) {
-                existingCard.remove();
-            }
-        }
-        return;
-    }
-    
-    console.log('[TODO] Processing', todos.length, 'todos');
-
-    // Merge new todos with existing ones (avoid duplicates by id)
-    var existingIds = new Set(currentTodoList.map(function(t) { return t.id; }));
-    var newTodos = todos.filter(function(t) { return !existingIds.has(t.id); });
-    
-    // Update status of existing todos if changed
-    todos.forEach(function(todo) {
-        var existing = currentTodoList.find(function(t) { return t.id === todo.id; });
-        if (existing) {
-            existing.status = todo.status;
-            existing.content = todo.content;
-        }
-    });
-    
-    // Add new todos
-    currentTodoList = currentTodoList.concat(newTodos);
-    
-    // Convert to new card format
-    var cardTodos = currentTodoList.map(function(todo) {
-        return {
-            text: todo.content,
-            status: (todo.status === 'COMPLETE' || todo.status === 'CANCELLED') ? 'completed' : 'active'
-        };
-    });
-    
-    // Check if todo card already exists
-    var existingCard = document.getElementById('todo-card-container');
-    if (existingCard) {
-        // Update existing card
-        existingCard.remove();
-    }
-    
-    // Create new todo card
-    var card = window.createTodoCard(cardTodos);
-    card.id = 'todo-card-container';
-    
-    // Append or prepend to chat (todos should appear near the top)
-    var chatMessages = document.getElementById('chatMessages');
-    if (chatMessages) {
-        // Insert after empty state but before other messages
-        var emptyState = document.getElementById('empty-state');
-        if (emptyState && emptyState.nextSibling) {
-            chatMessages.insertBefore(card, emptyState.nextSibling);
-        } else {
-            chatMessages.insertBefore(card, chatMessages.firstChild);
-        }
-    }
-    
-    console.log('[TODO] Card rendered with', cardTodos.length, 'items');
-}
 
 function getStatusClass(status) {
     switch (status) {
@@ -3904,34 +4142,6 @@ function getStatusClass(status) {
         case 'CANCELLED': return 'cancelled';
         default: return 'pending';
     }
-}
-
-function toggleTodoSection() {
-    var section = document.getElementById('todo-section');
-    var body    = document.getElementById('todo-body');
-    if (!section || !body) return;
-    var isExpanded = section.classList.contains('expanded');
-    if (isExpanded) {
-        section.classList.remove('expanded');
-        body.style.display = 'none';
-    } else {
-        section.classList.add('expanded');
-        body.style.display = 'block';
-    }
-}
-
-function clearTodos() {
-    var section = document.getElementById('todo-section');
-    var list = document.getElementById('todo-list');
-    var mainTaskEl = document.getElementById('todo-main-task');
-    var progressEl = document.getElementById('todo-progress-count');
-    
-    if (section) section.style.display = 'none';
-    if (list) list.innerHTML = '';
-    if (mainTaskEl) mainTaskEl.textContent = '';
-    if (progressEl) progressEl.textContent = '0/0';
-    
-    currentTodoList = [];
 }
 
 function startStreaming() {
@@ -4086,6 +4296,53 @@ function onChunk(chunk) {
     }
 }
 
+/**
+ * Normalize markdown text for consistent rendering across all providers.
+ * Only removes invisible Unicode characters that break bold/italic parsing.
+ * Does NOT modify spacing or markdown structure.
+ */
+function normalizeMarkdownText(text) {
+    if (!text) return '';
+    // Remove zero-width / invisible characters that break markdown parsing
+    text = text.replace(/[\u200B\u200C\u200D\u200E\u200F\uFEFF\u2060\u00AD]/g, '');
+    // Normalize Windows line endings
+    text = text.replace(/\r\n/g, '\n');
+    return text;
+}
+
+/**
+ * Convert quoted suggestion patterns in rendered HTML to clickable action chips.
+ * Detects patterns like:
+ *   "start with option 1"   or   "build the backend"
+ * and converts them to styled clickable buttons that auto-send the text.
+ */
+function convertSuggestionChips(html) {
+    if (!html) return html;
+    // Match "text" or \u201Ctext\u201D at the START of list items or standalone paragraphs
+    // Pattern: opening tag, optional numbering, then quoted text
+    var chipPattern = /([\u201C\u201D"\u2018\u2019])([^"\u201C\u201D\u2018\u2019]{3,60})([\u201C\u201D"\u2018\u2019])\s*([\u2013\u2014–—-])/g;
+    var chipCount = 0;
+    var result = html.replace(chipPattern, function(match, q1, text, q2, dash) {
+        chipCount++;
+        var escapedText = text.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+        return '<button class="suggestion-chip" onclick="selectOption(\'' + escapedText + '\')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>' + escapeHtml(text) + '</button>' + ' ' + dash;
+    });
+    // Also handle standalone quoted paragraphs ("text" alone in a <p>)
+    if (chipCount === 0) {
+        var pPattern = /(<p>\s*(?:<br>\s*)?)[\u201C\u201D"\u2018\u2019]([^"\u201C\u201D\u2018\u2019]{3,60})[\u201C\u201D"\u2018\u2019](\s*<\/p>)/gi;
+        result = html.replace(pPattern, function(match, before, text, after) {
+            chipCount++;
+            var escapedText = text.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+            return before + '<button class="suggestion-chip" onclick="selectOption(\'' + escapedText + '\')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>' + escapeHtml(text) + '</button>' + after;
+        });
+    }
+    // Remove standalone "or" separators between chips
+    if (chipCount >= 2) {
+        result = result.replace(/<p>\s*or\s*<\/p>/gi, '');
+    }
+    return result;
+}
+
 function updateStreamingUI() {
     var container = document.getElementById('chatMessages');
     if (!currentAssistantMessage || !container) return;
@@ -4105,6 +4362,9 @@ function updateStreamingUI() {
             .replace(/[\u2299\u229a\u25ce\u29bf\u2609]Thought\s*[\u00B7\u00b7\.\xB7]\s*\d+s\s*/g, '') // strip DeepSeek ⊙Thought · Xs
             .trim();
 
+        // -- 1b. Normalize markdown for consistent bold/italic rendering ----
+        cleanText = normalizeMarkdownText(cleanText);
+
         // -- 2. Parse markdown --------------------------------------------
         var html = '';
         try {
@@ -4123,6 +4383,8 @@ function updateStreamingUI() {
 
         // Highlight file creation mentions
         html = highlightFileCreations(html);
+        // Convert quoted suggestions to clickable chips
+        html = convertSuggestionChips(html);
         contentDiv.innerHTML = html;
 
         // -- 3. Syntax highlight (skip already-highlighted blocks) ----------
@@ -4298,8 +4560,30 @@ function processInlineMarkdown(text) {
         .replace(/`([^`]+)`/g, '<code>$1</code>');
 }
 
-// Wrap fec-cards-container in a collapsed summary group on task completion
+// Wrap fec-cards-container in activity section on task completion
 function collapseFecContainer() {
+    // Now FEC cards are inside activity sections, so collapse the activity section instead
+    if (currentActivitySection) {
+        // Force-complete all FEC cards inside activity section
+        var fecCards = currentActivitySection.querySelectorAll('.fec');
+        fecCards.forEach(function(card) {
+            if (card.dataset.status !== 'applied') {
+                card.classList.remove('fec-pending');
+                card.classList.add('fec-applied');
+                card.dataset.status = 'applied';
+                var rightEl = card.querySelector('.fec-right');
+                if (rightEl) rightEl.innerHTML = '<span class="fec-status-text fec-status-applied">OK</span>';
+                var labelEl = card.querySelector('.fec-action-label');
+                if (labelEl) labelEl.style.opacity = '0.4';
+            }
+        });
+        
+        // Collapse the activity section
+        collapseActivitySection();
+        return;
+    }
+    
+    // Fallback: legacy behavior for any remaining standalone FEC containers
     if (!currentAssistantMessage) return;
     var containers = currentAssistantMessage.querySelectorAll('.fec-cards-container');
     containers.forEach(function(container) {
@@ -4346,20 +4630,17 @@ function collapseFecContainer() {
         var groupHeader = document.createElement('div');
         groupHeader.className = 'fec-group-header';
         groupHeader.innerHTML =
-            '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.5;flex-shrink:0;"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>' +
-            '<span class="fec-group-label">' + escapeHtml(summary) + '</span>' +
-            '<svg class="fec-group-chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-left:auto;opacity:0.4;transform:rotate(-90deg);transition:transform 0.2s;"><polyline points="6 9 12 15 18 9"></polyline></svg>';
-
-        groupHeader.style.cursor = 'pointer';
+            '<span class="fec-group-icon">✓</span>' +
+            '<span class="fec-group-label">' + summary + '</span>' +
+            '<svg class="fec-group-toggle" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>';
         groupHeader.onclick = function() {
-            var isCollapsed = group.classList.toggle('fec-group-collapsed');
-            var chev = groupHeader.querySelector('.fec-group-chevron');
-            if (chev) chev.style.transform = isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
+            group.classList.toggle('fec-group-collapsed');
+            var t = groupHeader.querySelector('.fec-group-toggle');
+            if (t) t.style.transform = group.classList.contains('fec-group-collapsed') ? 'rotate(-90deg)' : 'rotate(0deg)';
         };
 
-        // Wrap container in group
-        container.parentElement.insertBefore(group, container);
         group.appendChild(groupHeader);
+        container.parentNode.insertBefore(group, container);
         group.appendChild(container);
     });
 }
@@ -4396,6 +4677,9 @@ function onComplete() {
             .replace(/[\u2299⊙]Thought\s*[\u00B7·\.\s]\s*\d+s\s*/g, '') // strip DeepSeek ⊙Thought · Xs
             .trim();
 
+        // Normalize markdown for consistent bold/italic rendering
+        displayText = normalizeMarkdownText(displayText);
+
         console.log('[CHAT] onComplete: displayText length:', displayText ? displayText.length : 0);
         console.log('[CHAT] onComplete: currentAssistantMessage exists:', !!currentAssistantMessage);
 
@@ -4421,7 +4705,10 @@ function onComplete() {
             }
             
             // CRITICAL FIX: Ensure contentDiv is visible and has content
-            contentDiv.innerHTML = finalHtml || displayText || '';
+            var processedHtml = finalHtml || displayText || '';
+            // Convert quoted suggestions to clickable chips
+            processedHtml = convertSuggestionChips(processedHtml);
+            contentDiv.innerHTML = processedHtml;
             // Hide any ⊙Thought · Xs patterns that slipped through
             contentDiv.innerHTML = contentDiv.innerHTML.replace(
                 /([\u2299\u229a\u25ce\u29bf⊙⊚◎⦿]Thought\s*[\u00B7\u00b7\.\xB7]\s*\d+s)/g,
@@ -5472,7 +5759,12 @@ document.addEventListener('DOMContentLoaded', function() {
     // TODO Functions
     window.updateTodos = updateTodos;
     window.toggleTodoSection = toggleTodoSection;
-    window.clearTodos = clearTodos;
+    window.clearTodos = clearTodosAndChangedFiles;
+
+    // Recovery / continuation signals from Python agent
+    window.onAgentStatus = onAgentStatus;
+    window.onTurnLimitHit = onTurnLimitHit;
+    window.continueTask = continueTask;
     
     // Chat Title Update Function (Phase 4)
     window.updateChatTitle = function(conversationId, title) {
@@ -5714,86 +6006,128 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Handler for full chat load (lazy loading response from Python bridge)
     window.chatFullLoadHandler = function(id, messagesParsed) {
-        console.log('[CHAT] >>> chatFullLoadHandler START for id:', id);
-        console.log('[CHAT] id type:', typeof id, 'currentChatId:', currentChatId, 'type:', typeof currentChatId);
+        console.log('[CHAT] >>> chatFullLoadHandler START for id:', id, 'messages:', messagesParsed ? messagesParsed.length : 0);
         
         var chat = chats.find(function(c) { return c.id == id; });
-        if (chat) {
-            console.log('[CHAT] Target chat object found. Setting messages (count:', messagesParsed ? messagesParsed.length : 0, ')');
-            
-            // Clean thinking messages from loaded data
-            var cleanedMessages = (messagesParsed || []).filter(function(msg) {
-                if (!msg || !(msg.content || msg.text)) return true;
-                var text = String(msg.content || msg.text);
-                var isThinking = text.includes('Thinking') || 
-                                 text.includes('Analyzing your request') ||
-                                 text.includes('Cortex is working');
-                return !isThinking;
-            });
-            if (cleanedMessages.length !== (messagesParsed || []).length) {
-                console.log('[CHAT] CLEANUP - Removed', (messagesParsed || []).length - cleanedMessages.length, 'thinking messages from SQLite load');
-            }
-            
-            chat.messages = cleanedMessages;
-            chat.loaded = true;
-            chat.message_count = chat.messages.length;
-            chat.truncated = false;
-            normalizeMessageRoles(chat.messages);
-            
-            console.log('[CHAT] Comparison: currentChatId == id is', (currentChatId == id));
-            if (currentChatId == id) {
-                console.log('[CHAT] MATCH! rendering messages...');
-                hideLoadingIndicator();
-                clearMessages();
-                
-                if (chat.messages.length === 0) {
-                   console.log('[CHAT] WARNING: No messages found in messagesParsed array.');
-                }
-                
-                chat.messages.forEach(function(msg, index) {
-                    try {
-                        var msgText = msg.content || msg.text;
-                        var msgSender = msg.role || msg.sender;
-                        console.log('[CHAT] Message', index, ':', msgSender, 'length:', msgText ? msgText.length : 0);
-                        if (msgText && msgText !== 'undefined' && msgText.trim() !== '') {
-                            // Restore chip metadata so chips render instead of raw code
-                            if (msgSender === 'user' && msgText) {
-                                var storedChipMeta = msg.chipMeta;
-                                if (!storedChipMeta || !storedChipMeta.length) {
-                                    storedChipMeta = (typeof _parseChipMetaFromText === 'function') ? _parseChipMetaFromText(msgText) : [];
-                                }
-                                if (storedChipMeta && storedChipMeta.length > 0) {
-                                    window._pendingChipMeta = storedChipMeta;
-                                }
-                            }
-                            appendMessage(msgText, msgSender || 'user', false);
-                            console.log('[CHAT] Message', index, 'appended successfully');
-                        } else {
-                            console.log('[CHAT] Skipping empty message', index);
-                        }
-                    } catch (err) {
-                        console.error('[CHAT] Error rendering message at index', index, ':', err);
-                    }
-                });
-                renderHistoryList();
-                
-                // Auto-scroll to bottom to show latest message
-                setTimeout(function() {
-                    var container = document.getElementById('chat-output') || document.getElementById('chatMessages');
-                    if (container) {
-                        container.scrollTop = container.scrollHeight;
-                        console.log('[CHAT] Auto-scrolled to bottom after loading', chat.messages.length, 'messages');
-                    }
-                }, 100);
-                
-                console.log('[CHAT] chatFullLoadHandler: Render complete.');
-            } else {
-                console.warn('[CHAT] chatFullLoadHandler: currentChatId mismatch. current:', currentChatId, 'loaded:', id);
-            }
-        } else {
+        if (!chat) {
             console.error('[CHAT] chatFullLoadHandler: chat object missing for id:', id);
-            console.log('[CHAT] Known chats IDs:', chats.map(function(c){ return c.id; }).join(', '));
+            console.log('[CHAT] <<< chatFullLoadHandler END');
+            return;
         }
+        
+        // Clean thinking messages from loaded data
+        var cleanedMessages = (messagesParsed || []).filter(function(msg) {
+            if (!msg || !(msg.content || msg.text)) return true;
+            var text = String(msg.content || msg.text);
+            return !(text.includes('Thinking') || 
+                     text.includes('Analyzing your request') ||
+                     text.includes('Cortex is working'));
+        });
+        
+        chat.messages = cleanedMessages;
+        chat.loaded = true;
+        chat.message_count = chat.messages.length;
+        chat.truncated = false;
+        normalizeMessageRoles(chat.messages);
+        
+        if (currentChatId != id) {
+            console.warn('[CHAT] chatFullLoadHandler: currentChatId mismatch. current:', currentChatId, 'loaded:', id);
+            console.log('[CHAT] <<< chatFullLoadHandler END');
+            return;
+        }
+        
+        hideLoadingIndicator();
+        clearMessages();
+        
+        if (chat.messages.length === 0) {
+            console.log('[CHAT] WARNING: No messages found.');
+            console.log('[CHAT] <<< chatFullLoadHandler END');
+            return;
+        }
+        
+        // BATCH RENDER: Build all messages into a DocumentFragment for single DOM insert
+        var container = document.getElementById('chatMessages');
+        if (!container) {
+            console.log('[CHAT] <<< chatFullLoadHandler END');
+            return;
+        }
+        
+        var emptyState = document.getElementById('empty-state');
+        if (emptyState) emptyState.remove();
+        
+        var fragment = document.createDocumentFragment();
+        var rendered = 0;
+        
+        for (var index = 0; index < chat.messages.length; index++) {
+            var msg = chat.messages[index];
+            var msgText = msg.content || msg.text;
+            var msgSender = msg.role || msg.sender;
+            
+            if (!msgText || msgText === 'undefined' || msgText.trim() === '') continue;
+            
+            // Restore chip metadata so chips render instead of raw code
+            if (msgSender === 'user' && msgText) {
+                var storedChipMeta = msg.chipMeta;
+                if (!storedChipMeta || !storedChipMeta.length) {
+                    storedChipMeta = (typeof _parseChipMetaFromText === 'function') ? _parseChipMetaFromText(msgText) : [];
+                }
+                if (storedChipMeta && storedChipMeta.length > 0) {
+                    window._pendingChipMeta = storedChipMeta;
+                }
+            }
+            
+            // Build bubble directly without appending to container
+            var bubble = _buildMessageBubble(msgText, msgSender || 'user');
+            if (bubble) {
+                fragment.appendChild(bubble);
+                rendered++;
+            }
+        }
+        
+        // Single DOM insert for all messages
+        container.appendChild(fragment);
+        console.log('[CHAT] Batch rendered', rendered, 'of', chat.messages.length, 'messages');
+        
+        // Defer syntax highlighting for all code blocks at once
+        if (window.hljs) {
+            requestAnimationFrame(function() {
+                var codeBlocks = container.querySelectorAll('pre code:not([data-highlighted])');
+                for (var k = 0; k < codeBlocks.length; k++) {
+                    var block = codeBlocks[k];
+                    var pre = block.parentElement;
+                    var dataLang = pre ? pre.getAttribute('data-lang') : '';
+                    var classMatch = block.className.match(/language-(\w+)/);
+                    var classLang = classMatch ? classMatch[1] : '';
+                    var lang = dataLang || classLang || 'plaintext';
+                    var normalizedLang = window.getNormalizedLanguage ? window.getNormalizedLanguage(lang) : lang;
+                    var code = block.textContent || '';
+                    try {
+                        var highlighted;
+                        if (window.highlightCodeWithEmbedded) {
+                            highlighted = window.highlightCodeWithEmbedded(code, lang);
+                        } else if (hljs.getLanguage(normalizedLang)) {
+                            highlighted = hljs.highlight(code, { language: normalizedLang }).value;
+                        } else {
+                            highlighted = hljs.highlightAuto(code).value;
+                        }
+                        if (highlighted && highlighted !== code) block.innerHTML = highlighted;
+                    } catch (e) {}
+                    block.dataset.highlighted = '1';
+                }
+            });
+        }
+        
+        renderHistoryList();
+        
+        // Auto-scroll to bottom
+        requestAnimationFrame(function() {
+            var c = document.getElementById('chat-output') || document.getElementById('chatMessages');
+            if (c) {
+                c.scrollTop = c.scrollHeight;
+                console.log('[CHAT] Auto-scrolled to bottom after loading', chat.messages.length, 'messages');
+            }
+        });
+        
         console.log('[CHAT] <<< chatFullLoadHandler END');
     };
     
@@ -6061,8 +6395,11 @@ function renderChangedFileRow(filePath, added, removed, editType, status) {
 
     section.style.display = 'flex';
 
-    var fileName    = filePath ? filePath.split('/').pop().split('\\').pop() : 'unknown';
-    var esc         = filePath ? filePath.replace(/'/g, "\\'") : '';
+        var fileName    = filePath ? filePath.split('/').pop().split('\\').pop() : 'unknown';
+    // Double-escape backslashes first, then escape single quotes,
+    // so the onclick string literal is valid JS on Windows paths
+    // (e.g. \urls.py would otherwise be a broken \u unicode escape)
+    var esc = filePath ? filePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'") : '';
     var badgeClass  = { 'M': 'cfs-badge-m', 'C': 'cfs-badge-c', 'D': 'cfs-badge-d' }[editType] || 'cfs-badge-m';
     var addedHtml   = added   > 0 ? '<span class="cfs-stat-added">+' + added   + '</span>' : '';
     var removedHtml = removed > 0 ? '<span class="cfs-stat-removed">-' + removed + '</span>' : '';
@@ -6125,7 +6462,7 @@ function addChangedFile(filePath, added, removed, editType) {
             // Use getElementById to avoid CSS selector failures on Windows paths
             var rightEl2 = document.getElementById('cfs-row-right-' + _escapeId(filePath));
             if (rightEl2) {
-                var esc2 = filePath.replace(/'/g, "\\'");
+                var esc2 = filePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
                 rightEl2.innerHTML =
                     '<button class="cfs-row-reject-btn" onclick="event.stopPropagation();rejectChangedFile(\'' + esc2 + '\', this)" title="Reject changes">' +
                         '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
@@ -6173,11 +6510,21 @@ function resolveFilePath(filePath) {
 
 function acceptChangedFile(filePath, btn) {
     if (!_changedFiles[filePath]) return;
+    if (_changedFiles[filePath].status === 'accepted') return; // guard against double-call
     _changedFiles[filePath].status = 'accepted';
 
-    // Use getElementById with the escaped ID — avoids CSS selector failures
-    // caused by Windows backslashes in data-path attribute queries.
+    // Primary: look up by escaped element ID
     var rightEl = document.getElementById('cfs-row-right-' + _escapeId(filePath));
+    // Fallback: iterate rows and compare data-path directly (avoids CSS selector issues)
+    if (!rightEl) {
+        var rows = document.querySelectorAll('#cfs-list .cfs-row');
+        for (var ri = 0; ri < rows.length; ri++) {
+            if (rows[ri].dataset.path === filePath) {
+                rightEl = rows[ri].querySelector('.cfs-row-right');
+                break;
+            }
+        }
+    }
     if (rightEl) {
         rightEl.innerHTML = '<span class="cfs-row-applied">Accepted</span>';
         var row = rightEl.closest('.cfs-row');
@@ -6189,14 +6536,26 @@ function acceptChangedFile(filePath, btn) {
     if (window.bridge) bridge.on_accept_file_edit(safePath);
     _refreshCfsHeader();
     markFileAccepted(filePath);
+    _updateDiffCardStatus(filePath, 'accepted'); // sync diff card in chat
 }
 
 function rejectChangedFile(filePath, btn) {
     if (!_changedFiles[filePath]) return;
+    if (_changedFiles[filePath].status === 'rejected') return; // guard against double-call
     _changedFiles[filePath].status = 'rejected';
 
-    // Use getElementById — same reason as acceptChangedFile (backslash-safe).
+    // Primary: look up by escaped element ID
     var rightEl = document.getElementById('cfs-row-right-' + _escapeId(filePath));
+    // Fallback: iterate rows and compare data-path directly
+    if (!rightEl) {
+        var rows = document.querySelectorAll('#cfs-list .cfs-row');
+        for (var ri = 0; ri < rows.length; ri++) {
+            if (rows[ri].dataset.path === filePath) {
+                rightEl = rows[ri].querySelector('.cfs-row-right');
+                break;
+            }
+        }
+    }
     if (rightEl) {
         rightEl.innerHTML = '<span class="cfs-row-rejected">Rejected</span>';
         var row = rightEl.closest('.cfs-row');
@@ -6208,6 +6567,7 @@ function rejectChangedFile(filePath, btn) {
     if (window.bridge) bridge.on_reject_file_edit(safePath);
     _refreshCfsHeader();
     markFileRejected(filePath);
+    _updateDiffCardStatus(filePath, 'rejected'); // sync diff card in chat
 }
 
 function acceptAllChanges(e) {
@@ -6688,11 +7048,33 @@ function undoLastAction() {
 
 // Called FROM Python to update file card state
 function markFileAccepted(filePath) {
-    acceptFileEdit(filePath, null);
+    // Only update legacy .fec card UI — bridge already called by acceptChangedFile
+    var card = document.querySelector('.fec[data-path="' + filePath + '"]');
+    if (card) {
+        card.dataset.status = 'applied';
+        card.className = 'fec fec-applied';
+        var pa = card.querySelector('.fec-pending-actions');
+        var aa = card.querySelector('.fec-applied-status');
+        var ra = card.querySelector('.fec-rejected-status');
+        if (pa) pa.style.display = 'none';
+        if (aa) aa.style.display = '';
+        if (ra) ra.style.display = 'none';
+    }
 }
 
 function markFileRejected(filePath) {
-    rejectFileEdit(filePath, null);
+    // Only update legacy .fec card UI — bridge already called by rejectChangedFile
+    var card = document.querySelector('.fec[data-path="' + filePath + '"]');
+    if (card) {
+        card.dataset.status = 'rejected';
+        card.className = 'fec fec-rejected';
+        var pa = card.querySelector('.fec-pending-actions');
+        var aa = card.querySelector('.fec-applied-status');
+        var ra = card.querySelector('.fec-rejected-status');
+        if (pa) pa.style.display = 'none';
+        if (aa) aa.style.display = 'none';
+        if (ra) ra.style.display = '';
+    }
 }
 
 // -- @ MENTION SYSTEM --------------------------------------------
@@ -7197,28 +7579,61 @@ function showFileOperationCard(cardId, filePath, opType) {
         }
     });
 
-    var isCreate = opType === 'create';
-    var label = isCreate ? 'Create file' : 'Edit file';
-    var iconColor = isCreate ? 'text-blue-500' : 'text-yellow-500';
+    // ---- Get or create a group container for this AI turn ----
+    if (!_currentFileOpGroup) {
+        var groupId = 'fileop-group-' + Date.now();
+        var groupEl = document.createElement('div');
+        groupEl.className = 'fileop-group-container';
+        groupEl.id = groupId;
+        groupEl.innerHTML =
+            '<div class="fileop-group-header">' +
+                '<div class="fileop-group-header-left">' +
+                    '<span class="fileop-group-chevron">&#9654;</span>' +
+                    '<span class="fileop-group-label">AI Edits</span>' +
+                    '<span class="fileop-group-count">0 files</span>' +
+                '</div>' +
+                '<span class="fileop-group-status"></span>' +
+            '</div>' +
+            '<div class="fileop-group-children"></div>';
 
+        groupEl.querySelector('.fileop-group-header').addEventListener('click', function() {
+            groupEl.classList.toggle('collapsed');
+        });
+
+        messages.appendChild(groupEl);
+        messages.scrollTop = messages.scrollHeight;
+        _currentFileOpGroup = { id: groupId, el: groupEl };
+    }
+
+    var isCreate = opType === 'create';
+    var iconColor = isCreate ? '#5b9bd5' : '#e8a857';
+
+    // ---- Build child card (loading/animated state) ----
     var card = document.createElement('div');
-    card.className = 'card-container';
+    card.className = 'fileop-child-card loading';
     card.id = cardId;
     card.innerHTML =
-        '<div class="flex items-center p-3 gap-3">' +
-            '<svg class="w-4 h-4 ' + iconColor + ' pulse-timer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">' +
+        '<div class="fileop-child-header">' +
+            '<svg class="pulse-timer" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="' + iconColor + '" stroke-width="2.5">' +
                 '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>' +
             '</svg>' +
-            '<span class="text-gray-400">' + label + '</span>' +
+            '<span class="fileop-child-label">' + (isCreate ? 'Creating file…' : 'Editing file…') + '</span>' +
         '</div>';
 
-    messages.appendChild(card);
+    // Append to group children and update badge
+    var children = _currentFileOpGroup.el.querySelector('.fileop-group-children');
+    children.appendChild(card);
+    var count = children.querySelectorAll('.fileop-child-card').length;
+    var countEl = _currentFileOpGroup.el.querySelector('.fileop-group-count');
+    if (countEl) countEl.textContent = count + (count === 1 ? ' file' : ' files');
+
     messages.scrollTop = messages.scrollHeight;
 
     _fileOpCards[cardId] = {
         element: card,
         filePath: filePath,
         opType: opType,
+        groupId: _currentFileOpGroup.id,
         startTime: Date.now()
     };
 }
@@ -7234,7 +7649,6 @@ function completeFileOperationCard(cardId, filePath, lineCount, opType) {
     console.log('[FileOpCard] completeFileOperationCard called:', cardId, filePath, lineCount, opType);
     var card = document.getElementById(cardId);
     if (!card) { console.error('[FileOpCard] Card NOT FOUND by id:', cardId); return; }
-    console.log('[FileOpCard] Card found, transforming to completed state');
 
     var isCreate = opType === 'create';
     var fileName = filePath.split(/[\\/]/).pop() || filePath;
@@ -7242,25 +7656,19 @@ function completeFileOperationCard(cardId, filePath, lineCount, opType) {
         ? '<span class="status-tag text-add">CREATED</span>'
         : '<span class="status-tag text-mod">MODIFIED</span>';
 
-    // Transform card — collapsed by default, clickable header to expand
-    card.className = 'card-container collapsed';
+    // Transform to completed state — collapsed by default, click header to expand
+    card.className = 'fileop-child-card completed collapsed';
     card.innerHTML =
-        '<div class="card-header">' +
-            '<svg class="chevron" fill="currentColor" viewBox="0 0 20 20"><path d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"/></svg>' +
-            '<span>' + (isCreate ? 'Created file' : 'Edited file') + '</span>' +
+        '<div class="fileop-child-header clickable">' +
+            '<svg class="fileop-child-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>' +
+            '<span class="fileop-child-filename">' + escapeHtml(fileName) + '</span>' +
+            statusBadge +
         '</div>' +
-        '<div class="card-body">' +
-            '<div class="list-row">' +
-                '<span>' + escapeHtml(fileName) + '</span>' +
-                statusBadge +
-            '</div>' +
-            '<div class="list-row" style="font-size:11px;padding-left:24px;color:var(--text-dim);">' +
-                escapeHtml(filePath) + ' \u00B7 ' + lineCount + ' lines' +
-            '</div>' +
+        '<div class="fileop-child-body">' +
+            '<div class="fileop-child-path">' + escapeHtml(filePath) + ' · ' + lineCount + ' lines</div>' +
         '</div>';
 
-    // Toggle expand/collapse on header click
-    card.querySelector('.card-header').addEventListener('click', function() {
+    card.querySelector('.fileop-child-header').addEventListener('click', function() {
         card.classList.toggle('collapsed');
         card.classList.toggle('expanded');
     });
@@ -7383,12 +7791,49 @@ function showDiffCard(cardId, filePath, diffLines, added, removed) {
             linesHtml += '<div class="diff-line" style="color:var(--text-dim);">' + (diffLines.length - MAX_LINES) + ' more lines…</div>';
         }
 
+        // ---- Get or create a group container for this AI turn ----
+        if (!_currentDiffGroup) {
+            var groupId = 'diff-group-' + Date.now();
+            var groupEl = document.createElement('div');
+            groupEl.className = 'diff-group-container';
+            groupEl.id = groupId;
+            groupEl.innerHTML =
+                '<div class="diff-group-header">' +
+                    '<div class="diff-group-header-left">' +
+                        '<span class="diff-group-chevron">&#9654;</span>' +
+                        '<span class="diff-group-label">AI Edits</span>' +
+                        '<span class="diff-group-count">0 files</span>' +
+                    '</div>' +
+                    '<div class="diff-group-actions">' +
+                        '<button class="btn-group-accept">&#10003; Accept All</button>' +
+                        '<button class="btn-group-reject">&#10007; Reject All</button>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="diff-group-children"></div>';
+
+            groupEl.querySelector('.diff-group-header').addEventListener('click', function(e) {
+                if (e.target.closest('.btn-group-accept') || e.target.closest('.btn-group-reject')) return;
+                groupEl.classList.toggle('collapsed');
+            });
+            var _gId = groupId;
+            groupEl.querySelector('.btn-group-accept').addEventListener('click', function(e) {
+                e.stopPropagation(); _groupAcceptAll(_gId);
+            });
+            groupEl.querySelector('.btn-group-reject').addEventListener('click', function(e) {
+                e.stopPropagation(); _groupRejectAll(_gId);
+            });
+
+            messages.appendChild(groupEl);
+            _currentDiffGroup = { id: groupId, el: groupEl };
+        }
+
+        // ---- Build the child diff card ----
         var card = document.createElement('div');
         card.className = 'diff-viewer-card';
         card.id = cardId;
         card.dataset.filePath = filePath;
+        card.dataset.groupId = _currentDiffGroup.id;
 
-        // Attach accept/reject handlers via addEventListener to avoid HTML quoting issues
         card.innerHTML =
             '<div class="diff-header">' +
                 '<div class="diff-header-left">' +
@@ -7403,41 +7848,91 @@ function showDiffCard(cardId, filePath, diffLines, added, removed) {
             '</div>' +
             '<div class="diff-content">' + linesHtml + '</div>';
 
-        // Header click toggles expand/collapse
         card.querySelector('.diff-header').addEventListener('click', function(e) {
-            // Don't toggle if clicking Accept/Reject buttons
             if (e.target.closest('.btn-accept') || e.target.closest('.btn-reject')) return;
             card.classList.toggle('collapsed');
         });
-
-        // Bind Accept/Reject safely (avoids HTML attribute quoting problems with paths)
         card.querySelector('.btn-accept').addEventListener('click', function(e) {
-            e.stopPropagation();
-            onDiffAccept(cardId, filePath);
+            e.stopPropagation(); onDiffAccept(cardId, filePath);
         });
         card.querySelector('.btn-reject').addEventListener('click', function(e) {
-            e.stopPropagation();
-            onDiffReject(cardId, filePath);
+            e.stopPropagation(); onDiffReject(cardId, filePath);
         });
 
-        messages.appendChild(card);
+        // Append to group children and update badge
+        var children = _currentDiffGroup.el.querySelector('.diff-group-children');
+        children.appendChild(card);
+        var count = children.querySelectorAll('.diff-viewer-card').length;
+        var countEl = _currentDiffGroup.el.querySelector('.diff-group-count');
+        if (countEl) countEl.textContent = count + (count === 1 ? ' file' : ' files');
+
         messages.scrollTop = messages.scrollHeight;
     } catch(e) {
         console.error('[DiffCard] Fatal error in showDiffCard:', e);
     }
 }
 
+function _groupAcceptAll(groupId) {
+    var groupEl = document.getElementById(groupId);
+    if (!groupEl) return;
+    groupEl.querySelectorAll('.diff-viewer-card').forEach(function(card) {
+        if (card.dataset.resolved) return;
+        onDiffAccept(card.id, card.dataset.filePath);
+    });
+}
+
+function _groupRejectAll(groupId) {
+    var groupEl = document.getElementById(groupId);
+    if (!groupEl) return;
+    groupEl.querySelectorAll('.diff-viewer-card').forEach(function(card) {
+        if (card.dataset.resolved) return;
+        onDiffReject(card.id, card.dataset.filePath);
+    });
+}
+
+function _updateGroupStatus(groupId) {
+    var groupEl = document.getElementById(groupId);
+    if (!groupEl) return;
+    var cards = groupEl.querySelectorAll('.diff-viewer-card');
+    var total = cards.length;
+    var resolved = 0;
+    cards.forEach(function(c) { if (c.dataset.resolved) resolved++; });
+    if (total > 0 && resolved >= total) {
+        var actionsEl = groupEl.querySelector('.diff-group-actions');
+        if (actionsEl) actionsEl.innerHTML = '<span class="diff-group-status" style="color:var(--text-dim);">All resolved</span>';
+    }
+}
+
+function _updateDiffCardStatus(filePath, status) {
+    document.querySelectorAll('.diff-viewer-card').forEach(function(card) {
+        if (card.dataset.filePath !== filePath || card.dataset.resolved) return;
+        card.dataset.resolved = '1';
+        card.classList.add('collapsed');
+        var actions = card.querySelector('.diff-actions');
+        if (actions) {
+            actions.innerHTML = status === 'accepted'
+                ? '<span class="diff-status-text" style="color:var(--green-bright);">&#10003; Accepted</span>'
+                : '<span class="diff-status-text" style="color:var(--red);">&#10007; Rejected</span>';
+        }
+        if (card.dataset.groupId) _updateGroupStatus(card.dataset.groupId);
+    });
+}
+
 function onDiffAccept(cardId, filePath) {
     console.log('[DiffCard] Accept:', filePath);
     var card = document.getElementById(cardId);
     if (card) {
-        // Collapse card and show status in header
+        if (card.dataset.resolved) return;
+        card.dataset.resolved = '1';
         card.classList.add('collapsed');
         var actions = card.querySelector('.diff-actions');
         if (actions) actions.innerHTML = '<span class="diff-status-text" style="color:var(--green-bright);">&#10003; Accepted</span>';
+        if (card.dataset.groupId) _updateGroupStatus(card.dataset.groupId);
     }
-    if (window.bridge && window.bridge.on_accept_file_edit) {
-        window.bridge.on_accept_file_edit(filePath);
+    if (_changedFiles[filePath] && _changedFiles[filePath].status === 'pending') {
+        acceptChangedFile(filePath, null);
+    } else if (!_changedFiles[filePath]) {
+        if (window.bridge && window.bridge.on_accept_file_edit) window.bridge.on_accept_file_edit(filePath);
     }
 }
 
@@ -7445,13 +7940,17 @@ function onDiffReject(cardId, filePath) {
     console.log('[DiffCard] Reject:', filePath);
     var card = document.getElementById(cardId);
     if (card) {
-        // Collapse card and show status in header
+        if (card.dataset.resolved) return;
+        card.dataset.resolved = '1';
         card.classList.add('collapsed');
         var actions = card.querySelector('.diff-actions');
         if (actions) actions.innerHTML = '<span class="diff-status-text" style="color:var(--red);">&#10007; Rejected</span>';
+        if (card.dataset.groupId) _updateGroupStatus(card.dataset.groupId);
     }
-    if (window.bridge && window.bridge.on_reject_file_edit) {
-        window.bridge.on_reject_file_edit(filePath);
+    if (_changedFiles[filePath] && _changedFiles[filePath].status === 'pending') {
+        rejectChangedFile(filePath, null);
+    } else if (!_changedFiles[filePath]) {
+        if (window.bridge && window.bridge.on_reject_file_edit) window.bridge.on_reject_file_edit(filePath);
     }
 }
 
@@ -7696,7 +8195,7 @@ window.showPermissionCard = function(command, warning, files) {
     var shortCmd = command.length > 70 ? command.slice(0, 67) + '...' : command;
     var html =
         '<div class="perm-card" id="' + cardId + '">'
-            + '<div class="perm-header">'
+            + '<div class="perm-header" id="' + cardId + '-hdr">'
                 + '<svg class="perm-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'
                     + '<polyline points="3 6 5 6 21 6"/>'
                     + '<path d="M19 6l-1 14H6L5 6"/>'
@@ -7708,9 +8207,10 @@ window.showPermissionCard = function(command, warning, files) {
                     + '<button class="perm-btn perm-reject" onclick="respondPermission(\'' + cardId + '\', \'reject\')">Reject</button>'
                     + '<button class="perm-btn perm-accept" onclick="respondPermission(\'' + cardId + '\', \'accept\')">Accept</button>'
                 + '</div>'
+                + '<svg class="perm-chevron" id="' + cardId + '-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="display:none"><polyline points="9 18 15 12 9 6"/></svg>'
             + '</div>'
-            + (fileRowsHtml ? '<div class="perm-files">' + fileRowsHtml + '</div>' : '')
-            + '<div class="perm-warning">' + escapeHtml(warning) + '</div>'
+            + (fileRowsHtml ? '<div class="perm-files" id="' + cardId + '-files">' + fileRowsHtml + '</div>' : '')
+            + '<div class="perm-warning" id="' + cardId + '-warn">' + escapeHtml(warning) + '</div>'
         + '</div>';
 
     // Inject as an AI message
@@ -7753,6 +8253,33 @@ function respondPermission(cardId, decision) {
         var btnsEl = card.querySelector('.perm-btns');
         if (btnsEl) btnsEl.style.display = 'none';
         card.classList.add(isAccept ? 'perm-accepted' : 'perm-rejected');
+
+        // Auto-collapse file list after decision + show chevron toggle
+        var filesEl = document.getElementById(cardId + '-files');
+        var warnEl  = document.getElementById(cardId + '-warn');
+        var chevEl  = document.getElementById(cardId + '-chev');
+        if (filesEl || warnEl) {
+            // Collapse immediately
+            card.classList.add('perm-collapsed');
+            if (filesEl) filesEl.style.display = 'none';
+            if (warnEl)  warnEl.style.display  = 'none';
+            // Show chevron (pointing right = collapsed)
+            if (chevEl) chevEl.style.display = 'block';
+
+            // Wire header click to toggle
+            var hdr = document.getElementById(cardId + '-hdr');
+            if (hdr) {
+                hdr.style.cursor = 'pointer';
+                hdr.addEventListener('click', function() {
+                    var isCollapsed = card.classList.contains('perm-collapsed');
+                    card.classList.toggle('perm-collapsed', !isCollapsed);
+                    if (filesEl) filesEl.style.display = isCollapsed ? 'flex' : 'none';
+                    if (warnEl)  warnEl.style.display  = isCollapsed ? 'block' : 'none';
+                    // Rotate chevron: ▶ collapsed → ▼ expanded
+                    if (chevEl) chevEl.style.transform = isCollapsed ? 'rotate(90deg)' : 'rotate(0deg)';
+                });
+            }
+        }
     }
 
     // Notify Python bridge
@@ -7771,30 +8298,22 @@ window.setTerminalOutput = function(cardId, output, exitCode) {
 // --------------------------------------------------------------
 
 function updateTodos(todos, mainTask) {
-    var section   = document.getElementById('todo-section');
-    var list      = document.getElementById('todo-list');
-    var countEl   = document.getElementById('todo-progress-count');
-    var previewEl = document.getElementById('todo-preview-text');
+    console.log('[TODO] updateTodos called, count:', todos ? todos.length : 0);
+    if (!todos || !Array.isArray(todos)) return;
 
-    if (!section || !list) return;
-
-    // If empty todos received, don't clear existing ones - persist until completed
-    if (!todos || todos.length === 0) {
-        // Only hide if there are no existing todos
+    // Empty payload — hide footer section if no current todos
+    if (todos.length === 0) {
         if (!currentTodoList || currentTodoList.length === 0) {
-            section.style.display = 'none';
-            list.innerHTML = '';
-            _todoExpanded = false;
+            var section = document.getElementById('todo-section');
+            if (section) section.style.display = 'none';
         }
         return;
     }
 
-    // Merge new todos with existing ones (avoid duplicates by id)
+    // ---- Merge with existing list ----
     if (!currentTodoList) currentTodoList = [];
     var existingIds = new Set(currentTodoList.map(function(t) { return t.id; }));
     var newTodos = todos.filter(function(t) { return !existingIds.has(t.id); });
-    
-    // Update status and text of existing todos if changed
     todos.forEach(function(todo) {
         var existing = currentTodoList.find(function(t) { return t.id === todo.id; });
         if (existing) {
@@ -7803,49 +8322,53 @@ function updateTodos(todos, mainTask) {
             if (todo.activeForm) existing.activeForm = todo.activeForm;
         }
     });
-    
-    // Add new todos
     currentTodoList = currentTodoList.concat(newTodos);
 
-    section.style.display = 'flex';
-
-    // Calculate stats from currentTodoList (merged list)
-    var total     = currentTodoList.length;
-    var completed = currentTodoList.filter(function(t) { return t.status === 'COMPLETE'; }).length;
-    if (countEl) countEl.textContent = completed + '/' + total;
-
-    // Preview: prefer the currently-active item's activeForm, then first non-done
-    if (previewEl) {
-        var activeItem  = currentTodoList.find(function(t) { return t.status === 'IN_PROGRESS'; });
-        var firstPending = currentTodoList.find(function(t) {
-            return t.status !== 'COMPLETE' && t.status !== 'CANCELLED';
-        });
-        var previewItem = activeItem || firstPending || currentTodoList[0];
-        var previewText = (previewItem.status === 'IN_PROGRESS' && previewItem.activeForm)
-            ? previewItem.activeForm
-            : previewItem.content;
-        previewEl.textContent = previewText;
+    // ---- Show and auto-expand the footer #todo-section ----
+    var section = document.getElementById('todo-section');
+    if (section) {
+        section.style.display = 'flex';
+        // Auto-expand to show tasks when there's an active item — CSS handles body visibility
+        var hasActive = currentTodoList.some(function(t) { return t.status === 'IN_PROGRESS'; });
+        if (hasActive && !section.classList.contains('expanded')) {
+            section.classList.add('expanded');
+        }
     }
 
-    list.innerHTML = '';
-    currentTodoList.forEach(function(todo) {
-        var item = document.createElement('div');
-        // COMPLETE → todo-complete, IN_PROGRESS → todo-inprogress, PENDING → todo-pending
-        var statusCls = 'todo-' + todo.status.toLowerCase().replace(/_/g, '');
-        item.className = 'todo-item ' + statusCls;
-        item.dataset.id = todo.id;
+    // ---- Progress counter ----
+    var total = currentTodoList.length;
+    var completed = currentTodoList.filter(function(t) { return t.status === 'COMPLETE'; }).length;
+    var countEl = document.getElementById('todo-progress-count');
+    if (countEl) countEl.textContent = completed + '/' + total + ' done';
 
-        // Show activeForm (present-continuous) while the task is in-progress
-        var displayText = (todo.status === 'IN_PROGRESS' && todo.activeForm)
-            ? todo.activeForm
-            : todo.content;
-
-        var iconHtml = buildTodoIcon(todo.status);
-        item.innerHTML = iconHtml +
-            '<span class="todo-text">' + escapeHtml(displayText) + '</span>';
-
-        list.appendChild(item);
+    // ---- Preview text (shown in collapsed header) ----
+    var activeItem   = currentTodoList.find(function(t) { return t.status === 'IN_PROGRESS'; });
+    var firstPending = currentTodoList.find(function(t) {
+        return t.status !== 'COMPLETE' && t.status !== 'CANCELLED';
     });
+    var previewItem = activeItem || firstPending || currentTodoList[0];
+    var previewText = (previewItem && previewItem.status === 'IN_PROGRESS' && previewItem.activeForm)
+        ? previewItem.activeForm : (previewItem ? previewItem.content : '');
+    var previewEl = document.getElementById('todo-preview-text');
+    if (previewEl) previewEl.textContent = previewText;
+
+    // ---- Rebuild item list ----
+    var list = document.getElementById('todo-list');
+    if (list) {
+        list.innerHTML = '';
+        currentTodoList.forEach(function(todo) {
+            var item = document.createElement('div');
+            var statusCls = 'todo-' + todo.status.toLowerCase().replace(/_/g, '');
+            item.className = 'todo-item ' + statusCls;
+            item.dataset.id = todo.id;
+            var displayText = (todo.status === 'IN_PROGRESS' && todo.activeForm)
+                ? todo.activeForm : todo.content;
+            item.innerHTML = buildTodoIcon(todo.status) +
+                '<span class="todo-text">' + escapeHtml(displayText) + '</span>';
+            list.appendChild(item);
+        });
+    }
+    console.log('[TODO] Footer section updated with', currentTodoList.length, 'items');
 }
 
 function buildTodoIcon(status) {
@@ -7872,15 +8395,115 @@ function buildTodoIcon(status) {
 }
 
 function toggleTodoSection() {
-    _todoExpanded = !_todoExpanded;
     var section = document.getElementById('todo-section');
-    var body    = document.getElementById('todo-body');
-    if (section) section.classList.toggle('expanded', _todoExpanded);
-    if (body)    body.style.display = _todoExpanded ? 'block' : 'none';
+    if (!section) return;
+    // Use DOM class as source of truth — CSS handles body visibility
+    if (section.classList.contains('expanded')) {
+        section.classList.remove('expanded'); // CSS hides todo-body automatically
+    } else {
+        section.classList.add('expanded');    // CSS shows todo-body automatically
+    }
 }
+
+// Alias for inline card toggle
+function toggleTodoCard() { toggleTodoSection(); }
 
 window.updateTodos = updateTodos;
 window.toggleTodoSection = toggleTodoSection;
+window.toggleTodoCard = toggleTodoCard;
+
+// ============================================================
+// AGENT RECOVERY UI  — context compaction + turn-limit banners
+// ============================================================
+
+/**
+ * onAgentStatus(type, message)
+ * Called by Python when the agent emits agent_status_update.
+ * Inserts a subtle inline status note into the chat feed.
+ *   type: 'compacting' | 'retrying'
+ */
+function onAgentStatus(type, message) {
+    var container = document.getElementById('chatMessages');
+    if (!container) return;
+    var note = document.createElement('div');
+    note.className = 'agent-status-note agent-status-' + (type || 'info');
+    var icon = type === 'compacting' ? '&#8635;' : '&#8634;';  // ↻ / ↺
+    note.innerHTML =
+        '<span class="agent-status-icon">' + icon + '</span>' +
+        '<span class="agent-status-text">' + escapeHtml(message || '') + '</span>';
+    container.appendChild(note);
+    container.scrollTop = container.scrollHeight;
+}
+window.onAgentStatus = onAgentStatus;
+
+/**
+ * onTurnLimitHit(pendingTodos)
+ * Called by Python when the agent loop ends with todos still PENDING/IN_PROGRESS.
+ * Shows a one-time "Continue?" banner so the user can resume the task.
+ */
+function onTurnLimitHit(pendingTodos) {
+    var container = document.getElementById('chatMessages');
+    if (!container) return;
+    // Only show once per response
+    if (document.getElementById('continue-task-banner')) return;
+
+    var pending = (pendingTodos || []).filter(function(t) {
+        var s = (t.status || '').toUpperCase();
+        return s === 'PENDING' || s === 'IN_PROGRESS';
+    });
+    if (pending.length === 0) return;
+
+    var count = pending.length;
+    var label = count + ' task' + (count !== 1 ? 's' : '') + ' remaining';
+
+    var todosJson = JSON.stringify(pendingTodos || []);
+    var banner = document.createElement('div');
+    banner.id = 'continue-task-banner';
+    banner.className = 'continue-task-banner';
+    banner.innerHTML =
+        '<div class="continue-task-info">' +
+            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+                '<circle cx="12" cy="12" r="10"/>' +
+                '<line x1="12" y1="8" x2="12" y2="12"/>' +
+                '<line x1="12" y1="16" x2="12.01" y2="16"/>' +
+            '</svg>' +
+            '<span>' + escapeHtml(label) + '</span>' +
+        '</div>' +
+        '<button class="continue-task-btn" onclick="continueTask(' + todosJson.replace(/"/g, '&quot;') + ')">Continue</button>';
+    container.appendChild(banner);
+    container.scrollTop = container.scrollHeight;
+}
+window.onTurnLimitHit = onTurnLimitHit;
+
+/**
+ * continueTask(pendingTodos)
+ * Dismisses the banner and sends a continuation user message so the agent
+ * picks up where it left off.
+ */
+function continueTask(pendingTodos) {
+    // Dismiss the banner
+    var banner = document.getElementById('continue-task-banner');
+    if (banner) banner.remove();
+
+    // Build a short continuation message listing the remaining items
+    var lines = (pendingTodos || []).filter(function(t) {
+        var s = (t.status || '').toUpperCase();
+        return s === 'PENDING' || s === 'IN_PROGRESS';
+    }).map(function(t) {
+        return '- ' + (t.content || t.description || '');
+    });
+    var msg = 'Continue the task. Remaining todos:\n' + lines.join('\n');
+
+    // Inject into the input and fire sendMessage
+    var input = document.getElementById('chatInput');
+    if (input) {
+        input.value = msg;
+        if (typeof sendMessage === 'function') {
+            sendMessage();
+        }
+    }
+}
+window.continueTask = continueTask;
 
 // --------------------------------------------------------------
 // FEATURE 4 - MESSAGE QUEUE SYSTEM
@@ -7889,6 +8512,8 @@ window.toggleTodoSection = toggleTodoSection;
 function _sendNow(text) {
     _isGenerating = true;
     _stopRequested = false;  // Clear any previous stop so the new response is not suppressed
+    _currentDiffGroup = null; // New AI turn — group diffs into a fresh container
+    _currentFileOpGroup = null; // New AI turn — group file ops into a fresh container
     
     // Check if there are attached images
     var hasImages = _attachedImages.length > 0;

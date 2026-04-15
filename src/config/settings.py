@@ -54,6 +54,10 @@ DEFAULT_SETTINGS = {
     },
     "recent_projects": [],
     "last_project": None,
+    "memory": {
+        "enabled": True,              # inject persistent memory into agent system prompt
+        "max_loaded_files": 10,        # max individual memory files loaded per session
+    },
 }
 
 

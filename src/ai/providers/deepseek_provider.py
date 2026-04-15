@@ -93,9 +93,9 @@ class DeepSeekProvider:
         # DEBUG: Log if tools are present
         if 'tools' in kwargs and kwargs['tools']:
             log.info(f"[DEEPSEEK DEBUG] Sending {len(kwargs['tools'])} tools to API")
-            log.info(f"[DEEPSEEK DEBUG] First tool: {kwargs['tools'][0].get('function', {}).get('name', 'unknown')}")
+            log.debug(f"[DEEPSEEK DEBUG] Tools: {', '.join([t.get('function', {}).get('name', '?') for t in kwargs['tools']])}")
         else:
-            log.warning("[DEEPSEEK DEBUG] NO TOOLS in request!")
+            log.debug("[DEEPSEEK DEBUG] No tools in request")
         
         url = f"{self.base_url}/chat/completions"
         
@@ -192,6 +192,31 @@ class DeepSeekProvider:
             log.error(f"Unexpected error: {e}")
             raise
     
+    def chat_stream(self, messages: List[Dict[str, str]], model: str = "deepseek-chat",
+                    max_tokens: int = 2000, tools: List = None, retry_callback=None,
+                    **kwargs) -> Generator[str, None, None]:
+        """Stream chat response (alias for chat with retry_callback support).
+        
+        Args:
+            messages: List of message dicts with 'role' and 'content'
+            model: Model ID (deepseek-chat, deepseek-reasoner, deepseek-coder)
+            max_tokens: Maximum tokens in response
+            tools: List of tool definitions for function calling
+            retry_callback: Optional callback for retry notifications (unused but for API compatibility)
+            **kwargs: Additional parameters passed to the API
+        """
+        # retry_callback is for API compatibility with MistralProvider
+        # DeepSeek doesn't implement custom retry logic, but we accept the param
+        
+        yield from self.chat(
+            messages, 
+            model=model, 
+            stream=True,
+            max_tokens=max_tokens,
+            tools=tools,
+            **kwargs
+        )
+
     def get_usage_stats(self) -> Dict[str, Any]:
         """Get current usage statistics"""
         total_tokens = self._token_count["input"] + self._token_count["output"]

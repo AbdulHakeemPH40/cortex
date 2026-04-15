@@ -19,7 +19,9 @@ class ProviderType(Enum):
     DEEPSEEK = "deepseek"   # Primary provider for agentic work
     SILICONFLOW = "siliconflow"  # Vision models
     MISTRAL = "mistral"     # Mistral AI models
-    OPENAI = "openai"       # For OpenAI or SiliconFlow if used as OpenAI
+    OPENAI = "openai"       # OpenAI models (GPT-4o, o1, o3)
+    OPENAI_LEGACY = "openai_legacy"  # Legacy OpenAI provider for backward compatibility
+    OPENAI_RESPONSES = "openai_responses"  # Codex & Responses API models
 
 @dataclass
 class ModelInfo:
@@ -157,7 +159,8 @@ class DeepSeekProvider(BaseProvider):
                    model: str = "deepseek-chat",
                    temperature: float = 0.7,
                    max_tokens: int = 2000,
-                   tools: Optional[List[Dict[str, Any]]] = None) -> Generator[str, None, None]:
+                   tools: Optional[List[Dict[str, Any]]] = None,
+                   retry_callback=None) -> Generator[str, None, None]:
         """Stream chat completion from DeepSeek using direct HTTP requests."""
         try:
             import requests as req
@@ -338,18 +341,167 @@ class ProviderRegistry:
         except (ImportError, Exception) as e:
             log.warning(f"Could not register MistralProvider: {e}")
         
+        # Register OpenAI provider
+        try:
+            from src.ai.providers.openai_provider import OpenAIProvider
+            openai_provider = OpenAIProvider()
+            # Create a wrapper that implements BaseProvider interface
+            openai_wrapper = self._create_openai_wrapper(openai_provider)
+            self._register_provider(ProviderType.OPENAI, openai_wrapper)
+            log.info("OpenAIProvider registered with comprehensive model support")
+        except (ImportError, Exception) as e:
+            log.warning(f"Could not register OpenAIProvider: {e}")
+        
         # Lazily register other providers if their modules are available
         try:
             from src.ai.providers.siliconflow_provider import SiliconFlowProvider
             self._register_provider(ProviderType.SILICONFLOW, SiliconFlowProvider())
             # Maintain backward compatibility if it used OPENAI type
-            self._register_provider(ProviderType.OPENAI, self._providers[ProviderType.SILICONFLOW])
+            self._register_provider(ProviderType.OPENAI_LEGACY, self._providers[ProviderType.SILICONFLOW])
             log.info("SiliconFlowProvider registered")
         except (ImportError, Exception) as e:
             log.warning(f"Could not register SiliconFlowProvider: {e}")
+        
+        # Register OpenAI Responses API provider (for Codex models)
+        try:
+            from src.ai.providers.openai_responses_provider import OpenAIResponsesProvider
+            responses_wrapper = self._create_responses_wrapper()
+            self._register_provider(ProviderType.OPENAI_RESPONSES, responses_wrapper)
+            log.info("OpenAIResponsesProvider registered for Codex models")
+        except (ImportError, Exception) as e:
+            log.warning(f"Could not register OpenAIResponsesProvider: {e}")
             
     def _register_provider(self, provider_type: ProviderType, provider: BaseProvider):
         self._providers[provider_type] = provider
+    
+    def _create_openai_wrapper(self, openai_provider):
+        """Create a wrapper that adapts OpenAIProvider to BaseProvider interface"""
+        
+        class OpenAIWrapper(BaseProvider):
+            """Wrapper to adapt standalone OpenAIProvider to registry interface"""
+            
+            def __init__(self, provider):
+                super().__init__(ProviderType.OPENAI)
+                self._provider = provider
+                self._api_key = provider.api_key
+            
+            @property
+            def available_models(self) -> List[ModelInfo]:
+                """Return OpenAI models as ModelInfo list"""
+                models = []
+                for model_data in self._provider.get_available_models():
+                    models.append(ModelInfo(
+                        id=model_data["id"],
+                        name=model_data["name"],
+                        provider="openai",
+                        context_length=model_data["context_window"],
+                        max_tokens=model_data["max_output"],
+                        supports_streaming=model_data["supports_streaming"],
+                        supports_vision=model_data["supports_vision"],
+                        cost_per_1k_input=model_data["pricing"]["input"] / 1000,
+                        cost_per_1k_output=model_data["pricing"]["output"] / 1000
+                    ))
+                return models
+            
+            def chat(self, messages, model, temperature=0.7, max_tokens=2000, 
+                    stream=False, tools=None, tool_choice=None) -> ChatResponse:
+                """Non-streaming chat completion"""
+                try:
+                    result = ""
+                    for chunk in self._provider.chat(
+                        messages=messages,
+                        model=model,
+                        stream=False,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        tools=tools
+                    ):
+                        result += chunk
+                    
+                    return ChatResponse(
+                        content=result,
+                        model=model,
+                        provider="openai"
+                    )
+                except Exception as e:
+                    return ChatResponse(
+                        content=f"[Error: {str(e)}]",
+                        model=model,
+                        provider="openai",
+                        error=str(e)
+                    )
+            
+            def chat_stream(self, messages, model, temperature=0.7, max_tokens=2000, tools=None, retry_callback=None, **kwargs):
+                """Stream chat completion"""
+                return self._provider.chat_stream(
+                    messages=messages,
+                    model=model,
+                    max_tokens=max_tokens,
+                    tools=tools
+                )
+            
+            def validate_api_key(self) -> bool:
+                return self._provider.validate_api_key()
+        
+        return OpenAIWrapper(openai_provider)
+    
+    def _create_responses_wrapper(self):
+        """Create wrapper for OpenAI Responses API provider"""
+        from src.ai.providers.openai_responses_provider import OpenAIResponsesProvider
+        
+        class ResponsesWrapper(BaseProvider):
+            """Wrapper to adapt OpenAIResponsesProvider to registry interface"""
+            
+            def __init__(self):
+                super().__init__(ProviderType.OPENAI_RESPONSES)
+                self._provider = OpenAIResponsesProvider()
+            
+            @property
+            def available_models(self) -> List[ModelInfo]:
+                """Return Codex/Responses models"""
+                return [
+                    ModelInfo("gpt-5.1-codex-mini", "GPT-5.1 Codex Mini", "openai_responses", 128000, 8000, True, False, 0.00015, 0.0006),
+                    ModelInfo("gpt-5.1-codex", "GPT-5.1 Codex", "openai_responses", 128000, 8000, True, False, 0.0005, 0.002),
+                    ModelInfo("gpt-5.3-codex", "GPT-5.3 Codex", "openai_responses", 256000, 16000, True, False, 0.001, 0.005),
+                ]
+            
+            def chat(self, messages, model="gpt-5.1-codex-mini", temperature=0.7,
+                    max_tokens=2000, stream=True, tools=None, **kwargs):
+                """Non-streaming chat"""
+                content = ""
+                for chunk in self._provider.chat_stream(
+                    messages=messages,
+                    model=model,
+                    max_tokens=max_tokens,
+                    tools=tools,
+                    stream=False,
+                    **kwargs
+                ):
+                    content += chunk
+                
+                from src.ai.providers import ChatResponse
+                return ChatResponse(
+                    content=content,
+                    model=model,
+                    provider="openai_responses",
+                    usage=self._provider.get_usage_stats()
+                )
+            
+            def chat_stream(self, messages, model, temperature=0.7, max_tokens=2000, 
+                          tools=None, retry_callback=None, **kwargs):
+                """Stream chat completion"""
+                yield from self._provider.chat_stream(
+                    messages=messages,
+                    model=model,
+                    max_tokens=max_tokens,
+                    tools=tools,
+                    **kwargs
+                )
+            
+            def validate_api_key(self) -> bool:
+                return bool(self._provider.api_key)
+        
+        return ResponsesWrapper()
         
     def get_provider(self, provider_type: Optional[ProviderType] = None) -> BaseProvider:
         if provider_type is None:

@@ -314,6 +314,280 @@
    DIFF VIEWER INSIDE CARDS
    ================================================ */
 
+/* ---- Diff group: wraps all diffs from one AI turn ---- */
+.diff-group-container {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    margin-bottom: 6px;
+    overflow: hidden;
+}
+
+.diff-group-header {
+    padding: 8px 14px;
+    background: rgba(255,255,255,0.03);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s ease;
+}
+
+.diff-group-header:hover { background: rgba(255,255,255,0.06); }
+
+.diff-group-header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+}
+
+.diff-group-chevron {
+    font-size: 11px;
+    opacity: 0.5;
+    transition: transform 0.25s cubic-bezier(0.4,0,0.2,1);
+    flex-shrink: 0;
+    color: var(--text-dim);
+}
+
+.diff-group-container:not(.collapsed) .diff-group-chevron {
+    transform: rotate(90deg);
+    opacity: 0.8;
+}
+
+.diff-group-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.diff-group-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.btn-group-accept {
+    background: var(--green);
+    color: #fff;
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+}
+.btn-group-accept:hover { background: var(--green-bright); }
+
+.btn-group-reject {
+    background: #333;
+    color: #ddd;
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+}
+.btn-group-reject:hover { background: #444; }
+
+.diff-group-status {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 0 6px;
+}
+
+.diff-group-children {
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    overflow: hidden;
+    max-height: 9999px;
+    transition: max-height 0.35s ease, padding 0.35s ease;
+}
+
+.diff-group-container.collapsed .diff-group-children {
+    max-height: 0;
+    padding: 0 6px;
+}
+
+.diff-group-container.collapsed .diff-group-header {
+    border-bottom: none;
+}
+
+/* Child diff cards inside a group: no outer margin, slightly inset look */
+.diff-group-children .diff-viewer-card {
+    margin-bottom: 0;
+}
+
+/* ============================================================
+   FILE OPERATION GROUP  (parent/child container per AI turn)
+   ============================================================ */
+
+.fileop-group-container {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    margin-bottom: 6px;
+    overflow: hidden;
+}
+
+.fileop-group-header {
+    padding: 8px 14px;
+    background: rgba(255,255,255,0.03);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s ease;
+}
+.fileop-group-header:hover { background: rgba(255,255,255,0.06); }
+
+.fileop-group-container.collapsed .fileop-group-header { border-bottom: none; }
+
+.fileop-group-header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+}
+
+.fileop-group-chevron {
+    font-size: 11px;
+    opacity: 0.5;
+    transition: transform 0.25s cubic-bezier(0.4,0,0.2,1);
+    flex-shrink: 0;
+    color: var(--text-dim);
+}
+.fileop-group-container:not(.collapsed) .fileop-group-chevron {
+    transform: rotate(90deg);
+    opacity: 0.8;
+}
+
+.fileop-group-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.fileop-group-count {
+    font-size: 11px;
+    color: var(--text-dim);
+    background: rgba(255,255,255,0.08);
+    padding: 1px 7px;
+    border-radius: 10px;
+}
+
+.fileop-group-status {
+    font-size: 11px;
+    color: var(--text-dim);
+    font-weight: 500;
+}
+
+.fileop-group-children {
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    overflow: hidden;
+    max-height: 9999px;
+    transition: max-height 0.35s ease, padding 0.35s ease;
+}
+.fileop-group-container.collapsed .fileop-group-children {
+    max-height: 0;
+    padding: 0 6px;
+}
+
+/* ---- Child file op card ---- */
+.fileop-child-card {
+    background: rgba(255,255,255,0.02);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 5px;
+    overflow: hidden;
+    transition: border-color 0.15s ease;
+}
+.fileop-child-card:hover { border-color: rgba(255,255,255,0.12); }
+
+/* Loading state — animated */
+.fileop-child-card.loading .fileop-child-header {
+    padding: 7px 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: default;
+}
+
+.fileop-child-label {
+    font-size: 12px;
+    color: var(--text-dim);
+    font-style: italic;
+}
+
+/* Completed state */
+.fileop-child-header.clickable {
+    padding: 7px 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+}
+.fileop-child-header.clickable:hover { background: rgba(255,255,255,0.04); }
+
+.fileop-child-chevron {
+    flex-shrink: 0;
+    color: var(--text-dim);
+    opacity: 0.6;
+    transition: transform 0.2s ease;
+}
+.fileop-child-card.expanded .fileop-child-chevron { transform: rotate(90deg); opacity: 1; }
+
+.fileop-child-filename {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-primary);
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fileop-child-body {
+    display: none;
+    padding: 0 10px 8px 28px;
+    border-top: 1px solid rgba(255,255,255,0.05);
+}
+.fileop-child-card.expanded .fileop-child-body { display: block; }
+
+.fileop-child-path {
+    font-size: 11px;
+    color: var(--text-dim);
+    word-break: break-all;
+    padding-top: 6px;
+    line-height: 1.5;
+}
+
+.diff-group-count {
+    font-size: 11px;
+    color: var(--text-dim);
+    background: rgba(255,255,255,0.08);
+    padding: 1px 7px;
+    border-radius: 10px;
+}
+
 .diff-viewer-card {
     background: var(--bg-card);
     border: 1px solid var(--border);
@@ -542,12 +816,12 @@
     
     .btn-accept,
     .btn-reject {
-        width: 100%;
+        /* Keep buttons side-by-side even on narrow panels */
+        width: auto;
     }
     
-    .diff-actions {
-        flex-direction: column;
-    }
+    /* NOTE: .diff-actions flex-direction intentionally NOT overridden here
+       so Accept/Reject buttons always stay on the same line */
 }
 
 @media (max-width: 480px) {
@@ -871,6 +1145,19 @@
     font-size: 11px;
     color: rgba(148, 163, 184, 0.65);
     font-style: italic;
+}
+
+/* Chevron toggle (shown after accept/reject) */
+.perm-chevron {
+    flex-shrink: 0;
+    color: rgba(148, 163, 184, 0.55);
+    transition: transform 0.2s ease;
+    margin-left: 4px;
+}
+
+/* Collapsed state — border-bottom removed when file list hidden */
+.perm-card.perm-collapsed .perm-header {
+    border-bottom: none;
 }
 
 /* Post-decision states */
@@ -1254,6 +1541,25 @@
 /* Applied card green left accent */
 .fec.fec-applied {
     border-left: 2px solid rgba(74, 222, 128, 0.35);
+}
+
+/* FEC cards inside activity section - spacing adjustments */
+.activity-section .fec-cards-container {
+    padding: 8px 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    margin: 0;
+}
+
+.activity-section.collapsed .fec-cards-container {
+    display: none;
+}
+
+.activity-section .fec {
+    margin-bottom: 4px;
+}
+
+.activity-section .fec:last-child {
+    margin-bottom: 0;
 }
 
 /* ================================================
@@ -2405,12 +2711,18 @@
 .todo-section {
     display: none;
     flex-direction: column;
+    flex-shrink: 0;
     background: #161618;
     border: 1px solid rgba(255, 255, 255, 0.07);
     border-radius: 8px;
     margin: 0 16px 10px;
     overflow: hidden;
     font-size: 13px;
+}
+
+/* Inline card inside chatMessages — remove side margins */
+#todo-card-container.todo-section {
+    margin: 0 0 8px 0;
 }
 
 .todo-header {
@@ -2431,6 +2743,11 @@
 
 .todo-section.expanded .todo-header {
     border-bottom-color: rgba(255, 255, 255, 0.06);
+}
+
+/* Show the body whenever the section is expanded — !important overrides any inline style */
+.todo-section.expanded .todo-body {
+    display: block !important;
 }
 
 .todo-header-left {
@@ -2494,6 +2811,7 @@
 }
 
 .todo-body {
+    display: none;  /* hidden by default; shown via .todo-section.expanded */
     border-top: 1px solid rgba(255, 255, 255, 0.06);
     max-height: 280px;
     overflow-y: auto;
@@ -2635,7 +2953,7 @@
     background: #161618;
     border: 1px solid rgba(255, 255, 255, 0.07);
     border-radius: 8px;
-    margin: 0 0 6px;
+    margin: 0 16px 10px;
     overflow: hidden;
     font-size: 13px;
 }
@@ -3047,4 +3365,81 @@
 .text-del {
     color: #ef4444;
     background: rgba(239, 68, 68, 0.1);
+}
+
+/* ================================================
+   AGENT RECOVERY UI
+   - agent-status-note : context compaction / retry inline note
+   - continue-task-banner : "Continue?" banner when todos remain
+   ================================================ */
+
+.agent-status-note {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 4px 16px;
+    padding: 5px 10px;
+    background: rgba(255, 170, 0, 0.07);
+    border: 1px solid rgba(255, 170, 0, 0.18);
+    border-radius: 6px;
+    font-size: 11.5px;
+    color: rgba(220, 180, 80, 0.85);
+    font-style: italic;
+}
+
+.agent-status-compacting {
+    background: rgba(80, 140, 255, 0.07);
+    border-color: rgba(80, 140, 255, 0.2);
+    color: rgba(140, 180, 255, 0.85);
+}
+
+.agent-status-icon {
+    font-size: 13px;
+    flex-shrink: 0;
+}
+
+.agent-status-text {
+    flex: 1;
+}
+
+.continue-task-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 8px 16px;
+    padding: 10px 14px;
+    background: rgba(80, 140, 255, 0.07);
+    border: 1px solid rgba(80, 140, 255, 0.22);
+    border-radius: 8px;
+    font-size: 13px;
+}
+
+.continue-task-info {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: rgba(140, 175, 255, 0.9);
+}
+
+.continue-task-info svg {
+    flex-shrink: 0;
+    opacity: 0.8;
+}
+
+.continue-task-btn {
+    background: rgba(80, 140, 255, 0.15);
+    border: 1px solid rgba(80, 140, 255, 0.35);
+    border-radius: 5px;
+    color: rgba(160, 195, 255, 1);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 5px 14px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    white-space: nowrap;
+}
+
+.continue-task-btn:hover {
+    background: rgba(80, 140, 255, 0.28);
+    border-color: rgba(80, 140, 255, 0.5);
 }

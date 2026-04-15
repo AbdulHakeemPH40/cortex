@@ -1766,6 +1766,7 @@ class SidebarWidget(QWidget):
     file_rejected = pyqtSignal(str)
     accept_all_requested = pyqtSignal()
     reject_all_requested = pyqtSignal()
+    settings_requested = pyqtSignal()   # ⚙ gear button in icon-strip footer
 
     def __init__(self, file_manager=None, git_manager=None, parent=None):
         super().__init__(parent)
@@ -1807,6 +1808,17 @@ class SidebarWidget(QWidget):
             self._icon_buttons.append(btn)
 
         icon_layout.addStretch()
+
+        # ── Footer: Settings / Memory gear button ──────────────────────
+        self._settings_icon_btn = QPushButton()
+        self._settings_icon_btn.setIconSize(QSize(22, 22))
+        self._settings_icon_btn.setToolTip("Settings / Memory Manager\nCtrl+Shift+M")
+        self._settings_icon_btn.setFixedSize(46, 46)
+        self._settings_icon_btn.setCheckable(False)
+        self._settings_icon_btn.clicked.connect(self.settings_requested.emit)
+        icon_layout.addWidget(self._settings_icon_btn)
+        icon_layout.setContentsMargins(4, 12, 4, 12)  # extra bottom padding
+
         layout.addWidget(self._icon_strip)
 
         # Stacked panels
@@ -1890,6 +1902,24 @@ class SidebarWidget(QWidget):
             icon_name = self._panels_info[i][0]
             btn.setIcon(make_icon(icon_name, icon_color, 24))
             btn.setStyleSheet(btn_style)
+
+        # Style the gear / settings button in footer
+        if hasattr(self, '_settings_icon_btn'):
+            self._settings_icon_btn.setIcon(make_icon("settings", icon_color, 22))
+            self._settings_icon_btn.setStyleSheet(f"""
+                QPushButton {{
+                    border-radius: 8px;
+                    background: transparent;
+                    border: none;
+                    padding: 2px;
+                }}
+                QPushButton:hover {{
+                    background: {hover_bg};
+                }}
+                QPushButton:pressed {{
+                    background: rgba(0,122,204,0.35);
+                }}
+            """)
 
     def get_expanded_paths(self) -> list[str]:
         return self._explorer.get_expanded_paths()

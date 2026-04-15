@@ -637,6 +637,8 @@ class CortexMainWindow(QMainWindow):
         self._toolbar_sep = None
         self._toolbar_logo = None
         self._toolbar_btns = []
+        self._memory_btn = None
+        self._settings_btn = None
 
         try:
             log.info("MainWindow: Building UI...")
@@ -658,7 +660,6 @@ class CortexMainWindow(QMainWindow):
         self._apply_initial_theme()
         log.info("MainWindow: Restoring session...")
         self._restore_session()
-        log.info("MainWindow: Initialization complete.")
         log.info("MainWindow: Initialization complete.")
 
         # Heartbeat to check for event loop hang
@@ -1132,6 +1133,7 @@ class CortexMainWindow(QMainWindow):
         
         self._add_action(ai_menu, "Permission Settings...", self._show_permission_settings, "")
         self._add_action(ai_menu, "GitHub Integration...", self._show_github_integration, "")
+        self._add_action(ai_menu, "Memory Manager...", self._show_memory_manager, "Ctrl+Shift+M")
         ai_menu.addSeparator()
         
         self._add_action(ai_menu, "AI Chat Focus", self._focus_ai_chat, "Ctrl+Shift+A")
@@ -1438,6 +1440,9 @@ class CortexMainWindow(QMainWindow):
         self._sidebar.accept_all_requested.connect(self._on_accept_all_files)
         self._sidebar.reject_all_requested.connect(self._on_reject_all_files)
 
+        # Sidebar footer gear button → Memory Manager
+        self._sidebar.settings_requested.connect(self._show_memory_manager)
+
         # Project manager
         self._project_manager.project_opened.connect(self._on_project_opened)
         self._project_manager.project_closed.connect(self._on_project_closed)
@@ -1476,6 +1481,9 @@ class CortexMainWindow(QMainWindow):
         self._ai_agent.thinking_stopped.connect(self._ai_chat.hide_thinking)
         self._ai_agent.todos_updated.connect(self._ai_chat.update_todos)
         self._ai_agent.tool_summary_ready.connect(self._ai_chat.show_tool_summary)
+        # Recovery: context compaction status + turn-limit continuation
+        self._ai_agent.agent_status_update.connect(self._ai_chat.on_agent_status_update)
+        self._ai_agent.turn_limit_hit.connect(self._ai_chat.on_turn_limit_hit)
         # Permission gate: agent → chat UI shows card; user response → agent continues
         self._ai_agent.permission_requested.connect(self._ai_chat._on_permission_request)
         self._ai_chat.permission_decided.connect(self._ai_agent.on_permission_respond)
@@ -4018,7 +4026,7 @@ class CortexMainWindow(QMainWindow):
     def _on_model_changed(self, model_id: str, perf: str, cost: str):
         """Handle model selection change from AI chat."""
         # Determine provider from model_id
-        log.info(f"[MainWindow] DEBUG: model_id='{model_id}', starts_with_mistral={model_id.startswith('mistral-')}, starts_with_codestral={model_id.startswith('codestral-')}")
+        log.info(f"[MainWindow] DEBUG: model_id='{model_id}'")
         
         if model_id.startswith("deepseek-") and "/" not in model_id:
             # Native DeepSeek models (without /)
@@ -4026,6 +4034,14 @@ class CortexMainWindow(QMainWindow):
         elif model_id.startswith("mistral-") or model_id.startswith("codestral-"):
             # Mistral AI models
             provider = "mistral"
+        elif model_id.startswith(("gpt-", "o1", "o3")):
+            # OpenAI models - determine which API to use
+            # Chat Completions: gpt-4o, gpt-4.1-*
+            # Responses API: gpt-5.*, o1, o3, codex
+            if any(x in model_id.lower() for x in ["codex", "gpt-5", "o1", "o3"]):
+                provider = "openai_responses"
+            else:
+                provider = "openai"
         elif "/" in model_id:
             # Vendor models via SiliconFlow
             provider = "siliconflow"
@@ -4961,6 +4977,19 @@ class CortexMainWindow(QMainWindow):
         dialog.exec()
         log.info("Permission settings dialog opened")
     
+    def _show_memory_manager(self):
+        """Open the Memory Manager dialog (AI → Memory Manager...)."""
+        from src.ui.dialogs.memory_manager import MemoryManagerDialog
+        try:
+            from src.config.settings import get_settings
+            settings = get_settings()
+        except Exception:
+            settings = None
+        # Use current project path if available, fallback to cwd
+        project_root = getattr(self, '_current_project_path', None) or os.getcwd()
+        dlg = MemoryManagerDialog(project_root, settings=settings, parent=self)
+        dlg.exec()
+
     def _show_github_integration(self):
         """Show GitHub integration dialog (Phase 4 Integration)."""
         from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QLineEdit, QInputDialog

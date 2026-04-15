@@ -138,8 +138,10 @@ class SiliconFlowProvider(BaseProvider):
                    temperature: float = 0.7,
                    max_tokens: int = 2000,
                    tools: Optional[List[Dict[str, Any]]] = None,
-                   images: Optional[List[Dict[str, Any]]] = None) -> Generator[str, None, None]:
+                   images: Optional[List[Dict[str, Any]]] = None,
+                   retry_callback=None) -> Generator[str, None, None]:
         """Stream chat completion."""
+        # retry_callback is for API compatibility with agent_bridge
         try:
             headers = {
                 "Authorization": f"Bearer {self._api_key}",

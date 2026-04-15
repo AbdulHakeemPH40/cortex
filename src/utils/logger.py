@@ -10,6 +10,7 @@ def get_logger(name: str = "cortex") -> logging.Logger:
     logger = logging.getLogger(name)
     if not logger.handlers:
         logger.setLevel(logging.DEBUG)
+        logger.propagate = False  # Prevent duplicate logs from root logger
         
         # Always log to user home directory to avoid file locks during project operations
         # Location: C:\Users\Hakeem1\.cortex\logs\cortex.log

@@ -638,6 +638,37 @@ _TOOL_SCHEMAS: List[Dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "TodoWrite",
+            "description": (
+                "Update the todo list for the current session. Use proactively for complex multi-step tasks "
+                "(3+ steps). Mark tasks in_progress BEFORE starting, completed IMMEDIATELY after finishing. "
+                "Always provide both content (imperative) and activeForm (present continuous) for each task."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "todos": {
+                        "type": "array",
+                        "description": "The updated list of todo items.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id":         {"type": "string",  "description": "Unique identifier for the task"},
+                                "content":    {"type": "string",  "description": "Task description in imperative form (e.g. 'Run tests')"},
+                                "activeForm": {"type": "string",  "description": "Task in present continuous form (e.g. 'Running tests')"},
+                                "status":     {"type": "string",  "enum": ["pending", "in_progress", "completed"], "description": "Current task status"},
+                            },
+                            "required": ["id", "content", "activeForm", "status"],
+                        },
+                    },
+                },
+                "required": ["todos"],
+            },
+        },
+    },
 ]
 
 
@@ -914,6 +945,9 @@ class CortexAgentBridge(QObject):
     file_creating_started = pyqtSignal(str)  # file_path
     file_editing_started = pyqtSignal(str)   # file_path
     file_operation_completed = pyqtSignal(str, str, str, str)  # card_id, file_path, content, op_type
+    # Recovery signals — context compaction / turn-limit continuation
+    agent_status_update = pyqtSignal(str, str)  # type ('compacting'|'retrying'), message
+    turn_limit_hit      = pyqtSignal(list)       # list of still-pending todo dicts
 
     # ── Internal state ──────────────────────────────────────────
     def __init__(self, **kwargs):
@@ -930,6 +964,8 @@ class CortexAgentBridge(QObject):
         self._streaming      = None
         self._current_todos:  List = []   # Persisted todo list for TodoWrite
         self._stop_requested: bool = False  # Set to interrupt the streaming loop
+        # Persistent memory dir — computed once per project root
+        self._memory_dir: Optional[str] = None
         # Permission gate — used by BridgeBashTool to pause until user accepts/rejects
         self._permission_event: 'threading.Event' = None   # lazily created
         self._permission_granted: bool = False
@@ -971,6 +1007,14 @@ class CortexAgentBridge(QObject):
         self._worker.start()
 
         log.info("[BRIDGE] Agent bridge ready")
+        
+        # Pre-warm provider registry at startup to avoid 2s delay on first message
+        try:
+            from src.ai.providers import get_provider_registry
+            get_provider_registry()
+            log.info("[BRIDGE] Provider registry pre-warmed")
+        except Exception as e:
+            log.warning(f"[BRIDGE] Provider pre-warm failed (will lazy-init): {e}")
 
     # ── Initialisation helpers ─────────────────────────────────
 
@@ -1008,6 +1052,18 @@ class CortexAgentBridge(QObject):
         # ── File state awareness ──────────────────────────────
         known_files = self._tool_ctx.get_known_files_summary()
 
+        # ── Persistent memory (project-scoped, loaded once per session) ──
+        memory_section = ''
+        try:
+            from src.config.settings import get_settings
+            _mem_enabled = get_settings().get('memory', 'enabled', default=True)
+        except Exception:
+            _mem_enabled = True
+        if _mem_enabled:
+            memory_dir = self._get_memory_dir()
+            self._ensure_memory_dir(memory_dir)
+            memory_section = self._load_memory_section(memory_dir)
+
         prompt = f"""You are Cortex AI Agent, an autonomous coding assistant integrated into Cortex IDE.
 You are a world-class software engineer who writes clean, efficient, well-tested code.
 
@@ -1023,8 +1079,15 @@ Shell: PowerShell (use semicolons ; not &&)
 ## Files You Know About This Session
 {known_files}
 
+{memory_section}
+
 ## Tools Available
 You MUST call tools to take real action. Never describe what you "would" do — actually do it.
+
+### TodoWrite(todos)
+Plan and track multi-step tasks in the UI. **CALL THIS FIRST** — before any other tool — whenever you start a task with 3+ steps. Use it to immediately show your plan in the sidebar. Mark tasks in_progress BEFORE starting them, completed IMMEDIATELY after finishing each one. Provide both content (imperative, e.g. 'Run tests') and activeForm (present continuous, e.g. 'Running tests') for every item.
+
+**IMPORTANT**: Call TodoWrite ONCE to set up your plan, then START WORKING immediately. Do NOT call TodoWrite again until a task status actually changes (e.g. moving a task to in_progress or completed). Never call TodoWrite twice in a row with the same data.
 
 ### Read(file_path, offset?, limit?)
 Read file contents. Always Read a file BEFORE editing it.
@@ -1060,19 +1123,159 @@ List directory contents. Quick overview of files and folders.
 Example: LS(path="src/")
 
 ## Strategy Rules
-1. EXPLORE FIRST: Use Glob/Grep/LS/Read to understand before making changes.
-2. READ BEFORE EDIT: Always Read the file to get exact text before calling Edit.
-3. VERIFY AFTER CHANGES: After editing, re-Read the file or run tests to confirm.
-4. BATCH RELATED EDITS: When multiple edits go to the same file, do them sequentially.
-5. USE EDIT NOT WRITE: For modifying existing files, prefer Edit over Write.
-6. SKIP RE-READING: If you already read a file this session (see 'Files You Know About'),
+1. TODO FIRST, THEN WORK: For tasks with 3+ steps, call TodoWrite ONCE to show your plan, then immediately start the FIRST task on the next turn. Never call TodoWrite twice in a row.
+2. EXPLORE FIRST: Use Glob/Grep/LS/Read to understand before making changes.
+3. READ BEFORE EDIT: Always Read the file to get exact text before calling Edit.
+4. VERIFY AFTER CHANGES: After editing, re-Read the file or run tests to confirm.
+5. BATCH RELATED EDITS: When multiple edits go to the same file, do them sequentially.
+6. USE EDIT NOT WRITE: For modifying existing files, prefer Edit over Write.
+7. SKIP RE-READING: If you already read a file this session (see 'Files You Know About'),
    you don't need to read it again unless it was modified.
-7. CHAIN TOOLS: You can call multiple tools in one turn for independent operations.
-8. HANDLE ERRORS: If a tool fails, try an alternative approach rather than giving up.
+8. CHAIN TOOLS: You can call multiple tools in one turn for independent operations.
+9. HANDLE ERRORS: If a tool fails, try an alternative approach rather than giving up.
 """
         if context.get("code_context"):
             prompt += f"\n## User's Selected Code\n```\n{context['code_context']}\n```\n"
         return prompt
+
+    # ── Persistent Memory ───────────────────────────────────
+
+    def _get_memory_dir(self) -> str:
+        """
+        Return (and cache) the memory directory for the current project.
+        Stored under ~/.cortex/projects/<sanitized-project-name>/memory/
+        so memories persist between IDE sessions and are scoped per project.
+        """
+        if self._memory_dir:
+            return self._memory_dir
+        import hashlib, re as _re
+        project = self._project_root or os.getcwd()
+        # Sanitize the project path to a safe directory name
+        sanitized = _re.sub(r'[<>:"/\\|?*\0]', '_', project).strip('_ ')
+        if len(sanitized) > 60:
+            h = hashlib.md5(project.encode('utf-8')).hexdigest()[:8]
+            sanitized = sanitized[-52:].lstrip('_') + '_' + h
+        self._memory_dir = os.path.join(
+            os.path.expanduser('~'), '.cortex', 'projects', sanitized, 'memory'
+        )
+        return self._memory_dir
+
+    def _ensure_memory_dir(self, memory_dir: str) -> None:
+        """Create memory directory if it does not exist."""
+        try:
+            os.makedirs(memory_dir, exist_ok=True)
+        except Exception as exc:
+            log.warning('[BRIDGE] Could not create memory dir: %s', exc)
+
+    def _load_memory_section(self, memory_dir: str) -> str:
+        """
+        Build the complete memory prompt section to inject into the system prompt.
+
+        Three layers:
+          1. Behavioral instructions (how to save/read memories) + MEMORY.md index
+             via buildMemoryPrompt() from memdir package.
+          2. Content of recently-modified individual memory files (up to 10).
+
+        Returns the combined string, or empty string if the memory system is
+        not available or the directory is empty.
+        """
+        parts: List[str] = []
+
+        # --- Layer 1: Instructions + MEMORY.md index ---
+        try:
+            from memdir.memdir import buildMemoryPrompt
+            prompt = buildMemoryPrompt({
+                'displayName': 'Cortex Memory',
+                'memoryDir': memory_dir,
+            })
+            if prompt:
+                parts.append(prompt)
+        except Exception as exc:
+            log.debug('[BRIDGE] buildMemoryPrompt failed (%s); using fallback', exc)
+            # Minimal fallback: instructions + MEMORY.md content
+            fallback_lines = [
+                '# Cortex Memory',
+                '',
+                f'You have a persistent, file-based memory system at `{memory_dir}`.',
+                'This directory already exists — write to it directly with the Write tool.',
+                '',
+                '## How to save memories',
+                'Save each memory as a separate .md file with frontmatter:',
+                '```markdown',
+                '---',
+                'name: <memory name>',
+                'description: <one-line description for relevance matching>',
+                'type: <user | feedback | project | reference>',
+                '---',
+                '',
+                '<memory content>',
+                '```',
+                'Then update MEMORY.md index with a one-line pointer: `- [Title](file.md) — hook`.',
+                '',
+                '## Memory types',
+                '- **user**: user role, goals, preferences, knowledge level',
+                '- **feedback**: corrections and confirmed approaches (include Why + How to apply)',
+                '- **project**: ongoing work, decisions, deadlines, context not in code',
+                '- **reference**: pointers to external systems (dashboards, trackers)',
+            ]
+            memory_index_path = os.path.join(memory_dir, 'MEMORY.md')
+            try:
+                with open(memory_index_path, 'r', encoding='utf-8') as fh:
+                    index_content = fh.read().strip()
+                if index_content:
+                    fallback_lines += ['', '## MEMORY.md', '', index_content]
+            except FileNotFoundError:
+                fallback_lines += [
+                    '', '## MEMORY.md',
+                    '', 'Your MEMORY.md is currently empty. When you save new memories, they will appear here.',
+                ]
+            except Exception:
+                pass
+            parts.append('\n'.join(fallback_lines))
+
+        # --- Layer 2: Recent individual memory files ---
+        try:
+            from memdir.memoryAge import memoryFreshnessNote
+        except Exception:
+            def memoryFreshnessNote(mtime_ms):
+                return ''
+
+        try:
+            mem_files = []
+            for dirpath, _dirs, fnames in os.walk(memory_dir):
+                for fname in fnames:
+                    if fname.endswith('.md') and fname != 'MEMORY.md':
+                        fp = os.path.join(dirpath, fname)
+                        try:
+                            mtime = os.path.getmtime(fp)
+                            mem_files.append((mtime, fp))
+                        except OSError:
+                            pass
+            # Sort newest-first; load up to 10
+            mem_files.sort(key=lambda x: x[0], reverse=True)
+            loaded_files: List[str] = []
+            for mtime, fp in mem_files[:10]:
+                try:
+                    with open(fp, 'r', encoding='utf-8') as fh:
+                        content = fh.read().strip()
+                    rel = os.path.relpath(fp, memory_dir)
+                    freshness = memoryFreshnessNote(mtime * 1000)
+                    header = f'### {rel}'
+                    if freshness:
+                        loaded_files.append(f'{header}\n{freshness}\n{content}')
+                    else:
+                        loaded_files.append(f'{header}\n{content}')
+                except Exception:
+                    pass
+            if loaded_files:
+                parts.append(
+                    '## Loaded Memory Files\n\n'
+                    + '\n\n---\n\n'.join(loaded_files)
+                )
+        except Exception as exc:
+            log.debug('[BRIDGE] Memory file loading skipped: %s', exc)
+
+        return '\n\n'.join(parts)
 
     def _get_project_summary(self, project_root: str) -> str:
         """Auto-discover project structure for the system prompt (cached per session)."""
@@ -1118,6 +1321,58 @@ Example: LS(path="src/")
         return result
 
     # ============================================================
+    # CONTEXT COMPACTION  (trim history when token limit exceeded)
+    # ============================================================
+
+    def _compact_messages(self, messages: list, PCM: type) -> list:
+        """
+        Trim conversation history so the next API call fits in the context window.
+
+        Strategy
+        --------
+        • Always keep the system message (index 0).
+        • Drop the oldest messages in the middle, keeping the last
+          KEEP_TAIL messages so recent context is intact.
+        • Walk the tail forward to the first safe boundary (a user or
+          assistant turn) so we never orphan a tool-result block.
+        • Insert a synthetic user note so the model knows history was pruned.
+        """
+        KEEP_TAIL = 10
+        if len(messages) <= KEEP_TAIL + 2:
+            return messages  # nothing meaningful to drop
+
+        system_msg = messages[0]
+        rest       = messages[1:]          # everything after the system prompt
+
+        if len(rest) <= KEEP_TAIL:
+            return messages
+
+        tail          = rest[-KEEP_TAIL:]
+        dropped_count = len(rest) - len(tail)
+
+        # Advance `tail` to the first safe role boundary so we never start
+        # mid tool-result block (tool results must follow their assistant turn).
+        for i, msg in enumerate(tail):
+            if getattr(msg, 'role', None) in ('user', 'assistant'):
+                tail = tail[i:]
+                break
+
+        summary = PCM(
+            role='user',
+            content=(
+                f'[System note: {dropped_count} earlier messages were removed to stay '
+                'within the context window. Continue completing the current task based '
+                'on the remaining context and any open todo items.]'
+            )
+        )
+        compacted = [system_msg, summary] + tail
+        log.info(
+            f'[BRIDGE] Context compacted: {len(messages)} → {len(compacted)} messages '
+            f'(dropped {dropped_count} middle messages)'
+        )
+        return compacted
+
+    # ============================================================
     # MULTI-TURN AGENTIC LOOP  (the core of the bridge)
     # ============================================================
 
@@ -1144,12 +1399,22 @@ Example: LS(path="src/")
 
             registry      = get_provider_registry()
             provider_name = merged.get("provider", "deepseek")
+            
+            # Determine provider type based on model
+            model_id = merged.get("model_id", merged.get("model", "deepseek-chat"))
+            model_lower = model_id.lower() if model_id else ""
+            
+            # Models requiring Responses API
+            needs_responses = any(x in model_lower for x in ["codex", "gpt-5", "o1", "o3"])
+            
             provider_type = (
                 ProviderType.MISTRAL if provider_name == "mistral"
+                else ProviderType.OPENAI_RESPONSES if needs_responses
+                else ProviderType.OPENAI if provider_name == "openai"
                 else ProviderType.DEEPSEEK
             )
             provider = registry.get_provider(provider_type)
-            model    = merged.get("model_id", merged.get("model", "deepseek-chat"))
+            model    = model_id
 
             log.info(f"[BRIDGE] provider={provider_name} model={model}")
 
@@ -1181,36 +1446,82 @@ Example: LS(path="src/")
             for turn in range(MAX_TURNS):
                 log.info(f"[BRIDGE] === Agentic turn {turn + 1}/{MAX_TURNS} ===")
 
-                # ── Stream LLM response ────────────────────────
-                tool_acc: Dict[int, Dict] = {}   # idx → {id, name, arguments}
-                turn_text = ""
+                # ── Stream LLM response (with context-compaction retry) ────
+                tool_acc:  Dict[int, Dict] = {}   # idx → {id, name, arguments}
+                turn_text  = ""
 
-                for chunk in provider.chat_stream(
-                    messages, model=model, max_tokens=8000, tools=tool_defs
-                ):
-                    # Respect a stop request from the user — break out of the stream
-                    if self._stop_requested:
-                        log.info("[BRIDGE] Stream interrupted by stop request")
-                        break
-                    # Yield to the event loop so stop/cancel signals are delivered
-                    # between streaming chunks (chat_stream is a sync generator).
-                    await asyncio.sleep(0)
-                    if isinstance(chunk, str) and chunk.startswith("__TOOL_CALL_DELTA__:"):
-                        delta_list = json.loads(chunk[20:])
-                        for td in delta_list:
-                            idx = td.get("index", 0)
-                            if idx not in tool_acc:
-                                tool_acc[idx] = {"id": "", "name": "", "arguments": ""}
-                            if td.get("id"):
-                                tool_acc[idx]["id"] = td["id"]
-                            if td.get("function", {}).get("name"):
-                                tool_acc[idx]["name"] = td["function"]["name"]
-                            if td.get("function", {}).get("arguments"):
-                                tool_acc[idx]["arguments"] += td["function"]["arguments"]
+                # Context-length errors are retried up to 2 times per turn by
+                # compacting the message history before each retry.
+                _CTX_ERR_KEYWORDS = (
+                    'input is too long', 'context_length_exceeded',
+                    'context length',    'prompt_too_long',
+                    'too many tokens',   'maximum context',
+                    'token limit',       'tokens exceed',
+                    'request too large', 'content too large',
+                )
+
+                # Callback passed to the provider so we get notified before each
+                # internal retry (timeout / rate-limit) and can show the user a
+                # status note without waiting for the retry to succeed or fail.
+                def _retry_notify(attempt_num, max_att, err_type):
+                    if err_type == 'timeout':
+                        msg = 'API timeout - retrying (%d/%d)...' % (attempt_num, max_att)
+                    elif err_type == 'rate_limit':
+                        msg = 'Rate limit hit - waiting before retry (%d/%d)...' % (attempt_num, max_att)
                     else:
-                        turn_text    += chunk
-                        full_response += chunk
-                        self.response_chunk.emit(chunk)
+                        msg = 'API error - retrying (%d/%d)...' % (attempt_num, max_att)
+                    log.info('[BRIDGE] Provider retry: %s' % msg)
+                    self.agent_status_update.emit('retrying', msg)
+
+                for _compact_attempt in range(3):  # attempt 0, 1, 2
+                    tool_acc  = {}
+                    turn_text = ""
+                    try:
+                        for chunk in provider.chat_stream(
+                            messages, model=model, max_tokens=8000, tools=tool_defs,
+                            retry_callback=_retry_notify
+                        ):
+                            # Respect a stop request from the user
+                            if self._stop_requested:
+                                log.info("[BRIDGE] Stream interrupted by stop request")
+                                break
+                            # Yield to the event loop so stop/cancel signals are delivered
+                            # between streaming chunks (chat_stream is a sync generator).
+                            await asyncio.sleep(0)
+                            if isinstance(chunk, str) and chunk.startswith("__TOOL_CALL_DELTA__:"):
+                                delta_list = json.loads(chunk[20:])
+                                for td in delta_list:
+                                    idx = td.get("index", 0)
+                                    if idx not in tool_acc:
+                                        tool_acc[idx] = {"id": "", "name": "", "arguments": ""}
+                                    if td.get("id"):
+                                        tool_acc[idx]["id"] = td["id"]
+                                    if td.get("function", {}).get("name"):
+                                        tool_acc[idx]["name"] = td["function"]["name"]
+                                    if td.get("function", {}).get("arguments"):
+                                        tool_acc[idx]["arguments"] += td["function"]["arguments"]
+                            else:
+                                turn_text    += chunk
+                                full_response += chunk
+                                self.response_chunk.emit(chunk)
+                        break  # stream completed (or stop requested) — exit retry loop
+
+                    except Exception as _stream_exc:
+                        _err_lower = str(_stream_exc).lower()
+                        _is_ctx_err = any(kw in _err_lower for kw in _CTX_ERR_KEYWORDS)
+                        if _is_ctx_err and _compact_attempt < 2:
+                            log.warning(
+                                f"[BRIDGE] Context limit on turn {turn + 1} "
+                                f"(compact attempt {_compact_attempt + 1}/2): {_stream_exc}"
+                            )
+                            self.agent_status_update.emit(
+                                'compacting',
+                                'Context window exceeded - compacting history (%d/2), retrying...' % (_compact_attempt + 1)
+                            )
+                            messages = self._compact_messages(messages, PCM)
+                            continue   # retry with compacted history
+                        else:
+                            raise      # non-context error or exhausted retries
 
                 # If stop was requested, abort the entire agentic loop immediately
                 if self._stop_requested:
@@ -1321,6 +1632,22 @@ Example: LS(path="src/")
                 # doesn't run the continuation sentence directly onto the previous
                 # turn's last word (e.g. "fix this.Now let me check...").
                 self.response_chunk.emit("\n\n")
+
+            # ── Pending-todo continuation check ───────────────────────
+            # If the turn loop ended (naturally or at MAX_TURNS) with todos still
+            # in PENDING or IN_PROGRESS state, emit a signal so the UI can offer
+            # the user a "Continue" button to resume the task.
+            if not self._stop_requested:
+                _pending_todos = [
+                    t for t in self._current_todos
+                    if str(t.get('status', '')).upper() in ('PENDING', 'IN_PROGRESS')
+                ]
+                if _pending_todos:
+                    log.info(
+                        f'[BRIDGE] {len(_pending_todos)} todos still pending after '
+                        f'turn loop — emitting turn_limit_hit'
+                    )
+                    self.turn_limit_hit.emit(_pending_todos)
 
             return full_response
 
@@ -1812,6 +2139,7 @@ Example: LS(path="src/")
 
     def set_project_root(self, path: str):
         self._project_root = path
+        self._memory_dir   = None  # reset so _get_memory_dir() recomputes for new project
         log.info(f"[BRIDGE] project root → {path}")
         try:
             _agent_set_project_root(path)

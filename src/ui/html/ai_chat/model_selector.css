@@ -169,6 +169,11 @@
     color: white;
 }
 
+.openai-icon {
+    background: #10a37f;
+    color: white;
+}
+
 .item-icon svg {
     stroke: currentColor;
 }

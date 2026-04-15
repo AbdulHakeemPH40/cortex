@@ -2584,17 +2584,31 @@
                 }
             };
             // CRITICAL: Define trySetProjectInfoWithChats IMMEDIATELY for Python to call
+            var _lastProjectInfoPath = null;
+            var _lastProjectInfoTime = 0;
             window.trySetProjectInfoWithChats = function(name, path, chatsJson, retryCount) {
                 retryCount = retryCount || 0;
+                
+                // Dedup guard: skip if same project was set within last 2 seconds
+                var now = Date.now();
+                if (path === _lastProjectInfoPath && (now - _lastProjectInfoTime) < 2000 && retryCount === 0) {
+                    console.log('[CHAT] Skipping duplicate setProjectInfoWithChats for:', path);
+                    return;
+                }
+                if (retryCount === 0) {
+                    _lastProjectInfoPath = path;
+                    _lastProjectInfoTime = now;
+                }
+                
                 console.log('[CHAT] trySetProjectInfoWithChats called (attempt', retryCount + 1, '):', name, path);
-                if (retryCount > 10) {
+                if (retryCount > 5) {
                     console.error('[CHAT] setProjectInfoWithChats failed after', retryCount, 'attempts');
                     window._pendingProjectInfoWithChats = { name: name, path: path, chatsJson: chatsJson };
                     if (window.onPendingProjectInfoWithChats) window.onPendingProjectInfoWithChats();
                     return;
                 }
                 if (window.setProjectInfoWithChats) {
-                    console.log('[CHAT] ? Calling setProjectInfoWithChats now');
+                    console.log('[CHAT] Calling setProjectInfoWithChats now');
                     window.setProjectInfoWithChats(name, path, chatsJson);
                     window._pendingProjectInfoWithChats = null;
                 } else {
@@ -2818,7 +2832,7 @@
                         <span class="todo-count" id="todo-progress-count">0/0</span>
                     </div>
                 </div>
-                <div class="todo-body" id="todo-body" style="display:none;">
+                <div class="todo-body" id="todo-body">
                     <div class="todo-list" id="todo-list"></div>
                 </div>
             </div>
@@ -3023,6 +3037,99 @@
                                             <span>Codestral (Code)</span>
                                         </div>
                                     </div>
+                                    
+                                    <div class="dropdown-divider"></div>
+                                    
+                                    <!-- OpenAI Models -->
+                                    <div class="dropdown-header">OpenAI Models</div>
+                                    
+                                    <!-- Coding Models -->
+                                    <div class="dropdown-item" data-value="gpt-5.1-codex-mini" data-provider="openai_responses" data-perf="9.5">
+                                        <div class="item-icon" style="background: #10a37f; color: white;">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>GPT-5.1 Codex Mini <span class="model-tag recommended-tag">Coding</span></span>
+                                            <span class="model-cost">$0.15/$0.60</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="dropdown-item" data-value="gpt-4.1-mini" data-provider="openai" data-perf="9.0">
+                                        <div class="item-icon" style="background: #10a37f; color: white;">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>GPT-4.1 Mini <span class="model-tag recommended-tag">Best Value</span></span>
+                                            <span class="model-cost">$0.40/$1.60</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="dropdown-item" data-value="gpt-4.1-nano" data-provider="openai" data-perf="8.0">
+                                        <div class="item-icon" style="background: #10a37f; color: white;">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>GPT-4.1 Nano <span class="model-tag">Economy</span></span>
+                                            <span class="model-cost">$0.10/$0.40</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Frontier Models -->
+                                    <div class="dropdown-item" data-value="gpt-5.4" data-provider="openai" data-perf="9.8">
+                                        <div class="item-icon" style="background: #10a37f; color: white;">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>GPT-5.4 <span class="model-tag active-tag">Premium</span></span>
+                                            <span class="model-cost">$2.50/$15.00</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="dropdown-item" data-value="gpt-5.4-mini" data-provider="openai" data-perf="9.4">
+                                        <div class="item-icon" style="background: #10a37f; color: white;">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>GPT-5.4 Mini</span>
+                                            <span class="model-cost">$0.75/$4.50</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- GPT-4o Series -->
+                                    <div class="dropdown-item" data-value="gpt-4o" data-provider="openai" data-perf="9.2">
+                                        <div class="item-icon" style="background: #10a37f; color: white;">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>GPT-4o <span class="model-tag">Vision</span></span>
+                                            <span class="model-cost">$2.50/$10.00</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="dropdown-item" data-value="gpt-4o-mini" data-provider="openai" data-perf="8.5">
+                                        <div class="item-icon" style="background: #10a37f; color: white;">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>GPT-4o Mini</span>
+                                            <span class="model-cost">$0.15/$0.60</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Reasoning Models -->
+                                    <div class="dropdown-item" data-value="o3" data-provider="openai" data-perf="9.6">
+                                        <div class="item-icon" style="background: #7c3aed; color: white;">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>o3 <span class="model-tag active-tag">Reasoning</span></span>
+                                            <span class="model-cost">$2.00/$8.00</span>
+                                        </div>
+                                    </div>
+                                    
+
+                                    
+
                                     
                                     <div class="dropdown-divider"></div>
                                     <div class="dropdown-footer">
