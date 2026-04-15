@@ -116,14 +116,27 @@ def _create_standard_logger(name: str = "cortex") -> logging.Logger:
         log_file = log_dir / "cortex.log"
         
         # File handler - Windows-safe: use TimedRotatingFileHandler with delay
-        # RotatingFileHandler causes WinError 32 (file locked) on Windows rollover
+        # Override rotator to handle Windows file locks gracefully
+        import os
+
+        def _windows_safe_rotator(source, dest):
+            """Rotate log file, handling Windows file lock errors gracefully."""
+            try:
+                if os.path.exists(dest):
+                    os.remove(dest)
+                os.rename(source, dest)
+            except (PermissionError, OSError):
+                # File is locked by another process/handler - skip rotation
+                pass
+
         file_handler = TimedRotatingFileHandler(
             log_file,
-            when='midnight',   # rotate at midnight instead of by size
+            when='midnight',
             backupCount=3,
             encoding='utf-8',
-            delay=True         # don't open file until first log write
+            delay=True
         )
+        file_handler.rotator = _windows_safe_rotator
         file_handler.setLevel(logging.INFO)  # INFO not DEBUG - prevents heartbeat/debug spam
         file_handler.setFormatter(
             logging.Formatter(
