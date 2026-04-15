@@ -8,7 +8,7 @@
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
-    margin-bottom: 16px;
+    margin-bottom: 6px;
     overflow: hidden;
     font-size: 13px;
     transition: all 0.2s ease;

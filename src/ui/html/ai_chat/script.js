@@ -7090,6 +7090,15 @@ function showFileOperationCard(cardId, filePath, opType) {
         if (existing) existing.remove();
     }
 
+    // Also remove any existing card for the same filePath (prevents duplicates on retry)
+    Object.keys(_fileOpCards).forEach(function(key) {
+        if (_fileOpCards[key] && _fileOpCards[key].filePath === filePath) {
+            var oldCard = document.getElementById(key);
+            if (oldCard) oldCard.remove();
+            delete _fileOpCards[key];
+        }
+    });
+
     var isCreate = opType === 'create';
     var label = isCreate ? 'Create file' : 'Edit file';
     var iconColor = isCreate ? 'text-blue-500' : 'text-yellow-500';
@@ -7132,26 +7141,31 @@ function completeFileOperationCard(cardId, filePath, lineCount, opType) {
     var isCreate = opType === 'create';
     var fileName = filePath.split(/[\\/]/).pop() || filePath;
     var statusBadge = isCreate
-        ? '<span class="status-tag text-add">A Created</span>'
-        : '<span class="status-tag text-mod">M Modified</span>';
-    var icon = isCreate ? '🐍' : '📝';
+        ? '<span class="status-tag text-add">CREATED</span>'
+        : '<span class="status-tag text-mod">MODIFIED</span>';
 
-    // Transform card to expanded file list display
-    card.className = 'card-container expanded';
+    // Transform card — collapsed by default, clickable header to expand
+    card.className = 'card-container collapsed';
     card.innerHTML =
-        '<div class="card-header" onclick="toggleCard(this)">' +
+        '<div class="card-header">' +
             '<svg class="chevron" fill="currentColor" viewBox="0 0 20 20"><path d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"/></svg>' +
             '<span>' + (isCreate ? 'Created file' : 'Edited file') + '</span>' +
         '</div>' +
         '<div class="card-body">' +
             '<div class="list-row">' +
-                '<span>' + icon + ' ' + escapeHtml(fileName) + '</span>' +
+                '<span>' + escapeHtml(fileName) + '</span>' +
                 statusBadge +
             '</div>' +
-            '<div class="list-row" style="font-size:11px;padding-left:24px;color:#22c55e;">' +
-                escapeHtml(filePath) + ' · ' + lineCount + ' lines' +
+            '<div class="list-row" style="font-size:11px;padding-left:24px;color:var(--text-dim);">' +
+                escapeHtml(filePath) + ' \u00B7 ' + lineCount + ' lines' +
             '</div>' +
         '</div>';
+
+    // Toggle expand/collapse on header click
+    card.querySelector('.card-header').addEventListener('click', function() {
+        card.classList.toggle('collapsed');
+        card.classList.toggle('expanded');
+    });
 
     delete _fileOpCards[cardId];
 }
@@ -7202,6 +7216,18 @@ window.completeFileCreatingCard = completeFileCreatingCard;
 window.completeFileEditingCard  = completeFileEditingCard;
 window.showFileCreatingCard     = showFileCreatingCard;
 window.showFileEditingCard      = showFileEditingCard;
+
+/**
+ * Dismiss a stale file operation card (e.g. duplicate from retry)
+ */
+function dismissFileOpCard(cardId) {
+    console.log('[FileOpCard] dismissFileOpCard:', cardId);
+    var card = document.getElementById(cardId);
+    if (card) card.remove();
+    delete _fileOpCards[cardId];
+}
+window.dismissFileOpCard = dismissFileOpCard;
+
 console.log('[FileOpCard] Window functions exposed:', typeof window.showFileOperationCard, typeof window.completeFileCreatingCard, typeof window.completeFileEditingCard);
 
 // ============================================================

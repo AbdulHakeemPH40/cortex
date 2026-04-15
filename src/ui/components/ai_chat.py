@@ -1508,6 +1508,12 @@ class AIChatWidget(QWidget):
         log.debug(f"[FileOpCard] Calling JS completeFileEditingCard with card_id={card_id}, newContentLen={len(new_content)}")
         self._view.page().runJavaScript(js)
 
+    def dismiss_file_op_card(self, card_id: str):
+        """Remove a stale file operation card (e.g. duplicate from retry)."""
+        js = f"if(window.dismissFileOpCard) window.dismissFileOpCard({json.dumps(card_id)});"
+        log.debug(f"[FileOpCard] Dismissing stale card: {card_id}")
+        self._view.page().runJavaScript(js)
+
     def emit_directory_tree(self, root_path: str, listing_text: str):
         """Send hierarchical tree data to JS for tree card rendering."""
         items = self._parse_listing(root_path, listing_text)

@@ -2316,9 +2316,14 @@ class CortexMainWindow(QMainWindow):
     def _on_file_editing_started(self, file_path: str):
         """Show 'Editing file...' card with pulse animation."""
         try:
-            card_id = self._ai_chat.show_file_editing_card(file_path)
             if not hasattr(self, '_file_op_cards'):
                 self._file_op_cards = {}
+            # If there's already an active card for this file, remove/complete it first
+            old_card_id = self._file_op_cards.get(file_path)
+            if old_card_id:
+                self._ai_chat.dismiss_file_op_card(old_card_id)
+                self._file_op_cards.pop(file_path, None)
+            card_id = self._ai_chat.show_file_editing_card(file_path)
             self._file_op_cards[file_path] = card_id
             log.debug(f"[FileOp] Started editing card ({card_id}) for: {file_path}")
         except Exception as e:
