@@ -7295,6 +7295,8 @@ function onDiffAccept(cardId, filePath) {
     console.log('[DiffCard] Accept:', filePath);
     var card = document.getElementById(cardId);
     if (card) {
+        // Collapse card to reference view
+        card.classList.add('collapsed');
         var actions = card.querySelector('.diff-actions');
         if (actions) actions.innerHTML = '<span style="color:var(--green-bright);font-size:12px;padding:6px 0;">&#10003; Changes accepted</span>';
     }
@@ -7307,6 +7309,8 @@ function onDiffReject(cardId, filePath) {
     console.log('[DiffCard] Reject:', filePath);
     var card = document.getElementById(cardId);
     if (card) {
+        // Collapse card to reference view
+        card.classList.add('collapsed');
         var actions = card.querySelector('.diff-actions');
         if (actions) actions.innerHTML = '<span style="color:var(--red);font-size:12px;padding:6px 0;">&#10007; Changes rejected</span>';
     }

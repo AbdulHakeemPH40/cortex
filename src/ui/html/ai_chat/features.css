@@ -386,8 +386,48 @@
     font-size: 11px;
     line-height: 1.6;
     overflow-x: auto;
-    max-height: 400px;
     overflow-y: auto;
+    max-height: 400px;
+    transition: max-height 0.3s ease, padding 0.3s ease;
+}
+
+/* Liquid/fluid scrollbar styling */
+.diff-content::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.diff-content::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+}
+
+.diff-content::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 4px;
+    transition: background 0.2s ease;
+}
+
+.diff-content::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.25);
+}
+
+.diff-content::-webkit-scrollbar-corner {
+    background: transparent;
+}
+
+/* Collapsed state after accept/reject */
+.diff-viewer-card.collapsed .diff-content {
+    max-height: 120px;
+    padding: 8px 14px;
+}
+
+.diff-viewer-card.collapsed .diff-actions {
+    display: none;
+}
+
+.diff-viewer-card.collapsed .diff-stats {
+    opacity: 0.5;
 }
 
 .diff-line {
