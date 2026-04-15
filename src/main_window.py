@@ -2263,6 +2263,17 @@ class CortexMainWindow(QMainWindow):
         norm_path = os.path.normcase(os.path.normpath(file_path))
         self._diff_data_store[file_path] = (original, new_content)
         self._diff_data_store[norm_path] = (original, new_content)
+
+        # ── Invalidate file_manager cache so _open_file reads fresh content ──
+        try:
+            resolved = str(Path(file_path).resolve())
+            self._file_manager._file_cache.put(resolved, new_content)
+            self._file_manager._hash_cache[resolved] = self._file_manager._compute_hash(new_content)
+            if resolved in self._file_manager._open_files:
+                self._file_manager._open_files[resolved] = new_content
+            log.debug(f"[Diff] Updated file_manager cache for: {file_path} ({len(new_content)} chars)")
+        except Exception as e:
+            log.debug(f"[Diff] Cache update failed: {e}")
         # Persist to diff cache for cross-session diff viewing
         cache = self._load_diff_cache()
         cache[file_path] = {

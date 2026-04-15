@@ -1553,11 +1553,12 @@ Example: LS(path="src/")
                 data = raw.get("data", {})
                 actual_old = data.get("oldString", old_string)
                 actual_new = data.get("newString", new_string)
-                self.file_edited_diff.emit(full_path, actual_old, actual_new)
+                # Compute full file content for diff/cache: original → new
+                full_new = original_content.replace(actual_old, actual_new, 1) if original_content else actual_new
+                self.file_edited_diff.emit(full_path, original_content or actual_old, full_new)
                 # Emit completion signal for card animation
                 if card_id:
-                    new_content = original_content.replace(actual_old, actual_new, 1) if original_content else actual_new
-                    self.file_operation_completed.emit(card_id, full_path, new_content, "edit")
+                    self.file_operation_completed.emit(card_id, full_path, full_new, "edit")
                 self._tool_ctx.mark_file_modified(full_path)
                 await self._refresh_git_diff_stats(full_path)
                 return ToolResult(tool_id=tool_id, result={
@@ -1576,7 +1577,7 @@ Example: LS(path="src/")
             new_content = file_content.replace(old_string, new_string, 1)
             with open(full_path, "w", encoding="utf-8") as f:
                 f.write(new_content)
-            self.file_edited_diff.emit(full_path, old_string, new_string)
+            self.file_edited_diff.emit(full_path, file_content, new_content)
             # Emit completion signal for card animation
             if card_id:
                 self.file_operation_completed.emit(card_id, full_path, new_content, "edit")
