@@ -1447,22 +1447,22 @@ class AIChatWidget(QWidget):
         """Show a diff viewer card in chat after AI edits a file."""
         import difflib, uuid
         try:
-            orig_lines = original.splitlines(keepends=True)
-            new_lines  = new_content.splitlines(keepends=True)
-            ud = list(difflib.unified_diff(orig_lines, new_lines, lineterm=''))
+            orig_lines = original.splitlines()
+            new_lines  = new_content.splitlines()
+            ud = list(difflib.unified_diff(orig_lines, new_lines))
             added   = sum(1 for l in ud if l.startswith('+') and not l.startswith('+++'))
             removed = sum(1 for l in ud if l.startswith('-') and not l.startswith('---'))
             # Build structured line list for JS (skip the --- +++ header lines)
             lines_data = []
             for l in ud[2:]:
                 if l.startswith('+') and not l.startswith('+++'):
-                    lines_data.append({'type': 'added',   'text': l[1:]})
+                    lines_data.append({'type': 'added',   'text': l[1:].rstrip()})
                 elif l.startswith('-') and not l.startswith('---'):
-                    lines_data.append({'type': 'removed', 'text': l[1:]})
+                    lines_data.append({'type': 'removed', 'text': l[1:].rstrip()})
                 elif l.startswith('@@'):
-                    lines_data.append({'type': 'info',    'text': l})
+                    lines_data.append({'type': 'info',    'text': l.rstrip()})
                 else:
-                    lines_data.append({'type': 'context', 'text': l[1:] if l.startswith(' ') else l})
+                    lines_data.append({'type': 'context', 'text': (l[1:] if l.startswith(' ') else l).rstrip()})
             card_id = f"diff-card-{uuid.uuid4().hex[:8]}"
             js = (f"if(window.showDiffCard) window.showDiffCard({json.dumps(card_id)}, "
                   f"{json.dumps(file_path)}, {json.dumps(lines_data)}, {added}, {removed});"
