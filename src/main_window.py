@@ -1464,6 +1464,7 @@ class CortexMainWindow(QMainWindow):
         self._ai_agent.file_edited_diff.connect(self._on_file_edited_diff_for_js)
         self._ai_agent.file_edited_diff.connect(self._on_inline_edit_diff)
         self._ai_agent.file_edited_diff.connect(self._ai_chat.on_file_edited_diff)  # populate Changed Files panel with +/- counts
+        self._ai_agent.file_edited_diff.connect(self._ai_chat.show_diff_card)       # show diff viewer card in chat
         # File operation cards — animated create/edit cards
         self._ai_agent.file_creating_started.connect(self._on_file_creating_started)
         self._ai_agent.file_editing_started.connect(self._on_file_editing_started)

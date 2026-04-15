@@ -7204,6 +7204,111 @@ window.showFileCreatingCard     = showFileCreatingCard;
 window.showFileEditingCard      = showFileEditingCard;
 console.log('[FileOpCard] Window functions exposed:', typeof window.showFileOperationCard, typeof window.completeFileCreatingCard, typeof window.completeFileEditingCard);
 
+// ============================================================
+// DIFF VIEWER CARD  (shown in chat after AI edits a file)
+// Reference design: test_aichat.html section 5
+// ============================================================
+
+/**
+ * Show a diff viewer card in chat after AI edits a file.
+ * Called from Python via runJavaScript.
+ * @param {string} cardId     - Unique DOM id
+ * @param {string} filePath   - Full file path
+ * @param {Array}  diffLines  - [{type:'added'|'removed'|'context'|'info', text:string}]
+ * @param {number} added      - Number of added lines
+ * @param {number} removed    - Number of removed lines
+ */
+function showDiffCard(cardId, filePath, diffLines, added, removed) {
+    console.log('[DiffCard] showDiffCard called:', cardId, filePath, '+'+added, '-'+removed);
+    var messages = document.getElementById('chatMessages');
+    if (!messages) { console.error('[DiffCard] chatMessages not found'); return; }
+
+    var fileName = filePath.split(/[\\/]/).pop() || filePath;
+
+    // Stats HTML
+    var statsHtml = '';
+    if (added > 0)   statsHtml += '<span class="text-add">+' + added + '</span> ';
+    if (removed > 0) statsHtml += '<span class="text-del">-' + removed + '</span>';
+
+    // Diff lines HTML
+    var linesHtml = '';
+    var MAX_LINES = 200;
+    var shown = 0;
+    (diffLines || []).forEach(function(line) {
+        if (shown >= MAX_LINES) return;
+        var text = escapeHtml(line.text || '');
+        if (line.type === 'added') {
+            linesHtml += '<div class="diff-line added">+ ' + text + '</div>';
+        } else if (line.type === 'removed') {
+            linesHtml += '<div class="diff-line removed">- ' + text + '</div>';
+        } else if (line.type === 'info') {
+            linesHtml += '<div class="diff-line" style="color:var(--text-dim);font-style:italic;">' + text + '</div>';
+        } else {
+            linesHtml += '<div class="diff-line context">  ' + text + '</div>';
+        }
+        shown++;
+    });
+    if (diffLines && diffLines.length > MAX_LINES) {
+        linesHtml += '<div class="diff-line" style="color:var(--text-dim);">' + (diffLines.length - MAX_LINES) + ' more lines…</div>';
+    }
+
+    var card = document.createElement('div');
+    card.className = 'diff-viewer-card';
+    card.id = cardId;
+    card.dataset.filePath = filePath;
+
+    // Attach accept/reject handlers via addEventListener to avoid HTML quoting issues
+    card.innerHTML =
+        '<div class="diff-header">' +
+            '<span class="diff-filename">' + escapeHtml(fileName) + '</span>' +
+            '<div class="diff-stats">' + statsHtml + '</div>' +
+        '</div>' +
+        '<div class="diff-content">' + linesHtml + '</div>' +
+        '<div class="diff-actions">' +
+            '<button class="btn-accept">&#10003; Accept</button>' +
+            '<button class="btn-reject">&#10007; Reject</button>' +
+        '</div>';
+
+    // Bind Accept/Reject safely (avoids HTML attribute quoting problems with paths)
+    card.querySelector('.btn-accept').addEventListener('click', function() {
+        onDiffAccept(cardId, filePath);
+    });
+    card.querySelector('.btn-reject').addEventListener('click', function() {
+        onDiffReject(cardId, filePath);
+    });
+
+    messages.appendChild(card);
+    messages.scrollTop = messages.scrollHeight;
+}
+
+function onDiffAccept(cardId, filePath) {
+    console.log('[DiffCard] Accept:', filePath);
+    var card = document.getElementById(cardId);
+    if (card) {
+        var actions = card.querySelector('.diff-actions');
+        if (actions) actions.innerHTML = '<span style="color:var(--green-bright);font-size:12px;padding:6px 0;">&#10003; Changes accepted</span>';
+    }
+    if (window.bridge && window.bridge.on_accept_file_edit) {
+        window.bridge.on_accept_file_edit(filePath);
+    }
+}
+
+function onDiffReject(cardId, filePath) {
+    console.log('[DiffCard] Reject:', filePath);
+    var card = document.getElementById(cardId);
+    if (card) {
+        var actions = card.querySelector('.diff-actions');
+        if (actions) actions.innerHTML = '<span style="color:var(--red);font-size:12px;padding:6px 0;">&#10007; Changes rejected</span>';
+    }
+    if (window.bridge && window.bridge.on_reject_file_edit) {
+        window.bridge.on_reject_file_edit(filePath);
+    }
+}
+
+// Expose diff card functions for Python runJavaScript calls
+window.showDiffCard = showDiffCard;
+console.log('[DiffCard] window.showDiffCard exposed:', typeof window.showDiffCard);
+
 function formatTerminalCommand(command) {
     if (!command) return '';
 
