@@ -1946,17 +1946,24 @@ function appendMessage(text, sender, shouldSave) {
         window._pendingChipMeta = null;
 
         if (chipMeta.length > 0) {
-            // Build the display text: strip out the code block context from text
-            var displayText = text;
-            // Remove the chip code blocks from display (they look like: `file.py 1-5`\n```lang\n...\n```)
-            chipMeta.forEach(function(cm) {
-                var label = cm.lineRange ? cm.fileName + ' ' + cm.lineRange : cm.fileName;
-                // Build regex to strip the chip context block from display text
-                var escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                var pattern = new RegExp('`' + escapedLabel + '`\\s*```[\\s\\S]*?```\\s*', 'g');
-                displayText = displayText.replace(pattern, '');
-            });
-            displayText = displayText.trim();
+            // Determine display text:
+            // 1. For new sends: use _pendingUserDisplayText (just the typed text, no code block)
+            // 2. For history restore: fall back to regex-stripping the code blocks from text
+            var displayText;
+            if (window._pendingUserDisplayText !== undefined) {
+                displayText = window._pendingUserDisplayText;
+                window._pendingUserDisplayText = undefined;
+            } else {
+                // History restore path: strip code-block context via regex
+                displayText = text;
+                chipMeta.forEach(function(cm) {
+                    var label = cm.lineRange ? cm.fileName + ' ' + cm.lineRange : cm.fileName;
+                    var escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    var pattern = new RegExp('`' + escapedLabel + '`\\s*```[\\s\\S]*?```\\s*', 'g');
+                    displayText = displayText.replace(pattern, '');
+                });
+                displayText = displayText.trim();
+            }
 
             // Render chip elements
             var chipsContainer = document.createElement('div');
@@ -2152,6 +2159,13 @@ function sendMessage() {
     var fullText = chipContext + text;
 
     if (!fullText) return;
+
+    // Store the pure user-typed text for display — chips render themselves visually.
+    // This avoids the fragile regex-strip approach which breaks when pasted code
+    // contains nested triple backticks (e.g. markdown files with code blocks).
+    if (chipMeta.length > 0) {
+        window._pendingUserDisplayText = text;  // only the typed portion, no code context
+    }
 
     input.value = '';
     input.style.height = 'auto';
