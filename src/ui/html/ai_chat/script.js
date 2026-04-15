@@ -7267,20 +7267,32 @@ function showDiffCard(cardId, filePath, diffLines, added, removed) {
         // Attach accept/reject handlers via addEventListener to avoid HTML quoting issues
         card.innerHTML =
             '<div class="diff-header">' +
-                '<span class="diff-filename">' + escapeHtml(fileName) + '</span>' +
-                '<div class="diff-stats">' + statsHtml + '</div>' +
+                '<div class="diff-header-left">' +
+                    '<span class="diff-chevron">&#9654;</span>' +
+                    '<span class="diff-filename">' + escapeHtml(fileName) + '</span>' +
+                    '<div class="diff-stats">' + statsHtml + '</div>' +
+                '</div>' +
+                '<div class="diff-actions">' +
+                    '<button class="btn-accept">&#10003; Accept</button>' +
+                    '<button class="btn-reject">&#10007; Reject</button>' +
+                '</div>' +
             '</div>' +
-            '<div class="diff-content">' + linesHtml + '</div>' +
-            '<div class="diff-actions">' +
-                '<button class="btn-accept">&#10003; Accept</button>' +
-                '<button class="btn-reject">&#10007; Reject</button>' +
-            '</div>';
+            '<div class="diff-content">' + linesHtml + '</div>';
+
+        // Header click toggles expand/collapse
+        card.querySelector('.diff-header').addEventListener('click', function(e) {
+            // Don't toggle if clicking Accept/Reject buttons
+            if (e.target.closest('.btn-accept') || e.target.closest('.btn-reject')) return;
+            card.classList.toggle('collapsed');
+        });
 
         // Bind Accept/Reject safely (avoids HTML attribute quoting problems with paths)
-        card.querySelector('.btn-accept').addEventListener('click', function() {
+        card.querySelector('.btn-accept').addEventListener('click', function(e) {
+            e.stopPropagation();
             onDiffAccept(cardId, filePath);
         });
-        card.querySelector('.btn-reject').addEventListener('click', function() {
+        card.querySelector('.btn-reject').addEventListener('click', function(e) {
+            e.stopPropagation();
             onDiffReject(cardId, filePath);
         });
 
@@ -7295,10 +7307,10 @@ function onDiffAccept(cardId, filePath) {
     console.log('[DiffCard] Accept:', filePath);
     var card = document.getElementById(cardId);
     if (card) {
-        // Collapse card to reference view
+        // Collapse card and show status in header
         card.classList.add('collapsed');
         var actions = card.querySelector('.diff-actions');
-        if (actions) actions.innerHTML = '<span style="color:var(--green-bright);font-size:12px;padding:6px 0;">&#10003; Changes accepted</span>';
+        if (actions) actions.innerHTML = '<span class="diff-status-text" style="color:var(--green-bright);">&#10003; Accepted</span>';
     }
     if (window.bridge && window.bridge.on_accept_file_edit) {
         window.bridge.on_accept_file_edit(filePath);
@@ -7309,10 +7321,10 @@ function onDiffReject(cardId, filePath) {
     console.log('[DiffCard] Reject:', filePath);
     var card = document.getElementById(cardId);
     if (card) {
-        // Collapse card to reference view
+        // Collapse card and show status in header
         card.classList.add('collapsed');
         var actions = card.querySelector('.diff-actions');
-        if (actions) actions.innerHTML = '<span style="color:var(--red);font-size:12px;padding:6px 0;">&#10007; Changes rejected</span>';
+        if (actions) actions.innerHTML = '<span class="diff-status-text" style="color:var(--red);">&#10007; Rejected</span>';
     }
     if (window.bridge && window.bridge.on_reject_file_edit) {
         window.bridge.on_reject_file_edit(filePath);
