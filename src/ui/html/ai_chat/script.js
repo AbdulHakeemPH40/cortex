@@ -4305,6 +4305,9 @@ function normalizeMarkdownText(text) {
     if (!text) return '';
     // Remove zero-width / invisible characters that break markdown parsing
     text = text.replace(/[\u200B\u200C\u200D\u200E\u200F\uFEFF\u2060\u00AD]/g, '');
+    // Fix OpenAI pattern: "** text**" (space after opening **) -> "**text**"
+    // This is safe: only removes space immediately AFTER opening **, never before
+    text = text.replace(/\*\*\s+([^*\s])/g, '**$1');
     // Normalize Windows line endings
     text = text.replace(/\r\n/g, '\n');
     return text;
@@ -4658,7 +4661,10 @@ function onComplete() {
     collapseActivitySection();  // Collapse (not remove) the Working section to show summary
     collapseFecContainer();     // Collapse file read/write/create cards into summary
 
-    // Clear any pending debounced render before final render
+    // Clear any pending debounced render. DO NOT re-render here - the last
+    // streaming render already has all the content. Re-rendering causes the
+    // browser to tear down and rebuild the DOM, causing the "flash then plain"
+    // visual flicker.
     if (window._streamRenderTimeout) {
         clearTimeout(window._streamRenderTimeout);
         window._streamRenderTimeout = null;
@@ -4666,7 +4672,7 @@ function onComplete() {
     }
 
     if (currentAssistantMessage) {
-        // -- Strip all custom tags for display -----------------------------
+        // -- Strip all custom tags for history save -------------------------
         var displayText = currentContent
             .replace(/<task_summary>[\s\S]*?<\/task_summary>/g, '')
             .replace(/<file_edited>[\s\S]*?<\/file_edited>/g, '')
@@ -4674,14 +4680,12 @@ function onComplete() {
             .replace(/<tasklist>[\s\S]*?<\/tasklist>/g, '')
             .replace(/<plan>[\s\S]*?<\/plan>/g, '')
             .replace(/<permission>[\s\S]*?<\/permission>/g, '')
-            .replace(/[\u2299⊙]Thought\s*[\u00B7·\.\s]\s*\d+s\s*/g, '') // strip DeepSeek ⊙Thought · Xs
+            .replace(/[\u2299\u2299]Thought\s*[\u00B7\u00b7\.\s]\s*\d+s\s*/g, '')
             .trim();
 
-        // Normalize markdown for consistent bold/italic rendering
         displayText = normalizeMarkdownText(displayText);
 
         console.log('[CHAT] onComplete: displayText length:', displayText ? displayText.length : 0);
-        console.log('[CHAT] onComplete: currentAssistantMessage exists:', !!currentAssistantMessage);
 
         // -- Save to history (only if content is valid) ---------------------
         var chat = chats.find(function(c) { return c.id == currentChatId; });
@@ -4690,34 +4694,32 @@ function onComplete() {
             saveChats();
         }
 
-        // -- Final markdown render ---------------------------------------
+        // -- Final touches on already-rendered content (NO re-render) ------
+        // The last streaming render already produced the correct HTML.
+        // We batch ALL DOM modifications into a single innerHTML assignment
+        // to prevent the browser from tearing down and rebuilding the DOM.
         var contentDiv = currentAssistantMessage.querySelector('.message-content');
-        console.log('[CHAT] onComplete: contentDiv found:', !!contentDiv);
         
         if (contentDiv) {
-            var finalHtml = '';
-            try {
-                finalHtml = (typeof marked !== 'undefined' && marked.parse)
-                    ? (marked.parse(displayText) || '')
-                    : formatMarkdownFallback(displayText);
-            } catch (e) {
-                finalHtml = formatMarkdownFallback(displayText);
+            // Batch all modifications into ONE innerHTML write
+            var finalHtml = contentDiv.innerHTML;
+            
+            // Apply suggestion chips if not already present
+            if (finalHtml.indexOf('suggestion-chip') === -1) {
+                finalHtml = convertSuggestionChips(finalHtml);
             }
+            // Replace thought timer patterns
+            var thoughtPattern = /([\u2299\u229a\u25ce\u29bf\u2299\u229a\u25ce\u29bf]Thought\s*[\u00B7\u00b7\.\xB7]\s*\d+s)/g;
+            if (thoughtPattern.test(finalHtml)) {
+                finalHtml = finalHtml.replace(
+                    thoughtPattern,
+                    '<span class="thought-timer">$1</span>'
+                );
+            }
+            // Single innerHTML assignment - no DOM teardown/rebuild cycle
+            contentDiv.innerHTML = finalHtml;
             
-            // CRITICAL FIX: Ensure contentDiv is visible and has content
-            var processedHtml = finalHtml || displayText || '';
-            // Convert quoted suggestions to clickable chips
-            processedHtml = convertSuggestionChips(processedHtml);
-            contentDiv.innerHTML = processedHtml;
-            // Hide any ⊙Thought · Xs patterns that slipped through
-            contentDiv.innerHTML = contentDiv.innerHTML.replace(
-                /([\u2299\u229a\u25ce\u29bf⊙⊚◎⦿]Thought\s*[\u00B7\u00b7\.\xB7]\s*\d+s)/g,
-                '<span class="thought-timer">$1</span>'
-            );
-            contentDiv.style.display = 'block';  // Force visibility
-            contentDiv.style.visibility = 'visible';
-            
-            console.log('[CHAT] onComplete: contentDiv.innerHTML set, length:', contentDiv.innerHTML.length);
+            console.log('[CHAT] onComplete: contentDiv.innerHTML length:', contentDiv.innerHTML.length);
 
             // -- Code block headers + syntax highlight -------------------
             contentDiv.querySelectorAll('pre code').forEach(function(block) {
@@ -4725,7 +4727,7 @@ function onComplete() {
                 injectCodeBlockHeader(block);
             });
         } else {
-            console.error('[CHAT] onComplete: contentDiv NOT FOUND! Message structure may be broken.');
+            console.error('[CHAT] onComplete: contentDiv NOT FOUND!');
         }
 
         // -- File edit cards ? KEY FIX --------------------------------
