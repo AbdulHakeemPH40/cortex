@@ -1359,11 +1359,14 @@ document.addEventListener('DOMContentLoaded', function () {
         // ── File chip helpers ────────────────────────────────────────
         function _getFileIcon(language) {
             var icons = {
-                'py':   '{\u00a0}',   // python
+                'py':   '{ }',
                 'js':   'JS',
                 'ts':   'TS',
+                'jsx':  'JS',
+                'tsx':  'TS',
                 'html': '</>',
                 'css':  '{}',
+                'scss': '{}',
                 'json': '{}',
                 'md':   '#',
                 'txt':  'TXT',
@@ -1374,9 +1377,21 @@ document.addEventListener('DOMContentLoaded', function () {
                 'java': 'Ja',
                 'rs':   'Rs',
                 'go':   'Go',
+                'rb':   'Rb',
+                'php':  'Ph',
+                'swift':'Sw',
+                'kt':   'Kt',
+                'sql':  'DB',
+                'xml':  'XML',
+                'yaml': 'YML',
+                'yml':  'YML',
+                'toml': 'TM',
+                'env':  'ENV',
             };
-            return icons[language] || '{}';
+            return icons[(language || '').toLowerCase()] || '{ }';
         }
+        // Expose globally so appendMessage and history restore can use it
+        window._getFileIcon = _getFileIcon;
         
         function _insertFileChip(fileName, lineRange, code, language) {
             // Get or create the chips container above the textarea
@@ -1697,6 +1712,19 @@ function loadChat(id) {
         var msgSender = msg.role || msg.sender;
         
         if (!msgText || msgText === 'undefined' || msgText.trim() === '') return;
+
+        // Restore chip metadata so appendMessage renders chips instead of raw code
+        if ((msgSender === 'user' || msgSender === undefined) && msgText) {
+            var storedChipMeta = msg.chipMeta;
+            if (!storedChipMeta || !storedChipMeta.length) {
+                // Fallback: parse from message text for legacy messages without saved chipMeta
+                storedChipMeta = (typeof _parseChipMetaFromText === 'function') ? _parseChipMetaFromText(msgText) : [];
+            }
+            if (storedChipMeta && storedChipMeta.length > 0) {
+                window._pendingChipMeta = storedChipMeta;
+            }
+        }
+
         appendMessage(msgText, msgSender || 'user', false);
         // Restore tool activities (like directory listings) if present
         if (msg.toolActivities && msg.toolActivities.length > 0) {
@@ -1937,7 +1965,7 @@ function appendMessage(text, sender, shouldSave) {
                 var chipEl = document.createElement('div');
                 chipEl.className = 'message-file-chip';
                 var ext = cm.language || cm.fileName.split('.').pop() || '';
-                var icon = (typeof _getFileIcon === 'function') ? _getFileIcon(ext) : '{ }';
+                var icon = (typeof window._getFileIcon === 'function') ? window._getFileIcon(ext) : '{ }';
                 var label = cm.lineRange ? cm.fileName + ' ' + cm.lineRange : cm.fileName;
                 chipEl.innerHTML = '<span class="chip-icon">' + icon + '</span>' +
                     '<span class="chip-label">' + label + '</span>';
@@ -2039,6 +2067,10 @@ function appendMessage(text, sender, shouldSave) {
                 messageData.toolActivities = window._pendingToolActivities;
                 window._pendingToolActivities = []; // Clear after saving
             }
+            // Preserve chip metadata so history restore can re-render chips
+            if (sender === 'user' && typeof chipMeta !== 'undefined' && chipMeta && chipMeta.length > 0) {
+                messageData.chipMeta = chipMeta;
+            }
             chat.messages.push(messageData);
             if (chat.messages.length === 1 && sender === 'user') {
                 chat.title = text.substring(0, 30) + (text.length > 30 ? '...' : '');
@@ -2066,6 +2098,47 @@ function copyMessage(text, btn) {
         setTimeout(function() { btn.innerHTML = originalHtml; }, 2000);
     });
 }
+
+/**
+ * Parse chip metadata embedded in a stored user message.
+ * Message format: `fileName lineRange`
+```lang
+...code...
+```
+
+
+ * Returns array of {fileName, lineRange, language, code} or [] if none found.
+ */
+function _parseChipMetaFromText(text) {
+    if (!text || typeof text !== 'string') return [];
+    var chips = [];
+    // Pattern: `filename.ext optional-line-range`\n```lang\n...\n```
+    var pattern = /`([^`]+)`\s*```([\w]*)\n([\s\S]*?)```/g;
+    var match;
+    while ((match = pattern.exec(text)) !== null) {
+        var label = match[1].trim();
+        var lang = match[2].trim();
+        var code = match[3];
+        // Split label into fileName and optional lineRange (e.g. "sample.md 1-66")
+        var spaceIdx = label.lastIndexOf(' ');
+        var fileName, lineRange;
+        if (spaceIdx !== -1 && /^\d/.test(label.slice(spaceIdx + 1))) {
+            fileName = label.slice(0, spaceIdx);
+            lineRange = label.slice(spaceIdx + 1);
+        } else {
+            fileName = label;
+            lineRange = '';
+        }
+        // Derive language from file extension if not in code fence
+        if (!lang) {
+            var ext = fileName.split('.').pop() || '';
+            lang = ext;
+        }
+        chips.push({ fileName: fileName, lineRange: lineRange, language: lang, code: code });
+    }
+    return chips;
+}
+window._parseChipMetaFromText = _parseChipMetaFromText;
 
 function sendMessage() {
     var input = document.getElementById('chatInput');
@@ -5668,6 +5741,16 @@ document.addEventListener('DOMContentLoaded', function() {
                         var msgSender = msg.role || msg.sender;
                         console.log('[CHAT] Message', index, ':', msgSender, 'length:', msgText ? msgText.length : 0);
                         if (msgText && msgText !== 'undefined' && msgText.trim() !== '') {
+                            // Restore chip metadata so chips render instead of raw code
+                            if (msgSender === 'user' && msgText) {
+                                var storedChipMeta = msg.chipMeta;
+                                if (!storedChipMeta || !storedChipMeta.length) {
+                                    storedChipMeta = (typeof _parseChipMetaFromText === 'function') ? _parseChipMetaFromText(msgText) : [];
+                                }
+                                if (storedChipMeta && storedChipMeta.length > 0) {
+                                    window._pendingChipMeta = storedChipMeta;
+                                }
+                            }
                             appendMessage(msgText, msgSender || 'user', false);
                             console.log('[CHAT] Message', index, 'appended successfully');
                         } else {
