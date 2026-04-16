@@ -143,14 +143,16 @@ async def fetch_git_diff(repo_path: str = None) -> Optional[GitDiffResult]:
         def _numstat():
             r = subprocess.run(
                 ['git', 'diff', '--numstat', 'HEAD'],
-                cwd=cwd, capture_output=True, text=True, creationflags=_flags
+                cwd=cwd, capture_output=True, text=True,
+                encoding='utf-8', errors='replace', creationflags=_flags
             )
             return r.stdout
 
         def _untracked():
             r = subprocess.run(
                 ['git', 'ls-files', '--others', '--exclude-standard'],
-                cwd=cwd, capture_output=True, text=True, creationflags=_flags
+                cwd=cwd, capture_output=True, text=True,
+                encoding='utf-8', errors='replace', creationflags=_flags
             )
             return r.stdout
 
@@ -215,7 +217,8 @@ async def fetch_git_diff_hunks(repo_path: str = None) -> Dict[str, List[Structur
         def _run():
             r = subprocess.run(
                 ['git', 'diff', 'HEAD', '--unified=3'],
-                cwd=cwd, capture_output=True, text=True, creationflags=_flags
+                cwd=cwd, capture_output=True, text=True,
+                encoding='utf-8', errors='replace', creationflags=_flags
             )
             return r.stdout
 

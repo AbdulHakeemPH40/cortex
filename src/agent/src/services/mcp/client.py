@@ -714,12 +714,8 @@ async def connect_to_server(
     in_process_server = None
     
     try:
-        # Get session ingress token if available
-        try:
-            from ...remote.remote_session import get_session_ingress_auth_token
-            session_ingress_token = get_session_ingress_auth_token()
-        except ImportError:
-            session_ingress_token = None
+        # Session ingress token removed - cloud agent infrastructure not used
+        session_ingress_token = None
         
         server_type = server_ref.get('type') if isinstance(server_ref, dict) else getattr(server_ref, 'type', None)
         

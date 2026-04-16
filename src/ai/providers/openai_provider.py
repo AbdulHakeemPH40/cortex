@@ -595,10 +595,21 @@ class OpenAIProvider:
                         time.sleep(backoff_seconds)
                         continue
                     else:
-                        raise Exception(
-                            f"OpenAI API rate limit exceeded. Please wait {backoff_seconds} seconds before trying again. "
-                            f"Observed limits: {self.get_rate_limit_status()}"
-                        )
+                        # Check if all rate limit fields are None — indicates no billing/credits
+                        _rl_status = self.get_rate_limit_status()
+                        _all_none = all(v is None for v in _rl_status.values())
+                        if _all_none:
+                            raise Exception(
+                                "OpenAI API rejected all requests (no rate limit headers returned). "
+                                "This usually means your account has no credits or billing is not active. "
+                                "Please check your billing at https://platform.openai.com/settings/organization/billing "
+                                "and add credits to resume API access."
+                            )
+                        else:
+                            raise Exception(
+                                f"OpenAI API rate limit exceeded after {max_retries} retries. "
+                                f"Wait a minute and try again. Observed limits: {_rl_status}"
+                            )
                 
                 # Standard error handling (timeouts, network errors, etc.)
                 log.error(f"[OpenAI] Attempt {attempt + 1} failed: {e}")

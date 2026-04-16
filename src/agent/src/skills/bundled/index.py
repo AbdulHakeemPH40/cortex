@@ -33,11 +33,6 @@ except ImportError:
     register_debug_skill = None
 
 try:
-    from ...skills.bundled.scheduleRemoteAgents import register_schedule_remote_agents_skill
-except ImportError:
-    register_schedule_remote_agents_skill = None
-
-try:
     from ...skills.bundled.simplify import register_simplify_skill
 except ImportError:
     register_simplify_skill = None
@@ -187,17 +182,8 @@ def init_bundled_skills(register_callback: Callable[[dict[str, Any]], None]) -> 
     # =====================================================================
     # Feature-Gated Skills (Conditional registration)
     # =====================================================================
-    
-    # Schedule Remote Agents - Cloud agent scheduling with MCP connectors
-    # Feature flag: AGENT_TRIGGERS_REMOTE
-    if feature('AGENT_TRIGGERS_REMOTE'):
-        results['schedule-remote-agents'] = _register_skill(
-            register_schedule_remote_agents_skill,
-            "schedule-remote-agents",
-            register_callback
-        )
-    else:
-        results['schedule-remote-agents'] = False
+        
+    # Note: schedule-remote-agents removed - cloud agent infrastructure not used
     
     # =====================================================================
     # Skipped Skills (Not converted to Python)

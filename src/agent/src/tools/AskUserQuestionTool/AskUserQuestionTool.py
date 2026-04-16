@@ -21,6 +21,28 @@ from .prompt import (
 )
 
 
+# ---------------------------------------------------------------------------
+# Stub build_tool — matches the pattern used by WebFetchTool, WebSearchTool,
+# etc.  The real TypeScript SDK's "buildTool" returns a typed tool descriptor;
+# here we just store the kwargs on a plain object so the registry can import
+# AskUserQuestionTool without a hard dependency on the full agent SDK.
+# ---------------------------------------------------------------------------
+class _ToolDescriptor:
+    """Lightweight container returned by build_tool()."""
+    def __init__(self, **kwargs: Any) -> None:
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
+
+# Type alias used in create_ask_user_question_tool return annotation
+Tool = _ToolDescriptor
+
+
+def build_tool(**kwargs: Any) -> _ToolDescriptor:
+    """Stub that mirrors the TypeScript buildTool() factory."""
+    return _ToolDescriptor(**kwargs)
+
+
 # ============================================================================
 # TYPE DEFINITIONS
 # ============================================================================
@@ -124,7 +146,7 @@ def validate_html_preview(preview: Optional[str]) -> Optional[str]:
 # TOOL DEFINITION
 # ============================================================================
 
-def create_ask_user_question_tool() -> Tool[AskUserQuestionInput, AskUserQuestionOutput]:
+def create_ask_user_question_tool() -> _ToolDescriptor:
     """Create and return the AskUserQuestion tool."""
     
     def get_description() -> str:

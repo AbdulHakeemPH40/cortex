@@ -673,15 +673,12 @@ class FileEditTool:
         # --------------------------------------------------------------
         # Update read-file state so subsequent edits see the fresh timestamp
         # --------------------------------------------------------------
-        read_file_state.set(
-            absolute_file_path,
-            {
-                "content": updated_file,
-                "timestamp": get_file_modification_time(absolute_file_path),
-                "offset": None,
-                "limit": None,
-            },
-        )
+        read_file_state[absolute_file_path] = {
+            "content": updated_file,
+            "timestamp": get_file_modification_time(absolute_file_path),
+            "offset": None,
+            "limit": None,
+        }
         
         # --------------------------------------------------------------
         # Analytics & logging

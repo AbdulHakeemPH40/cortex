@@ -62,6 +62,8 @@ from src.utils.helpers import detect_language, shorten_path
 from src.utils.logger import get_logger
 from src.utils.notifications import show_task_complete_notification
 
+log = get_logger("main_window")
+
 try:
     from src.ui.syntax_highlighting_config import (
         UniversalCodeColorizer,
@@ -73,8 +75,6 @@ try:
 except ImportError:
     HAS_SYNTAX_HIGHLIGHTING = False
     log.warning("Syntax highlighting module not available")
-
-log = get_logger("main_window")
 
 
 class CleanTabBar(QTabBar):
@@ -603,31 +603,8 @@ class CortexMainWindow(QMainWindow):
         else:
             log.info("[AGENT] Stub agent initialized - bridge not available")
         
-        # Phase 1, 2, 3 Integration: TEMPORARILY DISABLED
-        # log.info("[INIT] Initializing Phase 1, 2, 3 components...")
-        # self._title_generator = get_title_generator(self._ai_agent)
-        # self._session_db = get_session_schema_manager()
-        # log.info("[OK] Phase 1, 2, 3 components initialized")
-        
-        # Phase 4 Integration: TEMPORARILY DISABLED
-        # log.info("[INIT] Initializing Phase 4 components...")
-        # self._todo_manager = get_todo_manager()
-        # self._permission_evaluator = get_permission_evaluator()
-        # self._github_agent = get_github_agent()
-        # log.info("[OK] Phase 4 components initialized")
-        
-        # NEW: OpenCode Enhancement Integration - TEMPORARILY DISABLED
-        # log.info("[INIT] Initializing OpenCode Enhancement Integration...")
-        # self._ai_integration = get_ai_integration_layer()
-        # log.info("[OK] OpenCode Enhancement Integration initialized")
-        
-        log.info("[INIT] Legacy AI components disabled - awaiting OpenHands SDK")
-        
-        # TEMPORARILY DISABLED - FileEditTracker was part of deleted agentic code
-        # self._file_tracker = FileEditTracker(self)
+        # Legacy AI components removed - agent_bridge.py is the active runtime
         self._file_tracker = None
-        
-        # Keep diff window (it's UI, not agentic)
         self._diff_window = DiffWindow(self)
         self._codebase_index = None
         self._inline_edit_context = None
@@ -1484,54 +1461,25 @@ class CortexMainWindow(QMainWindow):
         # Recovery: context compaction status + turn-limit continuation
         self._ai_agent.agent_status_update.connect(self._ai_chat.on_agent_status_update)
         self._ai_agent.turn_limit_hit.connect(self._ai_chat.on_turn_limit_hit)
+        # Token budget: real-time context usage bar
+        self._ai_agent.context_budget_update.connect(self._ai_chat.on_context_budget_update)
         # Permission gate: agent → chat UI shows card; user response → agent continues
         self._ai_agent.permission_requested.connect(self._ai_chat._on_permission_request)
         self._ai_chat.permission_decided.connect(self._ai_agent.on_permission_respond)
         
-        # Phase 4: TEMPORARILY DISABLED - todo_manager, title_generator were deleted
-        # self._todo_manager.task_added.connect(self._on_todo_task_added)
-        # self._todo_manager.task_completed.connect(self._on_todo_task_completed)
-        # self._todo_manager.task_updated.connect(self._on_todo_task_updated)
-        
-        # Phase 4: TEMPORARILY DISABLED - title_generator was deleted
-        # self._title_generator.title_generated.connect(self._on_title_generated)
-        
-        # New interaction signals
+        # Active signal connections
         self._ai_chat.generate_plan_requested.connect(self._on_generate_plan)
-        # TEMPORARILY DISABLED - set_interaction_mode doesn't exist on stub agent
-        # self._ai_chat.mode_changed.connect(self._ai_agent.set_interaction_mode)
         self._ai_chat.open_file_requested.connect(self._open_file)
         self._ai_chat.open_file_at_line_requested.connect(self._open_file_at_line)
         log.info(f"[Diff-Debug] Connecting show_diff_requested to _on_show_diff. Signal exists: {hasattr(self._ai_chat, 'show_diff_requested')}")
         self._ai_chat.show_diff_requested.connect(self._on_show_diff)
         self._ai_chat.answer_question_requested.connect(self._ai_agent.user_responded)
         self._ai_chat.smart_paste_check_requested.connect(self._on_smart_paste_check)
-        # TEMPORARILY DISABLED - set_always_allowed doesn't exist on stub agent
-        # self._ai_chat.always_allow_changed.connect(self._ai_agent.set_always_allowed)
         
-        # NEW: TEMPORARILY DISABLED - AI Integration Layer was deleted
-        # self._ai_integration.intent_classified.connect(self._on_intent_classified)
-        # self._ai_integration.agent_selected.connect(self._on_agent_selected)
-        # self._ai_integration.tools_selected.connect(self._on_tools_selected)
-        # self._ai_integration.permission_requested.connect(self._on_permission_requested)
-        # self._ai_integration.permission_granted.connect(self._on_permission_granted)
-        # self._ai_integration.permission_denied.connect(self._on_permission_denied)
-        # self._ai_integration.user_denied_workflow.connect(self._on_user_denied_workflow)
-        
-        # NEW: TEMPORARILY DISABLED - Testing Workflow was deleted
-        # self._ai_integration.testing_decision.connect(self._on_testing_decision)
-        # self._ai_integration.test_tools_selected.connect(self._on_test_tools_selected)
-        # self._ai_integration.test_execution_started.connect(self._on_test_execution_started)
-        # self._ai_integration.test_execution_completed.connect(self._on_test_execution_completed)
-        # self._ai_integration.test_analysis_ready.connect(self._on_test_analysis_ready)
-        
-        # NEW: Connect AI Chat permission response signals
-        self._ai_chat.permission_response.connect(self._on_chat_permission_response)
-        
-        # NEW: Connect Todo toggle from UI to TodoManager
+        # Todo toggle (logs only - state managed by bridge/JS)
         self._ai_chat.toggle_todo_requested.connect(self._on_toggle_todo)
         
-        # Connect AI Agent back to UI for interactive questions
+        # Interactive questions from agent to user
         self._ai_agent.user_question_requested.connect(self._on_ai_question_requested)
 
         # ========== CortexDiffBridge: wire accept/reject signals ==========
@@ -2103,6 +2051,7 @@ class CortexMainWindow(QMainWindow):
                     git_show = subprocess.run(
                         ['git', '-C', project_root, 'show', f'HEAD:{rel_path}'],
                         capture_output=True, text=True,
+                        encoding='utf-8', errors='replace',
                         creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
                     )
                     if git_show.returncode == 0:
@@ -2114,6 +2063,7 @@ class CortexMainWindow(QMainWindow):
                         git_ls = subprocess.run(
                             ['git', '-C', project_root, 'ls-files', '--error-unmatch', rel_path],
                             capture_output=True, text=True,
+                            encoding='utf-8', errors='replace',
                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
                         )
                         if git_ls.returncode != 0:
@@ -2359,20 +2309,22 @@ class CortexMainWindow(QMainWindow):
         except Exception as e:
             log.debug(f"[FileOp] Failed to complete operation card: {e}")
 
-    def _on_ai_question_requested(self, tool_call_id: str, question: str, metadata: dict):
+    def _on_ai_question_requested(self, question_payload: dict):
         """Handle AI asking a question that requires user response in chat."""
-        log.info(f"AI requested user input: {question[:50]}...")
+        log.info(f"AI requested user input: {question_payload['question'][:50]}...")
         # Structuring the question info for the JS UI
         # CRITICAL: Use permission_request_id if available (for permission cards),
         # otherwise fall back to tool_call_id (for general questions)
-        request_id = metadata.get("permission_request_id", tool_call_id)
+        request_id = question_payload.get("permission_request_id", question_payload.get("id", str(_uuid.uuid4())))
         info = {
             "id": request_id,
-            "text": question,
-            "type": metadata.get("type", "text"),
-            "choices": metadata.get("choices", []),
-            "default": metadata.get("default", ""),
-            "details": metadata.get("details", "")
+            "text": question_payload["text"],
+            "type": question_payload.get("type", "text"),
+            "choices": question_payload.get("choices", []),
+            "default": question_payload.get("default", ""),
+            "details": question_payload.get("details", ""),
+            "scope": question_payload.get("scope", "user"),
+            "tool_name": question_payload.get("tool_name", "AskUserQuestion")
         }
         self._ai_chat.show_question(info)
 
@@ -2701,44 +2653,17 @@ class CortexMainWindow(QMainWindow):
         self._ai_chat.add_system_message(f"❌ Permission denied: {reason}")
         
     def _on_chat_permission_response(self, request_id: str, approved: bool, scope: str = "session", remember: bool = False):
-        """Handle permission response from chat UI."""
-        log.info(f"Chat permission response: {request_id}, approved={approved}, scope={scope}, remember={remember}")
+        """Handle permission response from chat UI.
         
-        # Convert permission_request_id to tool_call_id format for agent.user_responded
-        # The request_id from permission card is actually the permission_request_id (UUID)
-        # But agent.user_responded expects tool_call_id
-        # We need to find which pending tool this belongs to by searching _pending_tool_results
-        tool_call_id_match = None
-        if hasattr(self._ai_agent, '_pending_tool_results'):
-            for res in self._ai_agent._pending_tool_results:
-                # Check if this result's metadata has the matching permission_request_id
-                metadata = res.get("metadata", {})
-                if metadata.get("permission_request_id") == request_id:
-                    tool_call_id_match = res.get("tool_call_id")
-                    log.info(f"Matched permission {request_id} to tool_call_id {tool_call_id_match}")
-                    break
-        
-        if approved:
-            # Use _ai_agent instead of removed _ai_integration
-            if hasattr(self._ai_agent, 'grant_permission'):
-                self._ai_agent.grant_permission(request_id, scope, remember)
-            
-            # If we found the matching tool_call_id, trigger user_responded with "allow"
-            if tool_call_id_match:
-                response_str = f"allow:{scope}" if scope else "allow"
-                if remember:
-                    response_str = f"always:{scope}" if scope else "always"
-                log.info(f"Auto-responding to pending tool: {tool_call_id_match} with {response_str}")
-                self._ai_agent.user_responded(response_str)
-        else:
-            # Use _ai_agent instead of removed _ai_integration
-            if hasattr(self._ai_agent, 'deny_permission'):
-                self._ai_agent.deny_permission(request_id, "User denied via UI")
-            
-            # If we found the matching tool_call_id, trigger user_responded with "deny"
-            if tool_call_id_match:
-                log.info(f"Auto-responding to pending tool: {tool_call_id_match} with deny")
-                self._ai_agent.user_responded(tool_call_id_match, "deny")
+        NOTE: This method is now DEPRECATED. The active permission flow uses
+        permission_decided signal connected directly to bridge.on_permission_respond().
+        This handler is kept for backwards compatibility but the permission_response
+        signal is no longer connected.
+        """
+        log.info(f"[DEPRECATED] _on_chat_permission_response called: {request_id}, approved={approved}")
+        # The real permission flow now goes through:
+        #   _ai_chat.permission_decided -> _ai_agent.on_permission_respond(decision)
+        # This method is no longer in the active path.
     
     def _on_user_denied_workflow(self, tool_name: str):
         """Handle user denying workflow twice - stop AI agent."""
@@ -4857,47 +4782,28 @@ class CortexMainWindow(QMainWindow):
 
     # Phase 4 Integration Methods
     def _show_todo_manager(self):
-        """Show TODO manager dialog (Phase 4 Integration)."""
-        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QListWidget, QInputDialog
+        """Show TODO manager dialog.
+        
+        NOTE: The legacy _todo_manager has been removed. This dialog now shows
+        the current todos from the bridge/JS UI instead.
+        """
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QListWidget
         
         dialog = QDialog(self)
         dialog.setWindowTitle("Tasks & TODOs")
-        dialog.setMinimumSize(600, 400)
+        dialog.setMinimumSize(500, 350)
         
         layout = QVBoxLayout(dialog)
         
-        # Title
-        title = QLabel("<h2>✅ Task Manager</h2>")
+        title = QLabel("<h2>Task Manager</h2>")
         layout.addWidget(title)
         
-        # Get current session ID
-        session_id = getattr(self._ai_chat, '_current_conversation_id', 'default')
+        info = QLabel("Todos are now managed by the AI agent via TodoWrite.\nUse the chat sidebar to view and track task progress.")
+        info.setWordWrap(True)
+        layout.addWidget(info)
         
-        # Tasks list
-        tasks_label = QLabel("Current Tasks:")
-        layout.addWidget(tasks_label)
+        layout.addWidget(QLabel("Current session todos are shown in the sidebar."))
         
-        tasks_list = QListWidget()
-        tasks = self._todo_manager.get_session_tasks(session_id)
-        
-        if tasks:
-            for task in tasks:
-                status_icon = "✓" if task.status.value == "completed" else "○"
-                priority_icon = "🔴" if task.priority == 1 else "🟡" if task.priority == 2 else "🟢"
-                item_text = f"{status_icon} {priority_icon} {task.description[:50]}"
-                tasks_list.addItem(item_text)
-        else:
-            tasks_list.addItem("No tasks yet")
-        
-        layout.addWidget(tasks_list)
-        
-        # Stats
-        stats = self._todo_manager.get_task_stats(session_id)
-        stats_text = f"Pending: {stats.get('pending', 0)} | In Progress: {stats.get('in_progress', 0)} | Completed: {stats.get('completed', 0)}"
-        stats_label = QLabel(stats_text)
-        layout.addWidget(stats_label)
-        
-        # Close button
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(dialog.close)
         layout.addWidget(close_btn)
@@ -4906,36 +4812,14 @@ class CortexMainWindow(QMainWindow):
         log.info("TODO manager dialog opened")
     
     def _add_todo_task(self):
-        """Add a new TODO task."""
-        from PyQt6.QtWidgets import QInputDialog
-        
-        text, ok = QInputDialog.getText(self, "Add Task", "Task description:")
-        if ok and text:
-            session_id = getattr(self._ai_chat, '_current_conversation_id', 'default')
-            task_id = self._todo_manager.add_task(session_id, text)
-            self._statusbar.showMessage(f"Task added: {text[:30]}...", 3000)
-            log.info(f"Added todo task: {text}")
+        """Add a new TODO task. (Legacy - todo manager removed)"""
+        self._statusbar.showMessage("Todo manager has been removed. Ask the AI to create tasks via TodoWrite.", 5000)
+        log.info("[TODO] _add_todo_task called - todo manager removed")
     
     def _complete_todo_task(self):
-        """Complete a TODO task."""
-        from PyQt6.QtWidgets import QInputDialog
-        
-        session_id = getattr(self._ai_chat, '_current_conversation_id', 'default')
-        tasks = self._todo_manager.get_pending_tasks(session_id)
-        
-        if not tasks:
-            self._statusbar.showMessage("No pending tasks", 3000)
-            return
-        
-        task_descriptions = [f"{i+1}. {t.description[:40]}" for i, t in enumerate(tasks)]
-        text, ok = QInputDialog.getItem(self, "Complete Task", "Select task:", task_descriptions, 0, False)
-        
-        if ok and text:
-            idx = int(text.split(".")[0]) - 1
-            if 0 <= idx < len(tasks):
-                task_id = tasks[idx].id
-                self._todo_manager.complete_task(task_id)
-                self._statusbar.showMessage("Task completed!", 3000)
+        """Complete a TODO task. (Legacy - todo manager removed)"""
+        self._statusbar.showMessage("Todo manager has been removed. Toggle tasks in the sidebar instead.", 5000)
+        log.info("[TODO] _complete_todo_task called - todo manager removed")
     
     def _show_permission_settings(self):
         """Show permission settings dialog (Phase 4 Integration)."""
@@ -5047,41 +4931,33 @@ class CortexMainWindow(QMainWindow):
         log.info("GitHub integration dialog opened")
 
     # Phase 4: Real-time UI Update Handlers
+    # NOTE: The following handlers are LEGACY stubs. The _todo_manager has been removed.
+    # Todo state is now managed entirely by the bridge (CortexAgentBridge) via TodoWrite.
+    
     def _on_todo_task_added(self, task_id: str):
-        """Handle new todo task - update chat UI in real-time."""
-        task = self._todo_manager.get_task(task_id)
-        if task and hasattr(self, '_ai_chat'):
-            # Convert to dict and update chat UI
-            task_dict = task.to_dict()
-            self._ai_chat.update_todos([task_dict])
-            log.info(f"Todo task added to UI: {task.description[:30]}")
+        """Handle new todo task - LEGACY (todo manager removed)."""
+        log.info(f"[TODO] _on_todo_task_added called (legacy): {task_id}")
 
     def _on_toggle_todo(self, task_id: str, completed: bool):
-        """Handle todo toggle from UI - complete or reopen a task."""
-        if completed:
-            self._todo_manager.complete_task(task_id)
-            log.info(f"Todo completed via UI: {task_id}")
-        else:
-            self._todo_manager.start_task(task_id)
-            log.info(f"Todo reopened via UI: {task_id}")
+        """Handle todo toggle from UI.
+        
+        NOTE: The legacy _todo_manager has been removed. Todo state is now managed
+        entirely by the bridge (CortexAgentBridge) and the JS UI. This handler
+        logs the toggle but does not persist it - the UI already shows the toggled
+        state visually and the bridge will emit updated todos on its next turn.
+        """
+        status = "completed" if completed else "reopened"
+        log.info(f"[TODO] UI toggle: {task_id} -> {status}")
+        # The todo state is managed by the bridge's TodoWrite tool and the JS UI.
+        # No backend persistence needed here - the UI handles the visual state.
 
     def _on_todo_task_completed(self, task_id: str):
-        """Handle completed todo - update chat UI."""
-        task = self._todo_manager.get_task(task_id)
-        if task and hasattr(self, '_ai_chat'):
-            # Update the todo status in chat UI
-            task_dict = task.to_dict()
-            self._ai_chat.update_todos([task_dict])
-            log.info(f"Todo task completed in UI: {task.description[:30]}")
+        """Handle completed todo - LEGACY (todo manager removed)."""
+        log.info(f"[TODO] _on_todo_task_completed called (legacy): {task_id}")
 
     def _on_todo_task_updated(self, task_id: str):
-        """Handle updated todo - refresh chat UI."""
-        session_id = getattr(self._ai_chat, '_current_conversation_id', 'default')
-        tasks = self._todo_manager.get_session_tasks(session_id)
-        if hasattr(self, '_ai_chat'):
-            # Refresh all todos in chat UI
-            tasks_list = [t.to_dict() for t in tasks]
-            self._ai_chat.update_todos(tasks_list)
+        """Handle updated todo - LEGACY (todo manager removed)."""
+        log.info(f"[TODO] _on_todo_task_updated called (legacy): {task_id}")
 
     def _on_ai_task_complete(self, response: str):
         """Show Windows toast notification when AI task completes."""

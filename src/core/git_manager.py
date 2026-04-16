@@ -64,6 +64,8 @@ class GitManager(QObject):
                 ["git", "--version"],
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
+                errors='replace',
                 timeout=5,
                 creationflags=_NO_WINDOW
             )

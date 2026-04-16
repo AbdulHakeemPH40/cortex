@@ -130,7 +130,7 @@ def resolveEscapingPathToCwdRelative(n: str) -> Optional[str]:
     absolute) against the actual cwd, then check if it lands back INSIDE cwd.
     If so, strip cwd and return the cwd-relative remainder for prefix matching.
     If it lands outside cwd, return None (genuinely external — path-validation's
-    concern). Covers `..\<cwd-basename>\HEAD` and `C:\<full-cwd>\HEAD` which
+    concern). Covers `..\\<cwd-basename>\\HEAD` and `C:\\<full-cwd>\\HEAD` which
     posix.normalize alone cannot resolve (it leaves leading `..` as-is).
 
     This is the SOLE guard for the bare-repo HEAD attack. path-validation's

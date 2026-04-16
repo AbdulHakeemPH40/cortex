@@ -50,6 +50,10 @@ def get_cwd() -> str:
     """Get current working directory."""
     return os.getcwd()
 
+def expand_path(p: str) -> str:
+    """Expand ~ and resolve to absolute path."""
+    return str(Path(p).expanduser().resolve())
+
 def is_enoent(exc: Exception) -> bool:
     """Check if exception is FileNotFoundError."""
     return isinstance(exc, FileNotFoundError)
@@ -119,9 +123,17 @@ async def ripgrep(args: List[str], cwd: str, signal: Optional[asyncio.Event] = N
     Raises:
         RipgrepTimeoutError: If search times out
     """
+    # Find rg executable - check bundled location first (for compiled exe)
+    rg_exe = _find_ripgrep()
+    if not rg_exe:
+        raise RuntimeError(
+            "ripgrep (rg) not found. Please install ripgrep: "
+            "https://github.com/BurntSushi/ripgrep#installation"
+        )
+    
     try:
         # Build full command
-        cmd = ['rg'] + args
+        cmd = [rg_exe] + args
         
         # Execute ripgrep
         process = await asyncio.create_subprocess_exec(
@@ -159,6 +171,40 @@ async def ripgrep(args: List[str], cwd: str, signal: Optional[asyncio.Event] = N
             "ripgrep (rg) not found. Please install ripgrep: "
             "https://github.com/BurntSushi/ripgrep#installation"
         )
+
+
+def _find_ripgrep() -> Optional[str]:
+    """
+    Find the ripgrep (rg) executable.
+    
+    Priority:
+    1. Bundled rg.exe in bin/ folder (PyInstaller compiled exe)
+    2. System PATH (shutil.which)
+    
+    Returns:
+        Path to rg executable or None if not found
+    """
+    import shutil
+    import sys
+    
+    # Check for bundled rg.exe (PyInstaller sets _MEIPASS)
+    if getattr(sys, 'frozen', False):
+        # Running as compiled exe
+        base_path = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+        bundled_rg = os.path.join(base_path, 'bin', 'rg.exe')
+        if os.path.isfile(bundled_rg):
+            return bundled_rg
+    
+    # Check in project bin/ folder (development mode)
+    # GrepTool.py is at src/agent/src/tools/GrepTool/ — need 5 levels up to reach project root
+    for levels in ('..', '..', '..', '..', '..'), ('..', '..', '..', '..'):
+        project_bin = os.path.join(os.path.dirname(__file__), *levels, 'bin', 'rg.exe')
+        project_bin = os.path.abspath(project_bin)
+        if os.path.isfile(project_bin):
+            return project_bin
+    
+    # Fall back to system PATH
+    return shutil.which('rg')
 
 
 class RipgrepTimeoutError(Exception):
@@ -396,7 +442,15 @@ class GrepTool:
     # ------------------------------------------------------------------
     # Core grep operation - mirrors call
     # ------------------------------------------------------------------
-    
+
+    @staticmethod
+    def _to_relative(abs_path: str, cwd: str) -> str:
+        """Convert an absolute path to a relative path from cwd."""
+        try:
+            return os.path.relpath(abs_path, cwd)
+        except ValueError:
+            return abs_path  # different drives on Windows
+
     @staticmethod
     async def call(
         inp: Dict,
@@ -419,6 +473,12 @@ class GrepTool:
         multiline = inp.get("multiline", False)
         
         absolute_path = expand_path(path) if path else get_cwd()
+        # If the path is a file (not a directory), ripgrep cannot use it
+        # as cwd. Use the parent directory and restrict search to the file.
+        _restrict_to_file: Optional[str] = None
+        if os.path.isfile(absolute_path):
+            _restrict_to_file = os.path.basename(absolute_path)
+            absolute_path = os.path.dirname(absolute_path)
         args = ['--hidden']
         
         # --------------------------------------------------------------
@@ -533,6 +593,10 @@ class GrepTool:
         abort_controller = getattr(context, "abort_controller", None)
         signal = getattr(abort_controller, "signal", None) if abort_controller else None
         
+        # If path was a file, restrict ripgrep to search only that file
+        if _restrict_to_file:
+            args.extend(['--glob', _restrict_to_file])
+        
         results = await ripgrep(args, absolute_path, signal)
         
         # --------------------------------------------------------------
@@ -551,7 +615,7 @@ class GrepTool:
                 if colon_index > 0:
                     file_path = line[:colon_index]
                     rest = line[colon_index:]
-                    final_lines.append(to_relative_path(file_path) + rest)
+                    final_lines.append(GrepTool._to_relative(file_path, absolute_path) + rest)
                 else:
                     final_lines.append(line)
             
@@ -583,7 +647,7 @@ class GrepTool:
                 if colon_index > 0:
                     file_path = line[:colon_index]
                     count_str = line[colon_index:]
-                    final_count_lines.append(to_relative_path(file_path) + count_str)
+                    final_count_lines.append(GrepTool._to_relative(file_path, absolute_path) + count_str)
                 else:
                     final_count_lines.append(line)
             
@@ -646,7 +710,7 @@ class GrepTool:
             applied_limit = limited_result["appliedLimit"]
             
             # Convert absolute paths to relative paths
-            relative_matches = [to_relative_path(f) for f in final_matches]
+            relative_matches = [GrepTool._to_relative(f, absolute_path) for f in final_matches]
             
             output = {
                 "mode": "files_with_matches",

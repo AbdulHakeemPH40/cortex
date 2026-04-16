@@ -4658,8 +4658,8 @@ function onComplete() {
 
     removeThinkingIndicator();
     hideThinking();
-    collapseActivitySection();  // Collapse (not remove) the Working section to show summary
-    collapseFecContainer();     // Collapse file read/write/create cards into summary
+    collapseFecContainer();     // Must run first: FEC cards collapsed while currentActivitySection is still valid
+    collapseActivitySection();  // Safe second call — if collapseFecContainer already ran collapseActivitySection internally this is a no-op
 
     // If a debounced render is still pending (not yet fired), execute it
     // synchronously RIGHT NOW before reading contentDiv.innerHTML.
@@ -8323,19 +8323,10 @@ function updateTodos(todos, mainTask) {
         return;
     }
 
-    // ---- Merge with existing list ----
-    if (!currentTodoList) currentTodoList = [];
-    var existingIds = new Set(currentTodoList.map(function(t) { return t.id; }));
-    var newTodos = todos.filter(function(t) { return !existingIds.has(t.id); });
-    todos.forEach(function(todo) {
-        var existing = currentTodoList.find(function(t) { return t.id === todo.id; });
-        if (existing) {
-            existing.status = todo.status;
-            existing.content = todo.content;
-            if (todo.activeForm) existing.activeForm = todo.activeForm;
-        }
-    });
-    currentTodoList = currentTodoList.concat(newTodos);
+    // ---- Replace list entirely --- Python always emits the FULL current todo
+    // list on every TodoWrite call.  The old additive concat() caused visual
+    // duplicates whenever the agent re-planned with new IDs for the same tasks.
+    currentTodoList = todos.map(function(t) { return Object.assign({}, t); });
 
     // ---- Show and auto-expand the footer #todo-section ----
     var section = document.getElementById('todo-section');
@@ -8378,6 +8369,36 @@ function updateTodos(todos, mainTask) {
                 ? todo.activeForm : todo.content;
             item.innerHTML = buildTodoIcon(todo.status) +
                 '<span class="todo-text">' + escapeHtml(displayText) + '</span>';
+            // Add click handler to toggle todo status
+            (function(t, el) {
+                el.addEventListener('click', function handleClick() {
+                    var isCompleted = t.status === 'COMPLETE';
+                    var newCompleted = !isCompleted;
+                    console.log('[TODO] Toggle clicked:', t.id, '-> completed:', newCompleted);
+                    
+                    // Optimistic UI update - toggle status immediately
+                    t.status = newCompleted ? 'COMPLETE' : 'PENDING';
+                    var newStatusCls = 'todo-' + t.status.toLowerCase().replace(/_/g, '');
+                    el.className = 'todo-item ' + newStatusCls;
+                    // Update icon only (not full innerHTML) to preserve click handler
+                    var iconEl = el.querySelector('.todo-icon');
+                    if (iconEl) {
+                        iconEl.outerHTML = buildTodoIcon(t.status);
+                    }
+                    // Update text
+                    var textEl = el.querySelector('.todo-text');
+                    if (textEl) {
+                        var newDisplayText = (t.status === 'IN_PROGRESS' && t.activeForm)
+                            ? t.activeForm : t.content;
+                        textEl.textContent = newDisplayText;
+                    }
+                    
+                    // Notify Python bridge
+                    if (window.bridge && typeof window.bridge.on_toggle_todo === 'function') {
+                        window.bridge.on_toggle_todo(t.id, newCompleted);
+                    }
+                });
+            })(todo, item);
             list.appendChild(item);
         });
     }
@@ -8440,7 +8461,7 @@ function onAgentStatus(type, message) {
     if (!container) return;
     var note = document.createElement('div');
     note.className = 'agent-status-note agent-status-' + (type || 'info');
-    var icon = type === 'compacting' ? '&#8635;' : '&#8634;';  // ↻ / ↺
+    var icon = type === 'compacting' ? '&#8635;' : type === 'failover' ? '&#8644;' : '&#8634;';  // ↻ / ⇄ / ↺
     note.innerHTML =
         '<span class="agent-status-icon">' + icon + '</span>' +
         '<span class="agent-status-text">' + escapeHtml(message || '') + '</span>';
@@ -8448,6 +8469,59 @@ function onAgentStatus(type, message) {
     container.scrollTop = container.scrollHeight;
 }
 window.onAgentStatus = onAgentStatus;
+
+// ============================================================
+// TOKEN BUDGET BAR — real-time context usage display
+// ============================================================
+
+function onContextBudgetUpdate(used, total, provider) {
+    var bar = document.getElementById('context-budget-bar');
+    if (!bar) {
+        // Create the budget bar container (fixed at top of chat)
+        bar = document.createElement('div');
+        bar.id = 'context-budget-bar';
+        bar.className = 'context-budget-bar';
+        bar.innerHTML =
+            '<div class="cb-inner">' +
+                '<div class="cb-fill" id="cb-fill"></div>' +
+            '</div>' +
+            '<span class="cb-label" id="cb-label"></span>';
+        // Insert before chatMessages container
+        var chatArea = document.getElementById('chatMessages');
+        if (chatArea && chatArea.parentNode) {
+            chatArea.parentNode.insertBefore(bar, chatArea);
+        } else {
+            document.body.appendChild(bar);
+        }
+    }
+
+    var pct = total > 0 ? Math.min((used / total) * 100, 100) : 0;
+    var fill = document.getElementById('cb-fill');
+    var label = document.getElementById('cb-label');
+
+    if (fill) {
+        fill.style.width = pct.toFixed(1) + '%';
+        // Color transitions: green < 50%, yellow 50-75%, orange 75-90%, red > 90%
+        if (pct < 50) fill.style.background = '#4ade80';
+        else if (pct < 75) fill.style.background = '#facc15';
+        else if (pct < 90) fill.style.background = '#fb923c';
+        else fill.style.background = '#ef4444';
+    }
+
+    if (label) {
+        var usedK = (used / 1000).toFixed(0);
+        var totalK = (total / 1000).toFixed(0);
+        label.textContent = usedK + 'K / ' + totalK + 'K tokens · ' + provider;
+    }
+
+    // Show the bar (it hides after inactivity)
+    bar.classList.add('cb-visible');
+    clearTimeout(bar._hideTimer);
+    bar._hideTimer = setTimeout(function() {
+        bar.classList.remove('cb-visible');
+    }, 8000);
+}
+window.onContextBudgetUpdate = onContextBudgetUpdate;
 
 /**
  * onTurnLimitHit(pendingTodos)
@@ -8505,7 +8579,12 @@ function continueTask(pendingTodos) {
     }).map(function(t) {
         return '- ' + (t.content || t.description || '');
     });
-    var msg = 'Continue the task. Remaining todos:\n' + lines.join('\n');
+    var msg = 'Continue the task. Remaining todos:\n' + lines.join('\n') +
+        '\n\nIMPORTANT — large file rule: For any file over ~500 lines (e.g. script.js, ' +
+        'ai_chat.html, agent_bridge.py) you MUST use Grep first to find the relevant ' +
+        'line number, then Read with offset+limit (e.g. offset=200, limit=80). ' +
+        'Never call Read on a large file without offset and limit — it will exceed ' +
+        'the context limit and the task will fail again.';
 
     // Inject into the input and fire sendMessage
     var input = document.getElementById('chatInput');
@@ -8859,8 +8938,8 @@ window.showQuestionCard = function(info) {
     card.id = 'interaction-' + info.id;
 
     var html = '<div class="interaction-header">' +
-               '<span class="interaction-icon">?</span>' +
-               '<span class="interaction-title">AI Question</span>' +
+               '<span class="interaction-icon">&#x2753;</span>' +
+               '<span class="interaction-title">Question for you</span>' +
                '</div>' +
                '<div class="interaction-body">' +
                '<p class="interaction-text">' + (info.text || "I have a question before I continue.") + '</p>';
@@ -8880,7 +8959,13 @@ window.showQuestionCard = function(info) {
     } else if (info.type === 'choice' && info.choices && info.choices.length > 0) {
         html += '<div class="interaction-choices">';
         info.choices.forEach(function(choice) {
-            html += '<button class="interaction-choice-btn" onclick="submitInteractionAnswer(\'' + info.id + '\', \'' + choice.replace(/'/g, "\\'") + '\')">' + choice + '</button>';
+            var label = (choice && typeof choice === 'object') ? (choice.label || '') : String(choice);
+            var desc  = (choice && typeof choice === 'object' && choice.description) ? choice.description : '';
+            var safe  = label.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+            var tip   = desc ? ' title="' + desc.replace(/"/g, '&quot;') + '"' : '';
+            html += '<button class="interaction-choice-btn"' + tip +
+                    ' onclick="submitInteractionAnswer(\'' + info.id + '\', \'' + safe + '\')">'
+                    + (label || '') + '</button>';
         });
         html += '</div>';
     } else {

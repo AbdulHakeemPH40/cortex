@@ -1,4 +1,4 @@
-﻿import os
+import os
 import sys
 import json
 import platform
@@ -195,13 +195,24 @@ class ChatBridge(QObject):
 
     def show_question(self, question_info: dict):
         """Send a question to the JS chat UI for user response."""
-        js_data = json.dumps(question_info)
+        # Ensure all required fields are present
+        normalized_info = {
+            "id": question_info.get("id", str(_uuid.uuid4())),
+            "text": question_info.get("text", ""),
+            "type": question_info.get("type", "text"),
+            "choices": question_info.get("choices", []),
+            "default": question_info.get("default", ""),
+            "details": question_info.get("details", ""),
+            "scope": question_info.get("scope", "user"),
+            "tool_name": question_info.get("tool_name", "AskUserQuestion")
+        }
+        js_data = json.dumps(normalized_info)
         self._view.page().runJavaScript(f"if(window.showQuestionCard) window.showQuestionCard({js_data});")
 
     @pyqtSlot(str, str)
-    def on_answer_question(self, tool_call_id, answer):
+    def on_answer_question(self, id, answer):
         """User answered a pending question from the AI."""
-        self.answer_question_requested.emit(tool_call_id, answer)
+        self.answer_question_requested.emit(id, answer)
 
     @pyqtSlot(str)
     def on_show_diff(self, file_path):
@@ -1327,11 +1338,17 @@ class AIChatWidget(QWidget):
         self._view.page().runJavaScript(f"if(window.appendMessage) window.appendMessage({json.dumps(message)}, 'system');")
 
     def on_agent_status_update(self, status_type: str, message: str):
-        """Show an inline recovery-status note in chat (compacting / retrying)."""
+        """Show an inline recovery-status note in chat (compacting / retrying / failover)."""
         safe_type = json.dumps(status_type)
         safe_msg  = json.dumps(message)
         self._view.page().runJavaScript(
             f"if(window.onAgentStatus) window.onAgentStatus({safe_type}, {safe_msg});"
+        )
+
+    def on_context_budget_update(self, used: int, total: int, provider: str):
+        """Push real-time token budget data to the UI budget bar."""
+        self._view.page().runJavaScript(
+            f"if(window.onContextBudgetUpdate) window.onContextBudgetUpdate({used}, {total}, {json.dumps(provider)});"
         )
 
     def on_turn_limit_hit(self, pending_todos: list):

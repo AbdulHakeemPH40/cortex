@@ -138,7 +138,7 @@ def is_dangerous_removal_path(resolved_path: str) -> bool:
     
     Dangerous paths are:
     - Wildcard '*' (removes all files in directory)
-    - Any path ending with '/*' or '\*' (e.g., /path/to/dir/*, C:\\foo\\*)
+    - Any path ending with '/*' or '\\*' (e.g., /path/to/dir/*, C:\\\\foo\\\\*)
     - Root directory (/)
     - Home directory (~)
     - Direct children of root (/usr, /tmp, /etc, etc.)

@@ -272,7 +272,7 @@ class SyntaxChecker:
                 [self._node_path, '--check', temp_path],
                 capture_output=True,
                 text=True,
-                encoding='utf-8',
+                encoding='utf-8', errors='replace',
                 timeout=5,
                 creationflags=_NO_WINDOW
             )
@@ -316,6 +316,7 @@ class SyntaxChecker:
                 tsc_cmd,
                 capture_output=True,
                 text=True,
+                encoding='utf-8', errors='replace',
                 timeout=10,
                 creationflags=_NO_WINDOW
             )
@@ -462,6 +463,7 @@ class SyntaxChecker:
                 ['javac', '-Xlint:none', file_path],
                 capture_output=True,
                 text=True,
+                encoding='utf-8', errors='replace',
                 timeout=30,
                 creationflags=_NO_WINDOW
             )
@@ -517,6 +519,7 @@ class SyntaxChecker:
                 ['go', 'vet', file_path],
                 capture_output=True,
                 text=True,
+                encoding='utf-8', errors='replace',
                 timeout=10,
                 creationflags=_NO_WINDOW
             )
@@ -589,6 +592,7 @@ class SyntaxChecker:
                 ['rustc', '--error-format=short', '-Z', 'parse-only', file_path],
                 capture_output=True,
                 text=True,
+                encoding='utf-8', errors='replace',
                 timeout=15,
                 creationflags=_NO_WINDOW
             )
@@ -660,6 +664,7 @@ class SyntaxChecker:
                 [compiler, '-fsyntax-only', '-w', temp_path],
                 capture_output=True,
                 text=True,
+                encoding='utf-8', errors='replace',
                 timeout=10,
                 creationflags=_NO_WINDOW
             )
@@ -711,6 +716,7 @@ class SyntaxChecker:
                 ['csc', '-target:library', file_path],
                 capture_output=True,
                 text=True,
+                encoding='utf-8', errors='replace',
                 timeout=15,
                 creationflags=_NO_WINDOW
             )
@@ -784,6 +790,7 @@ class SyntaxChecker:
                 ['ruby', '-c', file_path],
                 capture_output=True,
                 text=True,
+                encoding='utf-8', errors='replace',
                 timeout=5,
                 creationflags=_NO_WINDOW
             )
@@ -839,6 +846,7 @@ class SyntaxChecker:
                 ['php', '-l', file_path],
                 capture_output=True,
                 text=True,
+                encoding='utf-8', errors='replace',
                 timeout=5,
                 creationflags=_NO_WINDOW
             )

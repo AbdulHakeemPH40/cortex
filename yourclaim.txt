@@ -1,0 +1,119 @@
+Cortex IDE Agent Integration - COMPLETE
+
+=== ALL TASKS COMPLETED (2026-04-15) ===
+
+Category A: Cosmetic cleanup -- DONE
+- Removed dead commented-out blocks in main_window.py:
+  - Lines 606-622: Phase 1/2/3, Phase 4, OpenCode Enhancement integration stubs
+  - Lines 1491-1526: Todo manager, title generator, AI integration layer signal connections
+  - Reduced code by 57 lines, cleaned up initialization and signal connection sections
+
+Category B.1: CortexToolContext Expansion -- DONE
+Expanded CortexToolContext with:
+
+1. App State Management
+   - _AppState class with get/set/update methods
+   - set_app_state(key, value)
+   - update_app_state(data)
+   - get_app_state() returns full state object
+
+2. Wait/Resume Mechanism
+   - _WaitResumeController class
+   - wait_for_event(timeout) - blocks until resumed
+   - resume_execution(result) - resumes with result
+   - is_waiting() - check if currently waiting
+
+3. MCP Hooks
+   - _MCPHookManager class
+   - register_mcp_hook(event, callback)
+   - unregister_mcp_hook(event, callback)
+   - async trigger_mcp_hook(event, *args, **kwargs)
+
+4. Auth Hooks
+   - _AuthHookManager class
+   - request_auth(service, scopes) - returns auth request ID
+   - complete_auth(request_id, result)
+   - get_auth_status(request_id)
+
+5. Session State Manager
+   - _SessionStateManager class
+   - get_session_state(key, default)
+   - set_session_state(key, value)
+   - subscribe_session_state(key, callback) - change notifications
+   - unsubscribe_session_state(key, callback)
+
+6. Permission Context Integration
+   - get_permission_context() method
+
+Category B.2: Bridge Refactor to Use tool_registry -- DONE
+Refactored agent_bridge.py to consume tool_registry.py:
+
+1. Tool Schema Conversion
+   - _convert_tool_to_schema(tool) - converts Tool objects to OpenAI schemas
+   - Handles name, input_schema extraction
+
+2. Registry Integration
+   - _get_tool_definitions_from_registry() - loads tools from tool_registry
+   - Graceful fallback when registry unavailable
+
+3. Schema Merging
+   - _merge_tool_schemas(builtin, registry) - intelligent merge
+   - Built-in schemas take precedence (richer descriptions)
+   - Registry schemas fill in missing tools
+
+4. Dynamic Tool Loading
+   - _get_tool_definitions() now merges both sources
+   - Automatically picks up new tools from tool_registry
+
+Category B.3: AskUserQuestion -- DONE
+- Added AskUserQuestion schema to tool definitions
+- Added _dispatch_ask_user_question() handler
+- Added _pending_questions field
+
+Category C.1: LSPTool -- DONE
+- Added LSP schema with 9 operations
+- Added _dispatch_lsp() handler with LSP manager integration
+
+Category C.2: WebFetchTool / WebSearchTool -- DONE
+- Added WebFetch and WebSearch schemas
+- Added dispatch handlers with fallback extraction
+
+Category C.3: Task V2 Tools -- DONE
+- Added 5 tool schemas: TaskCreate, TaskUpdate, TaskList, TaskGet, TaskStop
+- Session-scoped task storage in _session_tasks
+
+Category C.4: MCP Tool -- DONE
+- Added MCP schema (serverName, toolName, arguments)
+- Added _dispatch_mcp() handler
+
+Category C.5: Team/Swarm Tools -- DONE
+- Added TeamCreate and TeamDelete schemas
+- Session-scoped team storage in _teams
+
+RemoteSessionManager & Cloud Infrastructure -- REMOVED
+- Deleted src/agent/src/remote/ directory
+- Deleted src/agent/src/skills/bundled/scheduleRemoteAgents.py
+- Deleted src/agent/src/tools/RemoteTriggerTool/ directory
+- Cleaned up all remote-related imports
+
+=== FILES MODIFIED ===
+
+src/ai/agent_bridge.py:
+- +350 lines for CortexToolContext expansion
+- +115 lines for tool_registry integration
+- +275 lines for Task V2, MCP, Team/Swarm dispatchers
+
+src/main_window.py:
+- -57 lines of dead commented-out code
+
+src/ui/html/ai_chat/script.js:
+- +11 lines for todo item click handlers
+
+=== SUMMARY ===
+
+All planned work is complete. The Cortex IDE now has:
+- Fully expanded CortexToolContext with app-state, wait/resume, MCP/auth hooks
+- Bridge integration with tool_registry.py for dynamic tool loading
+- Task V2, MCP, and Team/Swarm tools fully integrated
+- All tool schemas and dispatch handlers implemented
+- Cloud infrastructure removed for local-only operation

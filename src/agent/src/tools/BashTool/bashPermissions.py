@@ -477,7 +477,7 @@ def strip_safe_wrappers(command: str) -> str:
     Strip safe wrapper commands (timeout, time, nice, nohup, stdbuf) and
     safe environment variables from a command string.
     
-    SECURITY: Use [ \t]+ not \s+ — \s matches \n/\r which are command
+    SECURITY: Use [ \\t]+ not \\s+ — \\s matches \\n/\\r which are command
     separators in bash. Matching across a newline would strip the wrapper from
     one line and leave a different command on the next line for bash to execute.
     

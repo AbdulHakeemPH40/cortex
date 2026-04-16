@@ -325,7 +325,7 @@ cronTools = [
     _get_conditional_tool('tools.ScheduleCronTool.CronListTool', 'CronListTool'),
 ] if feature('AGENT_TRIGGERS') else []
 
-RemoteTriggerTool = _get_conditional_tool('tools.RemoteTriggerTool.RemoteTriggerTool', 'RemoteTriggerTool') if feature('AGENT_TRIGGERS_REMOTE') else None
+# RemoteTriggerTool removed - cloud agent infrastructure not used
 MonitorTool = _get_conditional_tool('tools.MonitorTool.MonitorTool', 'MonitorTool') if feature('MONITOR_TOOL') else None
 SendUserFileTool = _get_conditional_tool('tools.SendUserFileTool.SendUserFileTool', 'SendUserFileTool') if feature('KAIROS') else None
 PushNotificationTool = _get_conditional_tool('tools.PushNotificationTool.PushNotificationTool', 'PushNotificationTool') if (feature('KAIROS') or feature('KAIROS_PUSH_NOTIFICATION')) else None
@@ -455,7 +455,7 @@ def get_all_base_tools() -> Tools:
         *( [WorkflowTool] if WorkflowTool else [] ),
         *( [SleepTool] if SleepTool else [] ),
         *cronTools,
-        *( [RemoteTriggerTool] if RemoteTriggerTool else [] ),
+        # RemoteTriggerTool removed - cloud agent infrastructure not used
         *( [MonitorTool] if MonitorTool else [] ),
         BriefTool,
         *( [SendUserFileTool] if SendUserFileTool else [] ),

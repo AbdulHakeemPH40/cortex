@@ -160,34 +160,46 @@ class MistralProvider(BaseProvider):
     
     def _format_tools_for_mistral(self, tools: List[Any]) -> List[Dict]:
         """BUG #3 FIX: Convert ClaudeTool objects to Mistral API format.
-        
+            
         Mistral expects tools in format:
         {
             "type": "function",
             "function": {
                 "name": "tool_name",
                 "description": "what it does",
-                "parameters": {...}
+                "parameters": {
+                    "type": "object",
+                    "properties": {...},
+                    "required": [...],
+                    "additionalProperties": false  # REQUIRED by Mistral
+                }
             }
         }
         """
         formatted = []
-        
+    
         for tool in tools:
             # Check if already formatted (has 'type' key)
             if isinstance(tool, dict) and 'type' in tool:
-                formatted.append(tool)
+                # Validate and fix the tool schema
+                fixed_tool = self._fix_mistral_tool_schema(tool)
+                if fixed_tool:
+                    formatted.append(fixed_tool)
                 continue
-            
+                
             # Format ClaudeTool objects
             if hasattr(tool, 'name') and hasattr(tool, 'input_schema'):
                 try:
+                    params = tool.input_schema() if callable(tool.input_schema) else tool.input_schema
+                    # Fix the schema for Mistral
+                    params = self._fix_params_for_mistral(params)
+                        
                     formatted_tool = {
                         "type": "function",
                         "function": {
                             "name": tool.name,
                             "description": getattr(tool, 'description', f"Tool: {tool.name}"),
-                            "parameters": tool.input_schema() if callable(tool.input_schema) else tool.input_schema
+                            "parameters": params
                         }
                     }
                     formatted.append(formatted_tool)
@@ -197,13 +209,76 @@ class MistralProvider(BaseProvider):
             elif isinstance(tool, dict):
                 # Already a dictionary, ensure proper format
                 if 'function' in tool:
-                    formatted.append({
+                    fixed_tool = self._fix_mistral_tool_schema({
                         "type": tool.get("type", "function"),
                         "function": tool["function"]
                     })
-        
+                    if fixed_tool:
+                        formatted.append(fixed_tool)
+    
         log.info(f"[MISTRAL] Formatted {len(formatted)} tools for API (from {len(tools)} input tools)")
         return formatted
+        
+    def _fix_mistral_tool_schema(self, tool: Dict) -> Optional[Dict]:
+        """Fix a tool schema for Mistral API compatibility."""
+        try:
+            fn = tool.get("function", {})
+            params = fn.get("parameters", {})
+                
+            # Fix parameters
+            params = self._fix_params_for_mistral(params)
+                
+            return {
+                "type": tool.get("type", "function"),
+                "function": {
+                    "name": fn.get("name", ""),
+                    "description": fn.get("description", ""),
+                    "parameters": params
+                }
+            }
+        except Exception as e:
+            log.warning(f"[MISTRAL] Failed to fix tool schema: {e}")
+            return None
+        
+    def _fix_params_for_mistral(self, params: Dict) -> Dict:
+        """
+        Fix parameter schema for Mistral API.
+            
+        Mistral requires:
+        - type: "object" at top level
+        - additionalProperties: false (strict validation)
+        - All properties must have types
+        """
+        if not isinstance(params, dict):
+            params = {}
+            
+        # Ensure type: object
+        if params.get("type") != "object":
+            params["type"] = "object"
+            
+        # Mistral requires additionalProperties: false for strict validation
+        # Only add if not already set
+        if "additionalProperties" not in params:
+            params["additionalProperties"] = False
+            
+        # Ensure properties exists
+        if "properties" not in params:
+            params["properties"] = {}
+            
+        # Fix nested objects in properties
+        for prop_name, prop_schema in params.get("properties", {}).items():
+            if isinstance(prop_schema, dict):
+                if prop_schema.get("type") == "object" and "properties" in prop_schema:
+                    prop_schema = self._fix_params_for_mistral(prop_schema)
+                    params["properties"][prop_name] = prop_schema
+                # Fix items in arrays
+                elif prop_schema.get("type") == "array" and "items" in prop_schema:
+                    items = prop_schema["items"]
+                    if isinstance(items, dict) and items.get("type") == "object":
+                        items = self._fix_params_for_mistral(items)
+                        prop_schema["items"] = items
+            
+        return params
     
     
     def _validate_json_output(self, content: str) -> tuple[bool, Any]:
@@ -370,6 +445,12 @@ class MistralProvider(BaseProvider):
             
             if stream:
                 response = requests.post(url, headers=headers, json=payload, stream=True, timeout=120)
+                if not response.ok:
+                    try:
+                        error_body = response.json()
+                        log.error(f"[Mistral] API error response: {json.dumps(error_body, indent=2)}")
+                    except:
+                        log.error(f"[Mistral] API error response (text): {response.text[:500]}")
                 response.raise_for_status()
                 
                 for line in response.iter_lines():

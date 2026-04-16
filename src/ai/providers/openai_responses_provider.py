@@ -186,7 +186,18 @@ class OpenAIResponsesProvider:
             stream=True,
             timeout=120
         )
-        resp.raise_for_status()
+        if not resp.ok:
+            try:
+                error_body = resp.json()
+                log.error(f"[OpenAI Responses] API error: {json.dumps(error_body, indent=2)}")
+            except:
+                log.error(f"[OpenAI Responses] API error (text): {resp.text[:500]}")
+            resp.raise_for_status()
+        
+        # Log first few lines of stream for debugging
+        _line_count = 0
+        _text_count = 0
+        _event_count = 0
 
         # Accumulator for Responses API tool calls
         # key = output_index, value = {call_id, name, arguments}
@@ -211,10 +222,26 @@ class OpenAIResponsesProvider:
             try:
                 data = json.loads(data_str)
                 event_type = data.get("type", "")
+                
+                # Log ALL event types for debugging (first 100 chars of data)
+                log.debug(f"[OpenAI Responses] Event: {event_type}")
+                
+                # Log full event data for unknown types
+                if event_type not in (
+                    "response.output_text.delta", "response.output_text.done",
+                    "response.created", "response.in_progress", "response.completed",
+                    "response.output_item.added", "response.output_item.done",
+                    "response.function_call_arguments.delta", "response.function_call_arguments.done",
+                    "response.content_part.added", "response.content_part.done",
+                ):
+                    log.info(f"[OpenAI Responses] Unknown event: {json.dumps(data)[:200]}")
 
                 # ── Text content ──────────────────────────────────
                 if event_type == "response.output_text.delta":
+                    _event_count += 1
                     delta = data.get("delta", "")
+                    if delta:
+                        _text_count += 1
                     if delta:
                         delta = re.sub(
                             r'[\ufffd\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f'
@@ -282,6 +309,8 @@ class OpenAIResponsesProvider:
                         usage = response_data["usage"]
                         self._token_count["input"] = usage.get("input_tokens", 0)
                         self._token_count["output"] = usage.get("output_tokens", 0)
+                    # Log summary
+                    log.info(f"[OpenAI Responses] Stream complete: {_event_count} events, {_text_count} text chunks")
 
                 elif event_type in (
                     "response.created", "response.in_progress",

@@ -3393,6 +3393,12 @@
     color: rgba(140, 180, 255, 0.85);
 }
 
+.agent-status-failover {
+    background: rgba(250, 170, 50, 0.08);
+    border-color: rgba(250, 170, 50, 0.22);
+    color: rgba(250, 200, 100, 0.9);
+}
+
 .agent-status-icon {
     font-size: 13px;
     flex-shrink: 0;
@@ -3400,6 +3406,49 @@
 
 .agent-status-text {
     flex: 1;
+}
+
+/* ── Token Budget Bar ─────────────────────────────────── */
+.context-budget-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 16px;
+    opacity: 0;
+    max-height: 0;
+    overflow: hidden;
+    transition: opacity 0.3s ease, max-height 0.3s ease;
+}
+.context-budget-bar.cb-visible {
+    opacity: 1;
+    max-height: 28px;
+}
+.cb-inner {
+    flex: 1;
+    height: 4px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 2px;
+    overflow: hidden;
+}
+.cb-fill {
+    height: 100%;
+    width: 0%;
+    background: #4ade80;
+    border-radius: 2px;
+    transition: width 0.4s ease, background 0.4s ease;
+}
+.cb-label {
+    font-size: 10.5px;
+    color: rgba(200,200,200,0.6);
+    white-space: nowrap;
+    min-width: 140px;
+    text-align: right;
+}
+.light-mode .cb-inner {
+    background: rgba(0,0,0,0.06);
+}
+.light-mode .cb-label {
+    color: rgba(80,80,80,0.6);
 }
 
 .continue-task-banner {

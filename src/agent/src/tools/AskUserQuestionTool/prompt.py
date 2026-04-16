@@ -7,7 +7,10 @@ Defines tool name, description, and prompt templates for the multiple-choice que
 
 from typing import Dict, Literal
 
-from ...tools.ExitPlanModeTool.constants import EXIT_PLAN_MODE_TOOL_NAME
+try:
+    from ...tools.ExitPlanModeTool.constants import EXIT_PLAN_MODE_TOOL_NAME
+except ImportError:
+    EXIT_PLAN_MODE_TOOL_NAME = 'ExitPlanMode'
 
 # Tool name identifier
 ASK_USER_QUESTION_TOOL_NAME = 'AskUserQuestion'

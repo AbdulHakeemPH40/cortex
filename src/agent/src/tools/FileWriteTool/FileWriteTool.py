@@ -503,15 +503,12 @@ class FileWriteTool:
         # Update read-file state so subsequent writes see the fresh timestamp
         # --------------------------------------------------------------
         read_file_state = getattr(context, "read_file_state", {})
-        read_file_state.set(
-            full_file_path,
-            {
-                "content": content,
-                "timestamp": get_file_modification_time(full_file_path),
-                "offset": None,
-                "limit": None,
-            },
-        )
+        read_file_state[full_file_path] = {
+            "content": content,
+            "timestamp": get_file_modification_time(full_file_path),
+            "offset": None,
+            "limit": None,
+        }
         
         # --------------------------------------------------------------
         # Log when writing to CLAUDE.md

@@ -2,11 +2,23 @@
 import os
 import sys
 import glob
+import shutil
 
 # Get the directory containing this spec file
 project_root = os.path.dirname(os.path.abspath(sys.argv[0])) if hasattr(sys, 'argv') else os.getcwd()
 
 block_cipher = None
+
+# ── Bundle ripgrep (rg.exe) for GrepTool ──────────────────────────────────────
+# Download ripgrep and place rg.exe in bin/ folder
+ripgrep_binaries = []
+rg_path = os.path.join(project_root, 'bin', 'rg.exe')
+if os.path.exists(rg_path):
+    ripgrep_binaries.append((rg_path, 'bin'))
+    print(f"Found ripgrep: {rg_path}")
+else:
+    print("WARNING: rg.exe not found in bin/ - GrepTool will not work!")
+    print("Download from: https://github.com/BurntSushi/ripgrep/releases")
 
 # Find pywinpty DLLs
 winpty_dlls = []
@@ -22,10 +34,13 @@ try:
 except ImportError:
     print("winpty not installed — skipping")
 
+# Combine all binaries
+all_binaries = winpty_dlls + ripgrep_binaries
+
 a = Analysis(
     ['src\\main.py'],
     pathex=[project_root],
-    binaries=winpty_dlls,  # ← ADD THIS
+    binaries=all_binaries,  # winpty + ripgrep
     datas=[
         ('src/ui/html/ai_chat', 'src/ui/html/ai_chat'),
         ('src/ui/html/ai_chat/file-icons/sprite.svg', 'src/ui/html/ai_chat/file-icons'),

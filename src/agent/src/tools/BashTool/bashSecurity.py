@@ -201,7 +201,7 @@ def strip_safe_redirections(content: str) -> str:
     """
     Strip safe redirections like `>/dev/null` and `2>&1`.
     
-    SECURITY: All three patterns MUST have a trailing boundary (?=\s|$).
+    SECURITY: All three patterns MUST have a trailing boundary (?=\\s|$).
     Without it, `> /dev/nullo` matches `/dev/null` as a PREFIX.
     """
     content = re.sub(r'\s+2\s*>&\s*1(?=\s|$)', '', content)
@@ -225,7 +225,7 @@ def has_unescaped_char(content: str, char: str) -> bool:
         True if unescaped occurrence found, False otherwise
     
     Examples:
-        has_unescaped_char("test \`safe\`", '`') → False (escaped backticks)
+        has_unescaped_char("test \\`safe\\`", '`') → False (escaped backticks)
         has_unescaped_char("test `dangerous`", '`') → True (unescaped backticks)
     """
     if len(char) != 1:

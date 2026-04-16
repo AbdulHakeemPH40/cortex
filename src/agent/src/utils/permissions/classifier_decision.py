@@ -92,8 +92,7 @@ REQUIRES_CONFIRMATION: Set[str] = {
     # Skill execution (may have side effects)
     'SkillTool',
     
-    # Remote operations
-    'RemoteTriggerTool',
+    # Remote operations removed - cloud agent infrastructure not used
 }
 
 # ---------------------------------------------------------------------------

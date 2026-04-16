@@ -1,386 +1,123 @@
 # ------------------------------------------------------------
 # context.py
-# Python conversion of context.ts (lines 1-190)
-# 
-# Context generation for conversations including:
-# - System prompt injection for cache breaking
-# - Git status snapshot (branch, commits, changes)
-# - System context (git status + cache breaker)
-# - User context (CLAUDE.md files + current date)
-# - Memoized caching with invalidation on injection changes
+# Lightweight context helpers for Cortex IDE.
+#
+# Provides:
+#   get_git_status()  - branch, commits, file changes for system prompt
+#   get_system_context() - wraps git status into a dict for _build_system_prompt
+#   get_current_date() - simple date string for system prompt
+#
+# The original Claude Code version had cache-breaking, CLAUDE.md loading,
+# and feature-flag plumbing. All of that has been removed because Cortex IDE
+# does not use any of it.
 # ------------------------------------------------------------
 
-import asyncio
-from datetime import datetime
-from functools import lru_cache
+import subprocess
+from datetime import datetime, timezone
 from typing import Dict, Optional
 
-
-# ============================================================
-# DEFENSIVE IMPORTS
-# ============================================================
-
-try:
-    from bun.bundle import feature
-except ImportError:
-    def feature(feature_name: str) -> bool:
-        """Stub: Check if a feature flag is enabled."""
-        return False
-
-try:
-    from .bootstrap.state import (
-        get_additional_directories_for_claude_md,
-        set_cached_claude_md_content,
-    )
-except ImportError:
-    def get_additional_directories_for_claude_md() -> list:
-        return []
-    
-    def set_cached_claude_md_content(content: Optional[str]) -> None:
-        pass
-
-try:
-    from .constants.common import get_local_iso_date
-except ImportError:
-    def get_local_iso_date() -> str:
-        return datetime.now().isoformat()
-
-try:
-    from .utils.claudemd import (
-        filter_injected_memory_files,
-        get_claude_mds,
-        get_memory_files,
-    )
-except ImportError:
-    async def get_memory_files() -> list:
-        return []
-    
-    def filter_injected_memory_files(files: list) -> list:
-        return files
-    
-    def get_claude_mds(files: list) -> Optional[str]:
-        return None
-
-try:
-    from .utils.diag_logs import log_for_diagnostics_no_pii
-except ImportError:
-    def log_for_diagnostics_no_pii(level: str, message: str, data: Optional[dict] = None) -> None:
-        pass
-
-try:
-    from .utils.env_utils import is_bare_mode, is_env_truthy
-except ImportError:
-    def is_bare_mode() -> bool:
-        return False
-    
-    def is_env_truthy(value: Optional[str]) -> bool:
-        return value and value.lower() in ["true", "1", "yes"]
-
-try:
-    from .utils.exec_file_no_throw import exec_file_no_throw
-except ImportError:
-    async def exec_file_no_throw(cmd: str, args: list, options: Optional[dict] = None) -> dict:
-        return {"stdout": "", "stderr": ""}
-
-try:
-    from .utils.git import get_branch, get_default_branch, get_is_git, git_exe
-except ImportError:
-    async def get_is_git() -> bool:
-        return False
-    
-    async def get_branch() -> Optional[str]:
-        return None
-    
-    async def get_default_branch() -> Optional[str]:
-        return None
-    
-    def git_exe() -> str:
-        return "git"
-
-try:
-    from .utils.git_settings import should_include_git_instructions
-except ImportError:
-    def should_include_git_instructions() -> bool:
-        return True
-
-try:
-    from .utils.log import log_error
-except ImportError:
-    def log_error(error: Exception) -> None:
-        print(f"Error: {error}")
-
-
-# ============================================================
-# CONSTANTS
-# ============================================================
 
 MAX_STATUS_CHARS = 2000
 
 
-# ============================================================
-# SYSTEM PROMPT INJECTION (Cache Breaking)
-# ============================================================
+def _run_git(*args: str, cwd: Optional[str] = None) -> str:
+    """Run a git command and return stripped stdout, or empty string on failure."""
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            capture_output=True, text=True, timeout=5, cwd=cwd,
+            encoding='utf-8', errors='replace',
+        )
+        return result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return ""
 
-# System prompt injection for cache breaking (ant-only, ephemeral debugging state)
-_system_prompt_injection: Optional[str] = None
+
+def _is_git_repo(cwd: Optional[str] = None) -> bool:
+    return bool(_run_git("rev-parse", "--git-dir", cwd=cwd))
 
 
-def get_system_prompt_injection() -> Optional[str]:
-    """Get the current system prompt injection value."""
-    return _system_prompt_injection
-
-
-def set_system_prompt_injection(value: Optional[str]) -> None:
+def get_git_status(project_root: Optional[str] = None) -> Optional[str]:
     """
-    Set system prompt injection and clear context caches immediately.
-    
-    Used for cache breaking in ant-only debugging scenarios.
-    
-    Args:
-        value: Injection string or None to clear
-    """
-    global _system_prompt_injection
-    _system_prompt_injection = value
-    
-    # Clear context caches immediately when injection changes
-    get_user_context.cache_clear()
-    get_system_context.cache_clear()
+    Get git repository status as a formatted string for injection into the
+    system prompt.
 
-
-# ============================================================
-# GIT STATUS GENERATION
-# ============================================================
-
-@lru_cache(maxsize=1)
-async def get_git_status() -> Optional[str]:
-    """
-    Get git repository status as a formatted string.
-    
     Includes:
     - Current branch
-    - Main branch (for PRs)
+    - Default/main branch (for PRs)
     - Git user name
     - Short status (truncated to 2000 chars)
     - Recent 5 commits
-    
-    Memoized for performance - clears when system prompt injection changes.
-    
-    Returns:
-        Formatted git status string or None if not in git repo
+
+    Returns None if the project root is not a git repo.
     """
-    import os
-    if os.environ.get('NODE_ENV') == 'test':
-        # Avoid cycles in tests
+    cwd = project_root
+    if not _is_git_repo(cwd):
         return None
-    
-    start_time = asyncio.get_running_loop().time() * 1000
-    log_for_diagnostics_no_pii('info', 'git_status_started')
-    
-    is_git_start = asyncio.get_running_loop().time() * 1000
-    is_git = await get_is_git()
-    log_for_diagnostics_no_pii('info', 'git_is_git_check_completed', {
-        'duration_ms': (asyncio.get_running_loop().time() * 1000) - is_git_start,
-        'is_git': is_git,
-    })
-    
-    if not is_git:
-        log_for_diagnostics_no_pii('info', 'git_status_skipped_not_git', {
-            'duration_ms': (asyncio.get_running_loop().time() * 1000) - start_time,
-        })
-        return None
-    
-    try:
-        git_cmds_start = asyncio.get_running_loop().time() * 1000
-        
-        # Run all git commands in parallel
-        branch, main_branch, status_result, log_result, user_name_result = await asyncio.gather(
-            get_branch(),
-            get_default_branch(),
-            exec_file_no_throw(
-                git_exe(),
-                ['--no-optional-locks', 'status', '--short'],
-                {'preserveOutputOnError': False},
-            ),
-            exec_file_no_throw(
-                git_exe(),
-                ['--no-optional-locks', 'log', '--oneline', '-n', '5'],
-                {'preserveOutputOnError': False},
-            ),
-            exec_file_no_throw(
-                git_exe(),
-                ['config', 'user.name'],
-                {'preserveOutputOnError': False},
-            ),
-        )
-        
-        # Extract stdout from results
-        status = status_result['stdout'].strip()
-        log = log_result['stdout'].strip()
-        user_name = user_name_result['stdout'].strip()
-        
-        log_for_diagnostics_no_pii('info', 'git_commands_completed', {
-            'duration_ms': (asyncio.get_running_loop().time() * 1000) - git_cmds_start,
-            'status_length': len(status),
-        })
-        
-        # Check if status exceeds character limit
-        if len(status) > MAX_STATUS_CHARS:
-            truncated_status = (
-                status[:MAX_STATUS_CHARS] +
-                '\n... (truncated because it exceeds 2k characters. If you need more information, run "git status" using BashTool)'
-            )
+
+    branch = _run_git("branch", "--show-current", cwd=cwd) or "(unknown)"
+    main_branch = _run_git("remote", "show", "origin", cwd=cwd)
+    # Extract HEAD branch from remote info
+    if main_branch:
+        for line in main_branch.splitlines():
+            if "HEAD branch:" in line:
+                main_branch = line.split(":", 1)[1].strip()
+                break
         else:
-            truncated_status = status
-        
-        log_for_diagnostics_no_pii('info', 'git_status_completed', {
-            'duration_ms': (asyncio.get_running_loop().time() * 1000) - start_time,
-            'truncated': len(status) > MAX_STATUS_CHARS,
-        })
-        
-        # Build status sections
-        sections = [
-            'This is the git status at the start of the conversation. Note that this status is a snapshot in time, and will not update during the conversation.',
-            f'Current branch: {branch}',
-            f'Main branch (you will usually use this for PRs): {main_branch}',
-        ]
-        
-        if user_name:
-            sections.append(f'Git user: {user_name}')
-        
-        sections.append(f'Status:\n{truncated_status or "(clean)"}')
-        sections.append(f'Recent commits:\n{log}')
-        
-        return '\n\n'.join(sections)
-    
-    except Exception as error:
-        log_for_diagnostics_no_pii('error', 'git_status_failed', {
-            'duration_ms': (asyncio.get_running_loop().time() * 1000) - start_time,
-        })
-        log_error(error)
-        return None
-
-
-# ============================================================
-# SYSTEM CONTEXT
-# ============================================================
-
-@lru_cache(maxsize=1)
-async def get_system_context() -> Dict[str, str]:
-    """
-    Get system context prepended to each conversation.
-    
-    Includes:
-    - Git status (unless in CCR or git instructions disabled)
-    - Cache breaker injection (if BREAK_CACHE_COMMAND feature enabled)
-    
-    Memoized for the duration of the conversation. Clears when
-    system prompt injection changes.
-    
-    Returns:
-        Dictionary with gitStatus and/or cacheBreaker keys
-    """
-    import os
-    
-    start_time = asyncio.get_running_loop().time() * 1000
-    log_for_diagnostics_no_pii('info', 'system_context_started')
-    
-    # Skip git status in CCR (unnecessary overhead on resume) or when git instructions are disabled
-    if (is_env_truthy(os.environ.get('CLAUDE_CODE_REMOTE')) or
-        not should_include_git_instructions()):
-        git_status = None
+            main_branch = "main"
     else:
-        git_status = await get_git_status()
-    
-    # Include system prompt injection if set (for cache breaking, ant-only)
-    injection = get_system_prompt_injection() if feature('BREAK_CACHE_COMMAND') else None
-    
-    log_for_diagnostics_no_pii('info', 'system_context_completed', {
-        'duration_ms': (asyncio.get_running_loop().time() * 1000) - start_time,
-        'has_git_status': git_status is not None,
-        'has_injection': injection is not None,
-    })
-    
-    result = {}
-    
+        main_branch = "main"
+
+    user_name = _run_git("config", "user.name", cwd=cwd)
+    status = _run_git("status", "--short", cwd=cwd)
+    log = _run_git("log", "--oneline", "-n", "5", cwd=cwd)
+
+    # Truncate status if it exceeds the character budget
+    if len(status) > MAX_STATUS_CHARS:
+        status = (
+            status[:MAX_STATUS_CHARS]
+            + "\n... (truncated; run 'git status' via Bash for full output)"
+        )
+
+    sections = [
+        "This is the git status at the start of the conversation. "
+        "Note that this status is a snapshot in time and will not update "
+        "during the conversation.",
+        f"Current branch: {branch}",
+        f"Main branch (you will usually use this for PRs): {main_branch}",
+    ]
+
+    if user_name:
+        sections.append(f"Git user: {user_name}")
+
+    sections.append(f"Status:\n{status or '(clean)'}")
+    sections.append(f"Recent commits:\n{log or '(none)'}")
+
+    return "\n\n".join(sections)
+
+
+def get_system_context(project_root: Optional[str] = None) -> Dict[str, str]:
+    """
+    Build system context for the agent's system prompt.
+
+    Returns a dict with optional gitStatus that can be merged into
+    _build_system_prompt in agent_bridge.py.
+    """
+    result: Dict[str, str] = {}
+    git_status = get_git_status(project_root)
     if git_status:
-        result['gitStatus'] = git_status
-    
-    if feature('BREAK_CACHE_COMMAND') and injection:
-        result['cacheBreaker'] = f'[CACHE_BREAKER: {injection}]'
-    
+        result["gitStatus"] = git_status
     return result
 
 
-# ============================================================
-# USER CONTEXT
-# ============================================================
+def get_current_date() -> str:
+    """Return a human-readable current date string for the system prompt."""
+    now = datetime.now(timezone.utc)
+    return f"Today's date is {now.strftime('%Y-%m-%d')} (UTC)."
 
-@lru_cache(maxsize=1)
-async def get_user_context() -> Dict[str, str]:
-    """
-    Get user context prepended to each conversation.
-    
-    Includes:
-    - CLAUDE.md files from project directories
-    - Current date in ISO format
-    
-    Memoized for the duration of the conversation. Clears when
-    system prompt injection changes.
-    
-    Returns:
-        Dictionary with claudeMd and currentDate keys
-    """
-    import os
-    
-    start_time = asyncio.get_running_loop().time() * 1000
-    log_for_diagnostics_no_pii('info', 'user_context_started')
-    
-    # CLAUDE_CODE_DISABLE_CLAUDE_MDS: hard off, always.
-    # --bare: skip auto-discovery (cwd walk), BUT honor explicit --add-dir.
-    # --bare means "skip what I didn't ask for", not "ignore what I asked for".
-    should_disable_claude_md = (
-        is_env_truthy(os.environ.get('CLAUDE_CODE_DISABLE_CLAUDE_MDS')) or
-        (is_bare_mode() and len(get_additional_directories_for_claude_md()) == 0)
-    )
-    
-    # Await the async I/O (readFile/readdir directory walk) so the event
-    # loop yields naturally at the first fs.readFile.
-    if should_disable_claude_md:
-        claude_md = None
-    else:
-        memory_files = await get_memory_files()
-        filtered_files = filter_injected_memory_files(memory_files)
-        claude_md = get_claude_mds(filtered_files)
-    
-    # Cache for the auto-mode classifier (yoloClassifier.py reads this
-    # instead of importing claudemd.py directly, which would create a
-    # cycle through permissions/filesystem → permissions → yolo_classifier).
-    set_cached_claude_md_content(claude_md)
-    
-    log_for_diagnostics_no_pii('info', 'user_context_completed', {
-        'duration_ms': (asyncio.get_running_loop().time() * 1000) - start_time,
-        'claudemd_length': len(claude_md) if claude_md else 0,
-        'claudemd_disabled': bool(should_disable_claude_md),
-    })
-    
-    result = {
-        'currentDate': f"Today's date is {get_local_iso_date()}.",
-    }
-    
-    if claude_md:
-        result['claudeMd'] = claude_md
-    
-    return result
-
-
-# ============================================================
-# PUBLIC API EXPORTS
-# ============================================================
 
 __all__ = [
-    "get_system_prompt_injection",
-    "set_system_prompt_injection",
     "get_git_status",
     "get_system_context",
-    "get_user_context",
+    "get_current_date",
 ]

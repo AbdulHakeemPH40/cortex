@@ -1,4 +1,210 @@
-/* ================================================
+/* Interaction Card Styles for AskUserQuestion */
+.interaction-card {
+    background: var(--bg-color-2, #1e1e2e);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin: 12px 0;
+    border: 1px solid var(--border-color, #3d3d5c);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+    max-width: 92%;
+}
+
+.interaction-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+    margin-bottom: 10px;
+    color: var(--accent-color, #bd93f9);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.interaction-icon {
+    font-size: 14px;
+}
+
+.interaction-text {
+    color: var(--text-color, #f8f8f2);
+    font-size: 14px;
+    margin: 0 0 14px 0;
+    line-height: 1.5;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+.interaction-input {
+    width: calc(100% - 24px);
+    padding: 9px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color, #44475a);
+    background: var(--bg-color-1, #282a36);
+    color: var(--text-color, #f8f8f2);
+    font-size: 13px;
+    margin-top: 4px;
+    outline: none;
+    transition: border-color 0.15s;
+}
+
+.interaction-input-group {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-top: 4px;
+}
+
+.interaction-input-group .interaction-input {
+    flex: 1;
+    width: auto;
+    margin-top: 0;
+}
+
+.interaction-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 18px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+    margin-right: 8px;
+    margin-top: 8px;
+    transition: opacity 0.15s, transform 0.1s;
+    min-width: 60px;
+}
+
+.interaction-btn:hover {
+    opacity: 0.88;
+    transform: translateY(-1px);
+}
+
+.interaction-btn.primary {
+    background: var(--accent-color, #bd93f9);
+    color: #fff;
+    border-color: var(--accent-color, #bd93f9);
+}
+
+.interaction-btn.secondary {
+    background: var(--bg-color-3, #44475a);
+    color: var(--text-color, #f8f8f2);
+    border-color: var(--border-color, #6272a4);
+}
+
+.interaction-btn.deny {
+    background: #ff5555;
+    color: #fff;
+    border-color: #ff5555;
+}
+
+.interaction-btn.approve {
+    background: #50fa7b;
+    color: #282a36;
+    border-color: #50fa7b;
+}
+
+.interaction-btn.ghost {
+    background: transparent;
+    color: var(--accent-color, #bd93f9);
+    border-color: var(--accent-color, #bd93f9);
+}
+
+/* Send button for text-input cards */
+.interaction-submit-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 9px 18px;
+    border-radius: 6px;
+    border: none;
+    background: var(--accent-color, #bd93f9);
+    color: #fff;
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: opacity 0.15s, transform 0.1s;
+}
+
+.interaction-submit-btn:hover {
+    opacity: 0.88;
+    transform: translateY(-1px);
+}
+
+.interaction-choices {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.interaction-choice-btn {
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color, #6272a4);
+    background: var(--bg-color-3, #44475a);
+    color: var(--text-color, #f8f8f2);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+
+.interaction-choice-btn:hover {
+    background: var(--accent-color, #bd93f9);
+    color: #fff;
+    border-color: var(--accent-color, #bd93f9);
+    transform: translateY(-1px);
+}
+
+.interaction-choice-btn.selected {
+    background: var(--accent-color, #bd93f9);
+    color: #fff;
+    border-color: var(--accent-color, #bd93f9);
+}
+
+.permission-status {
+    font-size: 12px;
+    color: var(--text-color-secondary, #6272a4);
+    margin-top: 8px;
+    font-style: italic;
+}
+
+/* Answered / submitted state — card is dimmed and buttons disabled */
+.interaction-card.answered {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+/* Disabled state — applied after submission to prevent duplicate answers */
+.interaction-btn:disabled,
+.interaction-choice-btn:disabled,
+.interaction-submit-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+/* Keyboard focus accessibility */
+.interaction-btn:focus,
+.interaction-choice-btn:focus,
+.interaction-submit-btn:focus,
+.interaction-input:focus {
+    outline: 2px solid var(--accent-color, #bd93f9);
+    outline-offset: 2px;
+}
+
+/* Error state */
+.interaction-card.error {
+    border-color: #ff5555;
+    background: rgba(255, 85, 85, 0.08);
+}
+
+.interaction-card.error .interaction-header {
+    color: #ff5555;
+}/* ================================================
    CORTEX AI - CURSOR IDE THEME
    Clean, Minimal Dark Theme (Exact Replica)
    ================================================ */
