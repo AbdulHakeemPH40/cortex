@@ -1478,7 +1478,7 @@ Example: LS(path="src/")
                     turn_text = ""
                     try:
                         for chunk in provider.chat_stream(
-                            messages, model=model, max_tokens=8000, tools=tool_defs,
+                            messages, model=model, max_tokens=32000, tools=tool_defs,
                             retry_callback=_retry_notify
                         ):
                             # Respect a stop request from the user

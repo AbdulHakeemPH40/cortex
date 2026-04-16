@@ -29,7 +29,7 @@ class OpenAIResponsesProvider:
         self,
         messages: List[Dict[str, Any]],
         model: str = "gpt-5.1-codex-mini",
-        max_tokens: int = 4000,
+        max_tokens: int = 16000,
         tools: List[Dict[str, Any]] = None,
         retry_callback=None,
         **kwargs
