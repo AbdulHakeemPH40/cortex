@@ -4661,14 +4661,19 @@ function onComplete() {
     collapseActivitySection();  // Collapse (not remove) the Working section to show summary
     collapseFecContainer();     // Collapse file read/write/create cards into summary
 
-    // Clear any pending debounced render. DO NOT re-render here - the last
-    // streaming render already has all the content. Re-rendering causes the
-    // browser to tear down and rebuild the DOM, causing the "flash then plain"
-    // visual flicker.
-    if (window._streamRenderTimeout) {
-        clearTimeout(window._streamRenderTimeout);
-        window._streamRenderTimeout = null;
+    // If a debounced render is still pending (not yet fired), execute it
+    // synchronously RIGHT NOW before reading contentDiv.innerHTML.
+    // This handles Responses API / fast models that deliver content in one
+    // final burst just before onComplete fires — the 200ms timer never runs.
+    // If renderPending is false AND _streamRenderTimeout is null the last
+    // debounced render already ran, so we do NOT re-render (avoids flicker).
+    if (renderPending || window._streamRenderTimeout) {
+        if (window._streamRenderTimeout) {
+            clearTimeout(window._streamRenderTimeout);
+            window._streamRenderTimeout = null;
+        }
         renderPending = false;
+        updateStreamingUI(); // One synchronous render with complete content
     }
 
     if (currentAssistantMessage) {
@@ -4701,31 +4706,37 @@ function onComplete() {
         var contentDiv = currentAssistantMessage.querySelector('.message-content');
         
         if (contentDiv) {
-            // Batch all modifications into ONE innerHTML write
-            var finalHtml = contentDiv.innerHTML;
-            
-            // Apply suggestion chips if not already present
-            if (finalHtml.indexOf('suggestion-chip') === -1) {
-                finalHtml = convertSuggestionChips(finalHtml);
+            try {
+                // Batch all modifications into ONE innerHTML write
+                var finalHtml = contentDiv.innerHTML;
+        
+                // Apply suggestion chips if not already present
+                if (finalHtml.indexOf('suggestion-chip') === -1) {
+                    finalHtml = convertSuggestionChips(finalHtml);
+                }
+                // Replace thought timer patterns
+                var thoughtPattern = /([\u2299\u229a\u25ce\u29bf]Thought\s*[\u00B7\u00b7\.\xB7]\s*\d+s)/g;
+                if (thoughtPattern.test(finalHtml)) {
+                    finalHtml = finalHtml.replace(
+                        thoughtPattern,
+                        '<span class="thought-timer">$1</span>'
+                    );
+                }
+                // Single innerHTML assignment - no DOM teardown/rebuild cycle
+                contentDiv.innerHTML = finalHtml;
+        
+                console.log('[CHAT] onComplete: contentDiv.innerHTML length:', contentDiv.innerHTML.length);
+        
+                // -- Code block headers + syntax highlight -------------------
+                contentDiv.querySelectorAll('pre code').forEach(function(block) {
+                    if (!block.dataset.highlighted && window.hljs) {
+                        try { hljs.highlightElement(block); } catch(e) {}
+                    }
+                    injectCodeBlockHeader(block);
+                });
+            } catch (renderErr) {
+                console.error('[CHAT] onComplete: post-render error:', renderErr.message);
             }
-            // Replace thought timer patterns
-            var thoughtPattern = /([\u2299\u229a\u25ce\u29bf\u2299\u229a\u25ce\u29bf]Thought\s*[\u00B7\u00b7\.\xB7]\s*\d+s)/g;
-            if (thoughtPattern.test(finalHtml)) {
-                finalHtml = finalHtml.replace(
-                    thoughtPattern,
-                    '<span class="thought-timer">$1</span>'
-                );
-            }
-            // Single innerHTML assignment - no DOM teardown/rebuild cycle
-            contentDiv.innerHTML = finalHtml;
-            
-            console.log('[CHAT] onComplete: contentDiv.innerHTML length:', contentDiv.innerHTML.length);
-
-            // -- Code block headers + syntax highlight -------------------
-            contentDiv.querySelectorAll('pre code').forEach(function(block) {
-                if (window.hljs) hljs.highlightElement(block);
-                injectCodeBlockHeader(block);
-            });
         } else {
             console.error('[CHAT] onComplete: contentDiv NOT FOUND!');
         }
