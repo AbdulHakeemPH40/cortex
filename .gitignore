@@ -1,12 +1,12 @@
 # Environment
 .env
-.env.example
+# .env.example is intentionally tracked (safe template for contributors)
 venv/
 .venv/
 env/
 ENV/
 
-# Logs
+Logs
 *.log
 test_out.txt
 
@@ -18,8 +18,11 @@ reset_settings.py
 
 # Temp
 tmp/
-installer_output/
 nul
+
+# Test cache
+.pytest_cache/
+.mypy_cache/
 
 # Documentation (optional)
 Docs/
@@ -31,13 +34,18 @@ __pycache__/
 *.pyo
 *.pyd
 
-# Build artifacts
+# Build artifacts / installer output
 build/
 dist/
+installer_output/
 *.exe
 *.dll
 *.pak
 *.bin
+opencode-dev/
+vscode-main/
+node_modules/
+claude-code/
+Docs/
 
-# Installer
-installer_output/
+# cortex_setup.iss

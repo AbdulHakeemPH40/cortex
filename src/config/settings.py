@@ -11,13 +11,22 @@ from pathlib import Path
 DEFAULT_SETTINGS = {
     "theme": "dark",
     "editor": {
-        "font_family": "Courier New",
-        "font_size": 13,
+        "font_family": "JetBrains Mono",  # Cursor uses Berkeley/Geist Mono, fallback to JetBrains
+        "font_stack": '"Berkeley Mono", "Geist Mono", "JetBrains Mono", "Consolas", monospace',
+        "font_size": 12,  # Editor font size (Cursor recommends 16px)
         "tab_size": 4,
         "word_wrap": False,
         "line_numbers": True,
         "highlight_current_line": True,
         "auto_indent": True,
+    },
+    "ui": {
+        "font_family": "Inter",  # Geist Sans preferred, fallback to Inter
+        "font_stack": '"Geist Sans", "Inter", "Segoe UI", sans-serif',
+        "font_size": 14,  # UI default - 14px
+        "code_font_family": "JetBrains Mono",
+        "code_font_stack": '"Berkeley Mono", "Geist Mono", "JetBrains Mono", "Consolas", monospace',
+        "code_font_size": 13,  # Terminal and inline code - 13px
     },
     "ai": {
         "model": "deepseek-chat",
@@ -35,8 +44,20 @@ DEFAULT_SETTINGS = {
         "right_panel_width": 320,
         "maximized": False,
     },
+    "lsp": {
+        # Language Server Protocol settings
+        # Note: Python, JS/TS, HTML, CSS, JSON, Bash work out-of-the-box
+        # Java requires additional setup - see JAVA_SETUP.md
+        "enabled": True,
+        "timeout": 5.0,  # Request timeout in seconds
+        "auto_restart": True,  # Auto-restart crashed servers
+    },
     "recent_projects": [],
     "last_project": None,
+    "memory": {
+        "enabled": True,              # inject persistent memory into agent system prompt
+        "max_loaded_files": 10,        # max individual memory files loaded per session
+    },
 }
 
 

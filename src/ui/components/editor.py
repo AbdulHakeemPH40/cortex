@@ -2,20 +2,39 @@
 Code Editor Component — QPlainTextEdit with line numbers, syntax highlighting,
 current-line highlight, and auto-indent.
 """
+import ast
+import os
+import re
+import sys
+from typing import cast, List, Dict, Optional, Tuple, Any
 
 from PyQt6.QtWidgets import (
     QPlainTextEdit, QWidget, QTextEdit, QApplication,
-    QFrame, QLabel, QPushButton, QVBoxLayout, QHBoxLayout
+    QFrame, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
+    QToolTip, QListWidget, QListWidgetItem, QStyledItemDelegate, QStyleOptionViewItem,
+    QMenu
 )
-from PyQt6.QtCore import Qt, QRect, QSize, pyqtSignal, QSignalBlocker, QPoint
+from PyQt6.QtCore import (
+    Qt, QRect, QSize, pyqtSignal, QSignalBlocker, QPoint, QTimer,
+    QEvent
+)
 from PyQt6.QtGui import (
     QColor, QPainter, QTextFormat, QFont, QSyntaxHighlighter,
-    QTextCharFormat, QKeyEvent, QFontMetrics, QTextOption, QPen, QPalette, QTextCursor
+    QTextCharFormat, QKeyEvent, QFontMetrics, QTextOption, QPen, QPalette, 
+    QTextCursor, QHelpEvent, QAction, QIcon, QKeySequence, QShortcut
 )
 from pygments import lex
 from pygments.lexers import get_lexer_by_name, TextLexer
 from pygments.token import Token
 from src.config.settings import get_settings
+from src.core.syntax_checker import get_syntax_checker, DiagnosticError
+from src.core.lsp_manager import get_lsp_manager
+from src.core.html_completion import get_html_completion_provider, get_closing_tag
+from src.core.code_formatter import get_code_formatter, FormatResult
+from src.utils.logger import get_logger
+
+
+log = get_logger("editor")
 
 
 # ---------------------------------------------------------------------------
@@ -26,26 +45,32 @@ def get_preferred_programming_font() -> str:
     
     Uses comprehensive font detection for best available monospace font
     commonly used in professional IDEs and code editors.
+    Cursor IDE prefers: Berkeley Mono, Geist Mono
     """
     # Industry-standard programming fonts (priority order)
-    # Tier 1: Modern purpose-built coding fonts
-    # Tier 2: Classic reliable system fonts
-    # Tier 3: Universal fallbacks
+    # Tier 1: Cursor IDE fonts (Berkeley/Geist Mono)
+    # Tier 2: Modern purpose-built coding fonts
+    # Tier 3: Classic reliable system fonts
+    # Tier 4: Universal fallbacks
     preferred_fonts = [
-        # Tier 1: Premium Programming Fonts (Best for syntax highlighting)
+        # Tier 1: Cursor IDE Premium Fonts (per cursor-ide-design-tokens.md)
+        "Berkeley Mono",       # Cursor's marketing font - premium
+        "Geist Mono",          # Vercel's font - free alternative to Berkeley
+        
+        # Tier 2: Premium Programming Fonts (Best for syntax highlighting)
         "JetBrains Mono",      # Best overall - designed for IDEs
         "Fira Code",           # Best ligatures support
         "Source Code Pro",     # Adobe's professional font
         "Cascadia Code",       # Microsoft's modern terminal font
         "Hack",                # Optimized for readability
         
-        # Tier 2: Classic Programming Fonts
+        # Tier 3: Classic Programming Fonts
         "Consolas",            # Windows standard (excellent ClearType)
         "Monaco",              # macOS classic
         "SF Mono",             # Apple's modern system font
         "Roboto Mono",         # Google's material design font
         
-        # Tier 3: Reliable Fallbacks
+        # Tier 4: Reliable Fallbacks
         "Inconsolata",         # High-quality open source
         "DejaVu Sans Mono",    # Extended character support
         "Lucida Console",      # Windows legacy
@@ -65,183 +90,223 @@ def get_preferred_programming_font() -> str:
 
 
 class PygmentsSyntaxHighlighter(QSyntaxHighlighter):
-    # VS Code Dark+ Exact Clone - Industry Standard Theme
-    # Matches VS Code's "Dark+ (default dark)" theme exactly
-    # Based on official VS Code color tokens
+    # CURSOR IDE THEME - Anysphere Dark
+    # Matches cursor-ide-design-tokens.md §5 exactly
     # Works perfectly with: Python, JS/TS, HTML, CSS, Java, C/C++, Rust, Go, SQL, etc.
     DARK_COLORS = {
         # ============================================
-        # VS CODE DARK+ EXACT COLORS
-        # Background: #1E1E1E, Foreground: #D4D4D4
+        # CURSOR IDE ANYSPHERE DARK - cursor-ide-design-tokens.md §5
+        # Background: #181818, Foreground: #d6d6dd
+        # Syntax ref: keyword=#83d6c5, string=#e394dc, function=#efb080,
+        #            number=#efb080, class=#87c3ff, attribute=#aaa0fa,
+        #            comment=#6d6d6d, operator=#83d6c5, variable=#d6d6dd
         # ============================================
         
-        # Keywords - VS Code Blue (#569CD6)
-        Token.Keyword:            ("#569CD6", False, False),     # Blue - def, class, if, for
-        Token.Keyword.Constant:   ("#569CD6", False, False),     # Blue - True, False, None
-        Token.Keyword.Declaration:("#569CD6", False, False),     # Blue - declarations
-        Token.Keyword.Namespace:  ("#569CD6", False, False),     # Blue - import, export, package
-        Token.Keyword.Reserved:   ("#569CD6", False, False),     # Blue - reserved words
-        Token.Keyword.Type:       ("#569CD6", False, False),     # Blue - int, void, string, bool
+        # Keywords - Cursor Teal (#83d6c5)
+        Token.Keyword:            ("#83d6c5", False, False),     # Teal - if, def, class, return
+        Token.Keyword.Constant:   ("#efb080", False, False),     # Orange - True, False, None (constants)
+        Token.Keyword.Declaration:("#83d6c5", False, False),     # Teal - var, let, const declarations
+        Token.Keyword.Namespace:  ("#83d6c5", False, False),     # Teal - import, export, package
+        Token.Keyword.Reserved:   ("#83d6c5", False, False),     # Teal - reserved words
+        Token.Keyword.Type:       ("#87c3ff", False, False),     # Light blue - int, void, string, bool (types)
         
-        # Variables - VS Code Light Blue (#9CDCFE)
-        Token.Name:               ("#9CDCFE", False, False),     # Light Blue - variables
-        Token.Name.Builtin:       ("#4EC9B0", False, False),     # Teal - built-ins (len, print)
-        Token.Name.Builtin.Pseudo:("#9CDCFE", False, False),     # Light Blue - self, this
-        Token.Name.Class:         ("#4EC9B0", False, False),     # Teal - class names
-        Token.Name.Decorator:     ("#DCDCAA", False, False),     # Yellow - @decorators
-        Token.Name.Entity:        ("#CE9178", False, False),     # Orange - entities
-        Token.Name.Exception:     ("#F44747", False, False),     # Red - exceptions
-        Token.Name.Function:      ("#DCDCAA", False, False),     # Yellow - function calls
-        Token.Name.Function.Magic:("#DCDCAA", False, False),     # Yellow - __magic__
-        Token.Name.Label:         ("#569CD6", False, False),     # Blue - labels
-        Token.Name.Namespace:     ("#4EC9B0", False, False),     # Teal - namespaces
-        Token.Name.Tag:           ("#569CD6", False, False),     # Blue - HTML/XML tags
-        Token.Name.Variable:      ("#9CDCFE", False, False),     # Light Blue - variables
-        Token.Name.Variable.Class:("#9CDCFE", False, False),     # Light Blue - class vars
-        Token.Name.Variable.Global:("#9CDCFE", False, False),    # Light Blue - global vars
-        Token.Name.Variable.Instance:("#9CDCFE", False, False),  # Light Blue - instance vars
-        Token.Name.Constant:      ("#569CD6", False, False),     # Blue - constants
-        Token.Name.Attribute:     ("#9CDCFE", False, False),     # Light Blue - attributes
+        # Variables & Names
+        Token.Name:               ("#d6d6dd", False, False),     # Primary text - default variable names
+        Token.Name.Builtin:       ("#87c3ff", False, False),     # Light blue - built-ins (len, print, console)
+        Token.Name.Builtin.Pseudo:("#efb080", False, False),     # Orange - self, this, super
+        Token.Name.Class:         ("#87c3ff", False, False),     # Light blue - class names (NO bold per Cursor)
+        Token.Name.Decorator:     ("#efb080", False, True),      # Orange ITALIC - @decorators
+        Token.Name.Entity:        ("#efb080", False, False),     # Orange - HTML entities
+        Token.Name.Exception:     ("#f14c4c", False, False),     # Red - exceptions (terminal.ansiRed)
+        Token.Name.Function:      ("#efb080", False, False),     # Orange - function names
+        Token.Name.Function.Magic:("#efb080", False, False),     # Orange - __magic__ methods
+        Token.Name.Label:         ("#87c3ff", False, False),     # Light blue - labels
+        Token.Name.Namespace:     ("#87c3ff", False, False),     # Light blue - namespaces
+        Token.Name.Other:         ("#87c3ff", False, False),     # Light blue - JS/CSS identifiers
+        Token.Name.Property:      ("#d6d6dd", False, False),     # Primary text - object property access
+        Token.Name.Tag:           ("#87c3ff", False, False),     # Light blue - HTML/XML tags
+        Token.Name.Variable:      ("#d6d6dd", False, False),     # Primary text - variable names
+        Token.Name.Variable.Class:("#d6d6dd", False, False),     # Primary text - class vars
+        Token.Name.Variable.Global:("#d6d6dd", False, False),    # Primary text - global vars
+        Token.Name.Variable.Instance:("#d6d6dd", False, False),  # Primary text - instance vars
+        Token.Name.Constant:      ("#efb080", False, False),     # Orange - constants
+        Token.Name.Attribute:     ("#aaa0fa", False, False),     # Purple - HTML/JSX attribute.name
         
-        # Strings - VS Code Orange (#CE9178)
-        Token.String:             ("#CE9178", False, False),     # Orange - all strings
-        Token.String.Affix:       ("#CE9178", False, False),     # Orange - f"", r"", b""
-        Token.String.Backtick:    ("#CE9178", False, False),     # Orange - `template`
-        Token.String.Char:        ("#CE9178", False, False),     # Orange - char literals
-        Token.String.Delimiter:   ("#CE9178", False, False),     # Orange - quotes
-        Token.String.Doc:         ("#6A9955", True, True),       # Green ITALIC - docstrings
-        Token.String.Double:      ("#CE9178", False, False),     # Orange - "strings"
-        Token.String.Escape:      ("#D7BA7D", False, False),     # Light Orange - \n, \t
-        Token.String.Heredoc:     ("#CE9178", False, False),     # Orange - heredocs
-        Token.String.Interpol:    ("#CE9178", False, False),     # Orange - ${expr}
-        Token.String.Other:       ("#CE9178", False, False),     # Orange - other strings
-        Token.String.Regex:       ("#D16969", False, False),     # Red-Orange - regex
-        Token.String.Single:      ("#CE9178", False, False),     # Orange - 'strings'
-        Token.String.Symbol:      ("#569CD6", False, False),     # Blue - symbols
+        # Strings - Cursor Pink (#e394dc)
+        Token.String:             ("#e394dc", False, False),     # Pink - all strings
+        Token.String.Affix:       ("#83d6c5", False, False),     # Teal - f"", r"", b"" prefixes
+        Token.String.Backtick:    ("#e394dc", False, False),     # Pink - `template literals`
+        Token.String.Char:        ("#e394dc", False, False),     # Pink - char literals
+        Token.String.Delimiter:   ("#e394dc", False, False),     # Pink - quote marks
+        Token.String.Doc:         ("#6d6d6d", False, True),      # Gray ITALIC - docstrings (comments)
+        Token.String.Double:      ("#e394dc", False, False),     # Pink - "double quoted"
+        Token.String.Escape:      ("#efb080", False, False),     # Orange - \n, \t, \\ (escape sequences)
+        Token.String.Heredoc:     ("#e394dc", False, False),     # Pink - heredocs
+        Token.String.Interpol:    ("#e394dc", False, False),     # Pink - ${expr} interpolations
+        Token.String.Other:       ("#e394dc", False, False),     # Pink - other strings
+        Token.String.Regex:       ("#efb080", False, False),     # Orange - /regex/
+        Token.String.Single:      ("#e394dc", False, False),     # Pink - 'single quoted'
+        Token.String.Symbol:      ("#efb080", False, False),     # Orange - symbols
         
-        # Numbers - VS Code Light Green (#B5CEA8)
-        Token.Number:             ("#B5CEA8", False, False),     # Light Green - all numbers
-        Token.Number.Bin:         ("#B5CEA8", False, False),     # Light Green - 0b1010
-        Token.Number.Float:       ("#B5CEA8", False, False),     # Light Green - 3.14
-        Token.Number.Hex:         ("#B5CEA8", False, False),     # Light Green - 0xFF
-        Token.Number.Integer:     ("#B5CEA8", False, False),     # Light Green - 42
-        Token.Number.Integer.Long:("#B5CEA8", False, False),     # Light Green - long ints
-        Token.Number.Oct:         ("#B5CEA8", False, False),     # Light Green - 0o777
+        # Numbers - Cursor Orange (#efb080)
+        Token.Number:             ("#efb080", False, False),     # Orange - all numbers
+        Token.Number.Bin:         ("#efb080", False, False),     # Orange - 0b1010
+        Token.Number.Float:       ("#efb080", False, False),     # Orange - 3.14
+        Token.Number.Hex:         ("#efb080", False, False),     # Orange - 0xFF
+        Token.Number.Integer:     ("#efb080", False, False),     # Orange - 42
+        Token.Number.Integer.Long:("#efb080", False, False),     # Orange - long ints
+        Token.Number.Oct:         ("#efb080", False, False),     # Orange - 0o777
         
-        # Operators - VS Code White (#D4D4D4)
-        Token.Operator:           ("#D4D4D4", False, False),     # White - + - * / %
-        Token.Operator.Word:      ("#569CD6", False, False),     # Blue - and, or, not
+        # Operators - Cursor Teal (#83d6c5)
+        Token.Operator:           ("#83d6c5", False, False),     # Teal - =, +, -, == operators
+        Token.Operator.Word:      ("#83d6c5", False, False),     # Teal - and, or, not
         
-        # Punctuation - VS Code White (#D4D4D4)
-        Token.Punctuation:        ("#D4D4D4", False, False),     # White - brackets, parens
-        Token.Punctuation.Marker: ("#D4D4D4", False, False),     # White - semicolons, commas
+        # Punctuation / Delimiters - Cursor Primary Text (#d6d6dd)
+        Token.Punctuation:        ("#d6d6dd", False, False),     # Primary text - brackets, parens, braces
+        Token.Punctuation.Marker: ("#d6d6dd", False, False),     # Primary text - semicolons, commas
         
-        # Comments - VS Code Green (#6A9955)
-        Token.Comment:            ("#6A9955", False, True),      # Green ITALIC - comments
-        Token.Comment.Hashbang:   ("#6A9955", False, True),      # Green ITALIC - shebang
-        Token.Comment.Multiline:  ("#6A9955", False, True),      # Green ITALIC - /* */
-        Token.Comment.Preproc:    ("#6A9955", False, True),      # Green ITALIC - #pragma
-        Token.Comment.PreprocFile:("#6A9955", False, True),      # Green ITALIC - includes
-        Token.Comment.Single:     ("#6A9955", False, True),      # Green ITALIC - // or #
-        Token.Comment.Special:    ("#6A9955", False, True),      # Green ITALIC - special
+        # Comments - Cursor Gray (#6d6d6d) ITALIC
+        Token.Comment:            ("#6d6d6d", False, True),      # Gray ITALIC - comments
+        Token.Comment.Hashbang:   ("#6d6d6d", False, True),      # Gray ITALIC - shebang
+        Token.Comment.Multiline:  ("#6d6d6d", False, True),      # Gray ITALIC - /* */
+        Token.Comment.Preproc:    ("#6d6d6d", False, True),      # Gray ITALIC - #pragma
+        Token.Comment.PreprocFile:("#6d6d6d", False, True),      # Gray ITALIC - includes
+        Token.Comment.Single:     ("#6d6d6d", False, True),      # Gray ITALIC - // or #
+        Token.Comment.Special:    ("#6d6d6d", False, True),      # Gray ITALIC - special
         
-        # Errors - VS Code Red (#F44747)
-        Token.Error:              ("#F44747", False, False),     # Red - syntax errors
+        # Errors / Invalid - Cursor Red (#f14c4c) - terminal.ansiRed
+        Token.Error:              ("#f14c4c", False, False),     # Red - syntax errors
         
-        # Types/Classes - VS Code Teal (#4EC9B0)
-        Token.Name.Class:         ("#4EC9B0", False, False),     # Teal - class names
-        Token.Name.Decorator:     ("#DCDCAA", False, False),     # Yellow - decorators
-        
-        # Functions - VS Code Yellow (#DCDCAA)
-        Token.Name.Function:      ("#DCDCAA", False, False),     # Yellow - function definitions
-        Token.Name.Function.Magic:("#DCDCAA", False, False),     # Yellow - magic methods
+        # Types/Classes - Cursor Light Blue (#87c3ff)
+        Token.Type:               ("#87c3ff", False, False),     # Light blue - type names
         
         # Markup - For HTML/XML/Markdown
-        Token.Generic:            ("#D4D4D4", False, False),     # White - generic markup
-        Token.Generic.Deleted:    ("#F44747", False, False),     # Red - deleted text
-        Token.Generic.Emph:       ("#CE9178", False, True),      # Orange ITALIC - emphasis
-        Token.Generic.Error:      ("#F44747", False, False),     # Red - errors
-        Token.Generic.Heading:    ("#4EC9B0", False, False),     # Teal - headings
-        Token.Generic.Inserted:   ("#4EC9B0", False, False),     # Teal - inserted text
-        Token.Generic.Output:     ("#6A9955", False, False),     # Green - program output
-        Token.Generic.Prompt:     ("#569CD6", False, False),     # Blue - shell prompt
-        Token.Generic.Strong:     ("#D4D4D4", True, False),      # White BOLD - strong
-        Token.Generic.Subheading: ("#569CD6", False, False),     # Blue - subheadings
-        Token.Generic.Traceback:  ("#F44747", False, False),     # Red - tracebacks
+        Token.Generic:            ("#d6d6dd", False, False),     # Primary text - generic markup
+        Token.Generic.Deleted:    ("#f14c4c", False, False),     # Red - deleted text
+        Token.Generic.Emph:       ("#e394dc", False, True),      # Pink ITALIC - emphasis
+        Token.Generic.Error:      ("#f14c4c", False, False),     # Red - errors
+        Token.Generic.Heading:    ("#87c3ff", False, False),     # Light blue - headings (NO bold per Cursor)
+        Token.Generic.Inserted:   ("#15ac91", False, False),     # Green - inserted text (terminal.ansiGreen)
+        Token.Generic.Output:     ("#6d6d6d", False, False),     # Gray - program output
+        Token.Generic.Prompt:       ("#15ac91", False, False),     # Green - shell prompt (terminal.ansiGreen)
+        Token.Generic.Strong:       ("#efb080", False, False),     # Orange - strong (NO bold per Cursor)
+        Token.Generic.Subheading:   ("#aaa0fa", False, False),     # Purple - subheadings
+        Token.Generic.Traceback:    ("#f14c4c", False, False),     # Red - tracebacks (terminal.ansiRed)
         
         # Literals
-        Token.Literal:            ("#569CD6", False, False),     # Blue - literal values
-        Token.Literal.Date:       ("#4EC9B0", False, True),      # Teal ITALIC - dates
-        Token.Literal.Number:     ("#B5CEA8", False, False),     # Light Green - numbers
-        Token.Literal.String:     ("#CE9178", False, False),     # Orange - strings
+        Token.Literal:              ("#efb080", False, False),     # Orange - literal values
+        Token.Literal.Date:         ("#87c3ff", False, True),      # Light blue ITALIC - dates
+        Token.Literal.Number:       ("#efb080", False, False),     # Orange - numbers (embedded JS/CSS)
+        Token.Literal.Number.Bin:   ("#efb080", False, False),     # Orange - 0b1010
+        Token.Literal.Number.Float: ("#efb080", False, False),     # Orange - 3.14 (embedded JS)
+        Token.Literal.Number.Hex:   ("#efb080", False, False),     # Orange - CSS hex colors
+        Token.Literal.Number.Integer:   ("#efb080", False, False),  # Orange - CSS values
+        Token.Literal.Number.Integer.Long:("#efb080", False, False), # Orange - long ints
+        Token.Literal.Number.Oct:   ("#efb080", False, False),     # Orange - 0o777
+        Token.Literal.String:       ("#e394dc", False, False),     # Pink - strings (embedded JS)
+        Token.Literal.String.Affix: ("#83d6c5", False, False),     # Teal - string prefixes
+        Token.Literal.String.Backtick:("#e394dc", False, False),    # Pink - template literals
+        Token.Literal.String.Char:  ("#e394dc", False, False),     # Pink - char literals
+        Token.Literal.String.Delimiter:("#e394dc", False, False),  # Pink - quote marks
+        Token.Literal.String.Doc:   ("#6d6d6d", False, True),      # Gray ITALIC - docstrings (comments)
+        Token.Literal.String.Double:("#e394dc", False, False),       # Pink - "double"
+        Token.Literal.String.Escape:("#efb080", False, False),      # Orange - escape chars
+        Token.Literal.String.Heredoc:("#e394dc", False, False),    # Pink - heredocs
+        Token.Literal.String.Interpol:("#e394dc", False, False),    # Pink - interpolation
+        Token.Literal.String.Other: ("#e394dc", False, False),      # Pink - other strings
+        Token.Literal.String.Regex: ("#efb080", False, False),      # Orange - regex
+        Token.Literal.String.Single:("#e394dc", False, False),     # Pink - 'single'
+        Token.Literal.String.Symbol:("#efb080", False, False),     # Orange - symbols
         
         # Text
-        Token.Text:               ("#D4D4D4", False, False),     # White - plain text
-        Token.Text.Whitespace:    ("#D4D4D4", False, False),     # White - whitespace
+        Token.Text:                 ("#d6d6dd", False, False),     # Primary text - plain text (foreground)
+        Token.Text.Whitespace:    ("#163761", False, False),     # Selection bg - whitespace markers
         
-        # HTML SPECIFIC - VS Code Colors
-        Token.Name.Doctype:       ("#569CD6", False, False),     # Blue - <!DOCTYPE html>
-        Token.Name.Entity:        ("#569CD6", False, False),     # Blue - &nbsp; &amp;
-        
-        # CSS INSIDE <style> - VS Code Colors (Embedded CSS)
-        Token.Name.Builtin:       ("#9CDCFE", False, False),     # Light Blue - CSS properties
-        Token.Name.Class:         ("#D7BA7D", False, False),     # Yellow-Orange - .class selectors
-        Token.Name.Constant:      ("#569CD6", False, False),     # Blue - #id selectors
-        Token.Name.Decorator:     ("#D7BA7D", False, False),     # Yellow-Orange - :pseudo-classes
-        Token.Name.Function:      ("#DCDCAA", False, False),     # Yellow - calc(), var()
-        Token.String:             ("#CE9178", False, False),     # Orange - CSS strings
-        Token.String.Other:       ("#CE9178", False, False),     # Orange - url() strings
-        Token.Number:             ("#B5CEA8", False, False),     # Light Green - CSS numbers
-        Token.Number.Integer:     ("#B5CEA8", False, False),     # Light Green - CSS integers
-        Token.Number.Float:       ("#B5CEA8", False, False),     # Light Green - CSS floats
-        Token.Operator:           ("#D4D4D4", False, False),     # White - CSS operators
-        Token.Punctuation:        ("#D4D4D4", False, False),     # White - CSS punctuation
-        
-        # JAVASCRIPT INSIDE <script> - VS Code Colors (Embedded JS)
-        Token.Name.Builtin:       ("#4EC9B0", False, False),     # Teal - console, window, document
-        Token.Name.Function:      ("#DCDCAA", False, False),     # Yellow - function calls
-        Token.Name.Variable:      ("#9CDCFE", False, False),     # Light Blue - variables
-        Token.String:             ("#CE9178", False, False),     # Orange - JS strings
-        Token.String.Regex:       ("#D16969", False, False),     # Red-Orange - /regex/
-        Token.Number:             ("#B5CEA8", False, False),     # Light Green - JS numbers
-        Token.Number.Integer:     ("#B5CEA8", False, False),     # Light Green - JS integers
-        Token.Number.Float:       ("#B5CEA8", False, False),     # Light Green - JS floats
-        Token.Operator:           ("#D4D4D4", False, False),     # White - JS operators
-        Token.Punctuation:        ("#D4D4D4", False, False),     # White - JS punctuation
-        Token.Keyword:            ("#569CD6", False, False),     # Blue - var, let, const, function
-        Token.Keyword.Declaration:("#569CD6", False, False),     # Blue - var, let, const
-        Token.Keyword.Reserved:   ("#569CD6", False, False),     # Blue - reserved words
-        
-        # Additional embedded language support
-        Token.Name.Exception:     ("#F44747", False, False),     # Red - Error objects (JS)
-        Token.Name.Label:         ("#569CD6", False, False),     # Blue - statement labels
-        Token.Literal.String.Other: ("#CE9178", False, False),   # Orange - other strings
-        Token.Comment:            ("#6A9955", False, True),      # Green Italic - comments
-        Token.Comment.Single:     ("#6A9955", False, True),      # Green Italic - single line
-        Token.Comment.Multiline:  ("#6A9955", False, True),      # Green Italic - multi-line
-        
-        # FALLBACK MAPPINGS - Catch-all for any unmapped tokens
-        Token.Name.Attribute:     ("#9CDCFE", False, False),     # Light Blue - attributes/properties
-        Token.Name.Namespace:     ("#4EC9B0", False, False),     # Teal - namespaces
-        Token.Name.Entity:        ("#DCDCAA", False, False),     # Yellow - entities
-        Token.Operator.Word:      ("#569CD6", False, False),     # Blue - word operators (and, or)
-        Token.Punctuation.Marker: ("#D4D4D4", False, False),     # White - punctuation markers
+        # HTML / XML specific
+        Token.Name.Doctype:         ("#83d6c5", False, False),     # Teal - <!DOCTYPE html> (metatag)
     }
     
-    # Light theme (VS Code Light+)
+    # Light theme (VS Code Light+) — Full coverage for all token types
     LIGHT_COLORS = {
+        # Keywords
         Token.Keyword:            ("#0000FF", False, False),     # Blue - keywords
-        Token.Keyword.Type:       ("#0000FF", False, False),     # Blue - types
+        Token.Keyword.Constant:   ("#0000FF", False, False),     # Blue - True, False, None
+        Token.Keyword.Declaration:("#0000FF", False, False),     # Blue - var, let, const
+        Token.Keyword.Namespace:  ("#0000FF", False, False),     # Blue - import, export
+        Token.Keyword.Reserved:   ("#0000FF", False, False),     # Blue - reserved words
+        Token.Keyword.Type:       ("#267F99", False, False),     # Teal - int, void, string
+        
+        # Names
         Token.Name:               ("#001080", False, False),     # Dark Blue - names
+        Token.Name.Builtin:       ("#267F99", False, False),     # Teal - built-ins
+        Token.Name.Builtin.Pseudo:("#0000FF", False, False),     # Blue - self, this
+        Token.Name.Class:         ("#267F99", True, False),      # Teal BOLD - classes
+        Token.Name.Decorator:     ("#795E26", False, True),      # Brown ITALIC - decorators
+        Token.Name.Entity:        ("#795E26", False, False),     # Brown - entities
+        Token.Name.Exception:     ("#A31515", False, False),     # Red - exceptions
         Token.Name.Function:      ("#795E26", False, False),     # Brown - functions
-        Token.Name.Class:         ("#267F99", False, False),     # Teal - classes
-        Token.Name.Tag:           ("#800000", False, False),     # Maroon - tags
+        Token.Name.Function.Magic:("#795E26", False, False),     # Brown - __magic__
+        Token.Name.Label:         ("#001080", False, False),     # Dark Blue - labels
+        Token.Name.Namespace:     ("#267F99", False, False),     # Teal - namespaces
+        Token.Name.Other:         ("#267F99", False, False),     # Teal - JS/CSS identifiers in embedded code
+        Token.Name.Property:      ("#795E26", False, False),     # Brown - object property access
+        Token.Name.Tag:           ("#800000", False, False),     # Maroon - HTML/XML tags
+        Token.Name.Variable:      ("#001080", False, False),     # Dark Blue - variables
+        Token.Name.Constant:      ("#0000FF", False, False),     # Blue - constants
+        Token.Name.Attribute:     ("#FF0000", False, False),     # Red - attribute.name
+        Token.Name.Doctype:       ("#800000", False, False),     # Maroon - DOCTYPE
+        
+        # Strings
         Token.String:             ("#A31515", False, False),     # Red - strings
+        Token.String.Affix:       ("#0000FF", False, False),     # Blue - f"", r""
+        Token.String.Doc:         ("#008000", False, True),      # Green ITALIC - docstrings
+        Token.String.Escape:      ("#EE0000", False, False),     # Bright Red - escape chars
+        Token.String.Regex:       ("#811F3F", False, False),     # Dark Red - regex
+        Token.String.Interpol:    ("#001080", False, False),     # Dark Blue - interpolation
+        
+        # Numbers
         Token.Number:             ("#098658", False, False),     # Green - numbers
-        Token.Comment:            ("#008000", False, True),      # Green ITALIC - comments
+        
+        # Operators & Punctuation
         Token.Operator:           ("#000000", False, False),     # Black - operators
+        Token.Operator.Word:      ("#0000FF", False, False),     # Blue - and, or, not
         Token.Punctuation:        ("#000000", False, False),     # Black - punctuation
+        
+        # Comments
+        Token.Comment:            ("#008000", False, True),      # Green ITALIC - comments
+        Token.Comment.Preproc:    ("#808080", False, False),     # Gray - preprocessor
+        
+        # Errors
         Token.Error:              ("#FF0000", False, False),     # Red - errors
+        
+        # Types
+        Token.Type:               ("#267F99", False, False),     # Teal - type names
+        
+        # Markup / Markdown
+        Token.Generic:            ("#000000", False, False),     # Black - generic
+        Token.Generic.Deleted:    ("#A31515", False, False),     # Red - deleted
+        Token.Generic.Emph:       ("#000000", False, True),      # Black ITALIC - emphasis
+        Token.Generic.Error:      ("#FF0000", False, False),     # Red - errors
+        Token.Generic.Heading:    ("#0000FF", True, False),      # Blue BOLD - headings
+        Token.Generic.Inserted:   ("#098658", False, False),     # Green - inserted
+        Token.Generic.Output:     ("#808080", False, False),     # Gray - output
+        Token.Generic.Prompt:     ("#098658", False, False),     # Green - prompt
+        Token.Generic.Strong:     ("#000000", True, False),      # Black BOLD - strong
+        Token.Generic.Subheading: ("#267F99", True, False),      # Teal BOLD - subheadings
+        Token.Generic.Traceback:  ("#FF0000", False, False),     # Red - tracebacks
+        
+        # Literals & Text
+        Token.Literal:            ("#098658", False, False),     # Green - literals
+        Token.Literal.Number:     ("#098658", False, False),     # Green - numbers (embedded JS/CSS)
+        Token.Literal.Number.Float:("#098658", False, False),    # Green - 3.14
+        Token.Literal.Number.Hex: ("#098658", False, False),     # Green - hex colors
+        Token.Literal.Number.Integer:("#098658", False, False),  # Green - integers
+        Token.Literal.String:     ("#A31515", False, False),     # Red - string literals
+        Token.Literal.String.Double:("#A31515", False, False),   # Red - "double"
+        Token.Literal.String.Single:("#A31515", False, False),   # Red - 'single'
+        Token.Literal.String.Backtick:("#A31515", False, False), # Red - `template`
+        Token.Literal.String.Escape:("#EE0000", False, False),   # Bright Red - escape chars
+        Token.Text:               ("#000000", False, False),     # Black - plain text
     }
     
     def __init__(self, document, language: str = "python", is_dark: bool = True):
@@ -251,10 +316,10 @@ class PygmentsSyntaxHighlighter(QSyntaxHighlighter):
         
         # Set premium programming font
         if is_dark:
-            # Dracula theme font settings
+            # Cursor IDE theme font settings - 12px editor font
             font_name = get_preferred_programming_font()  # Use module-level function
             self._base_format = QTextCharFormat()
-            self._base_format.setFont(QFont(font_name, 11))
+            self._base_format.setFont(QFont(font_name, 12))
         
         self._lexer = self._get_lexer(language)
         self._formats: dict = {}
@@ -275,16 +340,19 @@ class PygmentsSyntaxHighlighter(QSyntaxHighlighter):
                 from pygments.lexers.javascript import JavascriptLexer
                 return JavascriptLexer()
             elif language.lower() in ("typescript", "ts"):
-                from pygments.lexers.javascript import TypescriptLexer
-                return TypescriptLexer()
+                from pygments.lexers.javascript import TypeScriptLexer
+                return TypeScriptLexer()
             elif language.lower() == "css":
                 from pygments.lexers.css import CssLexer
                 return CssLexer()
             elif language.lower() == "json":
                 from pygments.lexers.data import JsonLexer
                 return JsonLexer()
+            elif language.lower() == "markdown":
+                from pygments.lexers.markup import MarkdownLexer
+                return MarkdownLexer()
             
-            # Fallback to generic lookup
+            # Fallback to generic lookup (handles all other languages: Java, C++, Go, Rust, etc.)
             return get_lexer_by_name(language, stripall=False)
         except Exception:
             return TextLexer()
@@ -293,14 +361,10 @@ class PygmentsSyntaxHighlighter(QSyntaxHighlighter):
         palette = self.DARK_COLORS if self._is_dark else self.LIGHT_COLORS
         self._formats.clear()
         
-        # DEBUG: Print how many formats we're building
-        print(f"[Highlighter] Building {len(palette)} format rules for {'dark' if self._is_dark else 'light'} theme")
-        
         # Get base font format if available
         base_format = getattr(self, '_base_format', None)
         if base_format:
             base_font = base_format.font()
-            print(f"[DEBUG] Base font: {base_font.family()}, size {base_font.pointSize()}")
         
         for token_type, (color, bold, italic) in palette.items():
             fmt = QTextCharFormat()
@@ -318,25 +382,7 @@ class PygmentsSyntaxHighlighter(QSyntaxHighlighter):
             if italic:
                 fmt.setFontItalic(True)
             
-            # DEBUG: Verify color was set correctly
-            if token_type == Token.Keyword:
-                print(f"[DEBUG] Keyword format: color={color}, actual_foreground={fmt.foreground().color().name()}, font={fmt.font().family()}")
-            
             self._formats[token_type] = fmt
-        
-        # DEBUG: Verify formats were created
-        print(f"[Highlighter] Created formats for {len(self._formats)} token types")
-        
-        # DEBUG: Show sample of created formats
-        if Token.Keyword in self._formats:
-            kw_fmt = self._formats[Token.Keyword]
-            print(f"[DEBUG] Keyword format stored: {kw_fmt.foreground().color().name()}, font: {kw_fmt.font().family()}")
-        if Token.String in self._formats:
-            str_fmt = self._formats[Token.String]
-            print(f"[DEBUG] String format stored: {str_fmt.foreground().color().name()}, font: {str_fmt.font().family()}")
-        
-        if len(self._formats) == 0:
-            print("[ERROR] No formats created! Check DARK_COLORS dictionary!")
 
     def set_language(self, language: str):
         """Set language with optimized re-highlighting."""
@@ -357,47 +403,39 @@ class PygmentsSyntaxHighlighter(QSyntaxHighlighter):
         self.rehighlight()
 
     def highlightBlock(self, text: str):
+        # Get previous state FIRST (before any early returns)
+        prev_state = self.previousBlockState()
+        
         if not text:
-            self.setCurrentBlockState(0)
+            # Preserve state through empty lines inside <script>/<style> blocks
+            self.setCurrentBlockState(prev_state if prev_state in (0, 1, 2) else 0)
             return
             
         # Performance safety: skip highlighting for extremely long lines (e.g. minified JS)
         if len(text) > 5000:
+            # Preserve state even for long lines
+            self.setCurrentBlockState(prev_state if prev_state in (0, 1, 2) else 0)
             return
-            
-        combined = self.previousBlockState()
         
-        # DEBUG: First time only - print lexer info
-        if not hasattr(self, '_debug_printed'):
-            print(f"\n[Highlighter] === FIRST BLOCK HIGHLIGHTING ===")
-            print(f"[Highlighter] Using lexer: {self._lexer.__class__.__name__}")
-            print(f"[Highlighter] Language: {self._language}")
-            print(f"[Highlighter] Formats available: {len(self._formats)}")
-            
-            # Show first few token mappings
-            print("[DEBUG] Sample token mappings:")
-            for i, (tok, fmt) in enumerate(list(self._formats.items())[:3]):
-                fg = fmt.foreground()
-                color = fg.color().name() if fg else "NO COLOR"
-                print(f"  {tok} -> {color}")
-            
-            self._debug_printed = True
-        
-        # Performance optimization: cache lexer results
         try:
-            tokens = list(lex(text, self._lexer))
-            if len(tokens) > 0 and len(text.strip()) > 0:
-                print(f"[Highlighter] Tokenized '{text[:40]}...' -> {len(tokens)} tokens")
-        except Exception as e:
-            # Fallback to plain text if lexing fails
-            print(f"[Highlighter] Lex error: {e}")
+            # For HTML/Vue/JSX with embedded content, use stateful lexing (returns 3-tuples)
+            if self._language.lower() in ('html', 'vue', 'jsx', 'tsx'):
+                tokens = self._lex_html_with_state(text, prev_state)
+                next_state = tokens[-1][2] if tokens else 0
+            else:
+                # Non-HTML: plain 2-tuple tokens, no state needed
+                raw_tokens = list(lex(text, self._lexer))
+                tokens = [(t[0], t[1]) for t in raw_tokens]
+                next_state = 0
+        except Exception:
+            self.setCurrentBlockState(0)
             return
         
         pos = 0
-        tokens_applied = 0
-        formats_used = set()
         
-        for token_type, value in tokens:
+        for token_entry in tokens:
+            token_type = token_entry[0]
+            value = token_entry[1]
             length = len(value)
             
             # Fast path: direct lookup first
@@ -411,43 +449,67 @@ class PygmentsSyntaxHighlighter(QSyntaxHighlighter):
                     t = t.parent if hasattr(t, 'parent') else Token
             
             if fmt:
-                # CRITICAL DEBUG: Verify format before applying
-                fg = fmt.foreground()
-                if not fg or not fg.color():
-                    print(f"[ERROR] Format for {token_type} has NO foreground color!")
-                else:
-                    fg_color = fg.color().name()
-                    block_count = getattr(self, '_debug_block_count', 0)
-                    if block_count < 3 and token_type == Token.Keyword:
-                        print(f"[DEBUG] Applying format: {token_type} -> {fg_color} to text: '{value}'")
-                
-                # Check if format has font set
-                if not fmt.font().family():
-                    print(f"[WARNING] Format for {token_type} has no font family!")
-                
                 self.setFormat(pos, length, fmt)
-                tokens_applied += 1
-                if fg and fg.color():
-                    formats_used.add(fg.color().name())
-                else:
-                    formats_used.add("NO COLOR")
             pos += length
         
-        # DEBUG: Print stats on first few blocks
-        if hasattr(self, '_debug_block_count'):
-            self._debug_block_count += 1
+        # Store state for next line (1 = inside script, 2 = inside style, 0 = normal)
+        self.setCurrentBlockState(next_state)
+    
+    def _lex_html_with_state(self, text: str, prev_state: int):
+        """
+        Stateful HTML lexer that properly handles embedded JS/CSS across lines.
+        Returns list of (token_type, value, new_state) tuples.
+        
+        State: 0 = normal HTML, 1 = inside <script>, 2 = inside <style>
+        """
+        from pygments.lexers.html import HtmlLexer
+        from pygments.lexers.javascript import JavascriptLexer
+        from pygments.lexers.css import CssLexer
+        from pygments import lex
+        
+        state = prev_state if prev_state in (0, 1, 2) else 0
+        text_lower = text.lower()
+        
+        # Detect state transitions for NEXT line
+        new_state = state
+        if state == 0:
+            # Normal HTML: watch for opening script/style tags
+            if '<script' in text_lower:
+                # Same-line open+close: <script src="..."></script> — stays HTML
+                new_state = 0 if '</script>' in text_lower else 1
+            elif '<style' in text_lower:
+                new_state = 0 if '</style>' in text_lower else 2
+        elif state == 1:
+            # Inside <script>: watch for closing tag
+            if '</script>' in text_lower:
+                new_state = 0
+        elif state == 2:
+            # Inside <style>: watch for closing tag
+            if '</style>' in text_lower:
+                new_state = 0
+        
+        # Determine if this is a transition line (contains opening/closing tags)
+        # Transition lines use HtmlLexer so the tag itself is colored correctly.
+        # Pure content lines inside script/style always use their own lexer,
+        # even if the line contains '<' (e.g. innerHTML template strings).
+        is_transition = (
+            (state == 0 and ('<script' in text_lower or '<style' in text_lower)) or
+            (state == 1 and '</script>' in text_lower) or
+            (state == 2 and '</style>' in text_lower)
+        )
+        
+        if state == 1 and not is_transition:
+            # Pure JS line inside <script> block — always use JS lexer
+            # (even if line contains '<span>' in a template string)
+            tokens = list(lex(text, JavascriptLexer()))
+        elif state == 2 and not is_transition:
+            # Pure CSS line inside <style> block — always use CSS lexer
+            tokens = list(lex(text, CssLexer()))
         else:
-            self._debug_block_count = 0
+            # HTML context: opening/closing tags, attributes, or normal markup
+            tokens = list(lex(text, HtmlLexer()))
         
-        if self._debug_block_count < 10 and len(text.strip()) > 0:
-            if tokens_applied == 0:
-                print(f"[WARNING] Block {self._debug_block_count}: 0 tokens applied to '{text[:50]}...'")
-            else:
-                print(f"[DEBUG] Block {self._debug_block_count}: Applied {tokens_applied} tokens, {len(formats_used)} unique colors")
-                if self._debug_block_count < 3:
-                    print(f"  Colors used: {list(formats_used)[:5]}")
-        
-        self.setCurrentBlockState(0)
+        return [(t[0], t[1], new_state) for t in tokens]
 
 
 # ---------------------------------------------------------------------------
@@ -570,6 +632,234 @@ class InlineEditOverlay(QFrame):
 
 
 # ---------------------------------------------------------------------------
+# Custom delegate for 2-line completion cards
+# ---------------------------------------------------------------------------
+class CompletionItemDelegate(QStyledItemDelegate):
+    """Renders completion items with icon badge, keyword, type, and skeleton preview."""
+    
+    def paint(self, painter, option, index):
+        painter.save()
+        
+        # Colors
+        from PyQt6.QtWidgets import QStyle
+        is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        bg = QColor("#094771") if is_selected else QColor("#252526")
+        text_color = QColor("#ffffff") if is_selected else QColor("#cccccc")
+        dim_color = QColor("#a0c4e8") if is_selected else QColor("#808080")
+        preview_color = QColor("#8ec8f0") if is_selected else QColor("#569cd6")
+        badge_bg = QColor("#0d5e9e") if is_selected else QColor("#333333")
+        
+        # Background
+        painter.fillRect(option.rect, bg)
+        
+        # Get data
+        display_text = index.data(Qt.ItemDataRole.DisplayRole) or ""
+        icon_text = index.data(Qt.ItemDataRole.UserRole) or ""
+        
+        rect = option.rect
+        x = rect.left() + 6
+        y = rect.top()
+        w = rect.width() - 12
+        
+        # Draw icon badge
+        badge_font = QFont("Cascadia Code", 8)
+        badge_font.setBold(True)
+        painter.setFont(badge_font)
+        fm = painter.fontMetrics()
+        badge_w = max(fm.horizontalAdvance(icon_text) + 8, 28)
+        badge_rect = QRect(x, y + 4, badge_w, 18)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(badge_bg)
+        painter.drawRoundedRect(badge_rect, 3, 3)
+        painter.setPen(preview_color)
+        painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, icon_text)
+        
+        text_x = x + badge_w + 8
+        
+        lines = display_text.split('\n')
+        
+        # Line 1: keyword — type
+        main_font = QFont("Cascadia Code", 10)
+        painter.setFont(main_font)
+        painter.setPen(text_color)
+        
+        line1 = lines[0] if lines else ""
+        # Split on " — " to color differently
+        if " — " in line1:
+            parts = line1.split(" — ", 1)
+            keyword = parts[0]
+            type_info = parts[1]
+            
+            painter.setPen(text_color)
+            painter.drawText(text_x, y + 16, keyword)
+            kw_width = painter.fontMetrics().horizontalAdvance(keyword + "  ")
+            
+            dim_font = QFont("Cascadia Code", 9)
+            painter.setFont(dim_font)
+            painter.setPen(dim_color)
+            painter.drawText(text_x + kw_width, y + 16, type_info)
+        else:
+            painter.drawText(text_x, y + 16, line1)
+        
+        # Line 2: skeleton preview (if exists)
+        if len(lines) > 1:
+            preview_font = QFont("Cascadia Code", 8)
+            painter.setFont(preview_font)
+            painter.setPen(preview_color)
+            painter.drawText(text_x, y + 34, lines[1].strip())
+        
+        painter.restore()
+    
+    def sizeHint(self, option, index):
+        display_text = index.data(Qt.ItemDataRole.DisplayRole) or ""
+        if '\n' in display_text:
+            return QSize(0, 44)
+        return QSize(0, 26)
+
+
+# ---------------------------------------------------------------------------
+# Autocomplete Sidebar/Overlay
+# ---------------------------------------------------------------------------
+class CompletionWidget(QWidget):
+    """A floating autocomplete popup (VS Code style)."""
+    item_selected = pyqtSignal(dict)
+    
+    def __init__(self, parent=None):
+        super().__init__(None)  # No parent = top-level window
+        self.setWindowFlags(Qt.WindowType.ToolTip)  # Simplest floating window
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(1, 1, 1, 1)
+        layout.setSpacing(0)
+        
+        self.list = QListWidget()
+        self.list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.list.setStyleSheet("""
+            QListWidget {
+                background-color: #252526;
+                color: #cccccc;
+                border: 1px solid #3c3c3c;
+                border-radius: 4px;
+                font-family: 'Cascadia Code', 'Consolas', monospace;
+                font-size: 12px;
+                outline: none;
+            }
+            QListWidget::item {
+                padding: 0px;
+                border: none;
+            }
+            QListWidget::item:selected {
+                background-color: transparent;
+            }
+            QListWidget::item:hover {
+                background-color: transparent;
+            }
+        """)
+        layout.addWidget(self.list)
+        self.list.setItemDelegate(CompletionItemDelegate(self.list))
+        self.list.itemActivated.connect(self._on_activated)
+        self._raw_items = []
+
+    # LSP CompletionItemKind mapping (VS Code style)
+    KIND_ICONS = {
+        1:  "📝",   # Text
+        2:  "🔧",   # Method
+        3:  "🔧",   # Function
+        4:  "📦",   # Constructor
+        5:  "🏷️",   # Field
+        6:  "🔧",   # Variable
+        7:  "🏛️",   # Class
+        8:  "🔗",   # Interface
+        9:  "📦",   # Module
+        10: "🏷️",   # Property
+        11: "🔢",   # Unit
+        12: "💰",   # Value
+        13: "📊",   # Enum
+        14: "🔑",   # Keyword
+        15: "📎",   # Snippet
+        16: "🎨",   # Color
+        17: "📁",   # File
+        18: "🔗",   # Reference
+        19: "📁",   # Folder
+        20: "🏷️",   # EnumMember
+        21: "📦",   # Constant
+        22: "🏛️",   # Struct
+        23: "⚡",   # Event
+        24: "🔧",   # Operator
+        25: "📐",   # TypeParameter
+    }
+
+    def set_items(self, items: List[Dict]):
+        self.list.clear()
+        self._raw_items = items
+        for item in items:
+            label = item.get("label", "")
+            kind = item.get("kind", 1)
+            detail = item.get("detail", "")
+            insert_text = item.get("insertText", label)
+            
+            # Create preview: resolve ${N:text} -> text for display
+            preview = re.sub(r'\$\{(\d+):([^}]*)\}', r'\2', insert_text)
+            preview = re.sub(r'\$(\d+)', '', preview)  # Remove bare $1
+            # Collapse newlines into  ↵  for single-line preview
+            preview = preview.replace('\n', ' ↵ ').strip()
+            if len(preview) > 50:
+                preview = preview[:47] + "..."
+            
+            # Build 2-line rich display using custom widget
+            widget_item = QListWidgetItem()
+            
+            # Determine icon and type label
+            if kind == 15:  # Snippet
+                icon = "{ }"
+                type_label = detail or "snippet"
+            elif kind == 3 or kind == 2:  # Function / Method
+                icon = "fn"
+                type_label = detail or "function"
+            elif kind == 7:  # Class
+                icon = "C"
+                type_label = detail or "class"
+            elif kind == 14:  # Keyword
+                icon = "kw"
+                type_label = "keyword"
+            elif kind == 6:  # Variable
+                icon = "x"
+                type_label = detail or "variable"
+            elif kind == 9:  # Module
+                icon = "M"
+                type_label = detail or "module"
+            else:
+                icon = "  "
+                type_label = detail or ""
+            
+            # For snippets: show keyword + skeleton on 2 lines
+            if kind == 15 and preview != label:
+                display_text = f"{label}  —  {type_label}\n  {preview}"
+            elif type_label:
+                display_text = f"{label}  —  {type_label}"
+            else:
+                display_text = label
+            
+            widget_item.setText(display_text)
+            widget_item.setData(Qt.ItemDataRole.UserRole, icon)
+            
+            # Taller row for 2-line items
+            if '\n' in display_text:
+                widget_item.setSizeHint(QSize(0, 42))
+            else:
+                widget_item.setSizeHint(QSize(0, 26))
+            
+            self.list.addItem(widget_item)
+        self.list.setCurrentRow(0)
+
+    def _on_activated(self, item):
+        idx = self.list.row(item)
+        if 0 <= idx < len(self._raw_items):
+            self.item_selected.emit(self._raw_items[idx])
+            self.hide()
+
+# ---------------------------------------------------------------------------
 # Main Code Editor
 # ---------------------------------------------------------------------------
 class CodeEditor(QPlainTextEdit):
@@ -578,6 +868,8 @@ class CodeEditor(QPlainTextEdit):
     inline_edit_submitted = pyqtSignal(str, str, tuple)  # prompt, selection_text, (start, end)
     inline_edit_cancelled = pyqtSignal()
     inline_diff_requested = pyqtSignal()
+    code_copied = pyqtSignal(str, str, int, int)  # text, file_path, start_line, end_line
+    _completion_results_ready = pyqtSignal(list)  # Thread-safe signal for completion items
 
     def _get_preferred_programming_font(self) -> str:
         """Get best available programming font."""
@@ -601,9 +893,9 @@ class CodeEditor(QPlainTextEdit):
             print("[Editor] Skipping theme - light mode")
             return
         
-        # Dracula theme exact colors
-        bg_color = QColor("#1E1E1E")      # VS Code Dark+ background
-        fg_color = QColor("#D4D4D4")      # VS Code Dark+ foreground
+        # Cursor IDE Anysphere Dark theme — matches cursor-ide-design-tokens.md
+        bg_color = QColor("#181818")      # editor.background - Cursor IDE dark
+        fg_color = QColor("#d6d6dd")      # editor.foreground - Cursor IDE primary text
         
         # CRITICAL: Force Qt to use palette colors
         self.setAutoFillBackground(True)
@@ -615,8 +907,8 @@ class CodeEditor(QPlainTextEdit):
         palette.setColor(QPalette.ColorRole.Base, bg_color)      # Text edit background
         palette.setColor(QPalette.ColorRole.Text, fg_color)       # Text color
         palette.setColor(QPalette.ColorRole.AlternateBase, bg_color)  # Alternating rows
-        palette.setColor(QPalette.ColorRole.Highlight, QColor("#264F78"))  # Selection background
-        palette.setColor(QPalette.ColorRole.HighlightedText, fg_color)  # Selection text
+        palette.setColor(QPalette.ColorRole.Highlight, QColor("#163761"))  # editor.selectionBackground - Cursor blue
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))  # Selected text - white
         self.setPalette(palette)
         
         # CRITICAL: Ensure viewport also uses the palette
@@ -628,24 +920,24 @@ class CodeEditor(QPlainTextEdit):
         # Force update to ensure colors are applied immediately
         self.update()
         
-        print(f"[Editor] ✅ Applied dark theme: bg={bg_color.name()}, fg={fg_color.name()}")
+        print(f"[Editor] Applied dark theme: bg={bg_color.name()}, fg={fg_color.name()}")
         print(f"[Editor] Palette Base: {palette.color(QPalette.ColorRole.Base).name()}")
         print(f"[Editor] Palette Text: {palette.color(QPalette.ColorRole.Text).name()}")
-        
-        # DEBUG: Check if viewport has correct colors
-        if hasattr(self, 'viewport'):
-            vp = self.viewport()
-            print(f"[Editor] Viewport Base: {vp.palette().color(QPalette.ColorRole.Base).name()}")
-            print(f"[Editor] Viewport Text: {vp.palette().color(QPalette.ColorRole.Text).name()}")
 
     def __init__(self, parent=None, language: str = "python"):
         super().__init__(parent)
         self._settings = get_settings()
         self._language = language
+        self._file_path = ""
         self._is_dark = True
+        self._syntax_checker = get_syntax_checker()
         
         # CRITICAL: Apply dark theme FIRST before any other setup
         self._apply_editor_theme()
+
+        # Enable mouse tracking for tooltips
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
 
         # Font - Premium programming fonts (Dracula theme style)
         font_family = self._get_preferred_programming_font()
@@ -664,6 +956,8 @@ class CodeEditor(QPlainTextEdit):
 
         # Line number area
         self._line_number_area = LineNumberArea(self)
+        self._lint_selections = []  # Must be before _highlight_current_line connection
+        self._syntax_errors = []
         self.blockCountChanged.connect(self._update_line_number_area_width)
         self.updateRequest.connect(self._update_line_number_area)
         self.cursorPositionChanged.connect(self._on_cursor_changed)
@@ -677,18 +971,9 @@ class CodeEditor(QPlainTextEdit):
         self._highlighter = PygmentsSyntaxHighlighter(
             self.document(), language=language, is_dark=True
         )
-        
-        # DEBUG: Verify highlighter is active
-        print(f"[Editor] Highlighter created: {self._highlighter is not None}")
-        print(f"[Editor] Highlighter document: {self._highlighter.document() is not None}")
-        print(f"[Editor] Document blocks: {self.document().blockCount()}")
 
         # Line wrap off
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        
-        # DEBUG: Verify colors are actually visible
-        print(f"[Editor] After init - Background: {self.palette().color(self.palette().ColorRole.Base).name()}")
-        print(f"[Editor] After init - Text: {self.palette().color(self.palette().ColorRole.Text).name()}")
 
         # Inline edit overlay
         self._inline_overlay = InlineEditOverlay(self.viewport())
@@ -698,14 +983,270 @@ class CodeEditor(QPlainTextEdit):
         self._inline_overlay.diff_requested.connect(self.inline_diff_requested.emit)
         self._inline_selection_text = ""
         self._inline_selection_range = (0, 0)
+        
+        # Syntax Error Detection — VS Code-style separate diagnostic collections
+        # Each source (LSP, local) has its own collection; they MERGE for display
+        self._lsp_diagnostics: List[DiagnosticError] = []   # From Pyright reactive push
+        self._local_diagnostics: List[DiagnosticError] = [] # From ast.parse / py_compile
+        self._syntax_errors: List[DiagnosticError] = []     # Merged view for rendering
+        self._lint_selections: list = []                     # Stored lint ExtraSelections (survives Qt round-trip)
+        self._lint_timer = QTimer(self)
+        self._lint_timer.setSingleShot(True)
+        self._lint_timer.timeout.connect(self._run_linting)
+        self.document().contentsChanged.connect(self._on_content_changed)
 
-    def set_content(self, text: str, language: str = None):
-        """Set editor content without triggering modification signal."""
+        # REACTIVE: Diagnostic Hover Timer (Fast Tooltips)
+        self._hover_timer = QTimer(self)
+        self._hover_timer.setSingleShot(True)
+        self._hover_timer.timeout.connect(self._show_hover_diagnostic)
+        self._last_hover_pos = QPoint(-1, -1)
+
+        # REACTIVE: Dynamic response to LSP background results
+        get_lsp_manager().diagnostics_updated.connect(self._handle_lsp_update)
+
+        # Completion Widget & Debounce Timer
+        self._completion_timer = QTimer(self)
+        self._completion_timer.setSingleShot(True)
+        self._completion_timer.timeout.connect(self._trigger_completion)
+        self._completion_widget = CompletionWidget(None)  # Top-level window for proper visibility
+        self._completion_widget.hide()
+        self._completion_widget.item_selected.connect(self._insert_completion)
+        # Thread-safe: LSP callback emits signal → GUI thread receives and shows popup
+        self._completion_results_ready.connect(self._show_completions)
+        
+        # Custom context menu with theme-aware icons
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_context_menu)
+        
+        # Global shortcut for Format Code (Shift+Alt+F)
+        self._format_shortcut = QShortcut(QKeySequence("Shift+Alt+F"), self)
+        self._format_shortcut.activated.connect(self._format_current_code)
+
+    # ── Drag & Drop: redirect external file/folder drops to main window ──
+    def dragEnterEvent(self, event):
+        """Accept text drops normally; redirect file/folder drops."""
+        if event.mimeData().hasUrls():
+            # Check if these are external files (not internal text drag)
+            urls = event.mimeData().urls()
+            has_local = any(u.toLocalFile() for u in urls)
+            if has_local:
+                event.acceptProposedAction()
+                return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            return
+        super().dragMoveEvent(event)
+
+    def dropEvent(self, event):
+        """Redirect file/folder drops to the main window (open as project/file)."""
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            paths = [u.toLocalFile() for u in urls if u.toLocalFile()]
+            if paths:
+                main_win = self.window()
+                if main_win and hasattr(main_win, '_open_folder_programmatic'):
+                    for p in paths:
+                        if os.path.isdir(p):
+                            main_win._open_folder_programmatic(p)
+                            event.acceptProposedAction()
+                            return
+                        elif os.path.isfile(p):
+                            main_win._open_file(p)
+                            event.acceptProposedAction()
+                            return
+        super().dropEvent(event)
+
+    def _show_context_menu(self, position):
+        """Show custom context menu with theme-aware icons."""
+        menu = QMenu(self)
+        
+        # Determine icon color based on theme
+        # In dark mode: use light/white icons
+        # In light mode: use dark/black icons
+        icon_color = "white" if self._is_dark else "black"
+        
+        # Use standard icons from Qt theme - they adapt to the theme
+        # For dark mode, we need to use inverted/light versions
+        
+        # Undo
+        undo_action = QAction("Undo", self)
+        undo_action.setShortcut("Ctrl+Z")
+        undo_action.triggered.connect(self.undo)
+        menu.addAction(undo_action)
+        
+        # Redo
+        redo_action = QAction("Redo", self)
+        redo_action.setShortcut("Ctrl+Y")
+        redo_action.triggered.connect(self.redo)
+        menu.addAction(redo_action)
+        
+        menu.addSeparator()
+        
+        # Cut
+        cut_action = QAction("Cut", self)
+        cut_action.setShortcut("Ctrl+X")
+        cut_action.triggered.connect(self.cut)
+        cut_action.setEnabled(self.textCursor().hasSelection())
+        menu.addAction(cut_action)
+        
+        # Copy
+        copy_action = QAction("Copy", self)
+        copy_action.setShortcut("Ctrl+C")
+        copy_action.triggered.connect(self.copy)
+        copy_action.setEnabled(self.textCursor().hasSelection())
+        menu.addAction(copy_action)
+        
+        # Paste
+        paste_action = QAction("Paste", self)
+        paste_action.setShortcut("Ctrl+V")
+        paste_action.triggered.connect(self.paste)
+        menu.addAction(paste_action)
+        
+        # Delete
+        delete_action = QAction("Delete", self)
+        delete_action.setShortcut("Delete")
+        delete_action.triggered.connect(self._delete_selection)
+        delete_action.setEnabled(self.textCursor().hasSelection())
+        menu.addAction(delete_action)
+        
+        menu.addSeparator()
+        
+        # Format Code
+        format_action = QAction("Format Code", self)
+        format_action.setShortcut("Shift+Alt+F")
+        format_action.triggered.connect(self._format_current_code)
+        menu.addAction(format_action)
+        
+        menu.addSeparator()
+        
+        # Select All
+        select_all_action = QAction("Select All", self)
+        select_all_action.setShortcut("Ctrl+A")
+        select_all_action.triggered.connect(self.selectAll)
+        menu.addAction(select_all_action)
+        
+        # Style the menu for the current theme
+        self._style_context_menu(menu)
+        
+        # Show menu at cursor position
+        menu.exec(self.mapToGlobal(position))
+    
+    def _delete_selection(self):
+        """Delete selected text."""
+        cursor = self.textCursor()
+        if cursor.hasSelection():
+            cursor.removeSelectedText()
+    
+    def _format_current_code(self):
+        """Format the current code in the editor."""
+        if not self._language:
+            return
+        
+        # Get current code
+        code = self.toPlainText()
+        if not code.strip():
+            return
+        
+        # Format the code
+        formatter = get_code_formatter()
+        result = formatter.format_code(code, self._language)
+        
+        if result.success:
+            # Save cursor position
+            cursor = self.textCursor()
+            old_position = cursor.position()
+            
+            # Replace with formatted code
+            self.setPlainText(result.formatted_code)
+            
+            # Restore cursor position (approximate)
+            new_length = len(result.formatted_code)
+            old_length = len(code)
+            if old_length > 0:
+                ratio = old_position / old_length
+                new_position = int(ratio * new_length)
+                cursor.setPosition(min(new_position, new_length))
+                self.setTextCursor(cursor)
+            
+            print(f"[Format] Code formatted successfully for {self._language}")
+        else:
+            print(f"[Format] Failed to format: {result.error_message}")
+            # Show error in status bar if available
+            main_win = self.window()
+            if main_win and hasattr(main_win, 'show_status_message'):
+                main_win.show_status_message(f"Format failed: {result.error_message}", 5000)
+    
+    def _style_context_menu(self, menu: QMenu):
+        """Apply theme-aware styling to context menu."""
+        if self._is_dark:
+            # Dark mode styling
+            menu.setStyleSheet("""
+                QMenu {
+                    background-color: #2d2d2d;
+                    border: 1px solid #3d3d3d;
+                    padding: 5px;
+                }
+                QMenu::item {
+                    color: #d4d4d4;
+                    padding: 6px 25px 6px 25px;
+                    border-radius: 3px;
+                }
+                QMenu::item:selected {
+                    background-color: #094771;
+                    color: #ffffff;
+                }
+                QMenu::item:disabled {
+                    color: #6d6d6d;
+                }
+                QMenu::separator {
+                    height: 1px;
+                    background-color: #3d3d3d;
+                    margin: 5px 10px;
+                }
+            """)
+        else:
+            # Light mode styling
+            menu.setStyleSheet("""
+                QMenu {
+                    background-color: #f5f5f5;
+                    border: 1px solid #d4d4d4;
+                    padding: 5px;
+                }
+                QMenu::item {
+                    color: #333333;
+                    padding: 6px 25px 6px 25px;
+                    border-radius: 3px;
+                }
+                QMenu::item:selected {
+                    background-color: #0078d4;
+                    color: #ffffff;
+                }
+                QMenu::item:disabled {
+                    color: #999999;
+                }
+                QMenu::separator {
+                    height: 1px;
+                    background-color: #d4d4d4;
+                    margin: 5px 10px;
+                }
+            """)
+
+    def set_content(self, text: str, language: str = None, file_path: str = ""):
+        """Set editor content and file context."""
+        if file_path:
+            self._file_path = file_path
         if language:
             self._language = language
             # Only set highlighter language if it exists (during init, it doesn't)
             if hasattr(self, '_highlighter'):
                 self._highlighter.set_language(language)
+            
+            # Show Java setup notification for first-time Java users
+            if language.lower() == 'java':
+                self._check_java_setup()
         
         # CRITICAL: Allow highlighter to run by NOT blocking document signals
         # Only prevent content_modified from firing
@@ -731,6 +1272,21 @@ class CodeEditor(QPlainTextEdit):
         # Trigger syntax highlighting via rehighlight() - this is the proper Qt way
         if hasattr(self, '_highlighter'):
             self._highlighter.rehighlight()
+        
+        # CRITICAL: Immediately notify LSP of the editor content so Pyright analyzes
+        # THIS content — not the stale on-disk version. Without this, Pyright's initial
+        # publishDiagnostics reports errors from the on-disk file, causing false errors.
+        if file_path and language:
+            get_lsp_manager().notify_changed(file_path, text, language)
+        
+        # Clear any stale diagnostics from previous file
+        self._lsp_diagnostics = []
+        self._local_diagnostics = []
+        self._syntax_errors = []
+        self._lint_selections = []
+            
+        # Initial local syntax check (delayed to not block UI)
+        QTimer.singleShot(300, self._run_linting)
 
     def set_theme(self, is_dark: bool):
         """Set theme and refresh font family."""
@@ -769,11 +1325,8 @@ class CodeEditor(QPlainTextEdit):
         self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)
 
     def _update_line_number_area(self, rect, dy):
-        if dy:
-            self._line_number_area.scroll(0, dy)
-        else:
-            self._line_number_area.update(0, rect.y(),
-                                          self._line_number_area.width(), rect.height())
+        # Fix scrolling drift: using update() instead of scroll() for better sync
+        self._line_number_area.update()
         if rect.contains(self.viewport().rect()):
             self._update_line_number_area_width(0)
 
@@ -785,9 +1338,9 @@ class CodeEditor(QPlainTextEdit):
         )
 
     def line_number_area_paint_event(self, event):
-        gutter_bg = QColor("#2d2d30") if self._is_dark else QColor("#f1f3f4")
-        num_color = QColor("#858585") if self._is_dark else QColor("#6c757d")
-        cur_color = QColor("#c6c6c6") if self._is_dark else QColor("#212529")
+        gutter_bg = QColor("#181818") if self._is_dark else QColor("#f1f3f4")  # editor.background - Cursor dark
+        num_color = QColor("#505050") if self._is_dark else QColor("#6c757d")  # editorLineNumber.foreground
+        cur_color = QColor("#ffffff") if self._is_dark else QColor("#212529")  # editorLineNumber.activeForeground
 
         painter = QPainter(self._line_number_area)
         painter.fillRect(event.rect(), gutter_bg)
@@ -800,32 +1353,269 @@ class CodeEditor(QPlainTextEdit):
 
         while block.isValid() and top <= event.rect().bottom():
             if block.isVisible() and bottom >= event.rect().top():
-                num = str(block.blockNumber() + 1)
-                if block.blockNumber() == current_line:
+                line_idx = block.blockNumber()
+                num = str(line_idx + 1)
+                if line_idx == current_line:
                     painter.setPen(cur_color)
                 else:
                     painter.setPen(num_color)
                 painter.drawText(
                     0, top,
-                    self._line_number_area.width() - 6,
+                    self._line_number_area.width() - 8,
                     self.fontMetrics().height(),
                     Qt.AlignmentFlag.AlignRight, num
                 )
+                
+                # Draw Syntax Error Marker (Gutter Dot)
+                line_errs = [e for e in self._syntax_errors if e.line == line_idx + 1]
+                if line_errs:
+                    # Pick highest severity color (Cursor IDE terminal colors)
+                    if any(e.severity == "error" for e in line_errs):
+                        color = QColor("#f14c4c") # terminal.ansiRed - Error
+                    elif any(e.severity == "warning" for e in line_errs):
+                        color = QColor("#e5b95c") # terminal.ansiYellow - Warning
+                    else:
+                        color = QColor("#4c9df3") # terminal.ansiBlue - Info
+                        
+                    painter.setPen(QPen(color, 5))
+                    # Center the dot in the gutter area left of the line numbers
+                    painter.drawPoint(8, top + (self.fontMetrics().height() // 2))
+
             block = block.next()
             top = bottom
             bottom = top + round(self.blockBoundingRect(block).height())
 
+    def _on_content_changed(self):
+        """Handle editor content change: schedule lint but keep LSP diagnostics.
+        
+        LSP diagnostics are kept until new ones arrive from Pyright.
+        This prevents flickering "no errors" while Pyright analyzes.
+        """
+        # Notify LSP immediately of content changes (don't wait for lint timer)
+        # This ensures Pyright analyzes the current editor content, not stale disk version
+        path = self._file_path or f"virtual_file.{self._language or 'py'}"
+        content = self.toPlainText()
+        get_lsp_manager().notify_changed(path, content, self._language)
+        
+        # Clear stale LSP diagnostics immediately when content changes
+        # New diagnostics will arrive from Pyright after analysis
+        self._lsp_diagnostics = []
+        self._merge_and_render()
+        
+        # Start lint timer for local checker (separate from LSP)
+        self._lint_timer.start(1500)
+
+    def _run_linting(self):
+        """Request a fresh syntax check from the engine (debounced, non-concurrent, background)."""
+        if not self._syntax_checker:
+            return
+        
+        # Prevent concurrent checks
+        if getattr(self, '_linting_in_progress', False):
+            return
+        
+        path = self._file_path or f"virtual_file.{self._language or 'py'}"
+        content = self.toPlainText()
+        
+        # Skip if content hasn't changed since last check
+        last_hash = getattr(self, '_last_lint_content_hash', None)
+        current_hash = hash(content)
+        if last_hash == current_hash:
+            return
+        
+        self._linting_in_progress = True
+        self._last_lint_content_hash = current_hash
+        
+        # Notify LSP of latest content (fast, non-blocking)
+        get_lsp_manager().notify_changed(path, content, self._language)
+        
+        # Run syntax check in background thread to avoid UI lag
+        import threading
+        checker = self._syntax_checker
+        def _bg_check():
+            try:
+                result = checker.check_file(path, content)
+                errors = result.errors
+                # Marshal results back to GUI thread
+                QTimer.singleShot(0, lambda: self._on_lint_done(errors))
+            except Exception as e:
+                print(f"[SyntaxChecker] Error: {e}")
+                QTimer.singleShot(0, lambda: self._on_lint_done([]))
+        
+        threading.Thread(target=_bg_check, daemon=True).start()
+    
+    def _on_lint_done(self, errors):
+        """Handle local lint results on the GUI thread.
+        
+        VS Code pattern: local diagnostics go into their own collection,
+        then merge with LSP diagnostics for rendering. This prevents
+        local checker from overwriting Pyright's precise diagnostics.
+        """
+        self._linting_in_progress = False
+        self._local_diagnostics = errors
+        self._merge_and_render()
+    
+    def _merge_and_render(self):
+        """Merge LSP and local diagnostics, deduplicate by line, render.
+        
+        VS Code keeps separate diagnostic collections per source.
+        LSP diagnostics take priority over local ones on the same line
+        because they have precise ranges.
+        """
+        # LSP diagnostics take priority (they have precise ranges)
+        lsp_lines = {e.line for e in self._lsp_diagnostics}
+        
+        merged = list(self._lsp_diagnostics)
+        for e in self._local_diagnostics:
+            if e.line not in lsp_lines:
+                merged.append(e)
+        
+        self._render_diagnostics(merged)
+
+    def _render_diagnostics(self, errors: List[DiagnosticError]):
+        """Pure visual rendering of provided diagnostic errors with precise ranges."""
+        self._syntax_errors = errors
+        
+        # Build new lint selections
+        new_sels = []
+        for err in self._syntax_errors:
+            # Skip errors on empty/whitespace-only lines
+            block = self.document().findBlockByNumber(max(0, err.line - 1))
+            if not block.isValid():
+                continue
+            if block.text().strip() == "":
+                continue
+            
+            s = QTextEdit.ExtraSelection()
+            fmt = QTextCharFormat()
+            
+            # Map severity to color (Cursor IDE terminal colors)
+            if err.severity == "warning":
+                color = QColor("#e5b95c")  # terminal.ansiYellow
+            elif err.severity == "info":
+                color = QColor("#4c9df3")  # terminal.ansiBlue
+            else:
+                color = QColor("#f14c4c")  # terminal.ansiRed - Error
+                
+            fmt.setUnderlineColor(color)
+            fmt.setUnderlineStyle(QTextCharFormat.UnderlineStyle.WaveUnderline)
+            
+            # Subtle background tint for visibility
+            bg_color = QColor(color)
+            bg_color.setAlpha(25)
+            fmt.setBackground(bg_color)
+            s.format = fmt
+            
+            # Use precise range from LSP (end_line, end_column)
+            start_block = block
+            cur = QTextCursor(start_block)
+            start_col = min(start_block.length() - 1, max(0, err.column - 1))
+            cur.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.MoveAnchor, start_col)
+            
+            # Determine end position
+            end_line_num = err.end_line if err.end_line > 0 else err.line
+            end_col = err.end_column if err.end_column > 0 else 0
+            
+            has_precise_range = (end_col > err.column and end_line_num == err.line) or (end_line_num > err.line)
+            
+            if has_precise_range:
+                # LSP gave us precise start/end — use it directly
+                end_block = self.document().findBlockByNumber(max(0, end_line_num - 1))
+                if end_block.isValid():
+                    end_pos = end_block.position() + min(end_block.length() - 1, max(0, end_col - 1))
+                    cur.setPosition(end_pos, QTextCursor.MoveMode.KeepAnchor)
+            else:
+                # No precise range — select the word under the error position
+                cur.select(QTextCursor.SelectionType.WordUnderCursor)
+                if cur.selectedText().strip() == "" or cur.blockNumber() != start_block.blockNumber():
+                    # Fallback: highlight single character
+                    cur.setPosition(start_block.position() + start_col)
+                    cur.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, 1)
+            
+            # Skip if the selected text is only whitespace (invisible underline)
+            selected_text = cur.selectedText()
+            if selected_text.strip() == "":
+                continue
+            
+            s.cursor = cur
+            new_sels.append(s)
+        
+        # Store lint selections so _highlight_current_line can preserve them
+        self._lint_selections = new_sels
+        
+        # Re-apply all selections (lint + current line highlight)
+        self._highlight_current_line()
+
+    def _handle_lsp_update(self, file_path: str, raw_diagnostics: List[Dict]):
+        """Reactive handler for LSP background results (e.g., Pyright publishDiagnostics).
+        
+        VS Code pattern: LSP diagnostics go into their own collection,
+        then merge with local diagnostics for rendering.
+        """
+        if not self._file_path: return
+        
+        # Convert LSP URI (file:///c%3A/...) to local path (C:\...)
+        from urllib.parse import unquote
+        if file_path.startswith("file://"):
+            # Remove file:// prefix and URL decode
+            uri_path = file_path[7:]  # Remove "file://"
+            uri_path = unquote(uri_path)  # Decode %3A to :
+            # Handle Unix-style paths on Windows
+            if uri_path.startswith("/") and len(uri_path) > 1 and uri_path[2] == ":":
+                uri_path = uri_path[1:]  # Remove leading / before drive letter
+            file_path = uri_path.replace("/", os.sep)
+        
+        # Only process if it matches our file
+        my_path = os.path.normcase(os.path.normpath(self._file_path))
+        inc_path = os.path.normcase(os.path.normpath(file_path))
+        
+        if my_path != inc_path:
+            return
+            
+        # Convert raw LSP dicts to DiagnosticError objects
+        processed_errors = []
+        for d in raw_diagnostics:
+            rng = d.get("range", {})
+            start = rng.get("start", {})
+            end = rng.get("end", {})
+            
+            severity_num = d.get("severity", 1)
+            severity_map = {1: "error", 2: "warning", 3: "info", 4: "info"}
+            
+            processed_errors.append(DiagnosticError(
+                file_path=file_path,
+                message=d.get("message", ""),
+                line=start.get("line", 0) + 1,
+                column=start.get("character", 0) + 1,
+                end_line=end.get("line", 0) + 1,
+                end_column=end.get("character", 0) + 1,
+                severity=severity_map.get(severity_num, "error"),
+                source="LSP",
+                code=str(d.get("code", ""))
+            ))
+        
+        # Store in LSP collection and merge with local diagnostics
+        self._lsp_diagnostics = processed_errors
+        self._merge_and_render()
+
     def _highlight_current_line(self):
-        extra = []
+        # Combine stored lint selections with current-line highlight
+        extra = list(self._lint_selections)
+        
         if not self.isReadOnly():
             sel = QTextEdit.ExtraSelection()
-            color = QColor("#2a2d2e") if self._is_dark else QColor("#f1f3f4")
+            color = QColor("#292929") if self._is_dark else QColor("#f1f3f4")  # editor.lineHighlightBackground - Cursor
             sel.format.setBackground(color)
             sel.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
             sel.cursor = self.textCursor()
             sel.cursor.clearSelection()
             extra.append(sel)
+            
         self.setExtraSelections(extra)
+        
+        # Update gutter for error dots
+        if hasattr(self, '_line_number_area'):
+            self._line_number_area.update()
     
     def paintEvent(self, event):
         """Paint editor with indentation guide lines."""
@@ -838,41 +1628,37 @@ class CodeEditor(QPlainTextEdit):
         """Draw vertical indentation guide lines like VS Code."""
         painter = QPainter(self.viewport())
         
-        # Guide line color (subtle gray)
-        guide_color = QColor("#808080") if self._is_dark else QColor("#cccccc")
-        painter.setPen(QPen(guide_color, 1, Qt.PenStyle.SolidLine))
+        # Guide line color — editorIndentGuide.background
+        guide_color = QColor("#2a2a2a") if self._is_dark else QColor("#e0e0e0")  # sideBar.border - subtle
+        painter.setPen(QPen(guide_color, 1, Qt.PenStyle.DotLine))
         
-        # Get tab width in pixels
-        tab_width = self.fontMetrics().horizontalAdvance(' ' * 4)  # Default 4 spaces
+        # Get horizontal offset and char width
+        offset_x = self.horizontalScrollBar().value()
+        char_w = self.fontMetrics().horizontalAdvance(' ')
+        # VS Code style: draw lines at 4, 8, 12... spaces
+        indent_char_count = 4 
         
         block = self.firstVisibleBlock()
         while block.isValid():
-            # Get block geometry
             top = int(self.blockBoundingGeometry(block).translated(self.contentOffset()).top())
             bottom = top + int(self.blockBoundingRect(block).height())
             
-            # Only draw if visible
-            if block.isVisible() and bottom >= 0 and top <= self.height():
+            if block.isVisible() and bottom >= 0 and top <= self.viewport().height():
                 text = block.text()
-                
-                # Calculate indent level
                 indent = 0
                 for char in text:
-                    if char == ' ':
-                        indent += 1
-                    elif char == '\t':
-                        indent += 4
-                    else:
-                        break
+                    if char == ' ': indent += 1
+                    elif char == '\t': indent += 4
+                    else: break
                 
-                # Draw guide lines for each indent level
-                if indent > 0:
-                    for i in range(0, indent, 4):  # Every 4 spaces
-                        x = i * self.fontMetrics().horizontalAdvance(' ')
-                        if x < self.width():  # Don't draw if outside viewport
+                if indent >= indent_char_count:
+                    for i in range(indent_char_count, indent + 1, indent_char_count):
+                        x = (i * char_w) - offset_x
+                        if 0 <= x < self.viewport().width():
                             painter.drawLine(x, top, x, bottom)
             
             block = block.next()
+            if top > self.viewport().height(): break
         
         painter.end()
 
@@ -882,20 +1668,65 @@ class CodeEditor(QPlainTextEdit):
         col = cursor.columnNumber() + 1
         self.cursor_position_changed.emit(line, col)
 
+    def focusOutEvent(self, event):
+        """Hide completion widget when editor loses focus."""
+        self._completion_widget.hide()
+        super().focusOutEvent(event)
+
     def keyPressEvent(self, event: QKeyEvent):
         key = event.key()
         modifiers = event.modifiers()
 
-        # Inline edit (Ctrl/Cmd + K)
+        # 1. IntelliSense Navigation (Up/Down/Enter/Tab)
+        if self._completion_widget.isVisible():
+            if key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+                row = self._completion_widget.list.currentRow()
+                count = self._completion_widget.list.count()
+                if count > 0:
+                    if key == Qt.Key.Key_Up:
+                        self._completion_widget.list.setCurrentRow((row - 1) % count)
+                    else:
+                        self._completion_widget.list.setCurrentRow((row + 1) % count)
+                return
+            elif key in (Qt.Key.Key_Enter, Qt.Key.Key_Return, Qt.Key.Key_Tab):
+                current = self._completion_widget.list.currentItem()
+                if current:
+                    self._completion_widget._on_activated(current)
+                return
+            elif key == Qt.Key.Key_Escape:
+                self._completion_widget.hide()
+                return
+
+        # 2. Inline edit (Ctrl/Cmd + K)
         if key == Qt.Key.Key_K and (modifiers & Qt.KeyboardModifier.ControlModifier or
                                     modifiers & Qt.KeyboardModifier.MetaModifier):
             self._show_inline_overlay()
             return
+
+        # 2b. Ctrl+C — emit code_copied signal with selection metadata before copy
+        if key == Qt.Key.Key_C and modifiers & Qt.KeyboardModifier.ControlModifier:
+            cursor = self.textCursor()
+            if cursor.hasSelection():
+                sel_text, (sl, el) = self._get_selection_info()
+                fp = getattr(self, '_file_path', '') or ''
+                if not fp:
+                    # Try to get from parent tab
+                    try:
+                        from src.ui.components.editor_tabs import EditorTabWidget
+                        p = self.parent()
+                        while p is not None:
+                            if hasattr(p, 'current_filepath'):
+                                fp = p.current_filepath() or ''
+                                break
+                            p = p.parent()
+                    except Exception:
+                        pass
+                self.code_copied.emit(sel_text, fp, sl, el)
         if key == Qt.Key.Key_Escape and self._inline_overlay.isVisible():
             self._hide_inline_overlay()
             return
-        
-        # Auto-indent on Enter
+
+        # 3. Auto-indent on Enter
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             cursor = self.textCursor()
             block = cursor.block()
@@ -912,27 +1743,112 @@ class CodeEditor(QPlainTextEdit):
             super().keyPressEvent(event)
             self.insertPlainText(indent)
             return
-        
-        # Tab handling - VS Code style
+
+        # 4. Manual IntelliSense trigger (Ctrl+Space) - VS Code style
+        if key == Qt.Key.Key_Space and modifiers & Qt.KeyboardModifier.ControlModifier:
+            self._completion_timer.stop()
+            self._trigger_completion()
+            return
+
+        # 5. Tab handling - VS Code style
         if key == Qt.Key.Key_Tab:
             tab_size = self._settings.get("editor", "tab_size") or 4
-            
-            # Shift+Tab - Outdent
             if modifiers == Qt.KeyboardModifier.ShiftModifier:
                 self._outdent_selection(tab_size)
                 return
-            
-            # Tab with selection - Indent multiple lines
             cursor = self.textCursor()
             if cursor.hasSelection():
                 self._indent_selection(tab_size)
                 return
-            
-            # No selection - Insert tab as spaces
             self.insertPlainText(" " * tab_size)
             return
-        
+
+        # 6. Default edit + IntelliSense trigger (Debounced)
         super().keyPressEvent(event)
+        
+        # 7. HTML Auto-close tags
+        if self._language and self._language.lower() == "html" and event.text() == ">":
+            cursor = self.textCursor()
+            position = cursor.position()
+            
+            # Get text before cursor
+            doc = self.document()
+            text_before = doc.toPlainText()[:position]
+            
+            # Check if we need to auto-close
+            closing_tag = get_closing_tag(text_before)
+            if closing_tag:
+                # Insert the closing tag
+                self.insertPlainText(closing_tag)
+                # Move cursor back between tags
+                cursor.setPosition(position)
+                self.setTextCursor(cursor)
+        
+        if event.text().isalnum() or event.text() in (".", "_"):
+            self._completion_timer.start(200) # 200ms delay to prevent flood
+
+    def mouseMoveEvent(self, event):
+        """Track mouse for instant diagnostic tooltips."""
+        super().mouseMoveEvent(event)
+        
+        pos = event.pos()
+        if pos == self._last_hover_pos:
+            return
+        self._last_hover_pos = pos
+        
+        # Hide tooltip if window not active
+        if not self.window().isActiveWindow():
+            QToolTip.hideText()
+            return
+        
+        # Check if mouse is over an error (with proper column range check)
+        cursor = self.cursorForPosition(pos)
+        line = cursor.blockNumber() + 1
+        col = cursor.columnNumber() + 1
+        
+        found_err = False
+        for err in self._syntax_errors:
+            if err.line == line:
+                # Check if column is within the error's precise range
+                err_start = err.column
+                err_end = err.end_column if err.end_column > err.column else err.column + 5
+                if err_start <= col <= err_end:
+                    found_err = True
+                    break
+        
+        if found_err:
+            self._hover_timer.start(200) # Fast 200ms hover detection
+        else:
+            self._hover_timer.stop()
+            QToolTip.hideText()
+
+    def _show_hover_diagnostic(self):
+        """Triggered by _hover_timer to show tooltip near mouse."""
+        # Don't show tooltip if IDE window is not active
+        if not self.window().isActiveWindow():
+            return
+        
+        pos = self._last_hover_pos
+        cursor = self.cursorForPosition(pos)
+        line = cursor.blockNumber() + 1
+        col = cursor.columnNumber() + 1
+        
+        # Find the specific error at this position (not just any error on the line)
+        for err in self._syntax_errors:
+            if err.line == line:
+                # Check if column is within the error's range
+                err_start = err.column
+                err_end = err.end_column if err.end_column > err.column else err.column + 5
+                if err_start <= col <= err_end:
+                    icon = "X" if err.severity == "error" else "!"
+                    text = f"<div style='background-color:#1e1e1e; color:#cccccc; border:1px solid #3c3c3c; padding:5px;'>"
+                    text += f"<b style='color:#f44747'>{icon} {err.severity.capitalize()}</b>: {err.message}"
+                    if err.code:
+                        text += f"<br/><i style='color:#888'>({err.source}: {err.code})</i>"
+                    text += "</div>"
+                    
+                    QToolTip.showText(self.viewport().mapToGlobal(pos), text, self.viewport())
+                    return
     
     def _indent_selection(self, tab_size: int):
         """Indent selected lines (VS Code style)."""
@@ -1019,11 +1935,432 @@ class CodeEditor(QPlainTextEdit):
         self._inline_overlay.raise_()
         self._inline_overlay.focus_prompt()
 
+
+    # Language-specific snippets for when LSP is slow/unavailable
+    SNIPPETS = {
+        "python": [
+            {"label": "def", "insertText": "def ${1:name}(${2:args}):\n    ${3:pass}", "kind": 15, "detail": "function"},
+            {"label": "class", "insertText": "class ${1:Name}:\n    def __init__(self):\n        pass", "kind": 15, "detail": "class"},
+            {"label": "ifmain", "insertText": "if __name__ == \"__main__\":\n    ${1:pass}", "kind": 15, "detail": "snippet"},
+            {"label": "for", "insertText": "for ${1:item} in ${2:iterable}:\n    ${3:pass}", "kind": 15, "detail": "loop"},
+            {"label": "try", "insertText": "try:\n    ${1:pass}\nexcept ${2:Exception} as ${3:e}:\n    ${4:pass}", "kind": 15, "detail": "snippet"},
+            {"label": "import", "insertText": "import ${1:module}", "kind": 15, "detail": "import"},
+            {"label": "from", "insertText": "from ${1:module} import ${2:name}", "kind": 15, "detail": "import"},
+        ],
+        "javascript": [
+            {"label": "func", "insertText": "function ${1:name}(${2:args}) {\n    ${3:// body}\n}", "kind": 15, "detail": "function"},
+            {"label": "arrow", "insertText": "const ${1:name} = (${2:args}) => {\n    ${3:// body}\n}", "kind": 15, "detail": "arrow function"},
+            {"label": "class", "insertText": "class ${1:Name} {\n    constructor() {\n        ${2:// init}\n    }\n}", "kind": 15, "detail": "class"},
+            {"label": "for", "insertText": "for (let ${1:i} = 0; ${1:i} < ${2:length}; ${1:i}++) {\n    ${3:// body}\n}", "kind": 15, "detail": "loop"},
+            {"label": "forof", "insertText": "for (const ${1:item} of ${2:iterable}) {\n    ${3:// body}\n}", "kind": 15, "detail": "for-of"},
+            {"label": "log", "insertText": "console.log(${1:message});", "kind": 15, "detail": "console"},
+            {"label": "import", "insertText": "import { ${2:exports} } from '${1:module}';", "kind": 15, "detail": "import"},
+        ],
+        "typescript": [
+            {"label": "interface", "insertText": "interface ${1:Name} {\n    ${2:prop}: ${3:type};\n}", "kind": 15, "detail": "interface"},
+            {"label": "type", "insertText": "type ${1:Name} = ${2:definition};", "kind": 15, "detail": "type alias"},
+            {"label": "func", "insertText": "function ${1:name}(${2:args}): ${3:void} {\n    ${4:// body}\n}", "kind": 15, "detail": "function"},
+        ],
+        "html": [
+            {"label": "div", "insertText": "<div>${1:content}</div>", "kind": 15, "detail": "tag"},
+            {"label": "span", "insertText": "<span>${1:content}</span>", "kind": 15, "detail": "tag"},
+            {"label": "a", "insertText": "<a href=\"${1:#}\">${2:link}</a>", "kind": 15, "detail": "link"},
+            {"label": "img", "insertText": "<img src=\"${1:url}\" alt=\"${2:description}\" />", "kind": 15, "detail": "image"},
+            {"label": "script", "insertText": "<script>\n${1:// code}\n</script>", "kind": 15, "detail": "script"},
+            {"label": "style", "insertText": "<style>\n${1:/* css */}\n</style>", "kind": 15, "detail": "style"},
+            {"label": "link", "insertText": "<link rel=\"stylesheet\" href=\"${1:style.css}\" />", "kind": 15, "detail": "stylesheet"},
+            {"label": "ul", "insertText": "<ul>\n    <li>${1:item}</li>\n</ul>", "kind": 15, "detail": "list"},
+            {"label": "input", "insertText": "<input type=\"${1:text}\" name=\"${2:name}\" />", "kind": 15, "detail": "form"},
+            {"label": "form", "insertText": "<form action=\"${1:#}\" method=\"${2:post}\">\n    ${3}\n</form>", "kind": 15, "detail": "form"},
+        ],
+        "css": [
+            {"label": "flex", "insertText": "display: flex;\njustify-content: ${1:center};\nalign-items: ${2:center};", "kind": 15, "detail": "flexbox"},
+            {"label": "grid", "insertText": "display: grid;\ngrid-template-columns: ${1:1fr 1fr};\ngap: ${2:1rem};", "kind": 15, "detail": "grid"},
+            {"label": "media", "insertText": "@media (max-width: ${1:768px}) {\n    ${2}\n}", "kind": 15, "detail": "responsive"},
+            {"label": "var", "insertText": "var(--${1:color-primary})", "kind": 15, "detail": "CSS variable"},
+            {"label": "transition", "insertText": "transition: ${1:all} ${2:0.3s} ${3:ease};", "kind": 15, "detail": "animation"},
+            {"label": "transform", "insertText": "transform: ${1:translateX(0)};", "kind": 15, "detail": "transform"},
+        ],
+    }
+
+    def _trigger_completion(self):
+        """Request completions from LSP Manager with fallback to snippets/words/HTML."""
+        cursor = self.textCursor()
+        line = cursor.blockNumber() + 1
+        col = cursor.columnNumber() + 1
+
+        # Get current word prefix for filtering
+        cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+        prefix = cursor.selectedText().lower()
+        cursor.clearSelection()
+        
+        print(f"[Completion] Triggered: lang={self._language}, prefix='{prefix}', file={self._file_path}, line={line}, col={col}")
+
+        # HTML Language: Use built-in HTML completion provider
+        if self._language and self._language.lower() == "html":
+            self._trigger_html_completion(line, col, prefix)
+            return
+
+        def on_results(res, err):
+            """Called from LSP background thread — must marshal to GUI thread."""
+            try:
+                items = []
+                if res:
+                    if isinstance(res, dict):
+                        items = res.get("items", []) or []
+                    elif isinstance(res, list):
+                        items = res
+                
+                print(f"[Completion] LSP returned {len(items)} items, err={err}")
+                
+                # Filter LSP items by prefix for relevance
+                if prefix and items:
+                    items = [i for i in items if i.get("label", "").lower().startswith(prefix)]
+
+                # Fallback: add snippets if LSP returned few/no results
+                if len(items) < 5:
+                    snippets = self.SNIPPETS.get(self._language, [])
+                    if prefix:
+                        snippets = [s for s in snippets if s["label"].lower().startswith(prefix)]
+                    if snippets:
+                        print(f"[Completion] Adding {len(snippets)} snippets for lang={self._language}")
+                    items = snippets + items
+
+                # Fallback: add word-based completions from current document
+                if len(items) < 10 and prefix and len(prefix) >= 2:
+                    existing_labels = {i.get("label", "") for i in items}
+                    words = self._extract_words(prefix)
+                    for w in words:
+                        if w not in existing_labels:
+                            items.append({"label": w, "kind": 1, "detail": "word"})
+
+                print(f"[Completion] Total items to show: {len(items)}")
+                
+                # Emit signal to GUI thread (safe from any thread)
+                final_items = items[:30]
+                self._completion_results_ready.emit(final_items)
+            except Exception as e:
+                print(f"[Completion] ERROR in on_results: {e}")
+                import traceback
+                traceback.print_exc()
+
+        get_lsp_manager().get_completions(self._file_path, line, col, self._language, on_results)
+    
+    def _trigger_html_completion(self, line: int, col: int, prefix: str):
+        """Trigger HTML-specific completions using built-in provider."""
+        try:
+            content = self.toPlainText()
+            provider = get_html_completion_provider()
+            completions = provider.get_completions(content, line - 1, col - 1)
+            
+            items = []
+            for comp in completions:
+                # Map HTML completion kinds to LSP kinds
+                kind_map = {
+                    "tag": 10,      # Property
+                    "attribute": 5, # Field
+                    "value": 12,    # Value
+                    "emmet": 15     # Snippet
+                }
+                
+                item = {
+                    "label": comp.label,
+                    "kind": kind_map.get(comp.kind, 1),
+                    "detail": comp.detail,
+                    "documentation": comp.documentation,
+                    "insertText": comp.insert_text
+                }
+                items.append(item)
+            
+            print(f"[Completion] HTML provider returned {len(items)} items")
+            
+            # Filter by prefix if provided
+            if prefix and items:
+                items = [i for i in items if i.get("label", "").lower().startswith(prefix)]
+            
+            self._completion_results_ready.emit(items[:30])
+        except Exception as e:
+            print(f"[Completion] ERROR in HTML completion: {e}")
+            import traceback
+            traceback.print_exc()
+            self._completion_results_ready.emit([])
+
+    def _extract_words(self, exclude_prefix: str) -> List[str]:
+        """Extract unique words from document matching exclude_prefix."""
+        text = self.toPlainText()
+        words = set()
+        pattern = re.compile(r'\b[a-zA-Z_]\w*\b')
+        for m in pattern.finditer(text):
+            w = m.group()
+            if w.lower().startswith(exclude_prefix.lower()) and len(w) > len(exclude_prefix):
+                words.add(w)
+        return sorted(words)[:20]  # Limit to 20 word suggestions
+
+    def _show_completions(self, items: List[Dict]):
+        """Display the completion widget near the cursor."""
+        if not items:
+            self._completion_widget.hide()
+            return
+        
+        try:
+            self._completion_widget.set_items(items[:30])
+            
+            # Size widget based on content — account for 2-line snippet cards
+            visible = items[:8]
+            total_h = 6
+            for it in visible:
+                insert_text = it.get("insertText", it.get("label", ""))
+                preview = re.sub(r'\$\{(\d+):([^}]*)\}', r'\2', insert_text)
+                preview = re.sub(r'\$(\d+)', '', preview)
+                preview = preview.replace('\n', ' ').strip()
+                label = it.get("label", "")
+                is_snippet = it.get("kind") == 15 and preview != label
+                total_h += 44 if is_snippet else 26
+            
+            w = 380
+            h = total_h
+            self._completion_widget.resize(w, h)
+            
+            # Position below cursor
+            cursor_rect = self.cursorRect()
+            pos = self.viewport().mapToGlobal(cursor_rect.bottomLeft())
+            pos.setY(pos.y() + 4)
+            
+            # Keep on screen
+            screen = QApplication.primaryScreen().availableGeometry()
+            if pos.y() + h > screen.bottom():
+                pos = self.viewport().mapToGlobal(cursor_rect.topLeft())
+                pos.setY(pos.y() - h - 4)
+            if pos.x() + w > screen.right():
+                pos.setX(screen.right() - w)
+            
+            self._completion_widget.move(pos)
+            self._completion_widget.show()
+            print(f"[Completion] POPUP shown at ({pos.x()},{pos.y()}) size=({w},{h}) items={len(items)} visible={self._completion_widget.isVisible()}")
+        except Exception as e:
+            print(f"[Completion] ERROR showing widget: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _insert_completion(self, item: Dict):
+        """Insert the selected completion text into the editor.
+        
+        Resolves snippet placeholders: ${1:name} -> name
+        Selects the first placeholder so the user can type over it.
+        """
+        text = item.get("insertText") or item.get("label")
+        
+        cursor = self.textCursor()
+        # Backtrack to the start of the word being typed
+        cursor.movePosition(QTextCursor.MoveOperation.StartOfWord, QTextCursor.MoveMode.KeepAnchor)
+        
+        # Find all ${N:default} placeholders
+        placeholders = list(re.finditer(r'\$\{(\d+):([^}]*)\}', text))
+        
+        if placeholders:
+            # Resolve all placeholders to their default text
+            resolved = text
+            # Track first placeholder position for selection
+            first_ph = placeholders[0]
+            first_default = first_ph.group(2)
+            
+            # Replace from end to start to preserve positions
+            for ph in reversed(placeholders):
+                resolved = resolved[:ph.start()] + ph.group(2) + resolved[ph.end():]
+            
+            # Also remove bare $N references
+            resolved = re.sub(r'\$(\d+)', '', resolved)
+            
+            # Calculate where the first placeholder default text will be
+            # after all replacements
+            first_start_in_resolved = first_ph.start()
+            # Adjust for any replacements before this position — but since
+            # first_ph IS the first one, nothing before it changed
+            
+            cursor.insertText(resolved)
+            
+            # Now select the first placeholder's default text
+            insert_end = cursor.position()
+            # The resolved text was inserted starting where the word was
+            # cursor is now at the end of the inserted text
+            total_len = len(resolved)
+            insert_start = insert_end - total_len
+            
+            sel_start = insert_start + first_start_in_resolved
+            sel_end = sel_start + len(first_default)
+            
+            new_cursor = self.textCursor()
+            new_cursor.setPosition(sel_start)
+            new_cursor.setPosition(sel_end, QTextCursor.MoveMode.KeepAnchor)
+            self.setTextCursor(new_cursor)
+        else:
+            # No placeholders — just insert as-is
+            # Remove any bare $N
+            text = re.sub(r'\$(\d+)', '', text)
+            cursor.insertText(text)
+        
+        self.setFocus()
+
     def _hide_inline_overlay(self):
         if self._inline_overlay.isVisible():
             self._inline_overlay.hide()
             self.inline_edit_cancelled.emit()
 
+    def _check_java_setup(self):
+        """Check if Java LSP is available and show setup notification if not."""
+        import shutil
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QApplication
+        
+        # Check if jdtls is available in PATH
+        jdtls_available = shutil.which("jdtls") is not None
+        
+        if not jdtls_available:
+            # Create custom dialog with selectable text
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Java Support Required")
+            dialog.setMinimumWidth(500)
+            
+            layout = QVBoxLayout(dialog)
+            
+            # Title label
+            title_label = QLabel("Java language features require setup.")
+            title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+            layout.addWidget(title_label)
+            
+            # Instruction label
+            inst_label = QLabel("Run these commands in CMD or PowerShell:")
+            layout.addWidget(inst_label)
+            
+            # Warning box for winget not found
+            warn_label = QLabel("⚠ If 'winget' not found, run this first:")
+            warn_label.setStyleSheet("color: #ff9800; font-size: 12px; font-weight: bold;")
+            layout.addWidget(warn_label)
+            
+            fix_text = QLabel('$env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")')
+            fix_text.setStyleSheet("background-color: #2d2d2d; padding: 8px; border-radius: 4px; font-family: Consolas, monospace; border-left: 3px solid #ff9800;")
+            fix_text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            layout.addWidget(fix_text)
+            
+            fix_btn = QPushButton("Copy")
+            fix_btn.clicked.connect(lambda: QApplication.clipboard().setText('$env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")'))
+            layout.addWidget(fix_btn)
+            
+            layout.addSpacing(15)
+            
+            # Command 1: Java JDK
+            cmd1_label = QLabel("1. Install Java 21+ JDK (required by jdtls):")
+            layout.addWidget(cmd1_label)
+            
+            cmd1_text = QLabel("winget install EclipseAdoptium.Temurin.21.JDK")
+            cmd1_text.setStyleSheet("background-color: #2d2d2d; padding: 8px; border-radius: 4px; font-family: Consolas, monospace;")
+            cmd1_text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            layout.addWidget(cmd1_text)
+            
+            cmd1_btn = QPushButton("Copy")
+            cmd1_btn.clicked.connect(lambda: QApplication.clipboard().setText("winget install EclipseAdoptium.Temurin.21.JDK"))
+            layout.addWidget(cmd1_btn)
+            
+            # Manual download note
+            manual_label = QLabel("If winget fails, download from adoptium.net and install manually.")
+            manual_label.setStyleSheet("color: #888; font-size: 11px;")
+            layout.addWidget(manual_label)
+            
+            layout.addSpacing(10)
+            
+            # Command 2: Install Scoop (if not installed)
+            cmd2_label = QLabel("2. Install Scoop (package manager):")
+            layout.addWidget(cmd2_label)
+            
+            cmd2_text = QLabel("iwr -useb get.scoop.sh | iex")
+            cmd2_text.setStyleSheet("background-color: #2d2d2d; padding: 8px; border-radius: 4px; font-family: Consolas, monospace;")
+            cmd2_text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            layout.addWidget(cmd2_text)
+            
+            cmd2_btn = QPushButton("Copy")
+            cmd2_btn.clicked.connect(lambda: QApplication.clipboard().setText("iwr -useb get.scoop.sh | iex"))
+            layout.addWidget(cmd2_btn)
+            
+            layout.addSpacing(10)
+            
+            # Command 3: Refresh PATH (needed after scoop install)
+            cmd3_label = QLabel("3. Refresh PATH (so scoop command works):")
+            layout.addWidget(cmd3_label)
+            
+            cmd3_text = QLabel('$env:Path = [Environment]::GetEnvironmentVariable("Path", "User")')
+            cmd3_text.setStyleSheet("background-color: #2d2d2d; padding: 8px; border-radius: 4px; font-family: Consolas, monospace;")
+            cmd3_text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            layout.addWidget(cmd3_text)
+            
+            cmd3_btn = QPushButton("Copy")
+            cmd3_btn.clicked.connect(lambda: QApplication.clipboard().setText('$env:Path = [Environment]::GetEnvironmentVariable("Path", "User")'))
+            layout.addWidget(cmd3_btn)
+            
+            layout.addSpacing(10)
+            
+            # Command 4: JDTLS
+            cmd4_label = QLabel("4. Install Eclipse JDT Language Server:")
+            layout.addWidget(cmd4_label)
+            
+            cmd4_text = QLabel("scoop install jdtls")
+            cmd4_text.setStyleSheet("background-color: #2d2d2d; padding: 8px; border-radius: 4px; font-family: Consolas, monospace;")
+            cmd4_text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            layout.addWidget(cmd4_text)
+            
+            cmd4_btn = QPushButton("Copy")
+            cmd4_btn.clicked.connect(lambda: QApplication.clipboard().setText("scoop install jdtls"))
+            layout.addWidget(cmd4_btn)
+            
+            layout.addSpacing(10)
+            
+            # Troubleshooting section
+            troubleshoot_title = QLabel("Troubleshooting:")
+            troubleshoot_title.setStyleSheet("color: #ff9800; font-size: 12px; font-weight: bold;")
+            layout.addWidget(troubleshoot_title)
+            
+            troubleshoot_text = QLabel(
+                "• If 'java -version' shows old version → Close & reopen terminal\n"
+                "• If 'scoop' not found → Run step 3 (Refresh PATH)\n"
+                "• If 'jdtls' not found → Reinstall: scoop uninstall jdtls && scoop install jdtls"
+            )
+            troubleshoot_text.setStyleSheet("color: #aaa; font-size: 11px;")
+            layout.addWidget(troubleshoot_text)
+            
+            layout.addSpacing(15)
+            
+            # Complete Guide section
+            guide_title = QLabel("Complete Setup Guide:")
+            guide_title.setStyleSheet("color: #2196F3; font-size: 12px; font-weight: bold;")
+            layout.addWidget(guide_title)
+            
+            guide_text = QLabel(
+                "If PATH is broken (commands not found):\n"
+                "$env:Path = [System.Environment]::GetEnvironmentVariable(\"Path\", \"Machine\") + \";\" + [System.Environment]::GetEnvironmentVariable(\"Path\", \"User\")\n\n"
+                "Fix Python for scoop (if jdtls install fails):\n"
+                "$env:Path = \"C:\\Users\\$env:USERNAME\\OneDrive\\Desktop\\black_box\\venv\\Scripts;$env:Path\"\n\n"
+                "Quick Install (copy all at once):\n"
+                "1. winget install EclipseAdoptium.Temurin.21.JDK\n"
+                "2. iwr -useb get.scoop.sh | iex\n"
+                "3. $env:Path = [Environment]::GetEnvironmentVariable(\"Path\", \"User\")\n"
+                "4. scoop install jdtls\n"
+                "5. Restart IDE"
+            )
+            guide_text.setStyleSheet("color: #888; font-size: 10px; font-family: Consolas, monospace;")
+            guide_text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            layout.addWidget(guide_text)
+            
+            layout.addSpacing(10)
+            
+            # Step 5
+            step5_label = QLabel("5. Restart Cortex IDE, then open any .java file")
+            layout.addWidget(step5_label)
+            
+            # OK button
+            ok_btn = QPushButton("OK")
+            ok_btn.clicked.connect(dialog.close)
+            layout.addWidget(ok_btn)
+            
+            dialog.exec()
+    
     def _on_inline_submit(self, prompt: str):
         self._inline_overlay.set_pending(True)
         self.inline_edit_submitted.emit(

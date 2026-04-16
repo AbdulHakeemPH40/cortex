@@ -90,6 +90,13 @@ class DeepSeekProvider:
             **kwargs
         }
         
+        # DEBUG: Log if tools are present
+        if 'tools' in kwargs and kwargs['tools']:
+            log.info(f"[DEEPSEEK DEBUG] Sending {len(kwargs['tools'])} tools to API")
+            log.debug(f"[DEEPSEEK DEBUG] Tools: {', '.join([t.get('function', {}).get('name', '?') for t in kwargs['tools']])}")
+        else:
+            log.debug("[DEEPSEEK DEBUG] No tools in request")
+        
         url = f"{self.base_url}/chat/completions"
         
         try:
@@ -101,7 +108,13 @@ class DeepSeekProvider:
                 
                 for line in response.iter_lines():
                     if line:
-                        line_text = line.decode('utf-8').strip()
+                        try:
+                            line_text = line.decode('utf-8', errors='replace').strip()
+                        except UnicodeDecodeError as e:
+                            import logging
+                            log = logging.getLogger('cortex.provider')
+                            log.warning(f"[DeepSeek] Unicode decode error: {e}")
+                            line_text = line.decode('utf-8', errors='replace').strip()
                         
                         if line_text.startswith('data: '):
                             data_str = line_text[6:]
@@ -120,10 +133,19 @@ class DeepSeekProvider:
                                     
                                     # Yield content if available
                                     if content:
-                                        yield content
+                                        # Filter out corrupted/non-printable characters
+                                        import re
+                                        # Remove replacement chars and control chars, BUT preserve \n (0x0a) and \t (0x09)
+                                        content = re.sub(r'[\ufffd\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]', '', content)
+                                        if content.strip():
+                                            yield content
                                     # Yield reasoning content separately (prefix with [THINK])
                                     elif reasoning:
-                                        yield f"[THINK] {reasoning}"
+                                        # Also filter reasoning content
+                                        import re
+                                        reasoning = re.sub(r'[\ufffd\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]', '', reasoning)
+                                        if reasoning.strip():
+                                            yield f"[THINK] {reasoning}"
                                     
                                     # Handle tool calls
                                     if tool_calls:
@@ -135,7 +157,7 @@ class DeepSeekProvider:
                                                 'function': {
                                                     'name': tc.get('function', {}).get('name', ''),
                                                     'arguments': tc.get('function', {}).get('arguments', '')
-                                                }
+                                               }
                                             }
                                             tool_call_data.append(tc_info)
                                         yield f"__TOOL_CALL_DELTA__:{json.dumps(tool_call_data)}"
@@ -170,6 +192,31 @@ class DeepSeekProvider:
             log.error(f"Unexpected error: {e}")
             raise
     
+    def chat_stream(self, messages: List[Dict[str, str]], model: str = "deepseek-chat",
+                    max_tokens: int = 2000, tools: List = None, retry_callback=None,
+                    **kwargs) -> Generator[str, None, None]:
+        """Stream chat response (alias for chat with retry_callback support).
+        
+        Args:
+            messages: List of message dicts with 'role' and 'content'
+            model: Model ID (deepseek-chat, deepseek-reasoner, deepseek-coder)
+            max_tokens: Maximum tokens in response
+            tools: List of tool definitions for function calling
+            retry_callback: Optional callback for retry notifications (unused but for API compatibility)
+            **kwargs: Additional parameters passed to the API
+        """
+        # retry_callback is for API compatibility with MistralProvider
+        # DeepSeek doesn't implement custom retry logic, but we accept the param
+        
+        yield from self.chat(
+            messages, 
+            model=model, 
+            stream=True,
+            max_tokens=max_tokens,
+            tools=tools,
+            **kwargs
+        )
+
     def get_usage_stats(self) -> Dict[str, Any]:
         """Get current usage statistics"""
         total_tokens = self._token_count["input"] + self._token_count["output"]

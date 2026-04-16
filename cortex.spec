@@ -2,11 +2,23 @@
 import os
 import sys
 import glob
+import shutil
 
 # Get the directory containing this spec file
 project_root = os.path.dirname(os.path.abspath(sys.argv[0])) if hasattr(sys, 'argv') else os.getcwd()
 
 block_cipher = None
+
+# ── Bundle ripgrep (rg.exe) for GrepTool ──────────────────────────────────────
+# Download ripgrep and place rg.exe in bin/ folder
+ripgrep_binaries = []
+rg_path = os.path.join(project_root, 'bin', 'rg.exe')
+if os.path.exists(rg_path):
+    ripgrep_binaries.append((rg_path, 'bin'))
+    print(f"Found ripgrep: {rg_path}")
+else:
+    print("WARNING: rg.exe not found in bin/ - GrepTool will not work!")
+    print("Download from: https://github.com/BurntSushi/ripgrep/releases")
 
 # Find pywinpty DLLs
 winpty_dlls = []
@@ -22,27 +34,60 @@ try:
 except ImportError:
     print("winpty not installed — skipping")
 
+# Combine all binaries
+all_binaries = winpty_dlls + ripgrep_binaries
+
 a = Analysis(
     ['src\\main.py'],
     pathex=[project_root],
-    binaries=winpty_dlls,  # ← ADD THIS
+    binaries=all_binaries,  # winpty + ripgrep
     datas=[
         ('src/ui/html/ai_chat', 'src/ui/html/ai_chat'),
+        ('src/ui/html/ai_chat/file-icons/sprite.svg', 'src/ui/html/ai_chat/file-icons'),
         ('src/ui/components/terminal.html', 'src/ui/components'),
         ('src/ui/components/assets', 'src/ui/components/assets'),
         ('src/ui/themes', 'src/ui/themes'),
         ('src/assets', 'src/assets'),
+        ('bin/node', 'bin/node'),
+        # LSP servers - essential for language support
+        ('node_modules/pyright', 'node_modules/pyright'),
+        ('node_modules/typescript-language-server', 'node_modules/typescript-language-server'),
+        ('node_modules/typescript', 'node_modules/typescript'),
+        ('node_modules/bash-language-server', 'node_modules/bash-language-server'),
+        ('node_modules/vscode-langservers-extracted', 'node_modules/vscode-langservers-extracted'),
+        # VSCode language services (dependencies of vscode-langservers-extracted)
+        ('node_modules/vscode-html-languageservice', 'node_modules/vscode-html-languageservice'),
+        ('node_modules/vscode-css-languageservice', 'node_modules/vscode-css-languageservice'),
+        ('node_modules/vscode-json-languageservice', 'node_modules/vscode-json-languageservice'),
+        ('node_modules/vscode-languageserver', 'node_modules/vscode-languageserver'),
+        ('node_modules/vscode-languageserver-protocol', 'node_modules/vscode-languageserver-protocol'),
+        ('node_modules/vscode-languageserver-textdocument', 'node_modules/vscode-languageserver-textdocument'),
+        ('node_modules/vscode-languageserver-types', 'node_modules/vscode-languageserver-types'),
+        ('node_modules/vscode-jsonrpc', 'node_modules/vscode-jsonrpc'),
+        ('node_modules/vscode-uri', 'node_modules/vscode-uri'),
+        ('node_modules/vscode-nls', 'node_modules/vscode-nls'),
+        ('node_modules/jsonc-parser', 'node_modules/jsonc-parser'),
+        ('node_modules/.bin/pyright-langserver*', 'node_modules/.bin'),
+        ('node_modules/.bin/typescript-language-server*', 'node_modules/.bin'),
+        ('node_modules/.bin/bash-language-server*', 'node_modules/.bin'),
+        ('node_modules/.bin/vscode-html-language-server*', 'node_modules/.bin'),
+        ('node_modules/.bin/vscode-css-language-server*', 'node_modules/.bin'),
+        ('node_modules/.bin/vscode-json-language-server*', 'node_modules/.bin'),
         ('.env', '.'),
     ],
     hiddenimports=[
         'winpty',          # pywinpty package imports as winpty
-        'winpty._winpty',  # C extension module
         'PyQt6.QtWebEngineWidgets',
         'PyQt6.QtWebChannel',
         'PyQt6.QtWebEngineCore',
         'PyQt6.sip',
         'src.ai.providers.deepseek_provider',
-        'src.ai.providers.together_provider',
+        'src.ai.providers.mistral_provider',      # Mistral AI support
+        'src.ai.providers.siliconflow_provider',
+        'src.core.lsp_manager',
+        'src.core.pyright_config',  # Pyright configuration management
+        'tomllib',  # For pyproject.toml parsing (Python 3.11+)
+        'tomli',    # Fallback for older Python versions
     ],
     hookspath=[],
     hooksconfig={},
@@ -72,6 +117,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='src/assets/logo/logo.ico',
 )
 
 coll = COLLECT(

@@ -8,6 +8,9 @@ from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
+
+# Suppress console windows for subprocess calls in frozen exe on Windows
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 from PyQt6.QtCore import QObject, pyqtSignal
 from src.utils.logger import get_logger
 
@@ -61,7 +64,10 @@ class GitManager(QObject):
                 ["git", "--version"],
                 capture_output=True,
                 text=True,
-                timeout=5
+                encoding='utf-8',
+                errors='replace',
+                timeout=5,
+                creationflags=_NO_WINDOW
             )
             return result.returncode == 0
         except:
@@ -106,7 +112,8 @@ class GitManager(QObject):
                 text=True,
                 timeout=timeout,
                 encoding='utf-8',
-                errors='replace'
+                errors='replace',
+                creationflags=_NO_WINDOW
             )
             return result.returncode == 0, result.stdout, result.stderr
         except subprocess.TimeoutExpired:
@@ -198,14 +205,19 @@ class GitManager(QObject):
             log.error(f"Git checkout failed: {stderr}")
         return success
         
-    def commit(self, message: str) -> bool:
-        """Commit staged changes."""
-        success, _, stderr = self._run_git(["commit", "-m", message])
+    def commit(self, message: str, amend: bool = False) -> Tuple[bool, str]:
+        """Commit staged changes. Returns (success, error_message)."""
+        args = ["commit", "-m", message]
+        if amend:
+            args.append("--amend")
+        success, stdout, stderr = self._run_git(args)
         if success:
             self.status_changed.emit()
+            return True, ""
         else:
-            log.error(f"Git commit failed: {stderr}")
-        return success
+            error_msg = stderr.strip() or stdout.strip() or "Unknown error"
+            log.error(f"Git commit failed: {error_msg}")
+            return False, error_msg
         
     def get_commits(self, count: int = 20) -> List[GitCommit]:
         """Get recent commits."""

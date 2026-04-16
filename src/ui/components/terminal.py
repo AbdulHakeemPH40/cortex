@@ -134,6 +134,7 @@ class TerminalWidget(QWidget):
             try:
                 result = subprocess.run(
                     cmd, shell=True, capture_output=True, text=True,
+                    encoding='utf-8', errors='replace',
                     cwd=self._cwd, timeout=30
                 )
                 if result.stdout:

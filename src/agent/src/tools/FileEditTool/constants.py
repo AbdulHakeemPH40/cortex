@@ -1,0 +1,45 @@
+# ------------------------------------------------------------
+# constants.py
+# Python conversion of constants.ts
+# 
+# FileEditTool constants.
+# In its own file to avoid circular dependencies.
+# ------------------------------------------------------------
+
+# ============================================================
+# TOOL CONSTANTS
+# ============================================================
+
+# Tool name constant
+FILE_EDIT_TOOL_NAME = "Edit"
+
+# ============================================================
+# PERMISSION PATTERNS
+# ============================================================
+
+# Permission pattern for granting session-level access to the project's .claude/ folder
+CLAUDE_FOLDER_PERMISSION_PATTERN = "/.claude/**"
+
+# Permission pattern for granting session-level access to the global ~/.claude/ folder
+GLOBAL_CLAUDE_FOLDER_PERMISSION_PATTERN = "~/.claude/**"
+
+# ============================================================
+# ERROR MESSAGES
+# ============================================================
+
+# Error message when file is modified during edit operation
+FILE_UNEXPECTEDLY_MODIFIED_ERROR = (
+    "File has been unexpectedly modified. "
+    "Read it again before attempting to write it."
+)
+
+# ============================================================
+# PUBLIC API EXPORTS
+# ============================================================
+
+__all__ = [
+    "FILE_EDIT_TOOL_NAME",
+    "CLAUDE_FOLDER_PERMISSION_PATTERN",
+    "GLOBAL_CLAUDE_FOLDER_PERMISSION_PATTERN",
+    "FILE_UNEXPECTEDLY_MODIFIED_ERROR",
+]

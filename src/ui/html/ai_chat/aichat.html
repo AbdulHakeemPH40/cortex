@@ -6,20 +6,98 @@
     <meta name="description" content="Cortex AI Agent IDE Chat Interface">
     <title>Cortex AI Chat</title>
     
+    <!-- THEME CONTROLLER - Must be FIRST script to ensure setTheme is always available -->
+    <script>
+    // IMMEDIATE LOG - should appear even if IIFE fails
+    console.log('[THEME] === THEME CONTROLLER SCRIPT START ===');
+    
+    (function() {
+        'use strict';
+        
+        console.log('[THEME] IIFE executing...');
+        
+        // Initialize immediately
+        window._themeChangeQueue = [];
+        window._themeControllerReady = false;
+        
+        console.log('[THEME] Queue initialized, defining setTheme...');
+        
+        // Define setTheme immediately so Python can always call it
+        window.setTheme = function(isDark) {
+            console.log('[THEME] setTheme called, isDark=' + isDark);
+            
+            if (!document.body) {
+                window._themeChangeQueue.push(isDark);
+                return;
+            }
+            
+            const body = document.body;
+            if (isDark) {
+                body.classList.remove('light-mode');
+                console.log('[THEME] Removed light-mode, classes=' + body.className);
+            } else {
+                body.classList.add('light-mode');
+                console.log('[THEME] Added light-mode, classes=' + body.className);
+            }
+            
+            try {
+                localStorage.setItem('cortex_theme', isDark ? 'dark' : 'light');
+            } catch (e) {}
+            
+            return 'success';
+        };
+        
+        // Process queue after DOM ready
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('[THEME] DOM ready');
+            while (window._themeChangeQueue.length > 0) {
+                var isDark = window._themeChangeQueue.shift();
+                window.setTheme(isDark);
+            }
+            window._themeControllerReady = true;
+            
+            // Apply saved theme
+            try {
+                var saved = localStorage.getItem('cortex_theme');
+                if (saved === 'light') {
+                    document.body.classList.add('light-mode');
+                    console.log('[THEME] Restored light mode from storage');
+                }
+            } catch (e) {}
+        });
+        
+        console.log('[THEME] Theme controller initialized');
+    })();
+    </script>
+    
     <!-- External Libraries (Local for reliability) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <!-- Cursor IDE Fonts: Geist Sans (UI), Geist Mono (Code) -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Geist+Mono:wght@400;500;600&family=Fira+Code:wght@400;500&family=JetBrains+Mono:wght@400;500&family=Outfit:wght@400;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind CSS CDN (for utility classes in new card components) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
     <script src="../../components/assets/marked.min.js"></script>
     <script src="../../components/assets/highlight.min.js"></script>
     
     <!-- Fallback highlight.js theme (Dracula) - used if CDN fails -->
     <style id="hljs-fallback-styles" disabled>
     .hljs{color:#f8f8f2;background:#282a36;display:block;overflow-x:auto;padding:0.5em}
-    .hljs-tag,.hljs-attr,.hljs-name{color:#ff79c6}
-    .hljs-keyword,.hljs-selector-tag,.hljs-built_in,.hljs-selector-id,.hljs-selector-class{color:#bd93f9}
-    .hljs-string,.hljs-symbol,.hljs-bullet,.hljs-addition{color:#50fa7b}
-    .hljs-title,.hljs-section,.hljs-meta{color:#ffb86c}
-    .hljs-deletion,.hljs-variable,.hljs-template-variable,.hljs-link,.hljs-attribute{color:#ff5555}
-    .hljs-comment,.hljs-quote,.hljs-doctag,.hljs-formula{color:#6272a4}
-    .hljs-number,.hljs-literal,.hljs-type,.hljs-params,.hljs-regexp{color:#bd93f9}
+    .hljs-tag,.hljs-name{color:#ff79c6}
+    .hljs-keyword,.hljs-selector-tag,.hljs-selector-id,.hljs-selector-class{color:#ff79c6}
+    .hljs-built_in,.hljs-type,.hljs-params{color:#8be9fd}
+    .hljs-string,.hljs-symbol,.hljs-bullet,.hljs-addition{color:#f1fa8c}
+    .hljs-title,.hljs-section,.hljs-function{color:#50fa7b;font-weight:600}
+    .hljs-meta{color:#ffb86c;font-style:italic}
+    .hljs-attr{color:#50fa7b}
+    .hljs-attribute{color:#f1fa8c}
+    .hljs-deletion{color:#ff5555}
+    .hljs-variable,.hljs-template-variable,.hljs-link{color:#f8f8f2}
+    .hljs-comment,.hljs-quote,.hljs-doctag,.hljs-formula{color:#6272a4;font-style:italic}
+    .hljs-number,.hljs-literal{color:#bd93f9}
+    .hljs-regexp{color:#ffb86c}
     .hljs-emphasis{font-style:italic}
     .hljs-strong{font-weight:bold}
     /* Code block container styling */
@@ -62,27 +140,127 @@
       };
       document.head.appendChild(hljsLink);
       
+      // Load universal syntax highlighting CSS
+      var syntaxHighlightingLink = document.createElement('link');
+      syntaxHighlightingLink.rel = 'stylesheet';
+      syntaxHighlightingLink.href = 'syntax-highlighting.css';
+      document.head.appendChild(syntaxHighlightingLink);
+      
       if (window.hljs) {
         hljs.configure({
           ignoreUnescapedHTML: true,
-          languages: ['python','javascript','typescript','bash','json','html','css','sql','cpp','java','rust','go']
+          languages: ['python','javascript','typescript','jsx','tsx','bash','json','html','xml','css','scss','sass','sql','cpp','c','java','rust','go','php','ruby','perl','lua','r','julia','matlab','swift','kotlin','scala','groovy','dart','elixir','erlang','haskell','clojure','lisp','scheme','fsharp','csharp','vbnet','powershell','cmd','batch','shell','nginx','apache','dockerfile','yaml','toml','ini','vim','lua','graphql','regex','markdown','md','django','jinja2','vue','angular','react','svelte','wasm','webassembly','diff','patch','http','graphql']
         });
+        
+        // Language alias mapping for framework files
+        window.HLJS_LANGUAGE_ALIASES = {
+          // JavaScript frameworks
+          'jsx': 'javascript', 'tsx': 'typescript', 'react': 'javascript',
+          'vue': 'javascript', 'angular': 'typescript', 'svelte': 'javascript',
+          // Python frameworks
+          'django': 'python', 'jinja2': 'python', 'jinja': 'python',
+          'flask': 'python', 'fastapi': 'python', 'tornado': 'python',
+          // Web templating
+          'erb': 'ruby', 'ejs': 'javascript', 'handlebars': 'javascript',
+          'hbs': 'javascript', 'mustache': 'javascript', 'pug': 'javascript',
+          'blade': 'php', 'twig': 'php', 'smarty': 'php',
+          // Config files
+          'yml': 'yaml', 'docker': 'dockerfile', 'dockerfile': 'dockerfile',
+          'nginx': 'nginx', 'apache': 'apache', 'httpd': 'apache',
+          'sh': 'bash', 'zsh': 'bash', 'fish': 'bash', 'ksh': 'bash',
+          'ps1': 'powershell', 'psm1': 'powershell', 'psd1': 'powershell',
+          'bat': 'cmd', 'batch': 'cmd', 'cmd': 'cmd',
+          // Markup
+          'htm': 'html', 'xhtml': 'html', 'svg': 'xml',
+          'md': 'markdown', 'mdx': 'markdown', 'markdown': 'markdown',
+          // Data
+          'json5': 'json', 'jsonc': 'json', 'geojson': 'json',
+          'yaml': 'yaml', 'yml': 'yaml',
+          // Styles
+          'scss': 'scss', 'sass': 'scss', 'less': 'less', 'stylus': 'stylus',
+          // C family
+          'h': 'c', 'hpp': 'cpp', 'cc': 'cpp', 'cxx': 'cpp', 'hxx': 'cpp',
+          // Other
+          'rs': 'rust', 'gql': 'graphql', 'graphql': 'graphql',
+          'wasm': 'wasm', 'wat': 'wasm', 'wast': 'wasm',
+          'pl': 'perl', 'pm': 'perl', 't': 'perl',
+          'rb': 'ruby', 'rbw': 'ruby', 'rake': 'ruby', 'gemspec': 'ruby',
+          'pyw': 'python', 'pyi': 'python', 'pyx': 'python',
+          'jsm': 'javascript', 'mjs': 'javascript', 'cjs': 'javascript',
+          'ts': 'typescript', 'mts': 'typescript', 'cts': 'typescript',
+          // More frameworks
+          'astro': 'javascript', 'solid': 'javascript', 'qwik': 'javascript',
+          'nuxt': 'javascript', 'next': 'javascript',
+          'express': 'javascript', 'koa': 'javascript', 'hapi': 'javascript',
+          'nestjs': 'typescript', 'loopback': 'typescript',
+          'spring': 'java', 'springboot': 'java',
+          'laravel': 'php', 'symfony': 'php', 'cakephp': 'php',
+          'rails': 'ruby', 'sinatra': 'ruby',
+          'dotnet': 'csharp', 'aspnet': 'csharp',
+          'qt': 'cpp', 'wx': 'cpp', 'gtk': 'c',
+          'electron': 'javascript', 'tauri': 'javascript',
+          'reactnative': 'javascript', 'flutter': 'dart',
+          'ionic': 'javascript', 'cordova': 'javascript',
+          'unity': 'csharp', 'unreal': 'cpp', 'godot': 'python',
+          'tensorflow': 'python', 'pytorch': 'python', 'keras': 'python',
+          'pandas': 'python', 'numpy': 'python', 'scipy': 'python',
+          'sklearn': 'python', 'matplotlib': 'python', 'seaborn': 'python',
+          'plotly': 'python', 'bokeh': 'python', 'dash': 'python'
+        };
       }
       
-      // Syntax highlighting with embedded language support for HTML
+      // Get normalized language name with alias support
+      window.getNormalizedLanguage = function(lang) {
+        if (!lang) return 'plaintext';
+        lang = lang.toLowerCase().trim();
+        
+        // Check if it's an alias
+        if (window.HLJS_LANGUAGE_ALIASES && window.HLJS_LANGUAGE_ALIASES[lang]) {
+          return window.HLJS_LANGUAGE_ALIASES[lang];
+        }
+        
+        // Check if hljs has this language
+        if (hljs.getLanguage(lang)) {
+          return lang;
+        }
+        
+        return 'plaintext';
+      };
+      
+      // Syntax highlighting with full embedded language support
       window.highlightCodeWithEmbedded = function(code, lang) {
-        // If explicitly HTML, try to detect and highlight embedded languages
-        if (lang === 'html' || lang === 'xml') {
-          // Check if code contains <style> or <script> tags
-          if (code.includes('<style') || code.includes('<script')) {
-            // Use highlight-auto to let hljs detect embedded languages
-            return hljs.highlightAuto(code).value;
+        if (!code) return '';
+        lang = (lang || 'text').toLowerCase();
+        
+        // Normalize language (handle aliases)
+        var normalizedLang = window.getNormalizedLanguage(lang);
+        
+        // For HTML, use highlightAuto which properly handles embedded CSS/JS
+        if (normalizedLang === 'html' || normalizedLang === 'xml') {
+          try {
+            return hljs.highlightAuto(code, ['html', 'css', 'javascript', 'typescript', 'json']).value;
+          } catch (e) {
+            return hljs.highlight(code, { language: 'xml' }).value;
           }
         }
         
-        // Normal highlight
+        // For template languages (Django, Jinja, Vue, etc), highlight as HTML then apply specific patterns
+        if (['django', 'jinja2', 'jinja', 'vue', 'angular', 'svelte', 'blade', 'twig', 'erb', 'ejs'].includes(normalizedLang)) {
+          try {
+            // Use auto detection with web languages priority
+            return hljs.highlightAuto(code, ['html', 'css', 'javascript', 'typescript', 'json', 'xml']).value;
+          } catch (e) {
+            return hljs.highlight(code, { language: 'xml' }).value;
+          }
+        }
+        
+        // Normal highlight with normalized language
         try {
-          return hljs.highlight(code, { language: hljs.getLanguage(lang) ? lang : 'plaintext' }).value;
+          if (hljs.getLanguage(normalizedLang)) {
+            return hljs.highlight(code, { language: normalizedLang }).value;
+          }
+          // Fallback to auto detection
+          return hljs.highlightAuto(code).value;
         } catch (e) {
           return code.replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }
@@ -93,18 +271,80 @@
       html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; }
       #app-container { height: 100%; display: flex; }
       #chat-container { height: 100%; display: flex; flex-direction: column; flex: 1; min-width: 0; }
-      #chatMessages { flex: 1; overflow-y: auto; min-height: 0; }
+      #chatMessages { 
+          flex: 1; 
+          overflow-y: auto; 
+          min-height: 0; 
+          position: relative;
+          padding: 0 16px;
+          display: flex;
+          flex-direction: column;
+          /* CRITICAL FIX: Ensure smooth scrolling and no clipping */
+          overflow-x: hidden;
+          scroll-behavior: smooth;
+      }
       
-      /* Indexing status bar */
+      #chatMessages > * {
+          overflow: visible;
+      }
+      
+      /* CRITICAL: Ensure all child messages are visible */
+      #chatMessages > .message-bubble {
+          overflow: visible !important;
+      }
+      
+      
+      /* Inline code with Cursor IDE syntax highlighting */
+      .inline-code {
+          background: #181818;  /* editor.background */
+          color: #d6d6dd;  /* editor.foreground */
+          padding: 2px 6px;
+          border-radius: 3px;
+          font-family: 'Geist Mono', 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+          font-size: 12px;  /* Editor font size - 12px */
+          border: 1px solid #2a2a2a;
+      }
+      
+      /* Cursor IDE Syntax Colors - Anysphere Dark Theme */
+      .inline-code .hljs-keyword { color: #83d6c5; }      /* Keyword - teal */
+      .inline-code .hljs-string { color: #e394dc; }        /* String - pink */
+      .inline-code .hljs-number { color: #efb080; }        /* Number - orange */
+      .inline-code .hljs-comment { color: #6d6d6d; font-style: italic; } /* Comment - gray */
+      .inline-code .hljs-function,
+      .inline-code .hljs-title { color: #efb080; }         /* Function - orange */
+      .inline-code .hljs-tag,
+      .inline-code .hljs-name { color: #87c3ff; }          /* Tag - light blue */
+      .inline-code .hljs-variable { color: #d6d6dd; }      /* Variable - primary text */
+      .inline-code .hljs-class,
+      .inline-code .hljs-type,
+      .inline-code .hljs-built_in { color: #87c3ff; }      /* Class/Type - light blue */
+      .inline-code .hljs-attr { color: #aaa0fa; }          /* Attribute - purple */
+      .inline-code .hljs-literal { color: #efb080; }       /* Literal - orange */
+      .inline-code .hljs-operator { color: #83d6c5; }      /* Operator - teal */
+      .inline-code .hljs-meta { color: #efb080; font-style: italic; } /* Meta - orange */
+      .inline-code .hljs-regexp { color: #efb080; }        /* Regex - orange */
+      
+      /* Language-specific inline code styling */
+      .inline-code-python { border-left: 2px solid #c678dd; }
+      .inline-code-javascript { border-left: 2px solid #d19a66; }
+      .inline-code-typescript { border-left: 2px solid #61afef; }
+      .inline-code-html { border-left: 2px solid #e06c75; }
+      .inline-code-css { border-left: 2px solid #61afef; }
+      .inline-code-bash { border-left: 2px solid #98c379; }
+      .inline-code-json { border-left: 2px solid #d19a66; }
+      .inline-code-sql { border-left: 2px solid #e5c07b; }
+      
+      /* Indexing status bar - Cursor theme */
       .indexing-bar {
           display: flex;
           align-items: center;
           gap: 7px;
           padding: 4px 14px;
-          background: #0c0c0c;
-          border-bottom: 1px solid #161616;
+          background: #141414;  /* sideBar.background */
+          border-bottom: 1px solid #2a2a2a;
           font-size: 11px;
-          color: #555;
+          color: #6d6d6d;  /* Muted text */
+          font-family: 'Geist Sans', 'Inter', sans-serif;
           transition: opacity 0.4s;
           flex-shrink: 0;
       }
@@ -121,6 +361,2137 @@
       @keyframes idxPulse {
           0%, 100% { opacity: 1; }
           50%       { opacity: 0.3; }
+      }
+      
+      /* AutoGen Multi-Agent Toggle - Cursor theme */
+      #autogen-toggle {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px 12px;
+          background: #141414;
+          border: 1px solid #2a2a2a;
+          border-radius: 6px;
+          color: #6d6d6d;
+          cursor: pointer;
+          transition: all 0.2s;
+          font-size: 12px;
+          font-family: 'Geist Sans', 'Inter', sans-serif;
+          margin-right: 8px;
+      }
+      
+      #autogen-toggle:hover {
+          background: #1a1a1a;
+          border-color: #228df2;
+          color: #d6d6dd;
+      }
+      
+      #autogen-toggle.active {
+          background: rgba(34, 141, 242, 0.15);
+          border-color: #228df2;
+          color: #228df2;
+      }
+      
+      #autogen-toggle .status-dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          background: #4b5563;
+          transition: background 0.3s;
+      }
+      
+      #autogen-toggle.active .status-dot {
+          background: #22c55e;
+          box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
+      }
+      
+      /* Compact AutoGen Banner inside dropdown */
+      .autogen-status-banner {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 12px;
+          margin: 4px 8px;
+          background: rgba(255, 255, 255, 0.03);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 6px;
+          font-size: 11px;
+          color: #9ca3af;
+          cursor: pointer;
+          transition: all 0.2s;
+      }
+      
+      .autogen-status-banner:hover {
+          background: rgba(255, 255, 255, 0.05);
+          border-color: rgba(255, 255, 255, 0.15);
+      }
+      
+      .autogen-status-banner.active {
+          background: rgba(34, 197, 94, 0.1);
+          border-color: rgba(34, 197, 94, 0.3);
+          color: #22c55e;
+      }
+      
+      .autogen-toggle-switch {
+          margin-left: auto;
+          width: 36px;
+          height: 20px;
+          background: rgba(255, 255, 255, 0.1);
+          border-radius: 10px;
+          position: relative;
+          cursor: pointer;
+          transition: background 0.3s;
+      }
+      
+      .autogen-status-banner.active .autogen-toggle-switch {
+          background: rgba(34, 197, 94, 0.4);
+      }
+      
+      .switch-knob {
+          width: 16px;
+          height: 16px;
+          background: #9ca3af;
+          border-radius: 50%;
+          position: absolute;
+          top: 2px;
+          left: 2px;
+          transition: all 0.3s;
+      }
+      
+      .autogen-status-banner.active .switch-knob {
+          background: #22c55e;
+          transform: translateX(16px);
+          box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
+      }
+      
+      /* Tool Summary Card Styles */
+      .tool-summary-card {
+          background: linear-gradient(135deg, rgba(30, 30, 35, 0.95), rgba(25, 25, 30, 0.95));
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 12px;
+          margin: 16px 0;
+          overflow: hidden;
+          box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+          backdrop-filter: blur(10px);
+      }
+      
+      .tool-summary-card.collapsed .summary-content {
+          display: none;
+      }
+      
+      .tool-summary-card.collapsed .summary-toggle {
+          transform: rotate(-90deg);
+      }
+      
+      .summary-header {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 14px 18px;
+          background: rgba(255, 255, 255, 0.03);
+          cursor: pointer;
+          transition: background 0.2s;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      }
+      
+      .summary-header:hover {
+          background: rgba(255, 255, 255, 0.06);
+      }
+      
+      .summary-icon {
+          font-size: 18px;
+      }
+      
+      .summary-title {
+          flex: 1;
+          font-size: 14px;
+          font-weight: 600;
+          color: #e5e7eb;
+      }
+      
+      .summary-count {
+          font-size: 12px;
+          color: #9ca3af;
+          background: rgba(255, 255, 255, 0.08);
+          padding: 3px 10px;
+          border-radius: 12px;
+      }
+      
+      .summary-toggle {
+          font-size: 12px;
+          color: #6b7280;
+          transition: transform 0.2s;
+      }
+      
+      .summary-content {
+          padding: 16px 18px;
+      }
+      
+      .summary-section {
+          margin-bottom: 16px;
+      }
+      
+      .summary-section:last-child {
+          margin-bottom: 0;
+      }
+      
+      .summary-section.error .section-header {
+          color: #ef4444;
+      }
+      
+      .section-header {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 12px;
+          font-weight: 600;
+          color: #9ca3af;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          margin-bottom: 10px;
+          padding-bottom: 8px;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      }
+      
+      .section-icon {
+          font-size: 14px;
+      }
+
+      @keyframes badgePulse {
+          0%, 100% {
+              transform: translateY(0);
+              opacity: 0.85;
+          }
+          50% {
+              transform: translateY(-1px);
+              opacity: 1;
+          }
+      }
+
+      .section-icon,
+      .item-icon,
+      .tcc-stat,
+      .tool-icon,
+      .tool-badge-icon {
+          animation: badgePulse 2.6s ease-in-out infinite;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+          .section-icon,
+          .item-icon,
+          .tcc-stat,
+          .tool-icon,
+          .tool-badge-icon {
+              animation: none;
+          }
+      }
+      
+      .section-items {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+      }
+      
+      .summary-item {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 8px 12px;
+          background: rgba(255, 255, 255, 0.03);
+          border-radius: 8px;
+          font-size: 13px;
+          transition: background 0.2s;
+      }
+      
+      .summary-item:hover {
+          background: rgba(255, 255, 255, 0.06);
+      }
+      
+      .summary-item.error {
+          background: rgba(239, 68, 68, 0.1);
+          border-left: 3px solid #ef4444;
+      }
+      
+      .item-icon {
+          font-size: 14px;
+          flex-shrink: 0;
+      }
+      
+      .item-name {
+          flex: 1;
+          color: #d1d5db;
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 12px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+      }
+      
+      .item-meta {
+          font-size: 11px;
+          color: #6b7280;
+          background: rgba(255, 255, 255, 0.05);
+          padding: 2px 8px;
+          border-radius: 4px;
+          flex-shrink: 0;
+      }
+      
+      .item-error {
+          font-size: 11px;
+          color: #fca5a5;
+          max-width: 200px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+      }
+      
+      /* CLEAN PERMISSION CARD - Windsurf Style */
+      
+      .permission-card {
+          background: #161618;
+          border: 1px solid rgba(255, 255, 255, 0.07);
+          border-radius: 8px;
+          padding: 14px;
+          margin: 10px 0;
+          animation: fadeIn 0.2s ease;
+          position: relative;
+          z-index: 10000;
+          display: block;
+          width: 100%;
+          box-sizing: border-box;
+          max-width: 100%;
+          overflow: visible;
+      }
+      
+      @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(-8px); }
+          to { opacity: 1; transform: translateY(0); }
+      }
+      
+      .permission-header {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          margin-bottom: 12px;
+      }
+      
+      .permission-icon {
+          width: 36px;
+          height: 36px;
+          border-radius: 8px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 18px;
+          flex-shrink: 0;
+      }
+      
+      .permission-icon.write {
+          background: rgba(234, 179, 8, 0.15);
+          color: #eab308;
+      }
+      
+      .permission-icon.delete {
+          background: rgba(239, 68, 68, 0.15);
+          color: #ef4444;
+      }
+      
+      .permission-icon.terminal {
+          background: rgba(168, 85, 247, 0.15);
+          color: #a855f7;
+      }
+      
+      .permission-icon.read {
+          background: rgba(34, 197, 94, 0.15);
+          color: #22c55e;
+      }
+      
+      .permission-title {
+          font-weight: 600;
+          font-size: 14px;
+          color: var(--text-primary, #f5f5f5);
+      }
+      
+      .permission-desc {
+          font-size: 12px;
+          color: var(--text-secondary, #a3a3a3);
+      }
+      
+      .permission-path {
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 12px;
+          background: var(--bg-tertiary, #242424);
+          padding: 10px 12px;
+          border-radius: 8px;
+          border: 1px solid var(--border-secondary, #333);
+          margin: 12px 0;
+          word-break: break-all;
+          color: var(--text-secondary, #a3a3a3);
+      }
+      
+      .permission-actions {
+          display: flex;
+          gap: 8px;
+          margin-top: 12px;
+      }
+      
+      .permission-btn {
+          padding: 8px 16px;
+          border-radius: 8px;
+          border: none;
+          font-size: 13px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: all 0.15s ease;
+      }
+      
+      .permission-btn.primary {
+          background: #3b82f6;
+          color: white;
+      }
+      
+      .permission-btn.primary:hover {
+          background: #2563eb;
+      }
+      
+      .permission-btn.secondary {
+          background: var(--bg-tertiary, #242424);
+          color: var(--text-primary, #f5f5f5);
+          border: 1px solid var(--border-secondary, #333);
+      }
+      
+      .permission-btn.secondary:hover {
+          background: var(--bg-hover, #2a2a2a);
+      }
+      
+      .permission-btn.success {
+          background: #22c55e;
+          color: #000;
+      }
+      
+      .permission-btn.danger {
+          background: #ef4444;
+          color: white;
+      }
+      
+      /* Legacy support for old permission-card class */
+      .permission-card.cursor-style {
+          composes: permission-card;
+      }
+      
+      .permission-backdrop {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: rgba(0, 0, 0, 0.5);
+          display: none;
+          z-index: 9999;
+      }
+      
+      .permission-card.visible ~ .permission-backdrop,
+      .permission-card-content {
+          display: block;
+      }
+      
+      .permission-card-header,
+      .permission-icon-wrapper,
+      .permission-card-body,
+      .permission-details-container,
+      .permission-tool-badge {
+          display: block;
+      }
+      
+      .permission-tool-badge {
+          color: #f59e0b;
+          text-transform: uppercase;
+          letter-spacing: 0.8px;
+      }
+      
+      .permission-card-subtitle {
+          font-size: 12px;
+          color: #6b7280;
+          font-weight: 400;
+      }
+      
+      .permission-card-body {
+          padding: 18px;
+          overflow-y: auto;
+          max-height: 60vh;
+      }
+      
+      .permission-tool-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 14px;
+          background: linear-gradient(135deg, rgba(59, 130, 246, 0.12), rgba(147, 51, 234, 0.1));
+          border: 1px solid rgba(59, 130, 246, 0.3);
+          border-radius: 10px;
+          margin-bottom: 16px;
+          font-size: 13px;
+          font-weight: 600;
+          color: #60a5fa;
+          position: relative;
+          z-index: 10001;
+      }
+      
+      .tool-badge-icon {
+          font-size: 16px;
+          filter: drop-shadow(0 0 4px rgba(59, 130, 246, 0.5));
+      }
+      
+      .permission-details-container {
+          background: rgba(0, 0, 0, 0.4);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 10px;
+          margin-bottom: 16px;
+          overflow: hidden;
+      }
+      
+      .details-label {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 10px 14px;
+          background: rgba(255, 255, 255, 0.03);
+          border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+          font-size: 11px;
+          font-weight: 600;
+          color: #9ca3af;
+          text-transform: uppercase;
+          letter-spacing: 0.6px;
+      }
+      
+      .details-label svg {
+          color: #f59e0b;
+      }
+      
+      .details-content {
+          padding: 14px;
+          font-family: 'JetBrains Mono', 'Fira Code', monospace;
+          font-size: 12px;
+          line-height: 1.6;
+          color: #d1d5db;
+          max-height: 220px;
+          overflow-y: auto;
+          white-space: pre-wrap;
+          word-break: break-word;
+      }
+      
+      .details-content::-webkit-scrollbar {
+          width: 6px;
+      }
+      
+      .details-content::-webkit-scrollbar-track {
+          background: transparent;
+      }
+      
+      .details-content::-webkit-scrollbar-thumb {
+          background: rgba(245, 158, 11, 0.3);
+          border-radius: 3px;
+      }
+      
+      .details-content::-webkit-scrollbar-thumb:hover {
+          background: rgba(245, 158, 11, 0.5);
+      }
+      
+      .permission-scope-selector {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+      }
+      
+      .scope-label {
+          font-size: 11px;
+          font-weight: 600;
+          color: #6b7280;
+          text-transform: uppercase;
+          letter-spacing: 0.6px;
+      }
+      
+      .scope-options {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 8px;
+      }
+      
+      .scope-btn {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          padding: 9px 12px;
+          background: rgba(255, 255, 255, 0.03);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 8px;
+          font-size: 12px;
+          font-weight: 500;
+          color: #9ca3af;
+          cursor: pointer;
+          transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+      
+      .scope-btn svg {
+          flex-shrink: 0;
+      }
+      
+      .scope-btn:hover {
+          background: rgba(255, 255, 255, 0.06);
+          border-color: rgba(255, 255, 255, 0.2);
+          transform: translateY(-1px);
+      }
+      
+      .scope-btn.active {
+          background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(147, 51, 234, 0.15));
+          border-color: rgba(59, 130, 246, 0.5);
+          color: #60a5fa;
+          box-shadow: 0 0 12px rgba(59, 130, 246, 0.2);
+      }
+      
+      .permission-card-footer {
+          padding: 16px 18px;
+          background: rgba(0, 0, 0, 0.3);
+          border-top: 1px solid rgba(255, 255, 255, 0.06);
+          display: flex;
+          flex-direction: column;
+          gap: 14px;
+      }
+      
+      .permission-actions-primary {
+          display: grid;
+          grid-template-columns: 1fr 1fr 1fr; /* Three columns now */
+          gap: 10px;
+      }
+      
+      .permission-btn {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          padding: 11px 18px;
+          border-radius: 9px;
+          font-size: 13px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+          border: none;
+          position: relative;
+          overflow: hidden;
+      }
+      
+      .permission-btn::before {
+          content: '';
+          position: absolute;
+          top: 0;
+          left: -100%;
+          width: 100%;
+          height: 100%;
+          background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+          transition: left 0.5s;
+      }
+      
+      .permission-btn:hover::before {
+          left: 100%;
+      }
+      
+      .permission-btn-deny {
+          background: rgba(239, 68, 68, 0.1);
+          color: #ef4444;
+          border: 1px solid rgba(239, 68, 68, 0.3);
+      }
+      
+      .permission-btn-deny:hover {
+          background: rgba(239, 68, 68, 0.18);
+          border-color: rgba(239, 68, 68, 0.5);
+          box-shadow: 0 0 16px rgba(239, 68, 68, 0.25);
+          transform: translateY(-2px);
+      }
+      
+      .permission-btn-allow {
+          background: linear-gradient(135deg, #3b82f6, #2563eb);
+          color: #fff;
+          border: 1px solid rgba(59, 130, 246, 0.5);
+          box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+      }
+      
+      .permission-btn-allow:hover {
+          background: linear-gradient(135deg, #2563eb, #1d4ed8);
+          border-color: rgba(59, 130, 246, 0.7);
+          box-shadow: 0 4px 16px rgba(59, 130, 246, 0.45);
+          transform: translateY(-2px);
+      }
+      
+      .permission-btn-always {
+          background: linear-gradient(135deg, #a855f7, #9333ea);
+          color: #fff;
+          border: 1px solid rgba(168, 85, 247, 0.5);
+          box-shadow: 0 2px 8px rgba(168, 85, 247, 0.3);
+      }
+      
+      .permission-btn-always:hover {
+          background: linear-gradient(135deg, #9333ea, #7e22ce);
+          border-color: rgba(168, 85, 247, 0.7);
+          box-shadow: 0 4px 16px rgba(168, 85, 247, 0.45);
+          transform: translateY(-2px);
+      }
+      
+      .permission-actions-secondary {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+      }
+      
+      .remember-toggle {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          cursor: pointer;
+          user-select: none;
+          padding: 8px 12px;
+          border-radius: 8px;
+          transition: background 0.2s;
+      }
+      
+      .remember-toggle:hover {
+          background: rgba(255, 255, 255, 0.05);
+      }
+      
+      .remember-toggle input {
+          display: none;
+      }
+      
+      .toggle-slider {
+          width: 46px;
+          height: 24px;
+          background: rgba(255, 255, 255, 0.08);
+          border-radius: 12px;
+          position: relative;
+          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          flex-shrink: 0;
+      }
+      
+      .toggle-slider::after {
+          content: '';
+          position: absolute;
+          top: 2px;
+          left: 2px;
+          width: 18px;
+          height: 18px;
+          background: linear-gradient(135deg, #9ca3af, #6b7280);
+          border-radius: 50%;
+          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+          box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+      }
+      
+      .remember-toggle input:checked + .toggle-slider {
+          background: linear-gradient(135deg, rgba(34, 197, 94, 0.3), rgba(34, 197, 94, 0.2));
+          border-color: rgba(34, 197, 94, 0.5);
+      }
+      
+      .remember-toggle input:checked + .toggle-slider::after {
+          transform: translateX(22px);
+          background: linear-gradient(135deg, #22c55e, #16a34a);
+          box-shadow: 0 0 12px rgba(34, 197, 94, 0.5);
+      }
+      
+      .remember-text {
+          display: flex;
+          align-items: center;
+          gap: 7px;
+          font-size: 12px;
+          color: #6b7280;
+          font-weight: 500;
+      }
+      
+      .remember-text svg {
+          opacity: 0.7;
+      }
+      
+      .permission-card.answered {
+          opacity: 0.5;
+          pointer-events: none;
+          filter: grayscale(0.4);
+      }
+      
+      @keyframes permissionSlideIn {
+          from {
+              opacity: 0;
+              transform: translateY(12px) scale(0.97);
+          }
+          to {
+              opacity: 1;
+              transform: translateY(0) scale(1);
+          }
+      }
+      
+      /* Responsive adjustments */
+      @media (max-width: 600px) {
+          .permission-card {
+              width: calc(100% - 20px);
+              margin: 12px auto;
+          }
+          
+          .permission-card-header {
+              padding: 14px 16px;
+          }
+          
+          .permission-card-body {
+              padding: 16px;
+          }
+          
+          .permission-card-footer {
+              padding: 14px 16px;
+          }
+          
+          .scope-options {
+              /* Keep scope buttons in ROW - responsive sizing */
+              grid-template-columns: 1fr 1fr 1fr;
+              gap: 6px;
+          }
+          
+          .scope-btn {
+              padding: 8px 10px;
+              font-size: 11px;
+          }
+          
+          /* Keep permission buttons in ROW - responsive sizing */
+          .permission-actions-primary {
+              grid-template-columns: 1fr 1fr 1fr;
+              gap: 6px;
+          }
+          
+          .permission-btn {
+              padding: 8px 10px;
+              font-size: 11px;
+          }
+      }
+      
+      /* Always Allow Toggle Button */
+      .toolbar-btn {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px 12px;
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 8px;
+          color: #9ca3af;
+          font-size: 12px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: all 0.2s;
+          margin-left: 8px;
+      }
+      
+      .toolbar-btn:hover {
+          background: rgba(255, 255, 255, 0.08);
+          border-color: rgba(255, 255, 255, 0.2);
+      }
+      
+      .toolbar-btn.active {
+          background: rgba(34, 197, 94, 0.15);
+          border-color: rgba(34, 197, 94, 0.4);
+          color: #22c55e;
+      }
+      
+      .toolbar-btn.active svg {
+          stroke: #22c55e;
+      }
+      
+      /* CLEAN PERMISSION CARD - Windsurf Style */
+      
+      .terminal-inline {
+          background: var(--bg-secondary, #1a1a1a);
+          border: 1px solid var(--border-primary, #2a2a2a);
+          border-radius: 12px;
+          margin: 12px 0;
+          overflow: hidden;
+      }
+      
+      .terminal-inline-header {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 10px 14px;
+          background: var(--bg-tertiary, #242424);
+          border-bottom: 1px solid var(--border-primary, #2a2a2a);
+      }
+      
+      .terminal-inline-icon {
+          font-size: 12px;
+      }
+      
+      .terminal-inline-title {
+          font-size: 12px;
+          font-weight: 500;
+          flex: 1;
+          color: var(--text-primary, #f5f5f5);
+      }
+      
+      .terminal-inline-status {
+          font-size: 11px;
+          color: var(--accent-green, #22c55e);
+      }
+      
+      .terminal-inline-content {
+          padding: 12px 14px;
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 12px;
+          line-height: 1.6;
+          max-height: 150px;
+          overflow-y: auto;
+          color: var(--text-secondary, #a3a3a3);
+      }
+      
+      .terminal-line {
+          margin-bottom: 2px;
+          white-space: pre-wrap;
+      }
+      
+      .terminal-prompt {
+          color: var(--accent-green, #22c55e);
+      }
+      
+      .terminal-output {
+          color: var(--text-secondary, #a3a3a3);
+      }
+      
+      /* CLEAN PERMISSION CARD - Windsurf Style */
+      
+      /* ================================================
+         MESSAGE BUBBLES - Clean Separation
+         User = right bubble, AI = full width
+         ================================================ */
+      
+      /* User messages - right-aligned bubble container */
+      .message-bubble.user {
+          background: transparent !important;
+          max-width: 85% !important;
+          width: auto !important;
+          align-self: flex-end !important;
+          margin-left: auto !important;
+          margin-right: 16px !important;
+          padding: 8px 0 !important;
+          display: flex !important;
+          justify-content: flex-end !important;
+          overflow: visible !important;
+      }
+      
+      /* User message content - single bubble with proper padding */
+      .message-bubble.user .message-content {
+          background: var(--bg-elevated, #2A2A2A) !important;
+          border: 1px solid var(--border-light, #3D3D3D) !important;
+          border-radius: 18px 18px 4px 18px !important;
+          padding: 14px 18px !important;
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2) !important;
+          max-width: 100% !important;
+          width: auto !important;
+          display: block !important;
+          flex: none !important;
+          min-width: auto !important;
+          overflow: visible !important;
+          word-wrap: break-word !important;
+          overflow-wrap: break-word !important;
+          white-space: pre-wrap !important;
+          text-align: left !important;
+      }
+      
+      /* AI messages - full width, left-aligned, no bubble */
+      .message-bubble.assistant {
+          background: transparent !important;
+          border: none !important;
+          border-radius: 0 !important;
+          padding: 12px 16px !important;
+          margin: 8px 0 !important;
+          width: 100% !important;
+          max-width: 100% !important;
+          box-sizing: border-box !important;
+          display: block !important;
+          text-align: left !important;
+      }
+      
+      /* AI message content - transparent, full width */
+      .message-bubble.assistant .message-content {
+          background: transparent !important;
+          border: none !important;
+          box-shadow: none !important;
+          padding: 0 !important;
+          margin: 0 !important;
+          max-width: 100% !important;
+          width: 100% !important;
+          display: block !important;
+      }
+      
+      .message-avatar {
+          width: 32px;
+          height: 32px;
+          border-radius: 8px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 14px;
+          flex-shrink: 0;
+      }
+      
+      .message-avatar.user {
+          background: var(--bg-tertiary, #242424);
+      }
+      
+      .message-avatar.ai {
+          background: linear-gradient(135deg, var(--accent-blue, #3b82f6), var(--accent-purple, #a855f7));
+      }
+      
+      .message-content {
+          flex: 1;
+          min-width: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+      }
+      
+      .message-header {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 12px;
+          color: var(--text-secondary, #a3a3a3);
+      }
+      
+      .message.user .message-header {
+          flex-direction: row-reverse;
+      }
+      
+      .message-author {
+          font-weight: 500;
+      }
+      
+      .message-time {
+          font-size: 11px;
+          opacity: 0.7;
+      }
+      
+      .message-bubble {
+          padding: 16px 20px;
+          font-size: 14px;
+          line-height: 1.7;
+          width: 100%;
+          max-width: 100%;
+          box-sizing: border-box;
+          display: flex;
+          flex-direction: column;
+          margin: 8px 0;
+      }
+      
+      @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(8px); }
+          to { opacity: 1; transform: translateY(0); }
+      }
+      
+      /* --- AI Thinking Animation (Clean minimal) --- */
+      .thinking-message {
+          display: flex;
+          align-items: center;
+          gap: 14px;
+          padding: 14px 16px;
+          margin: 10px 0;
+          background: #161618;
+          border: 1px solid rgba(255, 255, 255, 0.07);
+          border-radius: 8px;
+          animation: fadeIn 0.2s ease;
+      }
+      
+      /* Pulsing Orb Animation */
+      .thinking-orb {
+          position: relative;
+          width: 28px;
+          height: 28px;
+          flex-shrink: 0;
+      }
+      
+      .thinking-orb-core {
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          width: 10px;
+          height: 10px;
+          background: var(--accent-blue, #3b82f6);
+          border-radius: 50%;
+          animation: orbPulse 1.5s ease-in-out infinite;
+      }
+      
+      .thinking-orb-ring {
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          width: 100%;
+          height: 100%;
+          border: 1.5px solid var(--accent-blue, #3b82f6);
+          border-radius: 50%;
+          opacity: 0.3;
+          animation: orbRipple 2s ease-out infinite;
+      }
+      
+      .thinking-orb-ring:nth-child(2) {
+          animation-delay: 0.5s;
+      }
+      
+      @keyframes orbPulse {
+          0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+          50% { transform: translate(-50%, -50%) scale(0.8); opacity: 0.6; }
+      }
+      
+      @keyframes orbRipple {
+          0% { transform: translate(-50%, -50%) scale(0.5); opacity: 0.8; }
+          100% { transform: translate(-50%, -50%) scale(1.5); opacity: 0; }
+      }
+      
+      /* Thinking Content */
+      .thinking-content {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+      }
+      
+      .thinking-title {
+          font-weight: 500;
+          font-size: 13px;
+          letter-spacing: -0.1px;
+          color: #d0d0d8;
+          animation: silverWaveThink 1.8s ease-in-out infinite;
+      }
+      
+      @keyframes silverWaveThink {
+          0%   { opacity: 0.5; color: #909098; }
+          25%  { opacity: 0.85; color: #c8c8d0; }
+          50%  { opacity: 1; color: #f0f0f4; }
+          75%  { opacity: 0.85; color: #c8c8d0; }
+          100% { opacity: 0.5; color: #909098; }
+      }
+      
+      .thinking-subtitle {
+          font-size: 11.5px;
+          color: #8a8a92;
+          animation: silverWaveThink 2.2s ease-in-out infinite;
+          animation-delay: 0.3s;
+      }
+      
+      @keyframes textPulse {
+          0%, 100% { opacity: 0.6; }
+          50% { opacity: 1; }
+      }
+      
+      .thinking-status {
+          font-size: 11px;
+          color: var(--text-muted, #737373) !important;
+          margin-top: 4px;
+      }
+      
+      /* Timer with pulse animation */
+      .thinking-timer {
+          font-size: 12px;
+          font-weight: 500;
+          color: var(--text-dim, #666);
+          font-variant-numeric: tabular-nums;
+          min-width: 30px;
+          text-align: right;
+          opacity: 0.6;
+      }
+      
+      @keyframes timerPulse {
+          0%, 100% { opacity: 0.7; transform: scale(1); }
+          50% { opacity: 1; transform: scale(1.05); }
+      }
+      
+      /* --- Action Button Container (prevents flickering) --- */
+      .action-btn-container {
+          position: relative;
+          width: 36px;
+          height: 32px;
+          flex-shrink: 0;
+          z-index: 10;
+      }
+      
+      .action-btn-container .primary-btn,
+      .action-btn-container .stop-btn {
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          margin: 0;
+          padding: 0 !important;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+      }
+      
+      /* When hidden, ensure display:none works */
+      .action-btn-container .primary-btn[style*="none"],
+      .action-btn-container .stop-btn[style*="none"] {
+          display: none !important;
+      }
+      
+      /* --- Stop Button (Cursor/Windsurf style) --- */
+      .stop-btn {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 32px;
+          height: 32px;
+          background: linear-gradient(135deg, rgba(239, 68, 68, 0.15), rgba(220, 38, 38, 0.1));
+          border: 1.5px solid rgba(239, 68, 68, 0.5);
+          border-radius: 8px;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          animation: stopBtnPulse 1.5s ease-in-out infinite;
+          position: relative;
+          overflow: hidden;
+      }
+      
+      .stop-btn::before {
+          content: '';
+          position: absolute;
+          inset: 0;
+          background: radial-gradient(circle at center, rgba(239, 68, 68, 0.3), transparent 70%);
+          opacity: 0;
+          transition: opacity 0.3s ease;
+      }
+      
+      .stop-btn:hover {
+          background: linear-gradient(135deg, rgba(239, 68, 68, 0.25), rgba(220, 38, 38, 0.2));
+          border-color: rgba(239, 68, 68, 0.8);
+          transform: scale(1.05);
+          box-shadow: 0 0 16px rgba(239, 68, 68, 0.4);
+      }
+      
+      .stop-btn:hover::before {
+          opacity: 1;
+      }
+      
+      .stop-btn:active {
+          transform: scale(0.95);
+      }
+      
+      .stop-btn svg {
+          width: 14px;
+          height: 14px;
+          color: #ef4444;
+          position: relative;
+          z-index: 1;
+          transition: all 0.2s ease;
+      }
+      
+      .stop-btn:hover svg {
+          color: #f87171;
+          transform: scale(1.1);
+      }
+      
+      @keyframes stopBtnPulse {
+          0%, 100% { 
+              box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+              border-color: rgba(239, 68, 68, 0.5);
+          }
+          50% { 
+              box-shadow: 0 0 0 4px rgba(239, 68, 68, 0);
+              border-color: rgba(239, 68, 68, 0.8);
+          }
+      }
+      
+      .code-completion-popup {
+          position: absolute;
+          background: rgba(17, 17, 17, 0.98);
+          border: 1px solid rgba(59, 130, 246, 0.3);
+          border-radius: 12px;
+          box-shadow: 
+              0 8px 32px rgba(0, 0, 0, 0.6),
+              0 0 20px rgba(59, 130, 246, 0.15);
+          z-index: 1000;
+          max-height: 300px;
+          min-width: 280px;
+          max-width: 500px;
+          overflow: hidden;
+          display: none;
+          animation: completionSlideIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+          font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      }
+      
+      .code-completion-popup.visible {
+          display: block;
+      }
+      
+      @keyframes completionSlideIn {
+          from {
+              opacity: 0;
+              transform: translateY(8px) scale(0.98);
+          }
+          to {
+              opacity: 1;
+              transform: translateY(0) scale(1);
+          }
+      }
+      
+      .completion-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 10px 14px;
+          background: linear-gradient(90deg, rgba(59, 130, 246, 0.1), transparent);
+          border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      }
+      
+      .completion-title {
+          font-size: 11px;
+          font-weight: 600;
+          color: #60a5fa;
+          text-transform: uppercase;
+          letter-spacing: 0.6px;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+      }
+      
+      .completion-counter {
+          font-size: 10px;
+          color: #6b7280;
+          background: rgba(255, 255, 255, 0.05);
+          padding: 2px 8px;
+          border-radius: 10px;
+      }
+      
+      .completion-list {
+          max-height: 240px;
+          overflow-y: auto;
+          padding: 6px;
+      }
+      
+      
+      .completion-item {
+          display: flex;
+          align-items: flex-start;
+          gap: 10px;
+          padding: 10px 12px;
+          border-radius: 8px;
+          cursor: pointer;
+          transition: all 0.15s ease;
+          margin-bottom: 4px;
+          border: 1px solid transparent;
+      }
+      
+      .completion-item:last-child {
+          margin-bottom: 0;
+      }
+      
+      .completion-item:hover,
+      .completion-item.selected {
+          background: rgba(59, 130, 246, 0.15);
+          border-color: rgba(59, 130, 246, 0.3);
+      }
+      
+      .completion-item.selected {
+          box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+      }
+      
+      .completion-icon {
+          width: 28px;
+          height: 28px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: rgba(255, 255, 255, 0.05);
+          border-radius: 6px;
+          font-size: 14px;
+          flex-shrink: 0;
+      }
+      
+      .completion-item.pattern .completion-icon {
+          background: rgba(34, 197, 94, 0.1);
+          color: #22c55e;
+      }
+      
+      .completion-item.ai .completion-icon {
+          background: rgba(168, 85, 247, 0.1);
+          color: #a855f7;
+      }
+      
+      .completion-item.syntax .completion-icon {
+          background: rgba(239, 68, 68, 0.1);
+          color: #ef4444;
+      }
+      
+      .completion-item.template .completion-icon {
+          background: rgba(245, 158, 11, 0.1);
+          color: #f59e0b;
+      }
+      
+      .completion-content {
+          flex: 1;
+          min-width: 0;
+      }
+      
+      .completion-label {
+          font-size: 13px;
+          font-weight: 500;
+          color: #e5e7eb;
+          margin-bottom: 3px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+      }
+      
+      .completion-description {
+          font-size: 11px;
+          color: #6b7280;
+          line-height: 1.4;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+      }
+      
+      .completion-confidence {
+          font-size: 10px;
+          color: #22c55e;
+          font-weight: 500;
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          flex-shrink: 0;
+      }
+      
+      .completion-confidence.low {
+          color: #f59e0b;
+      }
+      
+      .completion-preview {
+          margin-top: 8px;
+          padding: 10px 12px;
+          background: rgba(0, 0, 0, 0.4);
+          border-radius: 8px;
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          font-family: 'JetBrains Mono', 'Fira Code', monospace;
+          font-size: 11px;
+          line-height: 1.5;
+          color: #9ca3af;
+          max-height: 120px;
+          overflow-y: auto;
+          white-space: pre-wrap;
+          word-break: break-word;
+      }
+      
+      .completion-preview::-webkit-scrollbar {
+          width: 4px;
+      }
+      
+      .completion-preview::-webkit-scrollbar-thumb {
+          background: rgba(59, 130, 246, 0.3);
+          border-radius: 2px;
+      }
+      
+      .completion-actions {
+          display: flex;
+          gap: 8px;
+          padding: 10px 14px;
+          background: rgba(0, 0, 0, 0.3);
+          border-top: 1px solid rgba(255, 255, 255, 0.06);
+      }
+      
+      .completion-btn {
+          flex: 1;
+          padding: 8px 14px;
+          border: none;
+          border-radius: 6px;
+          font-size: 12px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: all 0.2s;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+      }
+      
+      .completion-btn-accept {
+          background: linear-gradient(135deg, #3b82f6, #2563eb);
+          color: white;
+      }
+      
+      .completion-btn-accept:hover {
+          background: linear-gradient(135deg, #2563eb, #1d4ed8);
+          transform: translateY(-1px);
+      }
+      
+      .completion-btn-dismiss {
+          background: rgba(255, 255, 255, 0.05);
+          color: #9ca3af;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      
+      .completion-btn-dismiss:hover {
+          background: rgba(255, 255, 255, 0.08);
+          color: #d1d5db;
+      }
+      
+      .completion-shortcuts {
+          font-size: 10px;
+          color: #6b7280;
+          padding: 6px 14px;
+          background: rgba(0, 0, 0, 0.2);
+          border-top: 1px solid rgba(255, 255, 255, 0.04);
+          display: flex;
+          gap: 12px;
+          justify-content: center;
+      }
+      
+      .completion-shortcut {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+      }
+      
+      .completion-shortcut kbd {
+          background: rgba(255, 255, 255, 0.1);
+          padding: 2px 6px;
+          border-radius: 4px;
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 9px;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      
+      /* Code Completion Card (for inline display) */
+      .code-completion-card {
+          background: linear-gradient(135deg, rgba(30, 30, 35, 0.95), rgba(25, 25, 30, 0.95));
+          border: 1px solid rgba(59, 130, 246, 0.2);
+          border-radius: 12px;
+          margin: 12px 0;
+          overflow: hidden;
+          box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+          backdrop-filter: blur(10px);
+          animation: cardSlideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      
+      @keyframes cardSlideIn {
+          from {
+              opacity: 0;
+              transform: translateY(8px);
+          }
+          to {
+              opacity: 1;
+              transform: translateY(0);
+          }
+      }
+      
+      .completion-card-header {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 12px 16px;
+          background: rgba(59, 130, 246, 0.08);
+          border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      }
+      
+      .completion-card-icon {
+          width: 32px;
+          height: 32px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(147, 51, 234, 0.15));
+          border-radius: 8px;
+          font-size: 16px;
+      }
+      
+      .completion-card-title {
+          font-size: 14px;
+          font-weight: 600;
+          color: #e5e7eb;
+          flex: 1;
+      }
+      
+      .completion-card-badge {
+          font-size: 10px;
+          padding: 3px 10px;
+          background: rgba(34, 197, 94, 0.15);
+          color: #22c55e;
+          border-radius: 10px;
+          font-weight: 500;
+      }
+      
+      .completion-card-body {
+          padding: 16px;
+      }
+      
+      .completion-diff {
+          background: rgba(0, 0, 0, 0.4);
+          border-radius: 8px;
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          overflow: hidden;
+          margin-bottom: 12px;
+      }
+      
+      .completion-diff-header {
+          display: flex;
+          align-items: center;
+          padding: 8px 12px;
+          background: rgba(255, 255, 255, 0.03);
+          border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+          font-size: 11px;
+          color: #9ca3af;
+          gap: 8px;
+      }
+      
+      .diff-added {
+          background: rgba(34, 197, 94, 0.1);
+          color: #22c55e;
+          padding: 2px 8px;
+          border-radius: 4px;
+          font-size: 10px;
+          font-weight: 500;
+      }
+      
+      .diff-removed {
+          background: rgba(239, 68, 68, 0.1);
+          color: #ef4444;
+          padding: 2px 8px;
+          border-radius: 4px;
+          font-size: 10px;
+          font-weight: 500;
+      }
+      
+      .item-diff-link {
+          font-size: 11px;
+          color: #3b82f6;
+          cursor: pointer;
+          padding: 2px 6px;
+          border-radius: 4px;
+          margin-left: 4px;
+          transition: background 0.2s;
+      }
+      
+      .item-diff-link:hover {
+          background: rgba(59, 130, 246, 0.15);
+          text-decoration: underline;
+      }
+      
+      .completion-diff-content {
+          padding: 12px;
+          font-family: 'JetBrains Mono', 'Fira Code', monospace;
+          font-size: 12px;
+          line-height: 1.6;
+          max-height: 200px;
+          overflow-y: auto;
+      }
+      
+      .diff-line {
+          display: flex;
+          gap: 8px;
+          padding: 2px 0;
+      }
+      
+      .diff-line-num {
+          color: #4b5563;
+          min-width: 24px;
+          text-align: right;
+          font-size: 11px;
+      }
+      
+      .diff-line.added {
+          background: rgba(34, 197, 94, 0.1);
+          color: #4ade80;
+      }
+      
+      .diff-line.removed {
+          background: rgba(239, 68, 68, 0.1);
+          color: #f87171;
+      }
+      
+      /* CLEAN PERMISSION CARD - Windsurf Style */
+      
+      .inline-diff-container {
+          background: rgba(17, 17, 17, 0.95);
+          border: 1px solid rgba(59, 130, 246, 0.2);
+          border-radius: 12px;
+          margin: 16px 0;
+          overflow: hidden;
+          box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+      }
+      
+      .inline-diff-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 12px 16px;
+          background: linear-gradient(90deg, rgba(59, 130, 246, 0.1), transparent);
+          border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      }
+      
+      .inline-diff-title {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          font-size: 13px;
+          font-weight: 600;
+          color: #e5e7eb;
+      }
+      
+      .inline-diff-title .file-icon {
+          width: 28px;
+          height: 28px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: rgba(59, 130, 246, 0.15);
+          border-radius: 6px;
+          font-size: 14px;
+      }
+      
+      .inline-diff-stats {
+          display: flex;
+          gap: 12px;
+          font-size: 11px;
+      }
+      
+      .inline-diff-stat {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          padding: 4px 10px;
+          background: rgba(255, 255, 255, 0.05);
+          border-radius: 6px;
+      }
+      
+      .inline-diff-stat.added {
+          color: #22c55e;
+          background: rgba(34, 197, 94, 0.1);
+      }
+      
+      .inline-diff-stat.removed {
+          color: #ef4444;
+          background: rgba(239, 68, 68, 0.1);
+      }
+      
+      .inline-diff-content {
+          max-height: 400px;
+          overflow-y: auto;
+          font-family: 'JetBrains Mono', 'Fira Code', monospace;
+          font-size: 12px;
+          line-height: 1.6;
+      }
+      
+      .inline-diff-content::-webkit-scrollbar {
+          width: 8px;
+      }
+      
+      .inline-diff-content::-webkit-scrollbar-track {
+          background: rgba(0, 0, 0, 0.2);
+      }
+      
+      .inline-diff-content::-webkit-scrollbar-thumb {
+          background: rgba(59, 130, 246, 0.3);
+          border-radius: 4px;
+      }
+      
+      .diff-hunk-header {
+          display: flex;
+          align-items: center;
+          padding: 8px 16px;
+          background: rgba(255, 255, 255, 0.03);
+          border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+          font-size: 11px;
+          color: #6b7280;
+          cursor: pointer;
+          user-select: none;
+      }
+      
+      .diff-hunk-header:hover {
+          background: rgba(255, 255, 255, 0.05);
+      }
+      
+      .diff-hunk-header.collapsed::before {
+          content: '>';
+          margin-right: 8px;
+      }
+      
+      .diff-hunk-header:not(.collapsed)::before {
+          content: 'v';
+          margin-right: 8px;
+      }
+      
+      .diff-row {
+          display: flex;
+          align-items: stretch;
+          min-height: 24px;
+      }
+      
+      .diff-row:hover {
+          background: rgba(255, 255, 255, 0.02);
+      }
+      
+      .diff-line-numbers {
+          display: flex;
+          background: rgba(0, 0, 0, 0.3);
+          border-right: 1px solid rgba(255, 255, 255, 0.05);
+          user-select: none;
+      }
+      
+      .diff-line-num {
+          width: 50px;
+          padding: 2px 8px;
+          text-align: right;
+          color: #4b5563;
+          font-size: 11px;
+          border-right: 1px solid rgba(255, 255, 255, 0.03);
+      }
+      
+      .diff-line-num:last-child {
+          border-right: none;
+      }
+      
+      .diff-line-content {
+          flex: 1;
+          display: flex;
+          align-items: center;
+          padding: 2px 12px;
+          white-space: pre;
+          overflow-x: auto;
+      }
+      
+      .diff-line-prefix {
+          width: 20px;
+          text-align: center;
+          font-weight: 600;
+          margin-right: 8px;
+      }
+      
+      .diff-row.added {
+          background: rgba(34, 197, 94, 0.08);
+      }
+      
+      .diff-row.added .diff-line-prefix {
+          color: #22c55e;
+      }
+      
+      .diff-row.removed {
+          background: rgba(239, 68, 68, 0.08);
+      }
+      
+      .diff-row.removed .diff-line-prefix {
+          color: #ef4444;
+      }
+      
+      .diff-row.added .diff-line-num.new {
+          color: #22c55e;
+          background: rgba(34, 197, 94, 0.1);
+      }
+      
+      .diff-row.removed .diff-line-num.old {
+          color: #ef4444;
+          background: rgba(239, 68, 68, 0.1);
+      }
+      
+      .diff-line-actions {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          padding: 0 8px;
+          opacity: 0;
+          transition: opacity 0.2s;
+      }
+      
+      .diff-row:hover .diff-line-actions {
+          opacity: 1;
+      }
+      
+      .diff-line-btn {
+          width: 24px;
+          height: 24px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: transparent;
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
+          font-size: 12px;
+          transition: all 0.2s;
+      }
+      
+      .diff-line-btn.accept {
+          color: #22c55e;
+      }
+      
+      .diff-line-btn.accept:hover {
+          background: rgba(34, 197, 94, 0.15);
+      }
+      
+      .diff-line-btn.reject {
+          color: #ef4444;
+      }
+      
+      .diff-line-btn.reject:hover {
+          background: rgba(239, 68, 68, 0.15);
+      }
+      
+      .diff-line-btn.comment {
+          color: #6b7280;
+      }
+      
+      .diff-line-btn.comment:hover {
+          background: rgba(255, 255, 255, 0.1);
+          color: #e5e7eb;
+      }
+      
+      /* Semantic change badges */
+      .semantic-badges {
+          display: flex;
+          gap: 6px;
+          padding: 8px 16px;
+          background: rgba(0, 0, 0, 0.2);
+          border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+          flex-wrap: wrap;
+      }
+      
+      .semantic-badge {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          padding: 3px 10px;
+          border-radius: 12px;
+          font-size: 10px;
+          font-weight: 500;
+          text-transform: uppercase;
+          letter-spacing: 0.3px;
+      }
+      
+      .semantic-badge.bug_fix {
+          background: rgba(239, 68, 68, 0.15);
+          color: #f87171;
+          border: 1px solid rgba(239, 68, 68, 0.2);
+      }
+      
+      .semantic-badge.feature_add {
+          background: rgba(34, 197, 94, 0.15);
+          color: #4ade80;
+          border: 1px solid rgba(34, 197, 94, 0.2);
+      }
+      
+      .semantic-badge.refactor {
+          background: rgba(245, 158, 11, 0.15);
+          color: #fbbf24;
+          border: 1px solid rgba(245, 158, 11, 0.2);
+      }
+      
+      .semantic-badge.optimization {
+          background: rgba(168, 85, 247, 0.15);
+          color: #c084fc;
+          border: 1px solid rgba(168, 85, 247, 0.2);
+      }
+      
+      .semantic-badge.security {
+          background: rgba(59, 130, 246, 0.15);
+          color: #60a5fa;
+          border: 1px solid rgba(59, 130, 246, 0.2);
+      }
+      
+      .semantic-badge.test {
+          background: rgba(107, 114, 128, 0.15);
+          color: #9ca3af;
+          border: 1px solid rgba(107, 114, 128, 0.2);
+      }
+      
+      /* Diff footer with actions */
+      .inline-diff-footer {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 12px 16px;
+          background: rgba(0, 0, 0, 0.3);
+          border-top: 1px solid rgba(255, 255, 255, 0.05);
+      }
+      
+      .inline-diff-actions {
+          display: flex;
+          gap: 8px;
+      }
+      
+      .inline-diff-btn {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 8px 14px;
+          border: none;
+          border-radius: 6px;
+          font-size: 12px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: all 0.2s;
+      }
+      
+      .inline-diff-btn.accept-all {
+          background: linear-gradient(135deg, #22c55e, #16a34a);
+          color: white;
+      }
+      
+      .inline-diff-btn.accept-all:hover {
+          background: linear-gradient(135deg, #16a34a, #15803d);
+          transform: translateY(-1px);
+      }
+      
+      .inline-diff-btn.reject-all {
+          background: rgba(255, 255, 255, 0.05);
+          color: #ef4444;
+          border: 1px solid rgba(239, 68, 68, 0.3);
+      }
+      
+      .inline-diff-btn.reject-all:hover {
+          background: rgba(239, 68, 68, 0.1);
+      }
+      
+      .inline-diff-btn.view-full {
+          background: rgba(59, 130, 246, 0.15);
+          color: #60a5fa;
+          border: 1px solid rgba(59, 130, 246, 0.3);
+      }
+      
+      .inline-diff-btn.view-full:hover {
+          background: rgba(59, 130, 246, 0.25);
+      }
+      
+      .inline-diff-confidence {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          font-size: 11px;
+          color: #6b7280;
+      }
+      
+      .confidence-bar {
+          width: 60px;
+          height: 4px;
+          background: rgba(255, 255, 255, 0.1);
+          border-radius: 2px;
+          overflow: hidden;
+      }
+      
+      .confidence-fill {
+          height: 100%;
+          border-radius: 2px;
+          transition: width 0.3s;
+      }
+      
+      .confidence-fill.high {
+          background: linear-gradient(90deg, #22c55e, #4ade80);
+      }
+      
+      .confidence-fill.medium {
+          background: linear-gradient(90deg, #f59e0b, #fbbf24);
+      }
+      
+      .confidence-fill.low {
+          background: linear-gradient(90deg, #ef4444, #f87171);
+      }
+      
+      .completion-explanation {
+          font-size: 12px;
+          color: #9ca3af;
+          line-height: 1.6;
+          padding: 10px 12px;
+          background: rgba(255, 255, 255, 0.03);
+          border-radius: 6px;
+          margin-bottom: 12px;
+      }
+      
+      .completion-card-footer {
+          display: flex;
+          gap: 10px;
+          padding: 12px 16px;
+          background: rgba(0, 0, 0, 0.2);
+          border-top: 1px solid rgba(255, 255, 255, 0.05);
+      }
+      
+      /* Real-time completion indicator */
+      .completion-indicator {
+          position: absolute;
+          right: 12px;
+          top: 50%;
+          transform: translateY(-50%);
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 4px 10px;
+          background: rgba(59, 130, 246, 0.1);
+          border: 1px solid rgba(59, 130, 246, 0.2);
+          border-radius: 6px;
+          font-size: 11px;
+          color: #60a5fa;
+          opacity: 0;
+          transition: opacity 0.2s;
+          pointer-events: none;
+          z-index: 100;
+      }
+      
+      .completion-indicator.visible {
+          opacity: 1;
+      }
+      
+      .completion-indicator-icon {
+          width: 14px;
+          height: 14px;
+          animation: pulse 1.5s infinite;
+      }
+      
+      @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.5; }
+      }
+      
+      /* Keyboard shortcut hint */
+      .kbd-hint {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          font-size: 10px;
+          color: #6b7280;
+          background: rgba(255, 255, 255, 0.05);
+          padding: 3px 8px;
+          border-radius: 4px;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      
+      .kbd-hint kbd {
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 9px;
+          background: rgba(255, 255, 255, 0.1);
+          padding: 1px 4px;
+          border-radius: 3px;
+      }
+      
+      /* Loading state for completion */
+      .completion-loading {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          padding: 20px;
+          color: #6b7280;
+          font-size: 12px;
+      }
+      
+      .completion-loading-spinner {
+          width: 16px;
+          height: 16px;
+          border: 2px solid rgba(59, 130, 246, 0.3);
+          border-top-color: #3b82f6;
+          border-radius: 50%;
+          animation: spin 0.8s linear infinite;
+      }
+      
+      @keyframes spin {
+          to { transform: rotate(360deg); }
       }
     </style>
     
@@ -192,19 +2563,18 @@
                 document.body.classList.add('loaded');
             };
             
-            // CRITICAL: Define trySetProjectInfo IMMEDIATELY for Python to call
+                        // CRITICAL: Define trySetProjectInfo IMMEDIATELY for Python to call
             window._pendingProjectInfo = null;
+            window._pendingProjectInfoWithChats = null;
             window.trySetProjectInfo = function(name, path, retryCount) {
                 retryCount = retryCount || 0;
                 console.log('[CHAT] trySetProjectInfo called (attempt', retryCount + 1, '):', name, path);
-                
                 if (retryCount > 10) {
                     console.error('[CHAT] setProjectInfo failed after', retryCount, 'attempts');
                     return;
                 }
-                
                 if (window.setProjectInfo) {
-                    console.log('[CHAT] ✅ Calling setProjectInfo now');
+                    console.log('[CHAT] ? Calling setProjectInfo now');
                     window.setProjectInfo(name, path);
                 } else {
                     console.log('[CHAT] setProjectInfo not ready, retrying in 300ms...');
@@ -213,11 +2583,102 @@
                     }, 300);
                 }
             };
-            console.log('[CHAT] ✅ window.trySetProjectInfo defined at page load');
+            // CRITICAL: Define trySetProjectInfoWithChats IMMEDIATELY for Python to call
+            var _lastProjectInfoPath = null;
+            var _lastProjectInfoTime = 0;
+            window.trySetProjectInfoWithChats = function(name, path, chatsJson, retryCount) {
+                retryCount = retryCount || 0;
+                
+                // Dedup guard: skip if same project was set within last 2 seconds
+                var now = Date.now();
+                if (path === _lastProjectInfoPath && (now - _lastProjectInfoTime) < 2000 && retryCount === 0) {
+                    console.log('[CHAT] Skipping duplicate setProjectInfoWithChats for:', path);
+                    return;
+                }
+                if (retryCount === 0) {
+                    _lastProjectInfoPath = path;
+                    _lastProjectInfoTime = now;
+                }
+                
+                console.log('[CHAT] trySetProjectInfoWithChats called (attempt', retryCount + 1, '):', name, path);
+                if (retryCount > 5) {
+                    console.error('[CHAT] setProjectInfoWithChats failed after', retryCount, 'attempts');
+                    window._pendingProjectInfoWithChats = { name: name, path: path, chatsJson: chatsJson };
+                    if (window.onPendingProjectInfoWithChats) window.onPendingProjectInfoWithChats();
+                    return;
+                }
+                if (window.setProjectInfoWithChats) {
+                    console.log('[CHAT] Calling setProjectInfoWithChats now');
+                    window.setProjectInfoWithChats(name, path, chatsJson);
+                    window._pendingProjectInfoWithChats = null;
+                } else {
+                    window._pendingProjectInfoWithChats = { name: name, path: path, chatsJson: chatsJson };
+                    if (window.onPendingProjectInfoWithChats) window.onPendingProjectInfoWithChats();
+                    console.log('[CHAT] setProjectInfoWithChats not ready, retrying in 300ms...');
+                    setTimeout(function() {
+                        window.trySetProjectInfoWithChats(name, path, chatsJson, retryCount + 1);
+                    }, 300);
+                }
+            };
+            console.log('[CHAT] ? window.trySetProjectInfo defined at page load');
         })();
     </script>
 </head>
 <body class="dark">
+    <!-- Code Completion Popup -->
+    <div id="code-completion-popup" class="code-completion-popup" role="dialog" aria-label="Code Completion Suggestions">
+        <div class="completion-header">
+            <span class="completion-title">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                Code Completion
+            </span>
+            <span class="completion-counter" id="completion-counter">0 suggestions</span>
+        </div>
+        <div class="completion-list" id="completion-list">
+            <!-- Completion items will be inserted here -->
+        </div>
+        <div class="completion-preview" id="completion-preview" style="display: none;">
+            <!-- Preview of selected completion -->
+        </div>
+        <div class="completion-actions" id="completion-actions" style="display: none;">
+            <button class="completion-btn completion-btn-accept" id="completion-accept">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                Accept
+            </button>
+            <button class="completion-btn completion-btn-dismiss" id="completion-dismiss">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+                Dismiss
+            </button>
+        </div>
+        <div class="completion-shortcuts">
+            <span class="completion-shortcut">
+                <kbd>Up</kbd><kbd>Down</kbd> Navigate
+            </span>
+            <span class="completion-shortcut">
+                <kbd>Enter</kbd> Accept
+            </span>
+            <span class="completion-shortcut">
+                <kbd>Esc</kbd> Close
+            </span>
+        </div>
+    </div>
+    
+    <!-- Completion Indicator (for real-time completion) -->
+    <div id="completion-indicator" class="completion-indicator">
+        <svg class="completion-indicator-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <polyline points="12 6 12 12 16 14"></polyline>
+        </svg>
+        <span>Analyzing code...</span>
+    </div>
+    
     <!-- Loading Indicator -->
     <div id="loading-overlay" aria-hidden="true">
         <div class="loading-spinner"></div>
@@ -292,6 +2753,69 @@
                   </div>
                   <span class="thinking-label">Cortex is working...</span>
                 </div>
+                
+                <!-- Agent Mode Indicator (Think/Read/Explore/Surf/Dive/Search/Grep/Find) - Dynamic -->
+                <div id="agent-mode-indicator" style="display:none;">
+                    <div class="agent-mode-container">
+                        <div class="mode-indicator" data-mode="think" title="Thinking">
+                            <svg class="mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M12 2a3 3 0 0 0-3 3v14a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
+                                <path d="M12 11v6"></path>
+                                <path d="M9 8h6"></path>
+                            </svg>
+                            <span>Think</span>
+                        </div>
+                        <div class="mode-indicator" data-mode="read" title="Reading">
+                            <svg class="mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path>
+                                <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path>
+                            </svg>
+                            <span>Read</span>
+                        </div>
+                        <div class="mode-indicator" data-mode="search" title="Searching">
+                            <svg class="mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <path d="m21 21-4.35-4.35"></path>
+                            </svg>
+                            <span>Search</span>
+                        </div>
+                        <div class="mode-indicator" data-mode="grep" title="Grepping">
+                            <svg class="mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                            </svg>
+                            <span>Grep</span>
+                        </div>
+                        <div class="mode-indicator" data-mode="find" title="Finding">
+                            <svg class="mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                                <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                            </svg>
+                            <span>Find</span>
+                        </div>
+                        <div class="mode-indicator" data-mode="explore" title="Exploring">
+                            <svg class="mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <path d="M2 12h20"></path>
+                            </svg>
+                            <span>Explore</span>
+                        </div>
+                        <div class="mode-indicator" data-mode="surf" title="Surfing">
+                            <svg class="mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="2" y1="12" x2="22" y2="12"></line>
+                                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+                            </svg>
+                            <span>Surf</span>
+                        </div>
+                        <div class="mode-indicator" data-mode="dive" title="Diving">
+                            <svg class="mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1-7.94-7.94l3.77 3.77a1 1 0 0 0 1.4 0l1.6-1.6a1 1 0 0 0 0-1.4l-5-5a1 1 0 0 0-1.4 0l-1.6 1.6a1 1 0 0 0 0 1.4l5 5z"></path>
+                            </svg>
+                            <span>Dive</span>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- Todo Section (above input, Qoder style) -->
@@ -308,7 +2832,7 @@
                         <span class="todo-count" id="todo-progress-count">0/0</span>
                     </div>
                 </div>
-                <div class="todo-body" id="todo-body" style="display:none;">
+                <div class="todo-body" id="todo-body">
                     <div class="todo-list" id="todo-list"></div>
                 </div>
             </div>
@@ -334,7 +2858,7 @@
                         </div>
                     </div>
                 </div>
-                <div class="cfs-body" id="cfs-body" style="display:none;">
+                <div class="cfs-body" id="cfs-body">
                     <div class="cfs-list" id="cfs-list"></div>
                 </div>
             </div>
@@ -360,11 +2884,13 @@
             <!-- Context Bar (shows active context like @mentions) -->
             <div id="context-bar" class="context-bar" style="display: none;">
                 <div class="context-items"></div>
-                <button class="context-clear" title="Clear context">×</button>
+                <button class="context-clear" title="Clear context">X</button>
             </div>
             
             <!-- Input Area -->
             <div id="input-area" role="form" aria-label="Message input">
+                            <!-- Terminal notification bar (shown when 'View in terminal' is clicked) -->
+                            <div id="terminal-notify" style="display:none;"></div>
                 <!-- @ Mention Dropdown -->
                 <div id="mention-dropdown" class="mention-dropdown" style="display:none;" role="listbox" aria-label="File suggestions">
                   <div class="mention-header">Add file context</div>
@@ -405,45 +2931,209 @@
                                     </div>
                                 </div>
                             </div>
+                            
+                            <!-- Always Allow Toggle -->
+                            <button id="always-allow-toggle" class="toolbar-btn" title="Always allow tool execution">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                                    <path d="M9 12l2 2 4-4"/>
+                                </svg>
+                                <span>Auto</span>
+                            </button>
                         </div>
 
                         <div class="toolbar-right">
                             <!-- Model Selector -->
                             <div class="custom-dropdown" id="model-selector">
                                 <button class="dropdown-trigger" title="Select AI Model">
-                                    <span id="selected-model">DeepSeek V3</span>
+                                    <span id="selected-model">Detecting Model...</span>
                                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"></polyline></svg>
                                 </button>
                                 <div class="dropdown-menu model-dropdown-menu">
-                                    <div class="dropdown-header">DeepSeek</div>
-                                    <div class="dropdown-item active" data-value="deepseek-chat" data-provider="deepseek" data-perf="8.0" data-cost="$0.27/1M">
+                                    <!-- AutoGen Status Banner -->
+                                    <div class="autogen-status-banner" id="autogen-banner" title="Multi-Agent Mode Status">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                                            <circle cx="9" cy="7" r="4"></circle>
+                                            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                                            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                                        </svg>
+                                        <span id="autogen-banner-text">Multi-Agent: OFF</span>
+                                        <div class="autogen-toggle-switch" id="autogen-toggle-switch" title="Click to toggle">
+                                            <div class="switch-knob"></div>
+                                        </div>
+                                    </div>
+                                    
+                                    
+                                    <div class="dropdown-divider"></div>
+                                    
+                                    <!-- DeepSeek - Direct API Access -->
+                                    <div class="dropdown-header">DeepSeek Models (Direct API)</div>
+                                    
+                                    <div class="dropdown-item" data-value="deepseek-chat" data-provider="deepseek" data-perf="9.5">
                                         <div class="item-icon deepseek-icon">
                                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
                                         </div>
                                         <div class="item-text">
-                                            <span>DeepSeek V3 <span class="model-tag active-tag">
-                                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                                                Active
-                                            </span></span>
+                                            <span>DeepSeek Chat</span>
                                         </div>
-                                        <span class="model-cost">$0.27/1M</span>
+                                    </div>
+                                    
+                                    <div class="dropdown-item" data-value="deepseek-coder" data-provider="deepseek" data-perf="9.3">
+                                        <div class="item-icon deepseek-icon">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>DeepSeek Coder</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="dropdown-item" data-value="deepseek-reasoner" data-provider="deepseek" data-perf="9.7">
+                                        <div class="item-icon deepseek-icon">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>DeepSeek R1 (Reasoner)</span>
+                                        </div>
                                     </div>
                                     
                                     <div class="dropdown-divider"></div>
-                                    <div class="dropdown-header">DeepSeek</div>
-                                    <div class="dropdown-item" data-value="deepseek-chat" data-provider="deepseek" data-perf="1.2" data-cost="$0.27/1M">
-                                        <div class="item-icon deepseek-icon">
+                                    
+                                    <!-- Mistral Models -->
+                                    <div class="dropdown-header">Mistral Models</div>
+                                    
+                                    <div class="dropdown-item" data-value="mistral-large-latest" data-provider="mistral" data-perf="9.0">
+                                        <div class="item-icon" style="color: #ff7043;">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>Mistral Large</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="dropdown-item" data-value="mistral-medium-latest" data-provider="mistral" data-perf="8.5">
+                                        <div class="item-icon" style="color: #ff7043;">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>Mistral Medium</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="dropdown-item" data-value="mistral-small-latest" data-provider="mistral" data-perf="7.5">
+                                        <div class="item-icon" style="color: #ff7043;">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>Mistral Small</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="dropdown-item" data-value="codestral-latest" data-provider="mistral" data-perf="8.8">
+                                        <div class="item-icon" style="color: #ff7043;">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>Codestral (Code)</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="dropdown-divider"></div>
+                                    
+                                    <!-- OpenAI Models -->
+                                    <div class="dropdown-header">OpenAI Models</div>
+                                    
+                                    <!-- Coding Models -->
+                                    <div class="dropdown-item" data-value="gpt-5.1-codex-mini" data-provider="openai_responses" data-perf="9.5">
+                                        <div class="item-icon" style="background: #10a37f; color: white;">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>GPT-5.1 Codex Mini <span class="model-tag recommended-tag">Coding</span></span>
+                                            <span class="model-cost">$0.15/$0.60</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="dropdown-item" data-value="gpt-4.1-mini" data-provider="openai" data-perf="9.0">
+                                        <div class="item-icon" style="background: #10a37f; color: white;">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>GPT-4.1 Mini <span class="model-tag recommended-tag">Best Value</span></span>
+                                            <span class="model-cost">$0.40/$1.60</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="dropdown-item" data-value="gpt-4.1-nano" data-provider="openai" data-perf="8.0">
+                                        <div class="item-icon" style="background: #10a37f; color: white;">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>GPT-4.1 Nano <span class="model-tag">Economy</span></span>
+                                            <span class="model-cost">$0.10/$0.40</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Frontier Models -->
+                                    <div class="dropdown-item" data-value="gpt-5.4" data-provider="openai" data-perf="9.8">
+                                        <div class="item-icon" style="background: #10a37f; color: white;">
                                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
                                         </div>
                                         <div class="item-text">
-                                            <span>DeepSeek V3</span>
+                                            <span>GPT-5.4 <span class="model-tag active-tag">Premium</span></span>
+                                            <span class="model-cost">$2.50/$15.00</span>
                                         </div>
-                                        <span class="model-cost">$0.27/1M</span>
                                     </div>
+                                    
+                                    <div class="dropdown-item" data-value="gpt-5.4-mini" data-provider="openai" data-perf="9.4">
+                                        <div class="item-icon" style="background: #10a37f; color: white;">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>GPT-5.4 Mini</span>
+                                            <span class="model-cost">$0.75/$4.50</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- GPT-4o Series -->
+                                    <div class="dropdown-item" data-value="gpt-4o" data-provider="openai" data-perf="9.2">
+                                        <div class="item-icon" style="background: #10a37f; color: white;">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>GPT-4o <span class="model-tag">Vision</span></span>
+                                            <span class="model-cost">$2.50/$10.00</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="dropdown-item" data-value="gpt-4o-mini" data-provider="openai" data-perf="8.5">
+                                        <div class="item-icon" style="background: #10a37f; color: white;">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>GPT-4o Mini</span>
+                                            <span class="model-cost">$0.15/$0.60</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Reasoning Models -->
+                                    <div class="dropdown-item" data-value="o3" data-provider="openai" data-perf="9.6">
+                                        <div class="item-icon" style="background: #7c3aed; color: white;">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>o3 <span class="model-tag active-tag">Reasoning</span></span>
+                                            <span class="model-cost">$2.00/$8.00</span>
+                                        </div>
+                                    </div>
+                                    
+
+                                    
+
                                     
                                     <div class="dropdown-divider"></div>
                                     <div class="dropdown-footer">
-                                        Cost per 1M tokens • API key required
+                                        API key required in Settings
                                     </div>
                                 </div>
                             </div>
@@ -461,12 +3151,14 @@
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
                             </button>
                             
-                            <button id="sendBtn" class="primary-btn" title="Send Message">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
-                            </button>
-                            <button id="stopBtn" class="stop-btn" title="Stop" style="display: none;">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect></svg>
-                            </button>
+                            <div class="action-btn-container">
+                                <button id="sendBtn" class="primary-btn" title="Send Message">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                                </button>
+                                <button id="stopBtn" class="stop-btn" title="Stop Generation" style="display: none;">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -478,7 +3170,7 @@
     <div id="debug-console" style="display:none; position:fixed; bottom:0; left:0; right:0; height:200px; background:#1a1a1a; border-top:2px solid #333; z-index:10000; font-family:monospace; font-size:11px;">
         <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 10px; background:#252525; border-bottom:1px solid #333;">
             <span style="color:#888;">Debug Console</span>
-            <button onclick="document.getElementById('debug-console').style.display='none'" style="background:none; border:none; color:#888; cursor:pointer;">×</button>
+            <button onclick="document.getElementById('debug-console').style.display='none'" style="background:none; border:none; color:#888; cursor:pointer;">X</button>
         </div>
         <div id="debug-console-content" style="padding:10px; overflow-y:auto; height:calc(100% - 35px); color:#aaa;"></div>
     </div>
@@ -518,7 +3210,462 @@
             });
         })();
     </script>
+    
+    <!-- ========== PROFESSIONAL PERMISSION CARD (Cursor/Qoder Style) ========== -->
+    <template id="permission-card-template">
+        <div class="permission-card cursor-style">
+            <div class="permission-backdrop"></div>
+            <div class="permission-card-content">
+                <div class="permission-card-header">
+                    <div class="permission-icon-wrapper">
+                        <svg class="permission-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                        </svg>
+                    </div>
+                    <div class="permission-header-text">
+                        <span class="permission-card-title">Permission Required</span>
+                        <span class="permission-card-subtitle">AI agent requests access</span>
+                    </div>
+                </div>
+                
+                <div class="permission-card-body">
+                    <div class="permission-tool-badge">
+                        <span class="tool-badge-icon">TOOL</span>
+                        <span class="tool-badge-name"></span>
+                    </div>
+                    
+                    <div class="permission-details-container">
+                        <div class="details-label">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="12" y1="16" x2="12" y2="12"></line>
+                                <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                            </svg>
+                            <span>Action Details</span>
+                        </div>
+                        <div class="details-content"></div>
+                    </div>
+                    
+                    <div class="permission-scope-selector">
+                        <span class="scope-label">Scope:</span>
+                        <div class="scope-options">
+                            <button class="scope-btn scope-btn-session active" data-scope="session" title="This session only">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                    <circle cx="12" cy="12" r="10"></circle>
+                                    <polyline points="12 6 12 12 16 14"></polyline>
+                                </svg>
+                                Session
+                            </button>
+                            <button class="scope-btn scope-btn-workspace" data-scope="workspace" title="This workspace">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+                                    <polyline points="9 22 9 12 15 12 15 22"></polyline>
+                                </svg>
+                                Workspace
+                            </button>
+                            <button class="scope-btn scope-btn-global" data-scope="global" title="All workspaces">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                    <circle cx="12" cy="12" r="10"></circle>
+                                    <line x1="2" y1="12" x2="22" y2="12"></line>
+                                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+                                </svg>
+                                Global
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="permission-card-footer">
+                    <div class="permission-actions-primary">
+                        <button class="permission-btn permission-btn-deny">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                <line x1="18" y1="6" x2="6" y2="18"></line>
+                                <line x1="6" y1="6" x2="18" y2="18"></line>
+                            </svg>
+                            Deny
+                        </button>
+                        <button class="permission-btn permission-btn-allow">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                <polyline points="20 6 9 17 4 12"></polyline>
+                            </svg>
+                            Allow
+                        </button>
+                        <button class="permission-btn permission-btn-always">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                <path d="M12 2v20M2 12h20"></path>
+                                <circle cx="12" cy="12" r="10" opacity="0.3"></circle>
+                            </svg>
+                            Always
+                        </button>
+                    </div>
+                    <div class="permission-actions-secondary">
+                        <label class="remember-toggle">
+                            <input type="checkbox" class="permission-remember-checkbox" id="permission-remember-check">
+                            <span class="toggle-slider"></span>
+                            <span class="remember-text">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                                    <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                                    <polyline points="7 3 7 8 15 8"></polyline>
+                                </svg>
+                                Remember my choice
+                            </span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </template>
+    
+    <!-- Code Completion Card Template -->
+    <template id="code-completion-card-template">
+        <div class="code-completion-card">
+            <div class="completion-card-header">
+                <div class="completion-card-icon">AUTO</div>
+                <span class="completion-card-title">Code Completion Available</span>
+                <span class="completion-card-badge" id="completion-confidence-badge">90% confidence</span>
+            </div>
+            
+            <div class="completion-card-body">
+                <div class="completion-explanation" id="completion-explanation">
+                    Detected incomplete code that can be auto-completed.
+                </div>
+                
+                <div class="completion-diff">
+                    <div class="completion-diff-header">
+                        <span class="diff-removed">Original</span>
+                        <span style="color: #4b5563;">-></span>
+                        <span class="diff-added">Completed</span>
+                    </div>
+                    <div class="completion-diff-content" id="completion-diff-content">
+                        <!-- Diff lines will be inserted here -->
+                    </div>
+                </div>
+            </div>
+            
+            <div class="completion-card-footer">
+                <button class="completion-btn completion-btn-accept" id="card-accept-completion">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                    Apply Completion
+                </button>
+                <button class="completion-btn completion-btn-dismiss" id="card-dismiss-completion">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                    Dismiss
+                </button>
+            </div>
+        </div>
+    </template>
+    
+    <!-- AGENT MODE CONTROLLER - Dynamic Mode Switching -->
+    <script>
+    /**
+     * Agent Mode Controller
+     * Manages Think/Read/Explore/Surf/Dive modes with animations
+     */
+    (function() {
+        'use strict';
+        
+        const MODES = ['think', 'read', 'search', 'grep', 'find', 'explore', 'surf', 'dive'];
+        let currentMode = null;
+        let completedModes = [];
+        
+        /**
+         * Show the mode indicator
+         */
+        window.showAgentMode = function() {
+            const indicator = document.getElementById('agent-mode-indicator');
+            if (indicator) {
+                indicator.style.display = 'block';
+                indicator.classList.add('fade-in');
+            }
+        };
+        
+        /**
+         * Hide the mode indicator
+         */
+        window.hideAgentMode = function() {
+            const indicator = document.getElementById('agent-mode-indicator');
+            if (indicator) {
+                indicator.style.display = 'none';
+            }
+            // Reset all modes
+            currentMode = null;
+            completedModes = [];
+            updateModeDisplay();
+        };
+        
+        /**
+         * Set the current active mode
+         * @param {string} mode - One of: think, read, explore, surf, dive
+         */
+        window.setAgentMode = function(mode) {
+            if (!MODES.includes(mode)) {
+                console.warn('[AgentMode] Invalid mode:', mode);
+                return;
+            }
+            
+            // Mark previous modes as completed
+            const modeIndex = MODES.indexOf(mode);
+            completedModes = MODES.slice(0, modeIndex);
+            currentMode = mode;
+            
+            updateModeDisplay();
+            
+            console.log('[AgentMode] Mode changed to:', mode);
+        };
+        
+        /**
+         * Update the visual display of modes
+         */
+        function updateModeDisplay() {
+            const indicators = document.querySelectorAll('.mode-indicator');
+            
+            indicators.forEach(el => {
+                const mode = el.getAttribute('data-mode');
+                
+                // Reset classes
+                el.classList.remove('active', 'completed');
+                
+                if (mode === currentMode) {
+                    el.classList.add('active');
+                } else if (completedModes.includes(mode)) {
+                    el.classList.add('completed');
+                }
+            });
+        }
+        
+        /**
+         * Progress to next mode automatically
+         */
+        window.progressAgentMode = function() {
+            const currentIndex = MODES.indexOf(currentMode);
+            const nextIndex = currentIndex + 1;
+            
+            if (nextIndex < MODES.length) {
+                window.setAgentMode(MODES[nextIndex]);
+            }
+        };
+        
+        /**
+         * Use-case based mode triggers
+         */
+        window.triggerThinkMode = function() {
+            window.showAgentMode();
+            window.setAgentMode('think');
+        };
+        
+        window.triggerReadMode = function() {
+            window.showAgentMode();
+            window.setAgentMode('read');
+        };
+        
+        window.triggerExploreMode = function() {
+            window.showAgentMode();
+            window.setAgentMode('explore');
+        };
+        
+        window.triggerSurfMode = function() {
+            window.showAgentMode();
+            window.setAgentMode('surf');
+        };
+        
+        window.triggerDiveMode = function() {
+            window.showAgentMode();
+            window.setAgentMode('dive');
+        };
+        
+        window.triggerSearchMode = function() {
+            window.showAgentMode();
+            window.setAgentMode('search');
+        };
+        
+        window.triggerGrepMode = function() {
+            window.showAgentMode();
+            window.setAgentMode('grep');
+        };
+        
+        window.triggerFindMode = function() {
+            window.showAgentMode();
+            window.setAgentMode('find');
+        };
+        
+        /**
+         * Trigger mode based on agent activity type
+         * @param {string} activityType - Activity type (thinking, reading, searching, writing, analyzing)
+         */
+        window.triggerModeByActivity = function(activityType) {
+            const activityMap = {
+                'thinking': 'think',
+                'planning': 'think',
+                'reasoning': 'think',
+                'reading': 'read',
+                'file_read': 'read',
+                'searching': 'search',
+                'grep': 'grep',
+                'find': 'find',
+                'browsing': 'surf',
+                'writing': 'dive',
+                'editing': 'dive',
+                'analyzing': 'explore',
+                'debugging': 'dive'
+            };
+            
+            const mode = activityMap[activityType] || 'think';
+            window.showAgentMode();
+            window.setAgentMode(mode);
+        };
+        
+        console.log('[AgentMode] Controller initialized');
+    })();
+    </script>
+    
+    <!-- TOOL OPERATION CARDS - Dynamic Create/Edit/Delete -->
+    <script>
+    /**
+     * Tool Operation Card Controller
+     * Manages dynamic cards for create/edit/delete/read/terminal operations
+     */
+    (function() {
+        'use strict';
+        
+        const activeCards = new Map();
+        
+        /**
+         * Show a tool operation card
+         * @param {string} operationId - Unique ID for this operation
+         * @param {string} type - Type: 'create', 'edit', 'delete', 'read', 'terminal'
+         * @param {string} fileName - Name of the file being operated on
+         * @param {string} status - Status: 'pending', 'running', 'completed', 'failed'
+         */
+        window.showToolOperation = function(operationId, type, fileName, status = 'pending') {
+            // Remove existing card with same ID if present
+            if (activeCards.has(operationId)) {
+                removeToolCard(operationId);
+            }
+            
+            const card = createToolCard(operationId, type, fileName, status);
+            const chatContainer = document.querySelector('.chat-messages') || document.querySelector('#chat-container');
+            
+            if (chatContainer) {
+                chatContainer.appendChild(card);
+                activeCards.set(operationId, card);
+                
+                // Auto-scroll to show new card
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+            }
+            
+            console.log('[ToolCard] Showed:', operationId, type, fileName);
+        };
+        
+        /**
+         * Update the status of an existing tool operation card
+         * @param {string} operationId - The operation ID
+         * @param {string} newStatus - New status: 'running', 'completed', 'failed'
+         */
+        window.updateToolOperation = function(operationId, newStatus) {
+            const card = activeCards.get(operationId);
+            if (!card) {
+                console.warn('[ToolCard] Card not found:', operationId);
+                return;
+            }
+            
+            const statusEl = card.querySelector('.tool-operation-status');
+            if (statusEl) {
+                statusEl.className = 'tool-operation-status ' + newStatus;
+                statusEl.textContent = newStatus;
+            }
+            
+            // Remove completed cards after delay
+            if (newStatus === 'completed' || newStatus === 'failed') {
+                setTimeout(() => {
+                    removeToolCard(operationId);
+                }, 3000);
+            }
+            
+            console.log('[ToolCard] Updated:', operationId, newStatus);
+        };
+        
+        /**
+         * Create a tool operation card element
+         */
+        function createToolCard(operationId, type, fileName, status) {
+            const card = document.createElement('div');
+            card.className = 'tool-operation-card ' + type;
+            card.id = 'tool-op-' + operationId;
+            
+            const icons = {
+                create: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>',
+                edit: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>',
+                delete: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>',
+                read: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>',
+                terminal: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>'
+            };
+            
+            const titles = {
+                create: 'Creating file',
+                edit: 'Editing file',
+                delete: 'Deleting file',
+                read: 'Reading file',
+                terminal: 'Running command'
+            };
+            
+            card.innerHTML = `
+                <div class="tool-operation-icon">${icons[type] || icons.read}</div>
+                <div class="tool-operation-content">
+                    <div class="tool-operation-title">${titles[type] || 'Operation'}</div>
+                    <div class="tool-operation-file">${fileName}</div>
+                </div>
+                <div class="tool-operation-status ${status}">${status}</div>
+            `;
+            
+            return card;
+        }
+        
+        /**
+         * Remove a tool operation card with animation
+         */
+        function removeToolCard(operationId) {
+            const card = activeCards.get(operationId);
+            if (card) {
+                card.classList.add('removing');
+                setTimeout(() => {
+                    if (card.parentNode) {
+                        card.parentNode.removeChild(card);
+                    }
+                    activeCards.delete(operationId);
+                }, 300);
+            }
+        }
+        
+        /**
+         * Clear all tool operation cards
+         */
+        window.clearToolOperations = function() {
+            activeCards.forEach((card, id) => {
+                removeToolCard(id);
+            });
+        };
+        
+        console.log('[ToolCard] Controller initialized');
+    })();
+    </script>
+    
     <script src="script.js"></script>
 
 </body>
 </html>
+
+
+
+
+
+
+
+
+

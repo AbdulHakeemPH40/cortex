@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+ <head>
+  <meta charset="utf-8"/>
+  <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+  <title>
+   Simple Snake Game
+  </title>
+  <link href="style.css" rel="stylesheet"/>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet"/>
+ </head>
+ <body>
+  <div class="container">
+   <header>
+    <h1>
+     <i class="fas fa-gamepad">
+     </i>
+     Snake Game
+    </h1>
+    <p class="subtitle">
+     Eat the food, grow longer, avoid collisions!
+    </p>
+   </header>
+   <div class="game-area">
+    <div class="game-info">
+     <div class="score-board">
+      <div class="score-item">
+       <span class="score-label">
+        Score:
+       </span>
+       <span class="score-value" id="score">
+        0
+       </span>
+      </div>
+      <div class="score-item">
+       <span class="score-label">
+        High Score:
+       </span>
+       <span class="score-value" id="high-score">
+        0
+       </span>
+      </div>
+      <div class="score-item">
+       <span class="score-label">
+        Speed:
+       </span>
+       <span class="score-value" id="speed">
+        Normal
+       </span>
+      </div>
+     </div>
+     <div class="controls">
+      <button class="btn btn-primary" id="start-btn">
+       <i class="fas fa-play">
+       </i>
+       Start Game
+      </button>
+      <button class="btn btn-secondary" id="pause-btn">
+       <i class="fas fa-pause">
+       </i>
+       Pause
+      </button>
+      <button class="btn btn-danger" id="reset-btn">
+       <i class="fas fa-redo">
+       </i>
+       Reset
+      </button>
+     </div>
+     <div class="instructions">
+      <h3>
+       <i class="fas fa-info-circle">
+       </i>
+       How to Play
+      </h3>
+      <ul>
+       <li>
+        Use
+        <kbd>
+         Arrow Keys
+        </kbd>
+        or
+        <kbd>
+         WASD
+        </kbd>
+        to control the snake
+       </li>
+       <li>
+        Eat the
+        <span class="food-sample">
+        </span>
+        food to grow and earn points
+       </li>
+       <li>
+        Avoid hitting walls or yourself
+       </li>
+       <li>
+        Press
+        <kbd>
+         Space
+        </kbd>
+        to pause/resume
+       </li>
+       <li>
+        On mobile: Use touch controls below the game
+       </li>
+      </ul>
+     </div>
+    </div>
+    <div class="game-container">
+     <canvas height="400" id="game-canvas" width="600">
+     </canvas>
+     <div class="game-over" id="game-over">
+      <h2>
+       Game Over!
+      </h2>
+      <p>
+       Your Score:
+       <span id="final-score">
+        0
+       </span>
+      </p>
+      <button class="btn btn-primary" id="restart-btn">
+       <i class="fas fa-redo">
+       </i>
+       Play Again
+      </button>
+     </div>
+    </div>
+   </div>
+   <!-- Mobile Touch Controls -->
+   <div class="touch-controls">
+    <div class="touch-row">
+     <button class="touch-btn" id="touch-up">
+      <i class="fas fa-arrow-up">
+      </i>
+     </button>
+    </div>
+    <div class="touch-row">
+     <button class="touch-btn" id="touch-left">
+      <i class="fas fa-arrow-left">
+      </i>
+     </button>
+     <button class="touch-btn" id="touch-down">
+      <i class="fas fa-arrow-down">
+      </i>
+     </button>
+     <button class="touch-btn" id="touch-right">
+      <i class="fas fa-arrow-right">
+      </i>
+     </button>
+    </div>
+   </div>
+   <footer>
+    <p>
+     Created with
+     <i class="fas fa-heart">
+     </i>
+     using HTML, CSS &amp; JavaScript
+    </p>
+   </footer>
+  </div>
+  <script src="script.js">
+  </script>
+ </body>
+</html>
