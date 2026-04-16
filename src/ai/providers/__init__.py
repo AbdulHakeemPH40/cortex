@@ -433,11 +433,18 @@ class ProviderRegistry:
             
             def chat_stream(self, messages, model, temperature=0.7, max_tokens=2000, tools=None, retry_callback=None, **kwargs):
                 """Stream chat completion"""
+                # Convert ChatMessage objects → plain dicts for JSON serialization.
+                # DeepSeek and Mistral do this; without it the requests.post(json=...)
+                # call fails to serialize dataclass instances, and tool_call_id fields
+                # are silently lost on multi-turn tool-result messages.
+                formatted_messages = self._format_messages_for_provider(messages)
                 return self._provider.chat_stream(
-                    messages=messages,
+                    messages=formatted_messages,
                     model=model,
                     max_tokens=max_tokens,
-                    tools=tools
+                    tools=tools,
+                    retry_callback=retry_callback,
+                    **kwargs
                 )
             
             def validate_api_key(self) -> bool:
