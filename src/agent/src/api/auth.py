@@ -66,7 +66,6 @@ class APIKeyManager:
             "anthropic": "ANTHROPIC_API_KEY",
             "openai": "OPENAI_API_KEY",
             "groq": "GROQ_API_KEY",
-            "deepseek": "DEEPSEEK_API_KEY",
             "mistral": "MISTRAL_API_KEY",
             "siliconflow": "SILICONFLOW_API_KEY",
         }

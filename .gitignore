@@ -47,5 +47,4 @@ vscode-main/
 node_modules/
 claude-code/
 Docs/
-
-# cortex_setup.iss
+cortex_setup.iss

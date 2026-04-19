@@ -10,10 +10,26 @@ from pathlib import Path
 
 DEFAULT_SETTINGS = {
     "theme": "dark",
+    
+    # AI-First UI Mode Settings
+    "ui_mode": "ai_first",  # "ai_first" | "traditional"
+    "layout": {
+        "split_ratio": 0.4,  # Left panel (AI Chat) width ratio
+        "show_sidebar": False,  # Hide traditional sidebar by default
+        "editor_default_readonly": True,  # Editor starts in read-only preview mode
+        "show_terminal_by_default": False,  # Terminal hidden by default
+    },
+    "ai_command": {
+        "show_conversation_history": True,
+        "quick_actions_enabled": True,
+        "auto_preview_code": True,  # Automatically show AI-generated code in preview
+        "confirm_before_edit": True,  # Confirm before applying AI edits
+    },
+    
     "editor": {
         "font_family": "JetBrains Mono",  # Cursor uses Berkeley/Geist Mono, fallback to JetBrains
         "font_stack": '"Berkeley Mono", "Geist Mono", "JetBrains Mono", "Consolas", monospace',
-        "font_size": 12,  # Editor font size (Cursor recommends 16px)
+        "font_size": 14,  # Increased for better readability in preview mode
         "tab_size": 4,
         "word_wrap": False,
         "line_numbers": True,
@@ -29,10 +45,10 @@ DEFAULT_SETTINGS = {
         "code_font_size": 13,  # Terminal and inline code - 13px
     },
     "ai": {
-        "model": "deepseek-chat",
+        "model": "mistral-large-latest",
         "temperature": 0.7,
         "max_tokens": 4096,
-        "provider": "deepseek",  # openai | anthropic | deepseek | mock
+        "provider": "mistral",  # mistral is the only provider
         "auto_verify": True,
         "test_command": "",
         "max_verify_retries": 2,
@@ -57,6 +73,10 @@ DEFAULT_SETTINGS = {
     "memory": {
         "enabled": True,              # inject persistent memory into agent system prompt
         "max_loaded_files": 10,        # max individual memory files loaded per session
+        "ui_scope": "project",         # last selected scope in memory manager (project|global)
+        "auto_chat_summary": True,     # auto-summarize long chats into project memory
+        "auto_chat_summary_min_chars": 12000,
+        "auto_chat_summary_min_messages": 24,
     },
 }
 

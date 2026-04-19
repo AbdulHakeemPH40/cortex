@@ -266,9 +266,6 @@ class KeyManager:
             return api_key.startswith("sk-")
         elif provider == "anthropic":
             return api_key.startswith("sk-ant-")
-        elif provider == "deepseek":
-            # DeepSeek uses sk- prefix like OpenAI
-            return api_key.startswith("sk-") and len(api_key) >= 20
         
         return True
     

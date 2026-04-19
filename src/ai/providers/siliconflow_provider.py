@@ -19,7 +19,7 @@ class SiliconFlowProvider(BaseProvider):
     BASE_URL = "https://api.siliconflow.com/v1"
     
     def __init__(self):
-        super().__init__(ProviderType.OPENAI)  # Uses OpenAI-compatible API
+        super().__init__(ProviderType.SILICONFLOW)  # SiliconFlow provider
         self._api_key = os.getenv("SILICONFLOW_API_KEY", "")
         if not self._api_key:
             log.warning("SiliconFlow API key not configured")

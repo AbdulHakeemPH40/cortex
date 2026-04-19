@@ -35,7 +35,7 @@ VersionInfoVersion={#MyAppVersion}
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription=AI-Powered IDE for Developers
 VersionInfoTextVersion={#MyAppVersion}
-VersionInfoCopyright=Copyright (C) 2024 {#MyAppPublisher}
+VersionInfoCopyright=Copyright (C) 2026 {#MyAppPublisher}
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

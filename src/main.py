@@ -7,6 +7,17 @@ import sys
 import os
 from pathlib import Path
 
+# Align the embedded agent's memdir base with Cortex's config home.
+# agent/src/memdir/paths.py uses CLAUDE_CODE_REMOTE_MEMORY_DIR as the memory base.
+if not os.environ.get("CLAUDE_CODE_REMOTE_MEMORY_DIR"):
+    os.environ["CLAUDE_CODE_REMOTE_MEMORY_DIR"] = str(Path.home() / ".cortex")
+
+# Ensure global rules directory exists early so users can drop rules without manual setup.
+try:
+    (Path.home() / ".cortex" / "rules").mkdir(parents=True, exist_ok=True)
+except Exception:
+    pass
+
 # CRITICAL: Load .env FIRST before ANY other imports!
 try:
     from dotenv import load_dotenv

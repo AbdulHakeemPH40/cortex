@@ -133,7 +133,7 @@ except ImportError:
         return os.path.join(os.getcwd(), '.claude', 'memory')
     
     def isAutoMemoryEnabled():
-        return not isEnvTruthy(os.environ.get('CLAUDE_CODE_DISABLE_AUTO_MEMORY'))
+        return not isEnvTruthy(os.environ.get('CORTEX_DISABLE_AUTO_MEMORY'))
 
 
 ENTRYPOINT_NAME = 'MEMORY.md'
@@ -203,6 +203,69 @@ def truncateEntrypointContent(raw: str) -> EntrypointTruncation:
     }
 
 
+def _load_rules_snapshot() -> List[str]:
+    """
+    Read project + global rules and format them for prompt inclusion.
+    Rules must override memory when there is a conflict.
+    """
+    lines: List[str] = []
+    try:
+        from .paths import getGlobalRulesDir, getProjectRulesDir
+        global_rules_dir = getGlobalRulesDir()
+        project_rules_dir = getProjectRulesDir()
+    except Exception:
+        home = os.path.expanduser("~")
+        global_rules_dir = os.path.join(home, ".cortex", "rules")
+        project_rules_dir = os.path.join(getProjectDir(getOriginalCwd()), ".cortex", "rules")
+
+    def collect_rule_files(base_dir: str) -> List[str]:
+        if not os.path.isdir(base_dir):
+            return []
+        files: List[str] = []
+        for root, _dirs, names in os.walk(base_dir):
+            for name in names:
+                lname = name.lower()
+                if lname.endswith(".md") or lname.endswith(".txt"):
+                    files.append(os.path.join(root, name))
+        files.sort()
+        return files[:25]
+
+    def read_rules_block(scope_name: str, base_dir: str) -> List[str]:
+        result: List[str] = []
+        files = collect_rule_files(base_dir)
+        if not files:
+            return result
+        result.extend([f"### {scope_name} Rules", f"Directory: `{base_dir}`", ""])
+        for path in files:
+            rel = os.path.relpath(path, base_dir).replace("\\", "/")
+            try:
+                text = Path(path).read_text(encoding="utf-8", errors="ignore").strip()
+            except Exception:
+                continue
+            if not text:
+                continue
+            clipped = text[:1200]
+            if len(text) > len(clipped):
+                clipped += "\n..."
+            result.extend([f"#### {rel}", "```md", clipped, "```", ""])
+        return result
+
+    global_block = read_rules_block("Global", global_rules_dir)
+    project_block = read_rules_block("Current Project", project_rules_dir)
+    if not global_block and not project_block:
+        return lines
+
+    lines.extend([
+        "## Rules (Higher Priority Than Memory)",
+        "When rules and memory conflict, follow rules.",
+        "Priority order: Current Project Rules > Global Rules > Memory.",
+        "",
+    ])
+    lines.extend(project_block)
+    lines.extend(global_block)
+    return lines
+
+
 DIR_EXISTS_GUIDANCE = 'This directory already exists — write to it directly with the Write tool (do not run mkdir or check for its existence).'
 DIRS_EXIST_GUIDANCE = 'Both directories already exist — write to them directly with the Write tool (do not run mkdir or check for their existence).'
 
@@ -229,6 +292,33 @@ async def ensureMemoryDirExists(memory_dir: str) -> None:
             f'ensureMemoryDirExists failed for {memory_dir}: {code or str(e)}',
             {'level': 'debug'},
         )
+
+
+async def ensureRulesDirsExist() -> None:
+    """
+    Ensure global and project rules directories exist.
+    Mirrors Qoder-style behavior: global rules always available; project rules
+    created for the active project when memory prompt is loaded.
+    """
+    try:
+        from .paths import getGlobalRulesDir, getProjectRulesDir
+        global_dir = getGlobalRulesDir()
+        project_dir = getProjectRulesDir()
+    except Exception:
+        home = os.path.expanduser("~")
+        global_dir = os.path.join(home, ".cortex", "rules")
+        project_dir = os.path.join(getProjectDir(getOriginalCwd()), ".cortex", "rules")
+
+    fs = getFsImplementation()
+    for d in (global_dir, project_dir):
+        try:
+            await fs.mkdir(d)
+        except Exception as e:
+            code = getattr(e, "code", None)
+            logForDebugging(
+                f"ensureRulesDirsExist failed for {d}: {code or str(e)}",
+                {"level": "debug"},
+            )
 
 
 def logMemoryDirCounts(memory_dir: str, base_metadata: Dict) -> None:
@@ -350,10 +440,17 @@ def buildMemoryLines(
         ]
     )
     
+    rules_section = _load_rules_snapshot()
     lines = [
         f'# {display_name}',
         '',
         f'You have a persistent, file-based memory system at `{memory_dir}`. {DIR_EXISTS_GUIDANCE}',
+        '',
+        'Memory scope model:',
+        '- Current Project memory is isolated to the active project.',
+        '- Global memory applies to all projects.',
+        '',
+        *rules_section,
         '',
         "You should build up this memory system over time so that future conversations can have a complete picture of who the user is, how they'd like to collaborate with you, what behaviors to avoid or repeat, and the context behind the work the user gives you.",
         '',
@@ -495,7 +592,7 @@ async def loadMemoryPrompt() -> Optional[str]:
     Returns None when auto memory is disabled.
     """
     auto_enabled = isAutoMemoryEnabled()
-    
+
     skip_index = getFeatureValue_CACHED_MAY_BE_STALE('tengu_moth_copse', False)
     
     # KAIROS daily-log mode takes precedence over TEAMMEM: the append-only
@@ -505,13 +602,17 @@ async def loadMemoryPrompt() -> Optional[str]:
     # telemetry block below, matching the non-KAIROS path.
     kairos_enabled = os.environ.get('KAIROS', '').lower() in ('true', '1', 'yes')
     if kairos_enabled and auto_enabled and getKairosActive():
+        await ensureRulesDirsExist()
         logMemoryDirCounts(getAutoMemPath(), {
             'memory_type': 'auto',
         })
         return buildAssistantDailyLogPrompt(skip_index)
     
     # Cowork injects memory-policy text via env var; thread into all builders.
-    cowork_extra_guidelines = os.environ.get('CLAUDE_COWORK_MEMORY_EXTRA_GUIDELINES')
+    cowork_extra_guidelines = (
+        os.environ.get('CORTEX_MEMORY_EXTRA_GUIDELINES')
+        or os.environ.get('CLAUDE_COWORK_MEMORY_EXTRA_GUIDELINES')
+    )
     extra_guidelines = (
         [cowork_extra_guidelines]
         if cowork_extra_guidelines and cowork_extra_guidelines.strip()
@@ -523,8 +624,9 @@ async def loadMemoryPrompt() -> Optional[str]:
         try:
             from .teamMemPaths import isTeamMemoryEnabled, getTeamMemPath
             from .teamMemPrompts import buildCombinedMemoryPrompt
-            
+
             if isTeamMemoryEnabled():
+                await ensureRulesDirsExist()
                 auto_dir = getAutoMemPath()
                 team_dir = getTeamMemPath()
                 # Harness guarantees these directories exist so the model can write
@@ -546,6 +648,7 @@ async def loadMemoryPrompt() -> Optional[str]:
             pass
     
     if auto_enabled:
+        await ensureRulesDirsExist()
         auto_dir = getAutoMemPath()
         # Harness guarantees the directory exists so the model can write without
         # checking. The prompt text reflects this ("already exists").
@@ -555,12 +658,18 @@ async def loadMemoryPrompt() -> Optional[str]:
         })
         return '\n'.join(buildMemoryLines('auto memory', auto_dir, extra_guidelines, skip_index))
     
+    settings_obj = getInitialSettings()
+    if isinstance(settings_obj, dict):
+        settings_enabled = settings_obj.get('autoMemoryEnabled')
+    else:
+        settings_enabled = getattr(settings_obj, 'autoMemoryEnabled', None)
+    disabled_env = (
+        isEnvTruthy(os.environ.get('CORTEX_DISABLE_AUTO_MEMORY'))
+        or isEnvTruthy(os.environ.get('CLAUDE_CODE_DISABLE_AUTO_MEMORY'))
+    )
     logEvent('tengu_memdir_disabled', {
-        'disabled_by_env_var': isEnvTruthy(os.environ.get('CLAUDE_CODE_DISABLE_AUTO_MEMORY')),
-        'disabled_by_setting': (
-            not isEnvTruthy(os.environ.get('CLAUDE_CODE_DISABLE_AUTO_MEMORY')) and
-            getInitialSettings().autoMemoryEnabled == False
-        ),
+        'disabled_by_env_var': disabled_env,
+        'disabled_by_setting': (not disabled_env and settings_enabled is False),
     })
     # Gate on the GB flag directly, not isTeamMemoryEnabled() — that function
     # checks isAutoMemoryEnabled() first, which is definitionally false in this

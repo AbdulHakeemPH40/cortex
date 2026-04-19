@@ -1,8 +1,10 @@
 """
 Coordinator module for multi-agent orchestration.
 
-Provides system prompts and context builders for coordinating
-multiple AI workers using AutoGen/OpenHands in Cortex IDE.
+Provides system prompts, context builders, and coordination engine
+for multi-agent workflows in Cortex IDE.
+
+Ported from Claude Code's coordinatorMode.ts and agentToolUtils.ts.
 """
 
 from .coordinator_prompt import (
@@ -19,6 +21,14 @@ from .agent_context import (
     should_continue_worker,
 )
 
+from .coordinator_system import (
+    CoordinationEngine,
+    CoordinationResult,
+    Scratchpad,
+    VisionContextStore,
+    get_vision_store,
+)
+
 __all__ = [
     'get_coordinator_system_prompt',
     'get_worker_capabilities_description',
@@ -28,4 +38,9 @@ __all__ = [
     'create_implementation_prompt',
     'create_verification_prompt',
     'should_continue_worker',
+    'CoordinationEngine',
+    'CoordinationResult',
+    'Scratchpad',
+    'VisionContextStore',
+    'get_vision_store',
 ]

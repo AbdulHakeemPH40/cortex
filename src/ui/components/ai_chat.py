@@ -5,16 +5,352 @@ import platform
 import shutil
 import re
 import difflib
-from typing import Optional, Callable
+import hashlib
+import threading
+import time
+import requests
+import asyncio
+from datetime import datetime
+from pathlib import Path
+from typing import Optional, Callable, Dict, Any, List
+from dataclasses import dataclass
+from enum import Enum
 from PyQt6.QtCore import Qt, pyqtSignal, QUrl, QObject, pyqtSlot, QProcess, QProcessEnvironment, QTimer, QThread, QMutex
 from PyQt6.QtWidgets import QWidget, QVBoxLayout
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebChannel import QWebChannel
 from src.utils.logger import get_logger
+from src.utils.image_processing import (
+    process_images_for_api,
+    validate_images_for_api,
+    build_vision_messages,
+    compress_image,
+    IMAGE_MAX_WIDTH,
+    IMAGE_MAX_HEIGHT,
+    MAX_IMAGES_PER_MESSAGE,
+)
+from src.utils.agent_tools import (
+    AgentType,
+    AgentLifecycleManager,
+    classify_task_type,
+    should_use_parallel,
+    build_worker_system_prompt,
+)
 
 from src.utils.icons import make_icon
+from src.config.points_manager import get_points_manager, InsufficientPointsError
 
 log = get_logger("ai_chat")
+
+# Per-conversation throttling for background chat summary generation.
+_CHAT_SUMMARY_LOCK = threading.Lock()
+_CHAT_SUMMARY_IN_FLIGHT = set()  # conversation_id strings currently summarizing
+_CHAT_SUMMARY_LAST_TS = {}       # conversation_id -> last run epoch seconds
+_CHAT_SUMMARY_LAST_MSG_COUNT = {}  # conversation_id -> last msg count summarized
+
+
+class PerformanceMode(Enum):
+    """Performance modes for AI Chat."""
+    EFFICIENT = "efficient"      # 0.3x - Power saving
+    AUTO = "auto"                # 1.0x - Balanced
+    PERFORMANCE = "performance"  # 1.1x - Multi-agent
+    ULTIMATE = "ultimate"        # 1.6x - Max multi-agent
+
+
+@dataclass
+class PerformanceConfig:
+    """Configuration for each performance mode.
+    
+    ARCHITECTURE: Mistral is the ONLY provider.
+    
+    Mode hierarchy:
+    - Efficient: Mistral Small (text) / Medium (vision)
+    - Auto: Mistral Small/Medium/Large (auto-select based on query)
+    - Performance: Mistral Medium
+    - Ultimate: Mistral Large
+    """
+    temperature: float
+    multi_agent: bool
+    parallel_workers: int
+    vision_enabled: bool
+    description: str
+    token_multiplier: float  # Multiplier for model's max_output_tokens
+    vision_model: str  # Mistral model for vision
+    main_agent_model: str  # Main Mistral model
+
+
+PERFORMANCE_CONFIGS = {
+    PerformanceMode.EFFICIENT: PerformanceConfig(
+        temperature=0.3,
+        multi_agent=False,
+        parallel_workers=0,
+        vision_enabled=True,
+        description="Power saving - Mistral Small (text) / Medium (vision)",
+        token_multiplier=0.3,
+        vision_model="mistral-medium-latest",
+        main_agent_model="mistral-small-latest",
+    ),
+    PerformanceMode.AUTO: PerformanceConfig(
+        temperature=0.7,
+        multi_agent=False,
+        parallel_workers=0,
+        vision_enabled=True,
+        description="Smart routing - Mistral auto-select based on query",
+        token_multiplier=1.0,
+        vision_model="mistral-medium-latest",
+        main_agent_model="mistral-small-latest",  # Default, auto-upgraded based on query
+    ),
+    PerformanceMode.PERFORMANCE: PerformanceConfig(
+        temperature=0.7,
+        multi_agent=False,
+        parallel_workers=0,
+        vision_enabled=True,
+        description="Balanced - Mistral Medium",
+        token_multiplier=1.1,
+        vision_model="mistral-medium-latest",
+        main_agent_model="mistral-medium-latest",
+    ),
+    PerformanceMode.ULTIMATE: PerformanceConfig(
+        temperature=0.8,
+        multi_agent=False,
+        parallel_workers=0,
+        vision_enabled=True,
+        description="Best quality - Mistral Large",
+        token_multiplier=1.6,
+        vision_model="mistral-large-latest",
+        main_agent_model="mistral-large-latest",
+    ),
+}
+
+
+def get_performance_mode(mode_str: str) -> PerformanceMode:
+    """Convert string to PerformanceMode enum."""
+    mode_map = {
+        "efficient": PerformanceMode.EFFICIENT,
+        "auto": PerformanceMode.AUTO,
+        "performance": PerformanceMode.PERFORMANCE,
+        "ultimate": PerformanceMode.ULTIMATE,
+    }
+    return mode_map.get(mode_str.lower(), PerformanceMode.AUTO)
+
+
+def get_mode_config(mode: PerformanceMode) -> PerformanceConfig:
+    """Get configuration for performance mode."""
+    return PERFORMANCE_CONFIGS[mode]
+
+
+def calculate_max_tokens_for_mode(model_id: str, config: PerformanceConfig) -> int:
+    """Calculate max_tokens based on model_limits and performance mode multiplier.
+    
+    Uses the existing model_limits.py system to get the model's max_output_tokens,
+    then applies the performance mode's token_multiplier.
+    
+    Args:
+        model_id: Model identifier (e.g., 'deepseek-chat', 'mistral-large')
+        config: PerformanceConfig with token_multiplier
+    
+    Returns:
+        Calculated max_tokens for this mode and model
+    """
+    try:
+        from src.ai.model_limits import get_model_limits
+        
+        # Get model's base max_output_tokens from model_limits
+        limits = get_model_limits(model_id)
+        base_tokens = limits.max_output_tokens
+        
+        # Apply performance mode multiplier
+        adjusted_tokens = int(base_tokens * config.token_multiplier)
+        
+        log.debug(f"[AIChat] Token calculation: {model_id} base={base_tokens}, "
+                  f"multiplier={config.token_multiplier}, adjusted={adjusted_tokens}")
+        
+        return adjusted_tokens
+        
+    except Exception as e:
+        log.warning(f"[AIChat] Failed to calculate max_tokens: {e}, using default 4000")
+        return 4000
+
+def _compute_project_memory_dir(project_root: str) -> str:
+    sanitized = re.sub(r'[<>:"/\\|?*\0]', "_", (project_root or os.getcwd())).strip("_ ")
+    if len(sanitized) > 60:
+        digest = hashlib.md5((project_root or "").encode("utf-8")).hexdigest()[:8]
+        sanitized = sanitized[-52:].lstrip("_") + "_" + digest
+    return os.path.join(os.path.expanduser("~"), ".cortex", "projects", sanitized, "memory")
+
+
+def _ensure_memory_index(memory_dir: str) -> str:
+    os.makedirs(memory_dir, exist_ok=True)
+    entrypoint = os.path.join(memory_dir, "MEMORY.md")
+    if not os.path.exists(entrypoint):
+        Path(entrypoint).write_text("# Cortex Memory\n\n", encoding="utf-8")
+    return entrypoint
+
+
+def _append_index_link(entrypoint: str, rel_path: str, title: str) -> None:
+    rel_path = (rel_path or "").replace("\\", "/")
+    line = f"- [{title}]({rel_path})\n"
+    try:
+        existing = ""
+        if os.path.exists(entrypoint):
+            existing = Path(entrypoint).read_text(encoding="utf-8", errors="ignore")
+        if rel_path and rel_path in existing:
+            return
+        with open(entrypoint, "a", encoding="utf-8") as fh:
+            if existing and not existing.endswith("\n"):
+                fh.write("\n")
+            fh.write(line)
+    except Exception:
+        pass
+
+
+def _maybe_schedule_chat_summary(project_root: str, conversation_id: str, title: str, messages: list) -> None:
+    try:
+        from src.config.settings import get_settings
+
+        settings = get_settings()
+        if not settings.get("memory", "enabled", default=True):
+            return
+        if not settings.get("memory", "auto_chat_summary", default=True):
+            return
+
+        # Only summarize after an assistant response is saved. If we summarize on
+        # every user-message save, it can trigger an extra LLM request exactly
+        # when the user hits Send (competes with the main chat request).
+        if not messages:
+            return
+        last_role = (messages[-1].get("role") or messages[-1].get("sender") or "").strip().lower()
+        if last_role not in ("assistant", "ai"):
+            return
+
+        # Avoid running summaries too frequently for the same conversation.
+        # Once a chat is "long enough" to qualify, it may be saved many times
+        # (every message). Without throttling this can trigger repeated LLM calls
+        # that compete with primary chat requests and slow the overall UX.
+        min_interval_s = int(settings.get("memory", "auto_chat_summary_min_interval_s", default=600) or 600)
+        min_new_messages = int(settings.get("memory", "auto_chat_summary_min_new_messages", default=8) or 8)
+
+        min_chars = int(settings.get("memory", "auto_chat_summary_min_chars", default=12000) or 12000)
+        min_msgs = int(settings.get("memory", "auto_chat_summary_min_messages", default=24) or 24)
+        flat = " ".join((m.get("content") or m.get("text") or "") for m in (messages or []))
+        if len(messages or []) < min_msgs and len(flat) < min_chars:
+            return
+
+        # Throttle per-conversation execution.
+        now = time.time()
+        msg_count = len(messages or [])
+        with _CHAT_SUMMARY_LOCK:
+            if conversation_id in _CHAT_SUMMARY_IN_FLIGHT:
+                return
+            last_ts = _CHAT_SUMMARY_LAST_TS.get(conversation_id, 0.0)
+            last_count = _CHAT_SUMMARY_LAST_MSG_COUNT.get(conversation_id, 0)
+            if (now - last_ts) < min_interval_s and (msg_count - last_count) < min_new_messages:
+                return
+            _CHAT_SUMMARY_IN_FLIGHT.add(conversation_id)
+
+        def _runner():
+            try:
+                _write_chat_summary_memory(project_root, conversation_id, title, messages)
+            finally:
+                with _CHAT_SUMMARY_LOCK:
+                    _CHAT_SUMMARY_IN_FLIGHT.discard(conversation_id)
+                    _CHAT_SUMMARY_LAST_TS[conversation_id] = time.time()
+                    _CHAT_SUMMARY_LAST_MSG_COUNT[conversation_id] = msg_count
+
+        threading.Thread(target=_runner, daemon=True).start()
+    except Exception:
+        return
+
+
+def _write_chat_summary_memory(project_root: str, conversation_id: str, title: str, messages: list) -> None:
+    """
+    Best-effort: summarize long chats into a stable, project-scoped memory file.
+    Runs in a background thread to avoid blocking the UI.
+    """
+    try:
+        from src.config.settings import get_settings
+        from src.ai.providers import ChatMessage, ProviderType, get_provider_registry
+
+        settings = get_settings()
+        provider_name = (settings.get("ai", "provider") or "mistral").strip().lower()
+        model_id = (settings.get("ai", "model") or "mistral-large-latest").strip()
+
+        provider_map = {
+            "mistral": ProviderType.MISTRAL,
+            "siliconflow": ProviderType.SILICONFLOW,
+        }
+        provider_type = provider_map.get(provider_name, ProviderType.MISTRAL)
+        provider = get_provider_registry().get_provider(provider_type)
+
+        trimmed = (messages or [])[-40:]
+        transcript_lines = []
+        for msg in trimmed:
+            role = (msg.get("role") or msg.get("sender") or "user").strip()
+            content = (msg.get("content") or msg.get("text") or "").strip()
+            if not content:
+                continue
+            if len(content) > 700:
+                content = content[:700] + "…"
+            transcript_lines.append(f"{role.upper()}: {content}")
+        transcript = "\n".join(transcript_lines)
+
+        system = (
+            "You are converting a long coding chat into a persistent memory file for an IDE.\n"
+            "Output MUST be Markdown with YAML frontmatter, exactly like:\n"
+            "---\n"
+            "name: \"...\"\n"
+            "description: \"comma,separated,keywords\"\n"
+            "type: \"project\"\n"
+            "---\n"
+            "Then write concise bullet points useful in future sessions.\n"
+            "Avoid personal data. Avoid transient steps. Prefer stable decisions, preferences, constraints, and project facts.\n"
+        )
+        user = (
+            f"Chat title: {title}\n"
+            f"Conversation id: {conversation_id}\n\n"
+            "Transcript (most recent messages):\n"
+            f"{transcript}\n"
+        )
+
+        resp = provider.chat(
+            messages=[
+                ChatMessage(role="system", content=system),
+                ChatMessage(role="user", content=user),
+            ],
+            model=model_id,
+            temperature=0.2,
+            max_tokens=900,
+            stream=False,
+        )
+        content = (resp.content or "").strip()
+        if not content:
+            return
+
+        if not content.startswith("---"):
+            now = datetime.utcnow().strftime("%Y-%m-%d")
+            safe_title = (title or conversation_id[:8]).replace('"', "'")
+            content = (
+                "---\n"
+                f"name: \"Chat Summary: {safe_title}\"\n"
+                f"description: \"chat,summary,{now}\"\n"
+                "type: \"project\"\n"
+                "---\n\n"
+                + content
+            )
+
+        memory_dir = _compute_project_memory_dir(project_root)
+        auto_dir = os.path.join(memory_dir, "auto", "chat_summaries")
+        os.makedirs(auto_dir, exist_ok=True)
+        out_path = os.path.join(auto_dir, f"{conversation_id}.md")
+        Path(out_path).write_text(content, encoding="utf-8")
+
+        entrypoint = _ensure_memory_index(memory_dir)
+        rel = os.path.relpath(out_path, memory_dir).replace("\\", "/")
+        label = f"Chat summary: {title or conversation_id[:8]}"
+        _append_index_link(entrypoint, rel, label)
+        log.info(f"[MEMORY] Auto-saved chat summary to {out_path}")
+    except Exception as e:
+        log.warning(f"[MEMORY] Auto chat summary failed: {e}")
 
 
 class VisionWorker(QObject):
@@ -236,9 +572,8 @@ class ChatBridge(QObject):
     @pyqtSlot()
     def on_toggle_autogen(self):
         """Toggle AutoGen multi-agent mode."""
-        from src.ai.agent import AIAgent
-        # Find the AI agent instance and toggle AutoGen
-        # This will be handled by main_window
+        # Emit signal to main_window to handle AutoGen toggle
+        # The actual multi-agent logic is handled by the performance mode system
         self.toggle_autogen_requested.emit()
     
     # Add new signal for AutoGen toggle
@@ -424,6 +759,35 @@ class ChatBridge(QObject):
     def on_js_error(self, error_json: str):
         """Handle JavaScript errors reported from the page."""
         log.warning(f'JS Error: {error_json}')
+    
+    def update_points_balance(self, result: dict):
+        """Update UI with current points balance after consumption.
+        
+        Args:
+            result: Dict from points_manager.consume_points() with:
+                - remaining_balance: Points remaining
+                - remaining_tokens: Token equivalent
+                - points_consumed: Points just used
+        """
+        try:
+            # Send points update to JavaScript UI
+            points_data = {
+                "balance": result.get("remaining_balance", 0),
+                "tokens_equivalent": result.get("remaining_tokens", 0),
+                "points_consumed": result.get("points_consumed", 0),
+            }
+            
+            # Call JavaScript to update UI
+            js_code = f"""
+            if (window.updatePointsBalance) {{
+                window.updatePointsBalance({json.dumps(points_data)});
+            }}
+            """
+            self._view.page().runJavaScript(js_code)
+            
+            log.info(f"[AIChat] Points balance updated: {result.get('remaining_balance', 0):,} points")
+        except Exception as e:
+            log.warning(f"[AIChat] Failed to update points balance UI: {e}")
 
     @pyqtSlot(str)
     def delete_chat_from_sqlite(self, conversation_id: str):
@@ -544,6 +908,7 @@ class ChatBridge(QObject):
                 )
             
             log.debug(f'âœ“ Saved single chat {conversation_id} to SQLite (storage_key: {storage_key})')
+            _maybe_schedule_chat_summary(project_path, conversation_id, title, messages)
             return "OK"
             
         except Exception as e:
@@ -600,6 +965,7 @@ class ChatBridge(QObject):
                         files_accessed=msg.get('files_accessed', []),
                         tools_used=msg.get('tools_used', [])
                     )
+                _maybe_schedule_chat_summary(project_path, conversation_id, title, messages)
             
             log.debug(f'âœ“ Saved {len(chats)} chats to SQLite (storage_key: {storage_key})')
             return "OK"
@@ -744,6 +1110,10 @@ class AIChatWidget(QWidget):
     
     # Vision processing signal
     _vision_response_received = pyqtSignal(str)
+    
+    # Sync vision exchange to agent_bridge conversation history
+    # (user_text, assistant_response) — so follow-up messages have context
+    vision_history_sync = pyqtSignal(str, str)
 
     # Terminal panel signal
     open_terminal_requested = pyqtSignal()  # Request main window to open terminal panel
@@ -812,6 +1182,9 @@ class AIChatWidget(QWidget):
         
         # NEW: Store last user message for permission retry (OpenCode enhancement)
         self._last_user_message = ""
+        
+        # Track current interaction mode: 'Agent', 'Ask', or 'Plan'
+        self._current_interaction_mode = "Agent"
         
         self._build_ui()
         # Terminal backend starts lazily when first requested
@@ -892,6 +1265,7 @@ class AIChatWidget(QWidget):
         self._bridge.proceed_requested.connect(self.proceed_requested.emit)
         self._bridge.always_allow_changed.connect(self.always_allow_changed.emit)
         self._bridge.generate_plan_requested.connect(self.generate_plan_requested.emit)
+        self._bridge.mode_changed.connect(self._on_mode_changed_internal)
         self._bridge.mode_changed.connect(self.mode_changed.emit)
         self._bridge.model_changed.connect(self.model_changed.emit)
         self._bridge.open_file_requested.connect(self.open_file_requested.emit)
@@ -1000,18 +1374,57 @@ class AIChatWidget(QWidget):
             lambda result: None  # Async callback
         )
 
+    def on_complete(self, full_response: str):
+        """Handle completion of the AI response."""
+        self._view.page().runJavaScript("if(window.onComplete) window.onComplete();")
+
+    def _on_mode_changed_internal(self, mode: str):
+        """Track the current interaction mode internally."""
+        self._current_interaction_mode = mode
+        log.info(f"[AIChat] Interaction mode changed to: {mode}")
+
     def _on_js_message(self, text):
-        """Handle message from JS."""
+        """Handle message from JS.
+        
+        Routes to performance mode system if performance mode is enabled.
+        If Plan mode is active, generates a .md plan file instead of chat.
+        This ensures ALL messages (text-only or with images) use the correct
+        model selection based on performance mode.
+        """
         # NEW: Store last user message for permission retry
         self._last_user_message = text
         
+        # ── PLAN MODE: generate .md file instead of chat response ──────────
+        if getattr(self, '_current_interaction_mode', 'Agent') == 'Plan':
+            log.info(f"[AIChat] Plan mode: generating .md plan file for: {text[:80]}")
+            self._generate_plan_file(text)
+            return
+        
+        # Check if performance mode routing should be used
+        perf_mode_str = self._get_performance_mode_from_settings()
+        perf_mode = get_performance_mode(perf_mode_str)
+        config = get_mode_config(perf_mode)
+        
+        # If performance mode is not 'auto' or has special model selection, route through performance system
+        if perf_mode != PerformanceMode.AUTO or config.main_agent_model or config.vision_model:
+            log.info(f"[AIChat] Routing text-only message through performance mode: {perf_mode.value}")
+            # Process through performance mode (even without images)
+            self._process_text_message_through_performance(text, config)
+            return
+        
+        # Otherwise, use standard agent_bridge path (Auto mode with user's configured model)
         context = ""
         if self._get_code_context:
             context = self._get_code_context()
         self.message_sent.emit(text, context)
     
     def _on_js_message_with_images(self, text, image_data_json):
-        """Handle message with images - route to SiliconFlow for vision."""
+        """Handle message with images (vision/OCR).
+
+        Note: This path currently bypasses the agentic tool loop and runs a single
+        multimodal chat completion, then appends the assistant response to chat.
+        If Plan mode is active, generates a .md plan file based on image analysis.
+        """
         import json
         import requests
         import os
@@ -1032,57 +1445,49 @@ class AIChatWidget(QWidget):
             self._on_js_message(text)
             return
         
+        # ── PLAN MODE + IMAGES: analyze image then create .md plan file ───
+        # Trigger if: Plan dropdown selected, OR text mentions "plan" keywords
+        _plan_keywords = ["plan", "design", "blueprint", "architecture", "spec", "wireframe", "mockup", "layout"]
+        _is_plan_mode = getattr(self, '_current_interaction_mode', 'Agent') == 'Plan'
+        _text_wants_plan = any(kw in text.lower() for kw in _plan_keywords)
+        
+        if _is_plan_mode or _text_wants_plan:
+            log.info(f"[AIChat] Plan mode + images: generating .md plan from image analysis "
+                     f"(dropdown={'Plan' if _is_plan_mode else 'Agent'}, text_match={_text_wants_plan})")
+            self._show_thinking_in_js()
+            self._vision_user_text = text
+            import threading
+            threading.Thread(
+                target=self._generate_plan_file_with_images,
+                args=(text, images),
+                daemon=True,
+            ).start()
+            return
+        
         # Show thinking indicator
         self._show_thinking_in_js()
         
+        # Store user text for history sync after vision response completes
+        self._vision_user_text = text
+        
         # Process in a separate thread to not block UI
         def process_vision():
+            """Process vision request.
+            
+            FIXED: All modes now use single agent (direct Mistral API).
+            Multi-agent coordination was adding 30-60s overhead per call.
+            The quality comes from mistral-large vision, not from extra LLM calls.
+            """
             try:
-                # Build content with images for vision API
-                content_parts = [{"type": "text", "text": text}]
-                for img in images:
-                    content_parts.append({
-                        "type": "image_url",
-                        "image_url": {"url": img.get("data", "")}
-                    })
+                perf_mode_str = self._get_performance_mode_from_settings()
+                perf_mode = get_performance_mode(perf_mode_str)
+                config = get_mode_config(perf_mode)
                 
-                messages = [{
-                    "role": "user",
-                    "content": content_parts
-                }]
-                
-                # Call SiliconFlow API directly with raw requests
-                api_key = os.getenv("SILICONFLOW_API_KEY", "")
-                headers = {
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json"
-                }
-                
-                payload = {
-                    "model": "Qwen/Qwen3-VL-32B-Instruct",
-                    "messages": messages,
-                    "temperature": 0.7,
-                    "max_tokens": 4000
-                }
-                
-                response = requests.post(
-                    "https://api.siliconflow.com/v1/chat/completions",
-                    headers=headers,
-                    json=payload,
-                    timeout=(30, 180)  # 30s connect, 180s read
-                )
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    result = data.get('choices', [{}])[0].get('message', {}).get('content', '')
-                    self._vision_response_received.emit(result)
-                else:
-                    error_msg = f"API Error {response.status_code}: {response.text[:200]}"
-                    log.error(f"[AIChat] Vision API error: {error_msg}")
-                    self._vision_response_received.emit(f"Error: {error_msg}")
-                
+                log.info(f"[AIChat] Vision mode: {perf_mode.value} -> single agent (direct API)")
+                self._process_message_single_agent(images, text, config)
+                    
             except Exception as e:
-                log.error(f"[AIChat] Vision processing error: {e}")
+                log.error(f"[AIChat] Vision processing error: {e}", exc_info=True)
                 self._vision_response_received.emit(f"Error: {str(e)}")
         
         # Cleanup previous thread if exists and running
@@ -1101,6 +1506,1067 @@ class AIChatWidget(QWidget):
         self._vision_thread.start()
         log.info("Vision thread started")
     
+    def _execute_vision_agent(self, images, text, session_id):
+        """Execute Vision Agent for image analysis.
+        
+        This is the FIRST step in the coordination layer.
+        Vision Agent MUST complete before Main Agent is called.
+        
+        Args:
+            images: List of image dicts with 'data' key (base64)
+            text: User's text query
+            session_id: Session identifier for memory storage
+            
+        Returns:
+            Dictionary with vision analysis results
+        """
+        try:
+            from src.agent.src.tools.VisionAgentTool.vision_agent import VisionAgentTool
+            import asyncio
+            
+            # Get current performance mode to determine vision model
+            perf_mode_str = self._get_performance_mode_from_settings()
+            perf_mode = get_performance_mode(perf_mode_str)
+            config = get_mode_config(perf_mode)
+            vision_model = config.vision_model
+            
+            log.info(f"[AIChat] Spawning Vision Agent for image analysis (model={vision_model})")
+            
+            # Use first image for analysis
+            image_data = images[0]['data']
+            
+            # Create Vision Agent instance
+            agent = VisionAgentTool()
+            
+            # Execute vision analysis (synchronous in this thread)
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                result = loop.run_until_complete(
+                    agent.execute(
+                        image_data=image_data,
+                        analysis_type="full",
+                        store_in_memory=True,
+                        session_id=session_id,
+                        vision_model=vision_model  # Pass the model from config
+                    )
+                )
+            finally:
+                loop.close()
+            
+            log.info(f"[AIChat] Vision Agent execution complete: success={result.get('success')}, model={vision_model}")
+            return result
+            
+        except Exception as e:
+            log.error(f"[AIChat] Vision Agent execution failed: {e}", exc_info=True)
+            return {"success": False, "error": str(e)}
+    
+    def _build_vision_enhanced_prompt(self, user_text, vision_context):
+        """Build enhanced prompt with vision context injected.
+        
+        This ensures Main Agent has full context from Vision Agent's analysis.
+        
+        Args:
+            user_text: Original user query
+            vision_context: Dictionary with vision analysis results
+            
+        Returns:
+            Enhanced prompt string
+        """
+        prompt_parts = []
+        
+        # Add user's original question
+        prompt_parts.append(user_text)
+        
+        # Add vision context section
+        prompt_parts.append("\n\n## Image Analysis Context\n")
+        prompt_parts.append("The following image has been analyzed and the results are provided for your reference:\n")
+        
+        # OCR Text
+        ocr_text = vision_context.get('ocr_text', '')
+        if ocr_text:
+            prompt_parts.append(f"\n### OCR Extracted Text:\n{ocr_text}\n")
+        
+        # Image Description
+        description = vision_context.get('image_description', '')
+        if description:
+            prompt_parts.append(f"\n### Image Description:\n{description}\n")
+        
+        # Detected Objects
+        objects = vision_context.get('detected_objects', [])
+        if objects:
+            objects_str = ", ".join(objects)
+            prompt_parts.append(f"\n### Detected Objects:\n{objects_str}\n")
+        
+        # Analysis metadata
+        model_used = vision_context.get('vision_model_used', 'unknown')
+        confidence = vision_context.get('confidence_score', 0.0)
+        prompt_parts.append(f"\n### Analysis Details:\n")
+        prompt_parts.append(f"- Model: {model_used}\n")
+        prompt_parts.append(f"- Confidence: {confidence:.2f}\n")
+        
+        # Instruction to use context
+        prompt_parts.append("\n**IMPORTANT**: Use the above image analysis to inform your response. "
+                          "Do not ask the user to describe the image - you already have the analysis. "
+                          "Reference specific details from the analysis in your answer.\n")
+        
+        return "\n".join(prompt_parts)
+    
+    def _call_main_agent_with_vision_context(self, prompt, provider_name, model_id, config=None):
+        """Call Main Agent with vision-enhanced prompt.
+        
+        ARCHITECTURE: Mistral is ALWAYS the main provider.
+        This is the SECOND step in the coordination layer.
+        Main Agent receives vision context and provides informed response.
+        
+        Args:
+            prompt: Enhanced prompt with vision context
+            provider_name: LLM provider (always 'mistral' per architecture)
+            model_id: Model identifier
+            config: PerformanceConfig (optional, for token calculation)
+            
+        Returns:
+            Response string from Main Agent
+        """
+        try:
+            from src.config.settings import get_settings
+            settings = get_settings()
+            
+            # ARCHITECTURE: Force Mistral as provider regardless of what's passed
+            provider_name = "mistral"
+            
+            # Get API configuration
+            temperature = float(settings.get("ai", "temperature", default=0.7) or 0.7)
+            
+            # Calculate max_tokens from model_limits with performance multiplier
+            if config:
+                max_tokens = calculate_max_tokens_for_mode(model_id, config)
+            else:
+                # Fallback to settings if no config provided
+                max_tokens = int(settings.get("ai", "max_tokens", default=4000) or 4000)
+            
+            # Build messages for Main Agent
+            messages = [{"role": "user", "content": prompt}]
+            
+            log.info(f"[AIChat] Main Agent: provider=mistral, model={model_id}, max_tokens={max_tokens}")
+            
+            # ALWAYS route to Mistral as the main provider
+            return self._call_mistral_with_context(messages, temperature, max_tokens, model_id)
+                
+        except Exception as e:
+            log.error(f"[AIChat] Main Agent call failed: {e}", exc_info=True)
+            return f"Error calling Main Agent: {str(e)}"
+    
+    def _call_mistral_with_context(self, messages, temperature, max_tokens, model_id):
+        """Call Mistral API with vision context."""
+        api_key = os.getenv("MISTRAL_API_KEY", "")
+        if not api_key:
+            return "Error: MISTRAL_API_KEY not set"
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": model_id or "mistral-large-latest",
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens
+        }
+        
+        response = requests.post(
+            "https://api.mistral.ai/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=(30, 180)
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            content = data.get('choices', [{}])[0].get('message', {}).get('content', '')
+            # Mistral can return content as list of blocks for multimodal
+            if isinstance(content, list):
+                content = ''.join(
+                    c.get('text', '') if isinstance(c, dict) else str(c)
+                    for c in content
+                )
+            return content or ''
+        else:
+            return f"Mistral API error {response.status_code}: {response.text[:200]}"
+    
+    def _call_siliconflow_with_context(self, messages, temperature, max_tokens, model_id):
+        """Call SiliconFlow API with vision context."""
+        api_key = os.getenv("SILICONFLOW_API_KEY", "")
+        if not api_key:
+            return "Error: SILICONFLOW_API_KEY not set"
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": model_id or "Qwen/Qwen2.5-72B-Instruct",
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens
+        }
+        
+        response = requests.post(
+            "https://api.siliconflow.cn/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=(30, 180)
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            return data.get('choices', [{}])[0].get('message', {}).get('content', '')
+        else:
+            return f"SiliconFlow API error {response.status_code}: {response.text[:200]}"
+    
+    # ==================== PERFORMANCE MODE METHODS ====================
+    
+    def _get_performance_mode_from_settings(self) -> str:
+        """Get current performance mode from settings.
+        
+        Returns:
+            Mode string: 'efficient', 'auto', 'performance', or 'ultimate'
+        """
+        try:
+            from src.config.settings import get_settings
+            settings = get_settings()
+            mode = settings.get("ai", "performance_mode", default="auto")
+            return mode or "auto"
+        except Exception as e:
+            log.warning(f"[AIChat] Failed to get performance mode: {e}, defaulting to 'auto'")
+            return "auto"
+    
+    def _process_message_single_agent(self, images, text, config):
+        """Process message with single agent.
+        
+        ARCHITECTURE: Mistral is ALWAYS the main provider.
+        
+        For IMAGE messages:
+          Step 1: Call Mistral Vision to analyze the image (direct API)
+          Step 2: Build enhanced prompt with image description
+          Step 3: Route to agentic tool loop so AI can CREATE files
+        
+        For TEXT-only messages:
+          Direct to agentic tool loop (standard path)
+        
+        This ensures the agent actually SEES the image content and can
+        use tools (create_file, edit_file, etc.) to build what the user wants.
+        """
+        try:
+            from src.config.settings import get_settings
+            settings = get_settings()
+            
+            has_images = images and len(images) > 0
+            provider_name = "mistral"
+            
+            if not has_images:
+                # Text-only: standard agentic loop
+                model_id = self._auto_select_mistral_model(text)
+                max_tokens = calculate_max_tokens_for_mode(model_id, config)
+                log.info(f"[AIChat] Single agent text: {model_id}, max_tokens={max_tokens}")
+                self._call_agent_and_respond(text, provider_name, model_id, max_tokens, config.temperature)
+                return
+            
+            # ── IMAGE PATH: Analyze image first, then route to agentic loop ──
+            vision_model = config.vision_model or "mistral-medium-latest"
+            agent_model = config.main_agent_model or "mistral-small-latest"
+            log.info(f"[AIChat] Vision Step 1: Analyzing image with {vision_model}")
+            
+            # Step 1: Call Mistral Vision to get detailed image description
+            pipeline_result = process_images_for_api(images, text, provider=provider_name)
+            
+            for warn in pipeline_result.get("warnings", []):
+                log.warning(f"[AIChat] Image pipeline warning: {warn}")
+            for err in pipeline_result.get("errors", []):
+                log.warning(f"[AIChat] Image pipeline: {err}")
+            
+            messages = pipeline_result["messages"]
+            img_count = pipeline_result.get("image_count", 0)
+            log.info(f"[AIChat] Vision: {img_count} image(s) processed")
+            
+            # Direct Mistral vision call to describe the image
+            max_tokens_vision = 4096  # Enough for a detailed description
+            image_description = self._call_mistral_with_context(
+                messages, config.temperature, max_tokens_vision, vision_model
+            )
+            
+            if not image_description or image_description.startswith("Error"):
+                log.warning(f"[AIChat] Vision analysis failed: {image_description}")
+                self._vision_response_received.emit(
+                    image_description or "Error: Vision analysis failed"
+                )
+                return
+            
+            log.info(f"[AIChat] Vision Step 1 complete: {len(image_description)} chars description")
+            
+            # Step 2: Build enhanced prompt for the agentic loop
+            # The agent will see exactly what the image contains and can create files
+            enhanced_prompt = (
+                f"{text}\n\n"
+                f"## Image Analysis (what the user's image shows)\n"
+                f"{image_description}\n\n"
+                f"IMPORTANT: The image description above is what the user shared. "
+                f"Use this description to fulfill their request. "
+                f"Create files, write code, or take actions based on what the image shows."
+            )
+            
+            # Step 3: Route to agentic tool loop with mode's model
+            max_tokens = calculate_max_tokens_for_mode(agent_model, config)
+            log.info(f"[AIChat] Vision Step 2: Routing to agentic loop with {agent_model}")
+            
+            # Inject vision context into agent_bridge history for follow-ups
+            if hasattr(self, '_bridge') and hasattr(self._bridge, 'inject_vision_history'):
+                self._bridge.inject_vision_history(
+                    f"[User sent image with text: {text}]",
+                    f"[Image analysis: {image_description[:2000]}]"
+                )
+            
+            self._call_agent_and_respond(enhanced_prompt, provider_name, agent_model, max_tokens, config.temperature)
+            
+        except Exception as e:
+            log.error(f"[AIChat] Single agent error: {e}", exc_info=True)
+            self._vision_response_received.emit(f"Error: {str(e)}")
+    
+    def _process_message_performance(self, images, text, config):
+        """Process message with sequential multi-agent (Performance mode).
+        
+        Uses CoordinationEngine (ported from Claude Code's coordinatorMode.ts):
+        1. Vision Agent analyzes image FIRST (sequential - MUST complete)
+        2. Vision context stored via VisionContextStore + Scratchpad
+        3. Main Agent receives vision context and responds
+        4. Results aggregated with worker lifecycle tracking
+        """
+        try:
+            from src.config.settings import get_settings
+            from src.coordinator.coordinator_system import CoordinationEngine, get_vision_store
+            
+            settings = get_settings()
+            # ARCHITECTURE: Mistral is ALWAYS the main provider. Never read provider from settings.
+            provider_name = "mistral"
+            session_id = getattr(self, 'current_session_id', None) or "default-session"
+            project_path = None
+            if hasattr(self, '_pending_project_info') and self._pending_project_info:
+                _, project_path, _ = self._pending_project_info
+            
+            log.info(f"[AIChat] Performance mode: Sequential multi-agent via CoordinationEngine")
+            
+            # Create coordination engine
+            engine = CoordinationEngine(project_path=project_path, session_id=session_id)
+            
+            # Define vision callback (uses image pipeline)
+            def call_vision(imgs, txt):
+                # First try the VisionAgentTool
+                result = self._execute_vision_agent(imgs, txt, session_id)
+                if result.get("success"):
+                    return result.get("vision_context", {})
+                # Fallback: direct Mistral vision call with image pipeline
+                pipeline_result = process_images_for_api(imgs, txt, provider="mistral")
+                if pipeline_result["provider_supports_vision"]:
+                    messages = pipeline_result["messages"]
+                    vision_model = config.vision_model or "mistral-medium-latest"
+                    max_tok = calculate_max_tokens_for_mode(vision_model, config)
+                    raw_response = self._call_mistral_with_context(messages, config.temperature, max_tok, vision_model)
+                    return {"description": raw_response, "ocr_text": "", "raw": raw_response}
+                return {"error": "Vision not available"}
+            
+            # Define main LLM callback — ALWAYS uses Mistral
+            def call_llm(enhanced_prompt):
+                main_model = config.main_agent_model or "mistral-medium-latest"
+                log.info(f"[AIChat] Performance mode: Main Agent using mistral/{main_model}")
+                return self._call_main_agent_with_vision_context(
+                    enhanced_prompt, "mistral", main_model, config
+                )
+            
+            # Run coordination
+            result = engine.coordinate(
+                text=text,
+                images=images,
+                mode="performance",
+                call_vision=call_vision,
+                call_llm=call_llm,
+                get_code_context=self._get_code_context,
+            )
+            
+            if result.success:
+                log.info(f"[AIChat] Performance mode complete: {result.total_duration:.1f}s, "
+                        f"{len(result.worker_results)} workers")
+                self._vision_response_received.emit(result.response)
+            else:
+                log.warning(f"[AIChat] Performance mode failed, falling back to single agent")
+                self._process_message_single_agent(images, text, config)
+            
+        except Exception as e:
+            log.error(f"[AIChat] Performance mode error: {e}", exc_info=True)
+            self._vision_response_received.emit(f"Error: {str(e)}")
+    
+    def _process_message_ultimate(self, images, text, config):
+        """Process message with parallel multi-agent (Ultimate mode).
+        
+        Uses CoordinationEngine (ported from Claude Code's coordinatorMode.ts):
+        - Vision Agent runs FIRST (sequential) when images present
+        - Code + Context workers run in PARALLEL
+        - All contexts aggregated via Scratchpad
+        - Main Agent synthesizes final response
+        - Full worker lifecycle tracking via AgentLifecycleManager
+        """
+        try:
+            from src.config.settings import get_settings
+            from src.coordinator.coordinator_system import CoordinationEngine, get_vision_store
+            import concurrent.futures
+            
+            settings = get_settings()
+            # ARCHITECTURE: Mistral is ALWAYS the main provider. Never read provider from settings.
+            provider_name = "mistral"
+            session_id = getattr(self, 'current_session_id', None) or "default-session"
+            project_path = None
+            if hasattr(self, '_pending_project_info') and self._pending_project_info:
+                _, project_path, _ = self._pending_project_info
+            
+            log.info(f"[AIChat] Ultimate mode: Parallel multi-agent via CoordinationEngine ({config.parallel_workers} workers)")
+            
+            # Create coordination engine
+            engine = CoordinationEngine(project_path=project_path, session_id=session_id)
+            
+            # Define vision callback
+            def call_vision(imgs, txt):
+                result = self._execute_vision_agent(imgs, txt, session_id)
+                if result.get("success"):
+                    return result.get("vision_context", {})
+                # Fallback: direct Mistral vision via image pipeline
+                pipeline_result = process_images_for_api(imgs, txt, provider="mistral")
+                if pipeline_result["provider_supports_vision"]:
+                    messages = pipeline_result["messages"]
+                    vision_model = config.vision_model or "mistral-large-latest"
+                    max_tok = calculate_max_tokens_for_mode(vision_model, config)
+                    raw_response = self._call_mistral_with_context(messages, config.temperature, max_tok, vision_model)
+                    return {"description": raw_response, "ocr_text": "", "raw": raw_response}
+                return {"error": "Vision not available"}
+            
+            # Define main LLM callback — ALWAYS uses Mistral
+            def call_llm(enhanced_prompt):
+                main_model = config.main_agent_model or "mistral-large-latest"
+                log.info(f"[AIChat] Ultimate mode: Main Agent using mistral/{main_model}")
+                return self._call_main_agent_with_vision_context(
+                    enhanced_prompt, "mistral", main_model, config
+                )
+            
+            # Run coordination (engine handles parallel workers internally)
+            result = engine.coordinate(
+                text=text,
+                images=images,
+                mode="ultimate",
+                call_vision=call_vision,
+                call_llm=call_llm,
+                get_code_context=self._get_code_context,
+            )
+            
+            if result.success:
+                log.info(f"[AIChat] Ultimate mode complete: {result.total_duration:.1f}s, "
+                        f"{len(result.worker_results)} workers")
+                self._vision_response_received.emit(result.response)
+            else:
+                log.warning(f"[AIChat] Ultimate mode failed, falling back to single agent")
+                self._process_message_single_agent(images, text, config)
+            
+        except Exception as e:
+            log.error(f"[AIChat] Ultimate mode error: {e}", exc_info=True)
+            self._vision_response_received.emit(f"Error: {str(e)}")
+    
+    # ==================== END PERFORMANCE MODE METHODS ====================
+    
+    # ==================== PLAN MODE: .md FILE GENERATION ====================
+    
+    def _generate_plan_file(self, user_text: str):
+        """Generate a plan as a .md file instead of dumping it into the chat.
+        
+        Flow:
+        1. Show thinking indicator
+        2. Call Mistral LLM to produce a structured plan (markdown)
+        3. Write the plan to {project_root}/plans/<slug>.md
+        4. Show a brief notification in chat with the file path
+        5. Open the file in the editor
+        """
+        import threading
+        self._show_thinking_in_js()
+        threading.Thread(
+            target=self._generate_plan_file_worker,
+            args=(user_text,),
+            daemon=True,
+        ).start()
+    
+    def _generate_plan_file_worker(self, user_text: str):
+        """Background worker that calls LLM and writes plan .md file."""
+        import re, time, os
+        from pathlib import Path
+        
+        try:
+            # Determine project root
+            project_root = getattr(self, '_current_project_path', '') or os.getcwd()
+            plans_dir = Path(project_root) / "plans"
+            plans_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Derive a short filename slug from the user text
+            slug = re.sub(r'[^a-z0-9]+', '_', user_text[:60].lower()).strip('_') or 'plan'
+            timestamp = time.strftime('%Y%m%d_%H%M%S')
+            plan_filename = f"{slug}_{timestamp}.md"
+            plan_path = plans_dir / plan_filename
+            
+            # Build the LLM prompt
+            system_prompt = (
+                "You are an expert software architect. The user wants a detailed, "
+                "actionable plan written as a Markdown document.\n\n"
+                "Rules:\n"
+                "- Start with a level-1 heading (# Title).\n"
+                "- Break down tasks with numbered sub-headings (## Task 1, ## Task 2, ...).\n"
+                "- For each task include: goal, files involved, key implementation details.\n"
+                "- Keep it concise but thorough — no filler.\n"
+                "- Do NOT wrap the whole output in a code fence. Output raw Markdown directly.\n"
+                f"- Project root: {project_root}\n"
+            )
+            
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_text},
+            ]
+            
+            # Call Mistral (large model for quality plans)
+            plan_content = self._call_mistral_with_context(
+                messages,
+                temperature=0.7,
+                max_tokens=4096,
+                model_id="mistral-large-latest",
+            )
+            
+            if not plan_content or plan_content.startswith("Error"):
+                log.error(f"[AIChat] Plan generation LLM error: {plan_content}")
+                self._vision_response_received.emit(f"Plan generation failed: {plan_content}")
+                return
+            
+            # Strip any accidental code-fence wrapping
+            if plan_content.startswith("```"):
+                # Remove leading ```markdown and trailing ```
+                plan_content = re.sub(r'^```(?:markdown|md)?\s*\n?', '', plan_content)
+                plan_content = re.sub(r'\n?```\s*$', '', plan_content)
+            
+            # Write the file
+            plan_path.write_text(plan_content.strip() + '\n', encoding='utf-8')
+            log.info(f"[AIChat] Plan file created: {plan_path}")
+            
+            # Notify chat with a brief message (not the full plan)
+            rel_path = str(plan_path.relative_to(project_root)).replace('\\', '/')
+            abs_path_str = str(plan_path).replace('\\', '/')
+            notice = (
+                f"Plan created: **{rel_path}**\n\n"
+                f"Click to open: [{rel_path}]({abs_path_str})"
+            )
+            self._vision_response_received.emit(notice)
+            
+            # Open the file in editor
+            self.open_file_requested.emit(str(plan_path))
+            
+        except Exception as e:
+            log.error(f"[AIChat] Plan file generation error: {e}", exc_info=True)
+            self._vision_response_received.emit(f"Plan generation error: {str(e)}")
+    
+    def _generate_plan_file_with_images(self, user_text: str, images: list):
+        """Generate a plan .md file from image analysis + user text.
+        
+        Flow:
+        1. Send image(s) to Mistral vision to get a detailed description
+        2. Use that description + user text to generate a structured plan
+        3. Write .md file, show notification, open in editor
+        """
+        import re, time, os
+        from pathlib import Path
+        
+        try:
+            # Step 1: Analyze image(s) with Mistral vision
+            log.info("[AIChat] Plan+Image Step 1: Analyzing image via Mistral vision")
+            
+            vision_prompt = (
+                "Describe this image in detail. Focus on:\n"
+                "- UI layout, components, sections\n"
+                "- Colors, fonts, spacing\n"
+                "- Functionality and interactive elements\n"
+                "- Any text or labels visible\n"
+                "- Overall design pattern / style\n\n"
+                "Be thorough — this description will be used to create an implementation plan."
+            )
+            if user_text.strip():
+                vision_prompt += f"\n\nUser's notes: {user_text}"
+            
+            # Build multimodal messages via image pipeline
+            pipeline_result = process_images_for_api(images, vision_prompt, provider="mistral")
+            messages = pipeline_result["messages"]
+            
+            image_description = self._call_mistral_with_context(
+                messages,
+                temperature=0.5,
+                max_tokens=2000,
+                model_id="mistral-large-latest",
+            )
+            
+            if not image_description or image_description.startswith("Error"):
+                log.error(f"[AIChat] Vision analysis failed: {image_description}")
+                self._vision_response_received.emit(f"Plan generation failed (vision): {image_description}")
+                return
+            
+            log.info(f"[AIChat] Plan+Image Step 2: Generating plan from description ({len(image_description)} chars)")
+            
+            # Step 2: Generate structured plan from the description
+            project_root = getattr(self, '_current_project_path', '') or os.getcwd()
+            
+            system_prompt = (
+                "You are an expert software architect. Based on the image analysis below, "
+                "create a detailed, actionable implementation plan as a Markdown document.\n\n"
+                "Rules:\n"
+                "- Start with a level-1 heading (# Title).\n"
+                "- Break down tasks with numbered sub-headings (## Task 1, ## Task 2, ...).\n"
+                "- For each task include: goal, files to create/modify, key implementation details.\n"
+                "- Include specific HTML/CSS/JS details based on the visual design.\n"
+                "- Keep it concise but thorough \u2014 no filler.\n"
+                "- Do NOT wrap the whole output in a code fence. Output raw Markdown directly.\n"
+                f"- Project root: {project_root}\n"
+            )
+            
+            plan_user_prompt = (
+                f"=== Image Analysis ===\n{image_description}\n=== End Image Analysis ===\n\n"
+            )
+            if user_text.strip():
+                plan_user_prompt += f"User request: {user_text}\n\n"
+            plan_user_prompt += "Create a detailed implementation plan based on this design."
+            
+            plan_messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": plan_user_prompt},
+            ]
+            
+            plan_content = self._call_mistral_with_context(
+                plan_messages,
+                temperature=0.7,
+                max_tokens=4096,
+                model_id="mistral-large-latest",
+            )
+            
+            if not plan_content or plan_content.startswith("Error"):
+                log.error(f"[AIChat] Plan generation LLM error: {plan_content}")
+                self._vision_response_received.emit(f"Plan generation failed: {plan_content}")
+                return
+            
+            # Strip accidental code-fence wrapping
+            if plan_content.startswith("```"):
+                plan_content = re.sub(r'^```(?:markdown|md)?\s*\n?', '', plan_content)
+                plan_content = re.sub(r'\n?```\s*$', '', plan_content)
+            
+            # Step 3: Write the file
+            plans_dir = Path(project_root) / "plans"
+            plans_dir.mkdir(parents=True, exist_ok=True)
+            
+            slug = re.sub(r'[^a-z0-9]+', '_', user_text[:60].lower()).strip('_') or 'image_plan'
+            timestamp = time.strftime('%Y%m%d_%H%M%S')
+            plan_filename = f"{slug}_{timestamp}.md"
+            plan_path = plans_dir / plan_filename
+            
+            plan_path.write_text(plan_content.strip() + '\n', encoding='utf-8')
+            log.info(f"[AIChat] Plan file created from image: {plan_path}")
+            
+            # Brief notification in chat
+            rel_path = str(plan_path.relative_to(project_root)).replace('\\', '/')
+            abs_path_str = str(plan_path).replace('\\', '/')
+            notice = (
+                f"Plan created from image analysis: **{rel_path}**\n\n"
+                f"Click to open: [{rel_path}]({abs_path_str})"
+            )
+            self._vision_response_received.emit(notice)
+            
+            # Open in editor
+            self.open_file_requested.emit(str(plan_path))
+            
+        except Exception as e:
+            log.error(f"[AIChat] Plan+Image generation error: {e}", exc_info=True)
+            self._vision_response_received.emit(f"Plan generation error: {str(e)}")
+    
+    # ==================== END PLAN MODE ====================
+    
+    def _process_text_message_through_performance(self, text, config):
+        """Process text-only message through performance mode system.
+        
+        ARCHITECTURE: Mistral is the ONLY provider.
+        All modes route through single agent with the mode's configured model.
+        
+        Args:
+            text: User message text
+            config: PerformanceConfig for current mode
+        """
+        try:
+            from src.config.settings import get_settings
+            from PyQt6.QtCore import QThread
+            
+            settings = get_settings()
+            provider_name = "mistral"
+            model_id = config.main_agent_model or "mistral-small-latest"
+            session_id = (settings.get("ai", "session_id") or "default").strip()
+            
+            log.info(f"[AIChat] Text routing: provider={provider_name}, model={model_id}, mode={self._get_performance_mode_from_settings()}")
+            
+            # Show thinking indicator
+            self._show_thinking_in_js()
+            
+            # All modes: Single agent with mode's model
+            threading.Thread(
+                target=self._process_text_single_agent,
+                args=(text, config, provider_name, model_id, session_id),
+                daemon=True
+            ).start()
+                
+        except Exception as e:
+            log.error(f"[AIChat] Text message performance routing error: {e}", exc_info=True)
+            # Fallback to standard path
+            context = ""
+            if self._get_code_context:
+                context = self._get_code_context()
+            self.message_sent.emit(text, context)
+    
+    def _process_text_single_agent(self, text, config, provider_name, model_id, session_id):
+        """Process text message with single agent (ALL modes).
+        
+        ARCHITECTURE: Mistral is the ONLY provider.
+        - Efficient: Mistral Small
+        - Auto: Mistral Small/Medium/Large auto-select based on query
+        - Performance: Mistral Medium
+        - Ultimate: Mistral Large
+        """
+        try:
+            perf_mode_str = self._get_performance_mode_from_settings()
+            perf_mode = get_performance_mode(perf_mode_str)
+            
+            provider_name = "mistral"
+            
+            if perf_mode == PerformanceMode.AUTO:
+                # Auto mode: smart Mistral model selection based on query complexity
+                model_id = self._auto_select_mistral_model(text)
+                log.info(f"[AIChat] Auto mode text: auto-selected {model_id}")
+            else:
+                # All other modes: use the config's model directly
+                model_id = config.main_agent_model or "mistral-small-latest"
+                log.info(f"[AIChat] {perf_mode.value} mode text: {model_id}")
+            
+            max_tokens = calculate_max_tokens_for_mode(model_id, config)
+            log.info(f"[AIChat] Single agent text: provider={provider_name}, model={model_id}, max_tokens={max_tokens}")
+            
+            self._call_agent_and_respond(text, provider_name, model_id, max_tokens, config.temperature)
+            
+        except Exception as e:
+            log.error(f"[AIChat] Single agent text error: {e}", exc_info=True)
+            self._vision_response_received.emit(f"Error: {str(e)}")
+    
+    def _process_text_performance(self, text, config, provider_name, model_id, session_id):
+        """Process text message in Performance mode.
+        
+        FIXED: No more DeepSeek supporter pre-analysis.
+        The supporter was adding 30-60s overhead and bloating the prompt.
+        
+        Now: User message goes DIRECTLY to Mistral Medium via the agentic
+        tool loop. Performance mode = mistral-medium (faster, cheaper than large).
+        """
+        try:
+            main_model_id = "mistral-medium-latest"
+            max_tokens = calculate_max_tokens_for_mode(main_model_id, config)
+            log.info(f"[AIChat] Performance mode: Direct to agentic loop with {main_model_id}, max_tokens={max_tokens}")
+            self._call_agent_and_respond(text, "mistral", main_model_id, max_tokens, config.temperature)
+        except Exception as e:
+            log.error(f"[AIChat] Performance mode error: {e}", exc_info=True)
+            self._vision_response_received.emit(f"Error: {str(e)}")
+    
+    def _auto_select_mistral_model(self, text: str) -> str:
+        """Auto-select Mistral model based on query complexity.
+        
+        Auto mode smart routing:
+        - Pure greetings/acks only -> mistral-small-latest (fast, cheap)
+        - Coding / tool-requiring tasks -> mistral-medium-latest minimum
+        - Complex/long queries -> mistral-large-latest (maximum quality)
+        
+        IMPORTANT: mistral-small has only 32K context (hist_cap=4K) which is
+        too small for ANY coding task.  Reserve it ONLY for greetings.
+        
+        Returns:
+            Mistral model ID string
+        """
+        import re
+        text_stripped = text.strip()
+        text_lower = text_stripped.lower()
+        word_count = len(text_stripped.split())
+        
+        # ── "Continue the task" auto-messages always get large model ───────
+        # These carry forward accumulated context and need maximum headroom.
+        if text_lower.startswith("continue the task") or text_lower.startswith("continue task"):
+            return "mistral-large-latest"
+        
+        # ── Pure greetings/acks → small (same patterns as _is_simple_query) ──
+        greeting_patterns = [
+            r'^(hi|hello|hey|yo|sup|greetings)[!.\s]*$',
+            r'^(thanks?|thank you|thx)[!.\s]*$',
+            r'^(ok|okay|got it|sure|alright)[!.\s]*$',
+            r'^(bye|goodbye|see you|good night)[!.\s]*$',
+            r'^(good (morning|afternoon|evening))[!.\s]*$',
+            r'^how are you[?!.\s]*$',
+            r'^what\'?s up[?!.\s]*$',
+        ]
+        for pattern in greeting_patterns:
+            if re.match(pattern, text_lower):
+                return "mistral-small-latest"
+        
+        # ── Messages with code blocks or file references → large ──────────
+        if '```' in text_stripped or '`' in text_stripped:
+            return "mistral-large-latest"
+        
+        # ── Complex indicators: code keywords, debugging, architecture ────
+        complex_keywords = [
+            "debug", "error", "fix", "implement", "refactor", "architecture",
+            "explain", "analyze", "review", "optimize", "performance",
+            "function", "class", "module", "database", "api", "security",
+            "algorithm", "design pattern", "migration", "deploy",
+            "traceback", "exception", "stack trace", "bug",
+            "create", "build", "make", "write", "code", "file", "html",
+            "css", "js", "python", "react", "tailwind", "plan",
+        ]
+        complex_match = sum(1 for kw in complex_keywords if kw in text_lower)
+        
+        # High complexity: many keywords or very long query
+        if complex_match >= 3 or word_count > 80:
+            return "mistral-large-latest"
+        
+        # Medium complexity: any coding keyword or moderate length
+        if complex_match >= 1 or word_count > 15:
+            return "mistral-medium-latest"
+        
+        # Default: medium for anything that isn't a greeting
+        # mistral-small (32K) is too tight for tool-based interactions
+        return "mistral-medium-latest"
+    
+    def _is_simple_query(self, text: str) -> bool:
+        """Check if query is simple enough to skip multi-agent collaboration.
+        
+        Simple queries: greetings, short questions, continuation commands,
+        file creation/editing tasks, common coding commands.
+        Complex queries: architecture design, deep debugging, long explanations.
+        
+        The DeepSeek Reasoner supporter adds ~60s overhead per call.
+        Only use it for genuinely complex reasoning tasks.
+        
+        Returns:
+            True if simple (use single agent), False if complex (use multi-agent)
+        """
+        # Strip and check
+        text = text.strip()
+        text_lower = text.lower()
+        
+        # Very short messages (greetings, etc.)
+        if len(text) < 15:
+            return True
+        
+        # Continuation commands should ALWAYS skip multi-agent
+        continuation_patterns = [
+            "continue the task", "continue working", "continue from where",
+            "keep going", "proceed with", "remaining todos",
+            "continue the implementation", "continue building",
+        ]
+        for cp in continuation_patterns:
+            if cp in text_lower:
+                return True
+        
+        # Word count check
+        word_count = len(text.split())
+        if word_count < 5:
+            return True
+        
+        # File creation/editing tasks — single agent is enough
+        # These keywords ANYWHERE in text mean it's a direct coding task
+        coding_action_keywords = [
+            "create", "make", "build", "write", "generate", "fix",
+            "update", "edit", "modify", "add", "remove", "delete",
+            "rename", "move", "copy", "install", "setup", "init",
+            "plan", "implement", "code", "file", ".md", ".html",
+            ".css", ".js", ".py", ".json", ".ts", ".tsx",
+        ]
+        for kw in coding_action_keywords:
+            if kw in text_lower:
+                return True
+        
+        # Common simple patterns
+        simple_patterns = [
+            "hi", "hello", "hey", "thanks", "thank you", "good morning",
+            "good afternoon", "good evening", "bye", "goodbye", "see you",
+            "how are you", "what's up", "help me", "please",
+        ]
+        
+        for pattern in simple_patterns:
+            if text_lower.startswith(pattern) or text_lower == pattern:
+                return True
+        
+        # If question mark and short, might be simple
+        if '?' in text and word_count < 10:
+            simple_questions = ["how", "what", "where", "when", "who", "why"]
+            first_word = text_lower.split()[0] if text_lower.split() else ""
+            if first_word in simple_questions and word_count < 8:
+                return True
+        
+        # Short-to-medium messages (< 30 words) are unlikely to need deep reasoning
+        if word_count < 30:
+            return True
+        
+        # Default: complex query, use multi-agent
+        return False
+    
+    def _process_text_ultimate(self, text, config, provider_name, session_id):
+        """Process text message in Ultimate mode.
+        
+        FIXED: No more DeepSeek supporter pre-analysis.
+        The supporter was adding 60s overhead and bloating the prompt,
+        causing Mistral API timeouts.
+        
+        Now: User message goes DIRECTLY to Mistral Large via the agentic
+        tool loop (same as Qoder/VS Code architecture).
+        The quality comes from using mistral-large + full tool suite,
+        NOT from pre-analysis by another LLM.
+        """
+        try:
+            main_model_id = "mistral-large-latest"
+            max_tokens = calculate_max_tokens_for_mode(main_model_id, config)
+            log.info(f"[AIChat] Ultimate mode: Direct to agentic loop with {main_model_id}, max_tokens={max_tokens}")
+            self._call_agent_and_respond(text, "mistral", main_model_id, max_tokens, config.temperature)
+        except Exception as e:
+            log.error(f"[AIChat] Ultimate mode error: {e}", exc_info=True)
+            self._vision_response_received.emit(f"Error: {str(e)}")
+    
+    def _call_llm_direct(self, prompt: str, provider: str, model_id: str, temperature: float, max_tokens: int) -> str:
+        """Call LLM API directly.
+        
+        Args:
+            prompt: The prompt to send
+            provider: 'mistral' (only provider)
+            model_id: Model identifier
+            temperature: Temperature setting
+            max_tokens: Maximum tokens to generate
+            
+        Returns:
+            Response string or error message
+        """
+        try:
+            messages = [{"role": "user", "content": prompt}]
+            return self._call_mistral_with_context(messages, temperature, max_tokens, model_id)
+                
+        except Exception as e:
+            log.error(f"[AIChat] Direct LLM call failed: {e}", exc_info=True)
+            return f"Error: {str(e)}"
+    
+    def _call_agent_and_respond(self, text, provider_name, model_id, max_tokens, temperature):
+        """Call agent with specified model and append response to chat.
+        
+        This uses the model_changed signal to update the agent_bridge
+        with the performance mode's selected model before sending the message.
+        Also saves the token_multiplier to settings for agent_bridge to use.
+        """
+        try:
+            from src.config.settings import get_settings
+            
+            settings = get_settings()
+            
+            # Calculate the token multiplier from max_tokens
+            # We need to get the base max_output_tokens from model_limits to find the multiplier
+            try:
+                from src.ai.model_limits import get_model_limits
+                base_limits = get_model_limits(model_id)
+                base_max_tokens = base_limits.max_output_tokens
+                token_multiplier = max_tokens / base_max_tokens if base_max_tokens > 0 else 1.0
+            except Exception:
+                # Fallback: calculate from the perf string
+                token_multiplier = max_tokens / 4096.0
+            
+            # Save token_multiplier to settings so agent_bridge can read it
+            settings.set("ai", "token_multiplier", str(token_multiplier))
+            
+            log.info(f"[AIChat] Token multiplier: {token_multiplier}x (max_tokens: {max_tokens})")
+            
+            # Use the model_changed signal to update agent_bridge
+            # This is the proper way to switch models (same as dropdown selection)
+            perf = str(int(token_multiplier * 10) / 10) + "x"  # e.g., "0.3x", "1.6x"
+            cost = f"${temperature}/msg"  # Approximate cost indicator
+            
+            log.info(f"[AIChat] Emitting model_changed signal: {model_id} (provider: {provider_name})")
+            
+            # Emit signal to update agent_bridge (goes through main_window._on_model_changed)
+            self.model_changed.emit(model_id, perf, cost)
+            
+            # Small delay to ensure settings are updated before sending message
+            from PyQt6.QtWidgets import QApplication
+            QApplication.processEvents()
+            
+            # Now send the message through standard path
+            context = ""
+            if self._get_code_context:
+                context = self._get_code_context()
+            
+            log.info(f"[AIChat] Sending message with model: {model_id}, token_multiplier: {token_multiplier}x")
+            self.message_sent.emit(text, context)
+            
+        except Exception as e:
+            log.error(f"[AIChat] Agent call error: {e}", exc_info=True)
+            # Fallback to standard path
+            context = ""
+            if self._get_code_context:
+                context = self._get_code_context()
+            self.message_sent.emit(text, context)
+    
+    def _fallback_direct_vision_api(self, images, text, provider_name, model_id):
+        """Fallback to direct vision API if Vision Agent fails.
+        
+        This maintains backward compatibility with the original implementation.
+        """
+        # Reuse the original vision processing logic
+        # This is a simplified version - you can copy the full original code here
+        try:
+            log.warning("[AIChat] Using fallback direct vision API")
+            
+            temperature = 0.7
+            max_tokens = 2000
+            
+            if provider_name == "mistral":
+                content_parts = [{"type": "text", "text": text}]
+                for img in images:
+                    content_parts.append({
+                        "type": "image_url",
+                        "image_url": img.get("data", "")
+                    })
+                
+                messages = [{"role": "user", "content": content_parts}]
+                api_key = os.getenv("MISTRAL_API_KEY", "")
+                
+                response = requests.post(
+                    "https://api.mistral.ai/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json={"model": model_id or "mistral-small-latest", "messages": messages, "temperature": temperature, "max_tokens": max_tokens},
+                    timeout=(30, 180)
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    result = data.get('choices', [{}])[0].get('message', {}).get('content', '')
+                    self._vision_response_received.emit(result)
+                else:
+                    self._vision_response_received.emit(f"Error: {response.status_code}")
+            else:
+                self._vision_response_received.emit("Error: Vision Agent failed and no fallback provider available")
+                
+        except Exception as e:
+            log.error(f"[AIChat] Fallback vision API failed: {e}")
+            self._vision_response_received.emit(f"Error: {str(e)}")
+    
     def _show_thinking_in_js(self):
         """Show thinking indicator in JS chat."""
         try:
@@ -1110,9 +2576,16 @@ class AIChatWidget(QWidget):
             pass
     
     def _on_vision_response(self, response: str):
-        """Handle vision response and display in chat."""
+        """Handle vision response and display in chat.
+        
+        CRITICAL: Must call _onGenerationComplete() in JS to:
+        - Reset _isGenerating = false
+        - Show send button, hide stop button
+        - Release input for next user prompt
+        - Process any queued messages
+        """
         try:
-            # Hide thinking
+            # Hide thinking indicator
             js_code = "if(window.hideThinkingIndicator) window.hideThinkingIndicator();"
             self._view.page().runJavaScript(js_code)
             
@@ -1120,10 +2593,28 @@ class AIChatWidget(QWidget):
             js_code = f"if(window.appendMessage) window.appendMessage({json.dumps(response)}, 'assistant', true);"
             self._view.page().runJavaScript(js_code)
             
+            # CRITICAL: Signal generation complete to release UI
+            js_code = "if(window._onGenerationComplete) window._onGenerationComplete();"
+            self._view.page().runJavaScript(js_code)
+            
+            # Sync vision exchange to agent_bridge conversation history
+            # so follow-up text messages have context about what was in the image
+            user_text = getattr(self, '_vision_user_text', None) or 'Analyze this image'
+            self.vision_history_sync.emit(user_text, response)
+            self._vision_user_text = None
+            
+            # Show Windows push notification for completed vision response
+            try:
+                from src.utils.notifications import show_toast_notification
+                preview = response[:80] + '...' if len(response) > 80 else response
+                show_toast_notification("Cortex AI", f"Vision analysis complete: {preview}")
+            except Exception:
+                pass
+            
             # Cleanup thread after response
             self._cleanup_vision_thread()
-        except Exception:
-            pass
+        except Exception as e:
+            log.error(f"[AIChat] Vision response handling error: {e}")
     
     def _on_vision_error(self, error: str):
         """Handle vision error."""
@@ -1132,14 +2623,18 @@ class AIChatWidget(QWidget):
             js_code = "if(window.hideThinkingIndicator) window.hideThinkingIndicator();"
             self._view.page().runJavaScript(js_code)
             
-            # Add response as assistant message
+            # Add error as assistant message
             js_code = f"if(window.appendMessage) window.appendMessage({json.dumps('Error: ' + error)}, 'assistant', true);"
+            self._view.page().runJavaScript(js_code)
+            
+            # CRITICAL: Signal generation complete to release UI
+            js_code = "if(window._onGenerationComplete) window._onGenerationComplete();"
             self._view.page().runJavaScript(js_code)
             
             # Cleanup thread after error
             self._cleanup_vision_thread()
-        except Exception:
-            pass
+        except Exception as e:
+            log.error(f"[AIChat] Vision error handling error: {e}")
     
     def _cleanup_vision_thread(self):
         """Cleanup vision thread after worker finishes."""
@@ -1238,21 +2733,6 @@ class AIChatWidget(QWidget):
     def update_theme(self, is_dark: bool):
         """Alias for set_theme."""
         self.set_theme(is_dark)
-
-    def on_chunk(self, chunk):
-        """Handle AI streaming chunk - supporting both string and dict formats."""
-        if not chunk: return
-        
-        # Proper escaping for JS
-        safe_chunk = json.dumps(chunk)
-        self._view.page().runJavaScript(
-            f"if(window.onChunk) window.onChunk({safe_chunk});",
-            lambda result: None
-        )
-
-    def on_complete(self, full_response: str):
-        """Handle completion of the AI response."""
-        self._view.page().runJavaScript("if(window.onComplete) window.onComplete();")
 
     def on_error(self, error_message: str):
         """Handle an error from the AI agent."""
@@ -1418,6 +2898,16 @@ class AIChatWidget(QWidget):
     def clear_chat(self):
         """Clear the chat window."""
         self._view.page().runJavaScript("if(window.clearChat) window.clearChat();")
+
+    def set_input_text(self, text: str):
+        """Set the input field text."""
+        import json
+        safe_text = json.dumps(text)
+        self._view.page().runJavaScript(f"if(window.setInputText) window.setInputText({safe_text});")
+
+    def send_message(self):
+        """Trigger sending the current message."""
+        self._view.page().runJavaScript("if(window.sendMessage) window.sendMessage();")
 
     def set_project_info(self, name: str, path: str, chats_json: str = "[]"):
         """Initialize chat with project details and history."""

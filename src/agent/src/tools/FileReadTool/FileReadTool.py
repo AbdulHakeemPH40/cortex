@@ -1366,7 +1366,8 @@ class FileReadTool:
             
             similar_filename = find_similar_file(full_file_path)
             cwd_suggestion = await suggest_path_under_cwd(full_file_path)
-            message = f"File does not exist. {FILE_NOT_FOUND_CWD_NOTE} {get_cwd()}."
+            # Include the requested path so the model can correct itself instead of retrying blindly.
+            message = f"File does not exist: {file_path}. {FILE_NOT_FOUND_CWD_NOTE} {get_cwd()}."
             if cwd_suggestion:
                 message += f" Did you mean {cwd_suggestion}?"
             elif similar_filename:

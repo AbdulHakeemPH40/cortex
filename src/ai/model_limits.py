@@ -124,15 +124,6 @@ class ModelLimits:
 # fmt: off
 _REGISTRY: List[Tuple[str, int, int]] = [
 
-    # ── DeepSeek ─────────────────────────────────────────────────────────────
-    ("deepseek-r1",           64_000,   8_000),
-    ("deepseek-reasoner",     64_000,   8_000),
-    ("deepseek-coder-v2",    128_000,   8_000),
-    ("deepseek-coder",        16_000,   4_000),
-    ("deepseek-v3",          128_000,   8_000),
-    ("deepseek-chat",        128_000,   8_000),
-    ("deepseek",             128_000,   8_000),   # fallback for any deepseek variant
-
     # ── OpenAI GPT-5.x Series (Frontier) ───────────────────────────────────
     ("gpt-5.4-nano",         400_000, 128_000),
     ("gpt-5.4-mini",         400_000, 128_000),
@@ -265,7 +256,7 @@ def get_model_limits(model_id: str) -> ModelLimits:
 
     Usage::
 
-        limits = get_model_limits("deepseek-chat")
+        limits = get_model_limits("mistral-large-latest")
         response = provider.chat_stream(
             messages,
             model=model_id,

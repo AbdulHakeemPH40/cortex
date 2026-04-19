@@ -57,7 +57,6 @@ class LLMProvider(str, Enum):
     ANTHROPIC = "anthropic"
     GOOGLE = "google"  # Gemini
     XAI = "xai"  # Grok
-    DEEPSEEK = "deepseek"
     QWEN = "qwen"  # Alibaba
     BEDROCK = "bedrock"  # AWS
     VERTEX = "vertex"  # Google Cloud
@@ -70,7 +69,6 @@ PROVIDER_ENV_VARS = {
     LLMProvider.ANTHROPIC: "CORTEX_ANTHROPIC_API_KEY",
     LLMProvider.GOOGLE: "CORTEX_GOOGLE_API_KEY",
     LLMProvider.XAI: "CORTEX_XAI_API_KEY",
-    LLMProvider.DEEPSEEK: "CORTEX_DEEPSEEK_API_KEY",
     LLMProvider.QWEN: "CORTEX_QWEN_API_KEY",
     LLMProvider.BEDROCK: "CORTEX_USE_BEDROCK",
     LLMProvider.VERTEX: "CORTEX_USE_VERTEX",

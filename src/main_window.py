@@ -12,15 +12,16 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSplitter,
     QTabWidget, QLabel, QPushButton, QStatusBar, QFileDialog,
     QToolBar, QMenuBar, QMessageBox, QInputDialog, QTabBar,
-    QFrame, QSizePolicy, QApplication
+    QFrame, QSizePolicy, QApplication, QListWidget, QComboBox, QDialog,
+    QStackedWidget, QScrollArea, QTreeView, QLineEdit
 )
+from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtSlot, QTimer, QRect, QProcessEnvironment, QSignalBlocker, QEventLoop, QDir, QModelIndex
+from PyQt6.QtGui import QFileSystemModel, QAction, QKeySequence, QIcon, QFont, QPainter, QColor, QMouseEvent, QCloseEvent, QPixmap
 from PyQt6.QtWebEngineCore import QWebEnginePage
-from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtSlot, QTimer, QRect, QProcessEnvironment, QSignalBlocker, QEventLoop
-from PyQt6.QtGui import (QAction, QKeySequence, QIcon, QFont, QPainter, QColor, 
-                         QMouseEvent, QCloseEvent, QPixmap)
 
 from src.config.settings import get_settings
 from src.config.theme_manager import get_theme_manager
+from src.config.points_manager import get_points_manager, InsufficientPointsError
 from src.core.project_manager import ProjectManager
 from src.core.file_manager import FileManager
 from src.core.session_manager import SessionManager
@@ -51,13 +52,16 @@ class CodeAnalyzer:
 # from src.ai.file_edit_tracker import FileEditTracker
 from src.core.git_manager import GitManager
 from src.ui.components.sidebar import SidebarWidget
+from src.ui.components.command_palette import CommandPalette
 from src.ui.components.editor import CodeEditor
 from src.ui.components.ai_chat import AIChatWidget
 from src.ui.components.xterm_terminal import XTermWidget
 from src.ui.components.find_replace import FindReplaceDialog
+
 from src.ui.dialogs.diff_viewer import DiffWindow
 from src.utils.icons import make_icon
-from src.core.live_server import LiveServer
+# Live Server removed in AI-first mode - AI handles code execution
+# from src.core.live_server import LiveServer
 from src.utils.helpers import detect_language, shorten_path
 from src.utils.logger import get_logger
 from src.utils.notifications import show_task_complete_notification
@@ -594,6 +598,7 @@ class CortexMainWindow(QMainWindow):
         self._live_server: Optional[LiveServer] = None  # built-in HTML Live Server
         # Git manager for source control integration
         self._git_manager = GitManager()
+        self._git_manager.status_changed.connect(self._update_git_summary)
         log.info("[GIT] GitManager initialized")
         
         # Agent bridge connects Cortex to agent module
@@ -608,6 +613,8 @@ class CortexMainWindow(QMainWindow):
         self._diff_window = DiffWindow(self)
         self._codebase_index = None
         self._inline_edit_context = None
+        # Live Server removed in AI-first mode
+        self._live_server = None
         
         # Initialize UI components to None to prevent theme application crashes if build fails
         self._toolbar = None
@@ -621,9 +628,8 @@ class CortexMainWindow(QMainWindow):
             log.info("MainWindow: Building UI...")
             self._build_ui()
             log.info("MainWindow: Building Menu...")
+            # Build menu bar for all modes (Codex-style has menu bar)
             self._build_menu()
-            log.info("MainWindow: Building Toolbar...")
-            self._build_toolbar()
             log.info("MainWindow: Building Status Bar...")
             self._build_status_bar()
         except Exception as e:
@@ -698,40 +704,125 @@ class CortexMainWindow(QMainWindow):
         else:
             self.show()
 
-    # ------------------------------------------------------------------
-    # UI Construction
-    # ------------------------------------------------------------------
+    def _on_new_chat(self):
+        """Handle new chat request from top navigation bar"""
+        # Clear current chat and start fresh
+        if hasattr(self, '_ai_chat'):
+            self._ai_chat.clear_chat()
+        log.info("New chat requested")
+    
+    def _on_settings_requested(self):
+        """Handle settings request from top navigation bar"""
+        self._open_settings()
+    
+    def _open_settings(self):
+        """Open settings dialog (Ctrl+,)."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Settings")
+        dialog.setMinimumWidth(500)
+        dialog.setMinimumHeight(400)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Theme setting
+        theme_layout = QHBoxLayout()
+        theme_label = QLabel("Theme:")
+        theme_combo = QComboBox()
+        theme_combo.addItems(["Dark", "Light"])
+        theme_combo.setCurrentText("Dark" if self._settings.theme == "dark" else "Light")
+        theme_combo.currentTextChanged.connect(lambda t: self._set_theme(t.lower()))
+        theme_layout.addWidget(theme_label)
+        theme_layout.addWidget(theme_combo)
+        theme_layout.addStretch()
+        layout.addLayout(theme_layout)
+        
+        layout.addStretch()
+        
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.accept)
+        layout.addWidget(close_btn)
+        
+        dialog.exec()
+    
+    def _set_theme(self, theme: str):
+        """Set the application theme."""
+        self._settings.theme = theme
+        self._apply_initial_theme()
+    
+    def _toggle_theme(self):
+        """Toggle between dark and light theme"""
+        current_theme = self._settings.theme
+        new_theme = "light" if current_theme == "dark" else "dark"
+        self._settings.theme = new_theme
+        self._apply_initial_theme()
+        log.info(f"Theme toggled to: {new_theme}")
     def _build_ui(self):
+        """Build AI-First UI Layout - Codex-style with 2-panel and 4-panel states."""
         self.setWindowTitle("Cortex AI Agent")
         central = QWidget()
         self._central = central
         self.setCentralWidget(central)
+
+        # === STATE MANAGEMENT ===
+        # Always show 4-panel layout with chat ready
+        self._is_welcome_state = False
+        self._chat_started = True
+
+        # === CODEX-STYLE LAYOUT WITH SPLITTERS ===
+        main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        main_splitter.setChildrenCollapsible(True)
+        main_splitter.setHandleWidth(4)
+        main_splitter.setStyleSheet("""
+            QSplitter::handle {
+                background-color: #2a2a2a;
+            }
+            QSplitter::handle:hover {
+                background-color: #4d78cc;
+            }
+        """)
+
+        # Create all panels
+        # Panel 1: Left Sidebar (220px) - Collapsible
+        self._left_sidebar = self._create_left_sidebar()
+        self._left_sidebar.setMinimumWidth(180)
+        self._left_sidebar.setMaximumWidth(400)
+        main_splitter.addWidget(self._left_sidebar)
+
+        # Panel 2: Chat Panel - Main AI conversation (ALWAYS VISIBLE, flexible)
+        self._chat_panel = self._create_chat_panel()
+        self._chat_panel.setMinimumWidth(300)
+        main_splitter.addWidget(self._chat_panel)
+
+        # Panel 3: Review Panel (380px) - Summary/Review tabs - Collapsible
+        self._review_panel = self._create_review_panel()
+        self._review_panel.setMinimumWidth(250)
+        self._review_panel.setMaximumWidth(600)
+        main_splitter.addWidget(self._review_panel)
+
+        # Panel 4: File Tree Panel (280px) - Changed files - Collapsible
+        self._file_tree_panel = self._create_file_tree_panel()
+        self._file_tree_panel.setMinimumWidth(200)
+        self._file_tree_panel.setMaximumWidth(500)
+        main_splitter.addWidget(self._file_tree_panel)
+
+        # Set initial sizes (proportions)
+        main_splitter.setSizes([220, 600, 380, 280])
+
+        # Add splitter to main layout
         root_layout = QVBoxLayout(central)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
+        root_layout.addWidget(main_splitter, 1)
 
-        # Main horizontal splitter
-        self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        # Store reference for later access
+        self._main_splitter = main_splitter
 
-        # --- Left Sidebar ---
-        self._sidebar = SidebarWidget(self._file_manager, git_manager=self._git_manager)
-        self._sidebar.setMinimumWidth(44)
-        self._sidebar.setMaximumWidth(700)
-        self._main_splitter.addWidget(self._sidebar)
-
-        # --- Center: Editor + Terminal stacked vertically ---
-        center_widget = QWidget()
-        center_layout = QVBoxLayout(center_widget)
-        center_layout.setContentsMargins(0, 0, 0, 2)  # 2px bottom gap above status bar
-        center_layout.setSpacing(0)
-
-        self._center_splitter = QSplitter(Qt.Orientation.Vertical)
-
-        # Editor tabs
+        # Keep old components for backward compatibility
+        self._ai_splitter = None  # Replaced by 4-panel layout
         self._editor_tabs = EditorTabWidget()
         self._editor_tabs.setMinimumSize(200, 150)
-        self._editor_tabs.show()
-        self._center_splitter.addWidget(self._editor_tabs)
+        self._editor_tabs.hide()  # Hidden in Codex mode, shown in editor mode
 
         # Terminal tabs
         self._terminal_tabs = QTabWidget()
@@ -739,66 +830,32 @@ class CortexMainWindow(QMainWindow):
         self._terminal_tabs.setTabsClosable(True)
         self._terminal_tabs.setDocumentMode(True)
         self._terminal_tabs.setMovable(True)
-        self._terminal_tabs.setVisible(True)
+        self._terminal_tabs.setVisible(False)
         self._terminal_tabs.setMinimumHeight(120)
         self._terminal_tabs.tabCloseRequested.connect(self._close_terminal_tab)
-        
-        # Add a single terminal (VISIBLE on startup)
-        self._new_terminal(show_panel=True)
-        
-        self._center_splitter.addWidget(self._terminal_tabs)
 
-        self._center_splitter.setSizes([700, 275])
-        center_layout.addWidget(self._center_splitter, 1)
-        self._main_splitter.addWidget(center_widget)
-
-        # --- Right Panel: AI Chat ---
-        self._right_panel = QWidget()
-        self._right_panel.setMinimumWidth(50)  # Allow collapsing small
-        right_layout = QVBoxLayout(self._right_panel)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(0)
-
-        self._ai_chat = AIChatWidget()
-        self._ai_chat.run_command.connect(self._on_ai_run_command)
-        self._ai_chat.stop_requested.connect(self._on_ai_stop_requested)
-        self._ai_chat.open_file_requested.connect(self._open_file)
-        self._ai_chat.accept_file_edit_requested.connect(self._on_accept_file_edit)
-        self._ai_chat.reject_file_edit_requested.connect(self._on_reject_file_edit)
-        self._ai_chat.open_terminal_requested.connect(self._show_terminal_panel)
-        self._ai_chat.run_in_terminal_requested.connect(self._show_terminal_and_run)
-        self._ai_chat.set_code_context_callback(self._get_code_context)
-        # load_full_chat_requested is handled internally by AIChatWidget now
-        self._ai_chat.toggle_autogen_requested.connect(self._on_toggle_autogen)
-        right_layout.addWidget(self._ai_chat)
-        self._main_splitter.addWidget(self._right_panel)
-        
         # Find/Replace Dialog
         self._find_replace_dialog = FindReplaceDialog(self)
         self._find_replace_dialog.find_requested.connect(self._on_find_requested)
         self._find_replace_dialog.replace_requested.connect(self._on_replace_requested)
         self._find_replace_dialog.replace_all_requested.connect(self._on_replace_all_requested)
 
-        # Splitter sizes for 3 panels: sidebar | editor | AI chat
-        # VS Code-like defaults: sidebar ~300, AI chat ~350, editor gets the rest
-        sidebar_w = 300
-        right_w = 475
-        total_w = (self._settings.get("window", "width") or 1400)
-        center_w = max(300, total_w - sidebar_w - right_w)
-        self._main_splitter.setSizes([sidebar_w, center_w, right_w])
-        self._main_splitter.setHandleWidth(1)
-        # Editor gets most extra space; sidebar and chat grow slowly
-        self._main_splitter.setStretchFactor(0, 0)  # sidebar: fixed
-        self._main_splitter.setStretchFactor(1, 1)  # editor: stretches
-        self._main_splitter.setStretchFactor(2, 0)  # AI chat: fixed
-        
-        # Limit AI chat panel max width — much more flexible now
-        self._right_panel.setMaximumWidth(1200)
+        # Command Palette
+        self._command_palette = CommandPalette(self)
+        self._command_palette.command_selected.connect(self._on_command_selected)
 
-        root_layout.addWidget(self._main_splitter, 1)
+        # === KEEP SIDEBAR & OLD COMPONENTS (Hidden but available) ===
+        # These are kept for backward compatibility and can be shown via commands
+        self._sidebar = SidebarWidget(self._file_manager, git_manager=self._git_manager)
+        self._sidebar.setVisible(False)  # Hidden by default in AI-first mode
+        self._sidebar.setMinimumWidth(44)
+        self._sidebar.setMaximumWidth(700)
 
-        # Welcome tab
-        self._show_welcome()
+        # Initialize project info on welcome screen
+        self._update_welcome_project_info()
+
+        # Initialize Git summary after UI is built
+        QTimer.singleShot(500, self._update_git_summary)
 
     def _show_welcome(self):
         """Show a VS Code-like welcome screen in the editor tabs."""
@@ -827,7 +884,7 @@ class CortexMainWindow(QMainWindow):
         wlay.setContentsMargins(40, 40, 40, 40)
 
         # Logo and Title
-        self._welcome_title = QLabel("🧠 Cortex AI Agent")
+        self._welcome_title = QLabel("⚡ Cortex AI Agent")
         self._welcome_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._welcome_title.setObjectName("welcome_title")
         wlay.addWidget(self._welcome_title)
@@ -837,80 +894,42 @@ class CortexMainWindow(QMainWindow):
         self._welcome_subtitle.setObjectName("welcome_subtitle")
         wlay.addWidget(self._welcome_subtitle)
 
-        self._welcome_sep = QFrame()
-        self._welcome_sep.setFrameShape(QFrame.Shape.HLine)
-        self._welcome_sep.setObjectName("welcome_sep")
-        wlay.addWidget(self._welcome_sep)
-
         # Dynamic Project Info
         self._welcome_project_info = QLabel()
         self._welcome_project_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._welcome_project_info.setObjectName("welcome_project_info")
         wlay.addWidget(self._welcome_project_info)
-        self._welcome_hints = []
         self._update_welcome_project_info()
 
-        # Quick Actions Section
-        quick_actions_label = QLabel("Quick Actions")
-        quick_actions_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        quick_actions_label.setObjectName("quick_actions_label")
-        wlay.addWidget(quick_actions_label)
-        
-        hints = [
-            ("📂 Open Folder", "File → Open Folder  or  Ctrl+O"),
-            ("✨ New Project", "File → New Project"),
-            ("📝 New File", "File → New File  or  Ctrl+N"),
-        ]
-        for icon_title, shortcut in hints:
-            row = ClickableLabel(f"<b>{icon_title}</b>   <span class='shortcut'>{shortcut}</span>")
-            row.setAlignment(Qt.AlignmentFlag.AlignLeft)
-            row.setObjectName("welcome_hint")
-            
-            # Connect actions
-            if icon_title == "✨ New Project":
-                row.clicked.connect(self._new_project)
-            elif icon_title == "📂 Open Folder":
-                row.clicked.connect(self._open_folder_dialog)
-            elif icon_title == "📝 New File":
-                row.clicked.connect(self._new_file)
-                
-            wlay.addWidget(row)
-            self._welcome_hints.append(row)
+        # Initialize hints list for theme styling
+        self._welcome_hints = []
 
-        # Recent Projects Section (placeholder for future)
-        recent_label = QLabel("Recent")
-        recent_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        recent_label.setObjectName("recent_label")
-        wlay.addWidget(recent_label)
-        
-        self._recent_projects_list = QLabel("No recent projects")
-        self._recent_projects_list.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        self._recent_projects_list.setObjectName("recent_projects")
-        wlay.addWidget(self._recent_projects_list)
 
-        # Help & Tips Section
-        help_label = QLabel("Help & Tips")
-        help_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        help_label.setObjectName("help_label")
-        wlay.addWidget(help_label)
+        # AI Chat Card (prominent, GitHub Copilot style) - SIMPLIFIED
+        self._welcome_ai_card = QWidget()
+        self._welcome_ai_card.setObjectName("welcome_ai_card")
+        ai_card_layout = QVBoxLayout(self._welcome_ai_card)
+        ai_card_layout.setContentsMargins(16, 16, 16, 16)
+        ai_card_layout.setSpacing(12)
         
-        help_hints = [
-            ("🎨 Toggle Theme", "View → Toggle Theme  or  Ctrl+Shift+T"),
-            ("⚡ Terminal", "View → Toggle Terminal  or  Ctrl+`"),
-            ("🤖 AI Chat", "Type a question in the right panel"),
-        ]
-        for icon_title, shortcut in help_hints:
-            row = ClickableLabel(f"<b>{icon_title}</b>   <span class='shortcut'>{shortcut}</span>")
-            row.setAlignment(Qt.AlignmentFlag.AlignLeft)
-            row.setObjectName("welcome_hint")
-            
-            if icon_title == "🎨 Toggle Theme":
-                row.clicked.connect(self._toggle_theme)
-            elif icon_title == "⚡ Terminal":
-                row.clicked.connect(self._toggle_terminal)
-                
-            wlay.addWidget(row)
-            self._welcome_hints.append(row)
+        ai_title = QLabel("Chat with Cortex")
+        ai_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ai_title.setObjectName("ai_card_title")
+        ai_card_layout.addWidget(ai_title)
+        
+        ai_subtitle = QLabel("Describe what you want to build or explore")
+        ai_subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ai_subtitle.setObjectName("ai_card_subtitle")
+        ai_card_layout.addWidget(ai_subtitle)
+        
+        ai_prompt = ClickableLabel("<b>💬 Ask a question...</b>")
+        ai_prompt.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ai_prompt.setObjectName("ai_prompt")
+        ai_prompt.clicked.connect(self._focus_ai_chat)
+        ai_card_layout.addWidget(ai_prompt)
+        self._welcome_hints.append(ai_prompt)
+        
+        wlay.addWidget(self._welcome_ai_card)
 
         # Add stretch to center content vertically
         wlay.addStretch()
@@ -931,6 +950,14 @@ class CortexMainWindow(QMainWindow):
         shortcut_color = "#858585" if is_dark else "#6c757d"
         sep_color = "#3e3e42" if is_dark else "#dee2e6"
         subtitle_color = "#858585" if is_dark else "#6c757d"
+        
+        # Extract conditional colors for AI card
+        ai_card_bg = "#2d2d30" if is_dark else "#f3f3f3"
+        ai_card_border = "#3e3e42" if is_dark else "#ddd"
+        ai_prompt_bg = "#3e3e42" if is_dark else "#e8e8e8"
+        ai_prompt_hover_bg = "#4e4e52" if is_dark else "#d4d4d4"
+        hint_hover_bg = "#3e3e42" if is_dark else "#e9ecef"
+        project_info_color = "#c678dd" if is_dark else "#9b30ff"
 
         # Base stylesheet with responsive sizing
         sw = self.width()
@@ -964,7 +991,7 @@ class CortexMainWindow(QMainWindow):
             }}
             QLabel#welcome_project_info {{
                 font-size: {project_size}px;
-                color: {'#c678dd' if is_dark else '#9b30ff'};
+                color: {project_info_color};
                 margin: 8px 0 16px 0;
             }}
             QLabel#quick_actions_label,
@@ -983,13 +1010,40 @@ class CortexMainWindow(QMainWindow):
                 border-radius: 4px;
             }}
             ClickableLabel#welcome_hint:hover {{
-                background-color: {'#3e3e42' if is_dark else '#e9ecef'};
+                background-color: {hint_hover_bg};
             }}
             QLabel#recent_projects {{
                 font-size: {hint_size - 1}px;
                 color: {subtitle_color};
                 padding: 4px 12px;
                 font-style: italic;
+            }}
+            /* AI Chat Card - GitHub Copilot style */
+            QWidget#welcome_ai_card {{
+                background-color: {ai_card_bg};
+                border: 1px solid {ai_card_border};
+                border-radius: 8px;
+                padding: 12px;
+                margin: 8px 0;
+            }}
+            QLabel#ai_card_title {{
+                font-size: 15px;
+                font-weight: bold;
+                color: {fg};
+            }}
+            QLabel#ai_card_subtitle {{
+                font-size: 13px;
+                color: {hint_fg};
+            }}
+            ClickableLabel#ai_prompt {{
+                font-size: 14px;
+                color: #569cd6;
+                padding: 10px 14px;
+                background-color: {ai_prompt_bg};
+                border-radius: 6px;
+            }}
+            ClickableLabel#ai_prompt:hover {{
+                background-color: {ai_prompt_hover_bg};
             }}
         """
         
@@ -1008,6 +1062,893 @@ class CortexMainWindow(QMainWindow):
         if hasattr(self, '_welcome_project_info') and self._welcome_project_info:
             self._welcome_project_info.setStyleSheet(f"font-size:{project_size}px; color:{'#c678dd' if is_dark else '#9b30ff'}; margin: 8px 0;")
 
+    # ------------------------------------------------------------------
+    # Codex-Style 4-Panel Layout Methods
+    # ------------------------------------------------------------------
+
+    def _create_left_sidebar(self) -> QWidget:
+        """Create Left Sidebar (220px) - Navigation + Chat History."""
+        sidebar = QWidget()
+        sidebar.setObjectName("leftSidebar")
+        layout = QVBoxLayout(sidebar)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Codex-style colors
+        bg_color = "#1a1a1a"
+        text_color = "#cccccc"
+        muted_color = "#888888"
+        section_label_color = "#555555"
+
+        sidebar.setStyleSheet(f"""
+            QWidget#leftSidebar {{
+                background-color: {bg_color};
+            }}
+            QLabel {{
+                color: {text_color};
+            }}
+        """)
+
+        # App Controls section
+        app_controls = QWidget()
+        app_layout = QHBoxLayout(app_controls)
+        app_layout.setContentsMargins(12, 8, 12, 8)
+        app_layout.setSpacing(8)
+
+        # Back/forward arrows (decorative for now)
+        back_btn = QLabel("←")
+        back_btn.setStyleSheet(f"color: {muted_color}; font-size: 14px;")
+        app_layout.addWidget(back_btn)
+
+        forward_btn = QLabel("→")
+        forward_btn.setStyleSheet(f"color: {muted_color}; font-size: 14px;")
+        app_layout.addWidget(forward_btn)
+
+        # App icon (blue circle)
+        app_icon = QLabel("●")
+        app_icon.setStyleSheet("color: #4d78cc; font-size: 12px;")
+        app_layout.addWidget(app_icon)
+
+        # Title
+        title = QLabel("Cortex")
+        title.setStyleSheet(f"color: {text_color}; font-size: 13px; font-weight: 500;")
+        app_layout.addWidget(title)
+        app_layout.addStretch()
+
+        layout.addWidget(app_controls)
+
+        # Separator
+        sep1 = QFrame()
+        sep1.setFrameShape(QFrame.Shape.HLine)
+        sep1.setStyleSheet("background-color: #2a2a2a; max-height: 1px;")
+        layout.addWidget(sep1)
+
+        # Top Actions: New chat + Search
+        actions_widget = QWidget()
+        actions_layout = QVBoxLayout(actions_widget)
+        actions_layout.setContentsMargins(12, 12, 12, 12)
+        actions_layout.setSpacing(8)
+
+        new_chat_btn = QPushButton("+ New chat")
+        new_chat_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: #2d2d2d;
+                color: {text_color};
+                border: 1px solid #2a2a2a;
+                border-radius: 6px;
+                padding: 8px 12px;
+                font-size: 13px;
+                text-align: left;
+            }}
+            QPushButton:hover {{
+                background-color: #3d3d3d;
+            }}
+        """)
+        new_chat_btn.clicked.connect(self._on_new_chat)
+        actions_layout.addWidget(new_chat_btn)
+
+        search_btn = QPushButton("🔍 Search")
+        search_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {muted_color};
+                border: none;
+                padding: 6px 12px;
+                font-size: 13px;
+                text-align: left;
+            }}
+            QPushButton:hover {{
+                color: {text_color};
+            }}
+        """)
+        actions_layout.addWidget(search_btn)
+
+        layout.addWidget(actions_widget)
+
+        # Section label style
+        section_label_style = f"""
+            color: {section_label_color};
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            padding: 16px 12px 8px 12px;
+        """
+
+        # Plugins section
+        plugins_label = QLabel("Plugins")
+        plugins_label.setStyleSheet(section_label_style)
+        layout.addWidget(plugins_label)
+
+        plugins_item = QLabel("  Plugins")
+        plugins_item.setStyleSheet(f"color: {muted_color}; font-size: 13px; padding: 6px 12px;")
+        layout.addWidget(plugins_item)
+
+        # Automations section
+        auto_label = QLabel("Automations")
+        auto_label.setStyleSheet(section_label_style)
+        layout.addWidget(auto_label)
+
+        auto_item = QLabel("  Automations")
+        auto_item.setStyleSheet(f"color: {muted_color}; font-size: 13px; padding: 6px 12px;")
+        layout.addWidget(auto_item)
+
+        # Projects section
+        projects_label = QLabel("Projects")
+        projects_label.setStyleSheet(section_label_style)
+        layout.addWidget(projects_label)
+
+        # Sample project (will be dynamic)
+        project_item = QLabel("  📁 black_box")
+        project_item.setStyleSheet(f"color: {text_color}; font-size: 13px; padding: 6px 12px;")
+        layout.addWidget(project_item)
+
+        # Chats section
+        chats_header = QWidget()
+        chats_layout = QHBoxLayout(chats_header)
+        chats_layout.setContentsMargins(12, 16, 12, 8)
+        chats_layout.setSpacing(0)
+
+        chats_label = QLabel("Chats")
+        chats_label.setStyleSheet(section_label_style.replace("padding: 16px 12px 8px 12px;", ""))
+        chats_layout.addWidget(chats_label)
+        chats_layout.addStretch()
+
+        # Sort and new chat icons
+        sort_icon = QLabel("⇅")
+        sort_icon.setStyleSheet(f"color: {muted_color}; font-size: 12px;")
+        chats_layout.addWidget(sort_icon)
+
+        new_icon = QLabel("+")
+        new_icon.setStyleSheet(f"color: {muted_color}; font-size: 14px; padding-left: 8px;")
+        chats_layout.addWidget(new_icon)
+
+        layout.addWidget(chats_header)
+
+        # Chat list (will be populated dynamically)
+        self._sidebar_chat_list = QListWidget()
+        self._sidebar_chat_list.setStyleSheet(f"""
+            QListWidget {{
+                background-color: transparent;
+                border: none;
+                color: {text_color};
+                font-size: 13px;
+            }}
+            QListWidget::item {{
+                padding: 6px 12px;
+                color: {muted_color};
+            }}
+            QListWidget::item:selected {{
+                background-color: #2d2d2d;
+                color: {text_color};
+            }}
+            QListWidget::item:hover {{
+                background-color: #252525;
+            }}
+        """)
+        self._sidebar_chat_list.addItem("hi")
+        layout.addWidget(self._sidebar_chat_list)
+
+        layout.addStretch()
+
+        # Bottom: Settings + Upgrade
+        bottom_widget = QWidget()
+        bottom_layout = QHBoxLayout(bottom_widget)
+        bottom_layout.setContentsMargins(12, 12, 12, 12)
+        bottom_layout.setSpacing(8)
+
+        settings_btn = QPushButton("⚙ Settings")
+        settings_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {muted_color};
+                border: none;
+                padding: 6px;
+                font-size: 13px;
+            }}
+            QPushButton:hover {{
+                color: {text_color};
+            }}
+        """)
+        settings_btn.clicked.connect(self._on_settings_requested)
+        bottom_layout.addWidget(settings_btn)
+        bottom_layout.addStretch()
+
+        upgrade_btn = QPushButton("Upgrade")
+        upgrade_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f0a500;
+                color: #1a1a1a;
+                border: none;
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #ffb020;
+            }
+        """)
+        bottom_layout.addWidget(upgrade_btn)
+
+        layout.addWidget(bottom_widget)
+
+        return sidebar
+
+    def _create_chat_panel(self) -> QWidget:
+        """Create Chat Panel (flexible) - Main AI conversation."""
+        panel = QWidget()
+        panel.setObjectName("chatPanel")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        bg_color = "#1e1e1e"
+        border_color = "#2a2a2a"
+
+        panel.setStyleSheet(f"""
+            QWidget#chatPanel {{
+                background-color: {bg_color};
+            }}
+        """)
+
+        # Top bar - Clean minimal design
+        top_bar = QWidget()
+        top_bar.setFixedHeight(48)
+        top_bar_layout = QHBoxLayout(top_bar)
+        top_bar_layout.setContentsMargins(12, 0, 12, 0)
+        top_bar_layout.setSpacing(8)
+
+        # Chat identifier badge
+        chat_badge = QLabel("hi")
+        chat_badge.setStyleSheet("color: #888888; font-size: 12px;")
+        top_bar_layout.addWidget(chat_badge)
+
+        # Workspace name
+        workspace = QLabel("Cortex")
+        workspace.setStyleSheet("color: #cccccc; font-size: 14px; font-weight: 500;")
+        top_bar_layout.addWidget(workspace)
+
+        top_bar_layout.addStretch()
+
+        # Action buttons (minimal)
+        play_btn = QLabel("▶")
+        play_btn.setStyleSheet("color: #4ec94e; font-size: 12px;")
+        top_bar_layout.addWidget(play_btn)
+
+        # Commit button
+        commit_btn = QLabel("⎇ Commit ▾")
+        commit_btn.setStyleSheet("color: #cccccc; font-size: 13px;")
+        top_bar_layout.addWidget(commit_btn)
+
+        layout.addWidget(top_bar)
+
+        # Separator
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("background-color: #2a2a2a; max-height: 1px;")
+        layout.addWidget(sep)
+
+        # AI Chat widget (existing)
+        self._ai_chat = AIChatWidget()
+        self._ai_chat.run_command.connect(self._on_ai_run_command)
+        self._ai_chat.stop_requested.connect(self._on_ai_stop_requested)
+        self._ai_chat.open_file_requested.connect(self._open_file)
+        self._ai_chat.accept_file_edit_requested.connect(self._on_accept_file_edit)
+        self._ai_chat.reject_file_edit_requested.connect(self._on_reject_file_edit)
+        self._ai_chat.open_terminal_requested.connect(self._show_terminal_panel)
+        self._ai_chat.run_in_terminal_requested.connect(self._show_terminal_and_run)
+        self._ai_chat.set_code_context_callback(self._get_code_context)
+        self._ai_chat.toggle_autogen_requested.connect(self._on_toggle_autogen)
+        layout.addWidget(self._ai_chat, 1)
+
+        return panel
+
+    def _create_review_panel(self) -> QWidget:
+        """Create Review Panel (380px) - Clickable Summary/Review tabs."""
+        panel = QWidget()
+        panel.setObjectName("reviewPanel")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        bg_color = "#1e1e1e"
+
+        panel.setStyleSheet(f"""
+            QWidget#reviewPanel {{
+                background-color: {bg_color};
+            }}
+        """)
+
+        # Tab bar with clickable buttons
+        tab_bar = QWidget()
+        tab_bar.setFixedHeight(48)
+        tab_layout = QHBoxLayout(tab_bar)
+        tab_layout.setContentsMargins(12, 0, 12, 0)
+        tab_layout.setSpacing(8)
+
+        # Summary tab button
+        self._summary_tab_btn = QPushButton("≡ Summary")
+        self._summary_tab_btn.setFlat(True)
+        self._summary_tab_btn.setStyleSheet("""
+            QPushButton {
+                color: #ffffff;
+                font-size: 13px;
+                font-weight: 500;
+                background-color: transparent;
+                border: none;
+                padding: 8px 12px;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #2d2d2d;
+            }
+            QPushButton:checked {
+                background-color: #2d2d2d;
+            }
+        """)
+        self._summary_tab_btn.setCheckable(True)
+        self._summary_tab_btn.setChecked(True)
+        self._summary_tab_btn.clicked.connect(self._on_summary_tab_clicked)
+        tab_layout.addWidget(self._summary_tab_btn)
+
+        # Review tab button
+        self._review_tab_btn = QPushButton("📄 Review")
+        self._review_tab_btn.setFlat(True)
+        self._review_tab_btn.setStyleSheet("""
+            QPushButton {
+                color: #888888;
+                font-size: 13px;
+                background-color: transparent;
+                border: none;
+                padding: 8px 12px;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #2d2d2d;
+                color: #cccccc;
+            }
+            QPushButton:checked {
+                background-color: #2d2d2d;
+                color: #ffffff;
+            }
+        """)
+        self._review_tab_btn.setCheckable(True)
+        self._review_tab_btn.clicked.connect(self._on_review_tab_clicked)
+        tab_layout.addWidget(self._review_tab_btn)
+
+        tab_layout.addStretch()
+
+        add_tab = QLabel("+")
+        add_tab.setStyleSheet("color: #888888; font-size: 16px;")
+        tab_layout.addWidget(add_tab)
+
+        layout.addWidget(tab_bar)
+
+        # Separator
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("background-color: #2a2a2a; max-height: 1px;")
+        layout.addWidget(sep)
+
+        # Stacked widget for tab content
+        self._review_stack = QStackedWidget()
+
+        # === SUMMARY TAB CONTENT ===
+        summary_content = QWidget()
+        summary_layout = QVBoxLayout(summary_content)
+        summary_layout.setContentsMargins(16, 16, 16, 16)
+        summary_layout.setSpacing(12)
+
+        # Progress section
+        progress_label = QLabel("Progress")
+        progress_label.setStyleSheet("color: #aaaaaa; font-size: 12px; font-weight: bold;")
+        summary_layout.addWidget(progress_label)
+
+        progress_text = QLabel("Progress displayed for longer responses")
+        progress_text.setStyleSheet("color: #666666; font-size: 13px; padding: 8px 0;")
+        summary_layout.addWidget(progress_text)
+
+        # Branch details
+        branch_label = QLabel("Branch details")
+        branch_label.setStyleSheet("color: #aaaaaa; font-size: 12px; font-weight: bold; margin-top: 8px;")
+        summary_layout.addWidget(branch_label)
+
+        # GitHub CLI status (will be updated dynamically)
+        self._github_status_label = QLabel("🐙 Checking GitHub CLI...")
+        self._github_status_label.setStyleSheet("color: #888888; font-size: 13px; padding: 8px 0;")
+        summary_layout.addWidget(self._github_status_label)
+
+        # Changes count (will be updated dynamically)
+        self._changes_label = QLabel("✏️ Changes 0 unstaged, 0 untracked")
+        self._changes_label.setStyleSheet("color: #cccccc; font-size: 13px; padding: 8px 0;")
+        summary_layout.addWidget(self._changes_label)
+
+        # Artifacts
+        artifacts_label = QLabel("Artifacts")
+        artifacts_label.setStyleSheet("color: #aaaaaa; font-size: 12px; font-weight: bold; margin-top: 16px;")
+        summary_layout.addWidget(artifacts_label)
+
+        artifacts_text = QLabel("View and open referenced files")
+        artifacts_text.setStyleSheet("color: #666666; font-size: 13px; padding: 8px 0;")
+        summary_layout.addWidget(artifacts_text)
+
+        # Sources
+        sources_label = QLabel("Sources")
+        sources_label.setStyleSheet("color: #aaaaaa; font-size: 12px; font-weight: bold; margin-top: 16px;")
+        summary_layout.addWidget(sources_label)
+
+        sources_text = QLabel("Track sources used")
+        sources_text.setStyleSheet("color: #666666; font-size: 13px; padding: 8px 0;")
+        summary_layout.addWidget(sources_text)
+
+        summary_layout.addStretch()
+        self._review_stack.addWidget(summary_content)
+
+        # === REVIEW TAB CONTENT ===
+        review_content = QWidget()
+        review_layout = QVBoxLayout(review_content)
+        review_layout.setContentsMargins(16, 16, 16, 16)
+        review_layout.setSpacing(12)
+
+        # Unstaged files header
+        unstaged_header = QWidget()
+        unstaged_layout = QHBoxLayout(unstaged_header)
+        unstaged_layout.setContentsMargins(0, 0, 0, 0)
+
+        unstaged_label = QLabel("Unstaged")
+        unstaged_label.setStyleSheet("color: #ffffff; font-size: 13px; font-weight: 500;")
+        unstaged_layout.addWidget(unstaged_label)
+
+        # Unstaged count (will be updated dynamically)
+        self._unstaged_count_label = QLabel("0 ▾")
+        self._unstaged_count_label.setStyleSheet("color: #888888; font-size: 13px;")
+        unstaged_layout.addWidget(self._unstaged_count_label)
+        unstaged_layout.addStretch()
+
+        more_options = QLabel("⋯")
+        more_options.setStyleSheet("color: #888888; font-size: 16px;")
+        unstaged_layout.addWidget(more_options)
+
+        review_layout.addWidget(unstaged_header)
+
+        # Large diff notice
+        self._diff_notice = QLabel("Large diff detected — showing one file at a time.")
+        self._diff_notice.setStyleSheet("color: #888888; font-size: 12px; padding: 8px 0;")
+        self._diff_notice.hide()  # Hidden by default
+        review_layout.addWidget(self._diff_notice)
+
+        # File list container with scrollbar
+        self._file_list_scroll = QScrollArea()
+        self._file_list_scroll.setWidgetResizable(True)
+        self._file_list_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._file_list_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._file_list_scroll.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background-color: transparent;
+            }
+            QScrollBar:vertical {
+                border: none;
+                background: #252525;
+                width: 12px;
+                margin: 0px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background: #4d78cc;
+                min-height: 30px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #5d88dd;
+            }
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {
+                border: none;
+                background: none;
+                height: 0px;
+            }
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {
+                background: none;
+            }
+        """)
+        
+        self._file_list_container = QWidget()
+        self._file_list_layout = QVBoxLayout(self._file_list_container)
+        self._file_list_layout.setContentsMargins(0, 0, 0, 0)
+        self._file_list_layout.setSpacing(4)
+        
+        self._file_list_scroll.setWidget(self._file_list_container)
+        review_layout.addWidget(self._file_list_scroll, 1)
+        review_layout.addStretch()
+
+        self._review_stack.addWidget(review_content)
+        self._review_stack.setCurrentIndex(0)  # Show Summary by default
+
+        layout.addWidget(self._review_stack, 1)
+
+        return panel
+
+    def _on_summary_tab_clicked(self):
+        """Handle Summary tab click."""
+        self._summary_tab_btn.setChecked(True)
+        self._review_tab_btn.setChecked(False)
+        self._review_stack.setCurrentIndex(0)
+
+    def _on_review_tab_clicked(self):
+        """Handle Review tab click."""
+        self._review_tab_btn.setChecked(True)
+        self._summary_tab_btn.setChecked(False)
+        self._review_stack.setCurrentIndex(1)
+
+    def _update_git_summary(self):
+        """Update Summary panel with real Git status."""
+        if not hasattr(self, '_git_manager'):
+            log.warning("[GIT] GitManager not available")
+            self._changes_label.setText("✏️ No git repository")
+            if hasattr(self, '_unstaged_count_label'):
+                self._unstaged_count_label.setText("0 ▾")
+            return
+
+        if not self._git_manager.is_repo():
+            log.info("[GIT] No repository set")
+            self._changes_label.setText("✏️ No git repository")
+            if hasattr(self, '_unstaged_count_label'):
+                self._unstaged_count_label.setText("0 ▾")
+            return
+
+        log.info("[GIT] Updating git summary...")
+        # Get git status
+        git_files = self._git_manager.get_status()
+        log.info(f"[GIT] Found {len(git_files)} changed files")
+
+        # Check GitHub CLI availability
+        self._check_github_cli()
+
+        # Count files by status
+        unstaged_count = sum(1 for f in git_files if not f.staged)
+        untracked_count = sum(1 for f in git_files if f.status.name == 'UNTRACKED')
+        total_changes = len(git_files)
+
+        # Update changes label
+        if total_changes > 0:
+            self._changes_label.setText(f"✏️ Changes {unstaged_count} unstaged, {untracked_count} untracked")
+        else:
+            self._changes_label.setText("✏️ No changes")
+
+        # Update unstaged count in Review tab
+        if hasattr(self, '_unstaged_count_label'):
+            self._unstaged_count_label.setText(f"{unstaged_count} ▾")
+
+        # Update file list in Review tab
+        self._update_review_file_list(git_files)
+
+    def _check_github_cli(self):
+        """Check if GitHub CLI is available."""
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["gh", "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                version = result.stdout.strip().split('\n')[0]
+                self._github_status_label.setText(f"🐙 {version}")
+                self._github_status_label.setStyleSheet("color: #4ec94e; font-size: 13px; padding: 8px 0;")
+            else:
+                self._github_status_label.setText("🐙 GitHub CLI not installed")
+                self._github_status_label.setStyleSheet("color: #888888; font-size: 13px; padding: 8px 0;")
+        except FileNotFoundError:
+            self._github_status_label.setText("🐙 GitHub CLI not installed")
+            self._github_status_label.setStyleSheet("color: #888888; font-size: 13px; padding: 8px 0;")
+        except Exception:
+            self._github_status_label.setText("🐙 GitHub CLI unavailable")
+            self._github_status_label.setStyleSheet("color: #888888; font-size: 13px; padding: 8px 0;")
+
+    def _update_review_file_list(self, git_files):
+        """Update Review tab with actual file changes."""
+        # Clear existing file list
+        while self._file_list_layout.count():
+            child = self._file_list_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        if not git_files:
+            # Show "No changes" message
+            no_changes = QLabel("No changed files")
+            no_changes.setStyleSheet("color: #888888; font-size: 13px; padding: 16px 0;")
+            self._file_list_layout.addWidget(no_changes)
+            self._diff_notice.hide()
+            return
+
+        # Show large diff notice if many changes
+        if len(git_files) > 50:
+            self._diff_notice.show()
+        else:
+            self._diff_notice.hide()
+
+        # Track unique filenames to avoid duplicates
+        seen_files = set()
+        added_count = 0
+        
+        # Add each file with diff stats (deduplicated)
+        for git_file in git_files[:100]:  # Limit to 100 files for performance
+            # Skip duplicates
+            if git_file.path in seen_files:
+                continue
+            seen_files.add(git_file.path)
+            
+            file_widget = self._create_file_diff_item(git_file)
+            if file_widget:  # Only add if not None
+                self._file_list_layout.addWidget(file_widget)
+                added_count += 1
+        
+        # If no files with changes, show message
+        if added_count == 0:
+            no_changes = QLabel("No files with changes")
+            no_changes.setStyleSheet("color: #888888; font-size: 13px; padding: 16px 0;")
+            self._file_list_layout.addWidget(no_changes)
+
+    def _create_file_diff_item(self, git_file) -> QWidget:
+        """Create a file diff item widget."""
+        # Get diff stats
+        additions, deletions = self._get_file_diff_stats(git_file.path)
+        
+        # Show all files except purely untracked files with no content
+        # (Modified, Added, Deleted, Renamed files should all show)
+        if git_file.status.name == 'UNTRACKED' and additions == 0 and deletions == 0:
+            return None
+
+        file_item = QWidget()
+        file_layout = QHBoxLayout(file_item)
+        file_layout.setContentsMargins(0, 6, 0, 6)
+
+        # File name (only filename, not full path)
+        from pathlib import Path
+        filename = Path(git_file.path).name
+        file_name = QLabel(filename)
+        file_name.setStyleSheet("color: #cccccc; font-size: 13px;")
+        file_layout.addWidget(file_name)
+
+        file_layout.addStretch()
+
+        # Show diff stats (always show, even if 0)
+        additions_label = QLabel(f"+{additions}")
+        additions_label.setStyleSheet("color: #4ec94e; font-size: 13px; font-weight: 500;")
+        file_layout.addWidget(additions_label)
+
+        deletions_label = QLabel(f"-{deletions}")
+        deletions_label.setStyleSheet("color: #e05252; font-size: 13px; font-weight: 500;")
+        file_layout.addWidget(deletions_label)
+
+        # Expand icon
+        expand_icon = QLabel("▾")
+        expand_icon.setStyleSheet("color: #888888; font-size: 12px;")
+        file_layout.addWidget(expand_icon)
+
+        return file_item
+
+    def _get_file_diff_stats(self, file_path: str) -> tuple:
+        """Get additions and deletions for a file."""
+        if not hasattr(self, '_git_manager') or not self._git_manager.is_repo():
+            return 0, 0
+
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["git", "diff", "--numstat", file_path],
+                cwd=self._git_manager._repo_path,
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                parts = result.stdout.strip().split('\t')
+                if len(parts) >= 2:
+                    additions = int(parts[0]) if parts[0] != '-' else 0
+                    deletions = int(parts[1]) if parts[1] != '-' else 0
+                    return additions, deletions
+        except:
+            pass
+
+        return 0, 0
+
+    def _create_file_tree_panel(self) -> QWidget:
+        """Create File Tree Panel (280px) - Project Explorer."""
+        panel = QWidget()
+        panel.setObjectName("fileTreePanel")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        bg_color = "#1a1a1a"
+
+        panel.setStyleSheet(f"""
+            QWidget#fileTreePanel {{
+                background-color: {bg_color};
+            }}
+        """)
+
+        # Header
+        header = QWidget()
+        header.setFixedHeight(48)
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(12, 0, 12, 0)
+        header_layout.setSpacing(8)
+
+        title = QLabel("📁 Explore")
+        title.setStyleSheet("color: #ffffff; font-size: 13px; font-weight: 500;")
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+
+        layout.addWidget(header)
+
+        # Separator
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("background-color: #2a2a2a; max-height: 1px;")
+        layout.addWidget(sep)
+
+        # Filter input
+        filter_widget = QWidget()
+        filter_layout = QHBoxLayout(filter_widget)
+        filter_layout.setContentsMargins(12, 12, 12, 8)
+
+        self._file_filter_input = QLineEdit()
+        self._file_filter_input.setPlaceholderText("🔍 Filter files...")
+        self._file_filter_input.setStyleSheet("""
+            QLineEdit {
+                background-color: #252525;
+                color: #cccccc;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 12px;
+                font-size: 13px;
+            }
+            QLineEdit:focus {
+                background-color: #2d2d2d;
+            }
+        """)
+        self._file_filter_input.textChanged.connect(self._filter_file_tree)
+        filter_layout.addWidget(self._file_filter_input)
+        layout.addWidget(filter_widget)
+
+        # File Tree View with scrollbar
+        self._file_tree_scroll = QScrollArea()
+        self._file_tree_scroll.setWidgetResizable(True)
+        self._file_tree_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._file_tree_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._file_tree_scroll.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background-color: transparent;
+            }
+            QScrollBar:vertical {
+                border: none;
+                background: #252525;
+                width: 12px;
+                margin: 0px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background: #4d78cc;
+                min-height: 30px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #5d88dd;
+            }
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {
+                border: none;
+                background: none;
+                height: 0px;
+            }
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {
+                background: none;
+            }
+        """)
+
+        # Create tree widget
+        self._file_tree = QTreeView()
+        self._file_tree.setHeaderHidden(True)
+        self._file_tree.setIndentation(16)
+        self._file_tree.setAnimated(True)
+        self._file_tree.setStyleSheet("""
+            QTreeView {
+                background-color: transparent;
+                border: none;
+                color: #cccccc;
+                font-size: 13px;
+                outline: none;
+            }
+            QTreeView::item {
+                padding: 4px 8px;
+                border: none;
+            }
+            QTreeView::item:hover {
+                background-color: #2d2d2d;
+            }
+            QTreeView::item:selected {
+                background-color: #2a2a4a;
+                color: #ffffff;
+            }
+            QTreeView::branch:has-children:!has-siblings:closed,
+            QTreeView::branch:closed:has-children:has-siblings {
+                border-image: none;
+                image: none;
+            }
+            QTreeView::branch:open:has-children:!has-siblings,
+            QTreeView::branch:open:has-children:has-siblings {
+                border-image: none;
+                image: none;
+            }
+        """)
+
+        # Setup file system model
+        self._file_model = QFileSystemModel()
+        self._file_model.setFilter(QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot)
+        self._file_model.setNameFilterDisables(False)
+        self._file_tree.setModel(self._file_model)
+        
+        # Hide columns except name
+        self._file_tree.hideColumn(1)  # Size
+        self._file_tree.hideColumn(2)  # Type
+        self._file_tree.hideColumn(3)  # Date Modified
+
+        # Connect double-click to open file
+        self._file_tree.doubleClicked.connect(self._on_file_tree_double_clicked)
+
+        self._file_tree_scroll.setWidget(self._file_tree)
+        layout.addWidget(self._file_tree_scroll, 1)
+
+        return panel
+
+    def _filter_file_tree(self, text: str):
+        """Filter files in the tree view."""
+        if not text:
+            self._file_model.setNameFilters([])
+        else:
+            # Use wildcard pattern for filtering
+            self._file_model.setNameFilters([f"*{text}*"])
+
+    def _on_file_tree_double_clicked(self, index: QModelIndex):
+        """Handle file double-click to open in editor."""
+        file_path = self._file_model.filePath(index)
+        if Path(file_path).is_file():
+            self._open_file(file_path)
+
+    def _set_project_root(self, path: str):
+        """Set the project root directory for the file tree."""
+        if hasattr(self, '_file_model'):
+            self._file_model.setRootPath(path)
+            if hasattr(self, '_file_tree'):
+                self._file_tree.setRootIndex(self._file_model.index(path))
+
 
     # ------------------------------------------------------------------
     # Menu
@@ -1017,13 +1958,17 @@ class CortexMainWindow(QMainWindow):
 
         # File
         file_menu = mb.addMenu("File")
-        self._add_action(file_menu, "New File", self._new_file, "Ctrl+N")
-        self._add_action(file_menu, "New Project...", self._new_project, "")
+        self._add_action(file_menu, "New Window", self._new_window, "Ctrl+Shift+N")
+        self._add_action(file_menu, "New Chat", self._on_new_chat, "Ctrl+N")
+        self._add_action(file_menu, "Quick Chat", self._quick_chat, "Alt+Ctrl+N")
+        file_menu.addSeparator()
         self._add_action(file_menu, "Open File...", self._open_file_dialog, "Ctrl+Shift+O")
         self._add_action(file_menu, "Open Folder...", self._open_folder_dialog, "Ctrl+O")
         file_menu.addSeparator()
         self._add_action(file_menu, "Save", self._save_current, "Ctrl+S")
         self._add_action(file_menu, "Save All", self._save_all, "Ctrl+Shift+S")
+        file_menu.addSeparator()
+        self._add_action(file_menu, "Settings...", self._open_settings, "Ctrl+,")
         file_menu.addSeparator()
         self._add_action(file_menu, "Exit", self.close, "Alt+F4")
 
@@ -1067,18 +2012,27 @@ class CortexMainWindow(QMainWindow):
         self._add_action(nav_menu, "Next Tab", self._next_tab, "Ctrl+Tab")
         self._add_action(nav_menu, "Previous Tab", self._prev_tab, "Ctrl+Shift+Tab")
         nav_menu.addSeparator()
+        self._add_action(nav_menu, "Previous Chat", self._previous_chat, "Ctrl+Shift+[")
+        self._add_action(nav_menu, "Next Chat", self._next_chat, "Ctrl+Shift+]")
+        self._add_action(nav_menu, "Back", self._navigate_back, "Ctrl+[")
+        self._add_action(nav_menu, "Forward", self._navigate_forward, "Ctrl+]")
+        nav_menu.addSeparator()
         self._add_action(nav_menu, "Keyboard Shortcuts Help", self._show_shortcuts_help, "Ctrl+Alt+K")
 
         # View
         view_menu = mb.addMenu("View")
         self._add_action(view_menu, "Toggle Theme", self._toggle_theme, "Ctrl+Shift+T")
-        self._add_action(view_menu, "Toggle Terminal", self._toggle_terminal, "Ctrl+`")
+        self._add_action(view_menu, "Toggle Terminal", self._toggle_terminal, "Ctrl+J")
         view_menu.addSeparator()
         self._add_action(view_menu, "Toggle Sidebar", self._toggle_sidebar, "Ctrl+B")
+        self._add_action(view_menu, "Toggle File Tree", self._toggle_file_tree, "Ctrl+Shift+I")
+        self._add_action(view_menu, "Toggle Review Panel", self._toggle_review_panel, "Alt+Ctrl+B")
         view_menu.addSeparator()
-        self._add_action(view_menu, "Zoom In", self._zoom_in, "Ctrl+=")
+        self._add_action(view_menu, "Zoom In", self._zoom_in, "Ctrl++")
         self._add_action(view_menu, "Zoom Out", self._zoom_out, "Ctrl+-")
         self._add_action(view_menu, "Reset Zoom", self._zoom_reset, "Ctrl+0")
+        view_menu.addSeparator()
+        self._add_action(view_menu, "Toggle Full Screen", self._toggle_fullscreen, "F11")
 
         # AI
         ai_menu = mb.addMenu("AI")
@@ -1115,8 +2069,8 @@ class CortexMainWindow(QMainWindow):
         
         self._add_action(ai_menu, "AI Chat Focus", self._focus_ai_chat, "Ctrl+Shift+A")
         
-        # Command Palette
-        self._add_action(file_menu, "Command Palette...", self._command_palette, "Ctrl+Shift+P")
+        # Command Palette - AI-First mode uses Ctrl+K
+        self._add_action(file_menu, "Command Palette...", self._show_command_palette, "Ctrl+K")
         ai_menu.addSeparator()
         self._add_action(ai_menu, "Clear Chat", self._ai_chat.clear_chat, "")
 
@@ -1125,11 +2079,30 @@ class CortexMainWindow(QMainWindow):
         self._add_action(term_menu, "New Terminal", lambda: self._new_terminal(show_panel=True), "Ctrl+Shift+`")
         self._add_action(term_menu, "Kill Terminal", self._kill_current_terminal, "")
         term_menu.addSeparator()
-        self._add_action(term_menu, "Toggle Terminal Panel", self._toggle_terminal, "Ctrl+`")
+        self._add_action(term_menu, "Toggle Terminal Panel", self._toggle_terminal, "Ctrl+J")
+
+        # Window
+        window_menu = mb.addMenu("Window")
+        self._add_action(window_menu, "Minimize", self._minimize_window, "Ctrl+M")
+        self._add_action(window_menu, "Zoom", self._zoom_window, "")
+        self._add_action(window_menu, "Close", self._close_window, "Ctrl+W")
 
         # Help
         help_menu = mb.addMenu("Help")
+        self._add_action(help_menu, "Cortex Documentation", self._open_documentation, "")
+        self._add_action(help_menu, "What's New", self._show_whats_new, "")
+        self._add_action(help_menu, "Automations", self._show_automations, "")
+        self._add_action(help_menu, "Local Environments", self._show_local_envs, "")
+        self._add_action(help_menu, "Worktrees", self._show_worktrees, "")
+        self._add_action(help_menu, "Skills", self._show_skills_help, "")
+        self._add_action(help_menu, "Model Context Protocol", self._show_mcp_help, "")
+        self._add_action(help_menu, "Troubleshooting", self._show_troubleshooting, "")
+        help_menu.addSeparator()
+        self._add_action(help_menu, "Send Feedback", self._send_feedback, "")
+        self._add_action(help_menu, "Start Trace Recording", self._start_trace, "")
+        help_menu.addSeparator()
         self._add_action(help_menu, "Keyboard Shortcuts", self._show_keyboard_shortcuts, "F1")
+        help_menu.addSeparator()
         self._add_action(help_menu, "About Cortex", self._show_about, "")
 
     def _add_action(self, menu, text, slot, shortcut=""):
@@ -1143,112 +2116,8 @@ class CortexMainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Toolbar
     # ------------------------------------------------------------------
-    def _build_toolbar(self):
-        self._toolbar = self.addToolBar("Main")
-        tb = self._toolbar
-        tb.setMovable(False)
-        tb.setIconSize(QSize(28, 28))
-        tb.setFixedHeight(50)
-
-        # Logo label
-        self._toolbar_logo = QLabel("  🧠  <b style='font-size:16px'>Cortex AI</b>  ")
-        self._toolbar_logo.setStyleSheet("font-size:17px; padding:0 10px; letter-spacing:0.5px;")
-        tb.addWidget(self._toolbar_logo)
-
-        self._toolbar_sep = QFrame()
-        self._toolbar_sep.setFrameShape(QFrame.Shape.VLine)
-        self._toolbar_sep.setFixedHeight(30)
-        tb.addWidget(self._toolbar_sep)
-
-        self._toolbar_btns = []
-
-        # 1. File / Build Controls
-        actions = [
-            ("📂", "Open Folder\nCtrl+O",   self._open_folder_dialog),
-            ("💾", "Save File\nCtrl+S",     self._save_current),
-            ("▶️", "Run Current File  (HTML → Live Server)",      self._run_file),
-            ("➕", "New Terminal",          lambda: self._new_terminal(show_panel=True)),
-        ]
-        for icon, tip, slot in actions:
-            btn = QPushButton(icon)
-            btn.setToolTip(tip)
-            btn.setFixedSize(40, 40)
-            btn.clicked.connect(slot)
-            self._toolbar_btns.append(btn)
-            tb.addWidget(btn)
-
-        tb.addWidget(self._make_spacer())
-
-        # 2. Layout Toggle Controls (VS Code Style) - On the right side
-        layout_actions = [
-            ("◧", "Toggle Left Sidebar\nCtrl+B", self._toggle_sidebar),
-            ("⬒", "Toggle Bottom Panel\nCtrl+`", self._toggle_terminal),
-            ("◨", "Toggle AI Chat", self._toggle_ai_chat),
-        ]
-        for icon, tip, slot in layout_actions:
-            btn = QPushButton(icon)
-            btn.setToolTip(tip)
-            btn.setFixedSize(40, 40)
-            btn.clicked.connect(slot)
-            # Custom font size for layout icons to make them clear
-            btn.setObjectName("layout_btn")
-            self._toolbar_btns.append(btn)
-            tb.addWidget(btn)
-
-        self._toolbar_sep2 = QFrame()
-        self._toolbar_sep2.setFrameShape(QFrame.Shape.VLine)
-        self._toolbar_sep2.setFixedHeight(30)
-        tb.addWidget(self._toolbar_sep2)
-
-        # 3. Theme toggle button
-        self._theme_btn = QPushButton("🌙")
-        self._theme_btn.setToolTip("Toggle Theme\nCtrl+Shift+T")
-        self._theme_btn.setFixedSize(40, 40)
-        self._theme_btn.clicked.connect(self._toggle_theme)
-        self._toolbar_btns.append(self._theme_btn)
-        tb.addWidget(self._theme_btn)
-
-    def _apply_toolbar_theme(self, is_dark: bool):
-        """Apply theme-aware styles to toolbar elements."""
-        if not self._toolbar:
-            return
-            
-        border_color = "#3e3e42" if is_dark else "#dee2e6"
-        hover_bg = "rgba(255,255,255,0.10)" if is_dark else "rgba(0,0,0,0.06)"
-        
-        self._toolbar.setStyleSheet(f"""
-            QToolBar {{
-                spacing: 6px;
-                padding: 4px 6px;
-                border-bottom: 1px solid {border_color};
-            }}
-        """)
-        self._toolbar_sep.setStyleSheet(f"color:{border_color};")
-        self._toolbar_sep2.setStyleSheet(f"color:{border_color};")
-        
-        fg_color = "#dcdcdc" if is_dark else "#1a1a1a"
-        
-        btn_style = f"""
-            QPushButton {{
-                font-size: 22px;
-                color: {fg_color};
-                border-radius: 6px;
-                background: transparent;
-                border: none;
-                padding: 2px;
-            }}
-            QPushButton:hover {{
-                background: {hover_bg};
-            }}
-            QPushButton:pressed {{
-                background: rgba(0,122,204,0.35);
-            }}
-        """
-        for btn in self._toolbar_btns:
-            style = btn_style
-            if btn.objectName() == "layout_btn":
-                style += f" QPushButton {{ font-size: 24px; color: {fg_color}; }}"
-            btn.setStyleSheet(style)
+    # Toolbar removed in AI-first mode - replaced by TopNavBar component
+    # def _build_toolbar(self):
 
 
     def _make_spacer(self) -> QWidget:
@@ -1261,6 +2130,16 @@ class CortexMainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _build_status_bar(self):
         sb = self.statusBar()
+        sb.setStyleSheet("""
+            QStatusBar {
+                background-color: #1e1e1e;
+                color: #cccccc;
+                border-top: 1px solid #2a2a2a;
+            }
+            QLabel {
+                color: #cccccc;
+            }
+        """)
         self._status_file = QLabel("  No file open")
         self._status_cursor = QLabel("Ln 1, Col 1")
         self._status_lang = QLabel("Plain Text")
@@ -1294,7 +2173,6 @@ class CortexMainWindow(QMainWindow):
         self._ai_chat.set_theme(is_dark)
         self._sidebar.set_theme(is_dark)
         self._apply_welcome_theme(is_dark)
-        self._apply_toolbar_theme(is_dark)
         # Theme button label
         if hasattr(self, '_theme_btn') and self._theme_btn:
             self._theme_btn.setText("☀️" if not is_dark else "🌙")
@@ -1436,6 +2314,7 @@ class CortexMainWindow(QMainWindow):
         # AI chat - ONLY connect signals here to avoid duplicates
         self._ai_chat.message_sent.connect(self._on_ai_chat_message)
         self._ai_chat.model_changed.connect(self._on_model_changed)
+        self._ai_chat.vision_history_sync.connect(self._ai_agent.inject_vision_history)
         self._ai_agent.response_chunk.connect(self._ai_chat.on_chunk)
         self._ai_agent.response_complete.connect(self._ai_chat.on_complete)
         self._ai_agent.response_complete.connect(self._on_ai_task_complete)
@@ -1558,6 +2437,17 @@ class CortexMainWindow(QMainWindow):
     def _open_folder_programmatic(self, folder: str):
         """Open a folder as the active project (no dialog, usable from argv/drag-drop)."""
         self._project_manager.open(folder)
+        
+        # Set project root for file tree
+        self._set_project_root(folder)
+        
+        # Initialize Git repository
+        if hasattr(self, '_git_manager'):
+            self._git_manager.set_repository(folder)
+            log.info(f"[GIT] Repository set to: {folder}")
+            # Update Git summary after a short delay
+            QTimer.singleShot(300, self._update_git_summary)
+        
         try:
             from src.core.lsp_manager import get_lsp_manager
             get_lsp_manager().set_project_root(folder)
@@ -1571,6 +2461,15 @@ class CortexMainWindow(QMainWindow):
             # For now, just open it as a project. 
             # Could add a template/scaffolding step here later.
             self._project_manager.open(folder)
+            
+            # Set project root for file tree
+            self._set_project_root(folder)
+            
+            # Initialize Git repository
+            if hasattr(self, '_git_manager'):
+                self._git_manager.set_repository(folder)
+                log.info(f"[GIT] Repository set to: {folder}")
+                QTimer.singleShot(300, self._update_git_summary)
 
     def _open_file(self, filepath: str):
         # Normalize path (convert forward slashes to backslashes on Windows)
@@ -2311,7 +3210,7 @@ class CortexMainWindow(QMainWindow):
 
     def _on_ai_question_requested(self, question_payload: dict):
         """Handle AI asking a question that requires user response in chat."""
-        log.info(f"AI requested user input: {question_payload['question'][:50]}...")
+        log.info(f"AI requested user input: {question_payload.get('text', question_payload.get('question', ''))[:50]}...")
         # Structuring the question info for the JS UI
         # CRITICAL: Use permission_request_id if available (for permission cards),
         # otherwise fall back to tool_call_id (for general questions)
@@ -2792,19 +3691,11 @@ class CortexMainWindow(QMainWindow):
             QMessageBox.information(self, "Run", f"Running {lang} is not yet supported.")
 
     def _run_live_server(self, file_path: str):
-        """Start (or restart) the built-in Live Server for an HTML file."""
-        # Restart if already running
-        if self._live_server and self._live_server.is_running:
-            self._live_server.stop()
-
-        root = str(Path(file_path).parent)
-        try:
-            self._live_server = LiveServer(root, file_path)
-            port = self._live_server.start()
-            url  = self._live_server.get_url(file_path)
-        except Exception as e:
-            QMessageBox.warning(self, "Live Server", f"Could not start Live Server:\n{e}")
-            return
+        """Live Server removed in AI-first mode - AI handles preview"""
+        QMessageBox.information(self, "Info", 
+            "Live Server is not available in AI-first mode.\n"
+            "Ask AI to preview your HTML code instead.")
+        return
 
         import webbrowser
         webbrowser.open(url)
@@ -2986,7 +3877,6 @@ class CortexMainWindow(QMainWindow):
             if isinstance(term, XTermWidget):
                 term.set_theme(is_dark)
         self._apply_welcome_theme(is_dark)
-        self._apply_toolbar_theme(is_dark)
 
 
     def _show_terminal_panel(self):
@@ -3004,9 +3894,7 @@ class CortexMainWindow(QMainWindow):
         if self._terminal_tabs.count() == 0:
             self._new_terminal()
         # Ensure the terminal panel has a visible height
-        sizes = self._center_splitter.sizes()
-        if len(sizes) > 1 and sizes[1] < 40:
-            self._center_splitter.setSizes([max(100, sizes[0]), 220])
+        self._terminal_tabs.setMinimumHeight(150)
         term = self._current_terminal()
         if term:
             term.setFocus()
@@ -3014,57 +3902,93 @@ class CortexMainWindow(QMainWindow):
                 term.execute_command(command.strip())
 
     def _toggle_terminal(self):
+        """Toggle terminal visibility in AI-first mode"""
         visible = self._terminal_tabs.isVisible()
-        sizes = self._center_splitter.sizes()
-        # If already visible but dragged to be hidden (tiny size), just restore the size
-        if visible and len(sizes) > 1 and sizes[1] < 40:
-            self._center_splitter.setSizes([sizes[0], 200])
-            self._terminal_tabs.setFocus()
-            return
-            
         self._terminal_tabs.setVisible(not visible)
         if self._terminal_tabs.isVisible():
             if self._terminal_tabs.count() == 0:
                 self._new_terminal()
-            
-            # Ensure it has a non-zero height if it was collapsed
-            new_sizes = self._center_splitter.sizes()
-            if len(new_sizes) > 1 and new_sizes[1] < 40:
-                self._center_splitter.setSizes([max(100, new_sizes[0]), 200])
-                
+            self._terminal_tabs.setMinimumHeight(150)
             term = self._current_terminal()
             if term:
                 term.setFocus()
 
     def _toggle_sidebar(self):
+        """Toggle sidebar visibility (hidden by default in AI-first mode)"""
         visible = self._sidebar.isVisible()
-        sizes = self._main_splitter.sizes()
-        # If visible but tiny (dragged hidden), restore size instead of toggling 
-        if visible and sizes[0] < 40:
-            self._main_splitter.setSizes([260, sizes[1], sizes[2]])
-            self._sidebar.setFocus()
-            return
-            
         self._sidebar.setVisible(not visible)
         if self._sidebar.isVisible():
-            new_sizes = self._main_splitter.sizes()
-            if new_sizes[0] < 40:
-                 self._main_splitter.setSizes([200, new_sizes[1], new_sizes[2]])
             self._sidebar.setFocus()
 
+    def _toggle_file_tree(self):
+        """Toggle File Tree panel visibility (Ctrl+Shift+I)."""
+        if hasattr(self, '_file_tree_panel'):
+            visible = self._file_tree_panel.isVisible()
+            self._file_tree_panel.setVisible(not visible)
+
+    def _toggle_review_panel(self):
+        """Toggle Review panel visibility (Alt+Ctrl+B)."""
+        if hasattr(self, '_review_panel'):
+            visible = self._review_panel.isVisible()
+            self._review_panel.setVisible(not visible)
+
+    def _toggle_fullscreen(self):
+        """Toggle full screen mode (F11)."""
+        if self.isFullScreen():
+            self.showNormal()
+        else:
+            self.showFullScreen()
+
+    def _minimize_window(self):
+        """Minimize window (Ctrl+M)."""
+        self.showMinimized()
+
+    def _zoom_window(self):
+        """Zoom window (maximize/restore)."""
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+
+    def _close_window(self):
+        """Close window (Ctrl+W)."""
+        self.close()
+
+    def _previous_chat(self):
+        """Navigate to previous chat (Ctrl+Shift+[)."""
+        # TODO: Implement chat history navigation
+        log.info("Previous chat shortcut pressed")
+
+    def _next_chat(self):
+        """Navigate to next chat (Ctrl+Shift+])."""
+        # TODO: Implement chat history navigation
+        log.info("Next chat shortcut pressed")
+
+    def _navigate_back(self):
+        """Navigate back (Ctrl+[)."""
+        # TODO: Implement navigation history
+        log.info("Navigate back shortcut pressed")
+
+    def _navigate_forward(self):
+        """Navigate forward (Ctrl+])."""
+        # TODO: Implement navigation history
+        log.info("Navigate forward shortcut pressed")
+
+    def _new_window(self):
+        """Open new window (Ctrl+Shift+N)."""
+        # TODO: Implement multi-window support
+        log.info("New window shortcut pressed")
+
+    def _quick_chat(self):
+        """Open quick chat (Alt+Ctrl+N)."""
+        self._on_new_chat()
+
     def _toggle_ai_chat(self):
-        visible = self._right_panel.isVisible()
-        sizes = self._main_splitter.sizes()
-        # If visible but tiny (dragged hidden), restore size
-        if visible and len(sizes) > 2 and sizes[2] < 40:
-            self._main_splitter.setSizes([sizes[0], sizes[1], 300])
-            return
-            
-        self._right_panel.setVisible(not visible)
-        if self._right_panel.isVisible():
-            new_sizes = self._main_splitter.sizes()
-            if len(new_sizes) > 2 and new_sizes[2] < 40:
-                 self._main_splitter.setSizes([new_sizes[0], new_sizes[1], 300])
+        """Toggle AI chat panel visibility"""
+        # In AI-first mode, the chat is always visible
+        # This method can be used to focus it instead
+        if hasattr(self, '_ai_chat'):
+            self._ai_chat.setFocus()
 
     def _zoom_in(self):
         """Zoom in (Ctrl+=)."""
@@ -3842,28 +4766,41 @@ class CortexMainWindow(QMainWindow):
 
     def _on_ai_chat_message(self, message: str):
         """Handle user message from AI chat with project context."""
-        # FAST PATH: Check if this is a simple query that doesn't need AIIntegrationLayer
-        simple_patterns = [
-            r'^hi$', r'^hello$', r'^hey$', r'^greetings$', r'^sup$', r'^yo$',
-            r'^how are you', r'^what.*your name', r'^what can you do',
-            r'^thanks?$', r'^thank you$', r'^ok$', r'^okay$', r'^got it$',
-            r'^bye$', r'^goodbye$', r'^see you$'
-        ]
+        # TODO: POINTS SYSTEM - Disabled for development
+        # Will be enabled when connecting to https://logic-practice.com backend
+        # Points tracking will be handled via API authentication with production server
+        """
+        # Check points balance before processing
+        try:
+            points_mgr = get_points_manager()
+            perf_mode = self._get_current_performance_mode()
+            estimated_tokens = len(message) // 4  # Rough estimate: 4 chars per token
+            
+            # Check if user can afford this request
+            if not points_mgr.can_afford(estimated_tokens, perf_mode):
+                cost = points_mgr.estimate_cost(estimated_tokens, perf_mode)
+                balance = points_mgr.get_balance()
+                log.warning(
+                    f"[MainWindow] Insufficient points: need {cost:,}, have {balance:,}. "
+                    f"Mode: {perf_mode}, estimated tokens: {estimated_tokens}"
+                )
+                # Send error to UI
+                self._ai_chat.on_error(
+                    f"Insufficient points. This request needs ~{cost:,} points but you have {balance:,} points.\n\n"
+                    f"Please purchase more points or switch to Efficient mode (0.3x cost)."
+                )
+                return
+            
+            log.info(
+                f"[MainWindow] Points check passed: balance={points_mgr.get_balance():,}, "
+                f"mode={perf_mode}, estimated_cost={points_mgr.estimate_cost(estimated_tokens, perf_mode):,}"
+            )
+        except Exception as e:
+            log.warning(f"[MainWindow] Points check failed: {e} - proceeding anyway")
+        """
         
-        stripped = message.strip().lower()
-        is_simple = any(__import__('re').match(pattern, stripped) for pattern in simple_patterns)
-        
-        if is_simple:
-            # Fast path: Skip AIIntegrationLayer, go directly to AI agent
-            log.info(f"Fast path: Simple query '{message}' - skipping AIIntegrationLayer")
-            context = []
-            if self._project_manager.root:
-                context.append(f"Project path: {self._project_manager.root}")
-            full_context = "\n\n".join(context)
-            self._ai_agent.chat(message, full_context)
-            return
-        
-        # NORMAL PATH: Full processing for complex queries
+        # Build context for ALL messages - let agent_bridge decide
+        # what to do with simple vs complex queries
         context = []
 
         # 1. Project Root Info
@@ -3912,7 +4849,7 @@ class CortexMainWindow(QMainWindow):
                         conv_id, 
                         title, 
                         self._project_manager.root or "", 
-                        self._ai_agent._settings.get("ai", "model", default="deepseek-chat")
+                        self._ai_agent._settings.get("ai", "model", default="mistral-large-latest")
                     )
                 import uuid
                 self._session_db.add_message(
@@ -3950,14 +4887,27 @@ class CortexMainWindow(QMainWindow):
 
     def _on_model_changed(self, model_id: str, perf: str, cost: str):
         """Handle model selection change from AI chat."""
-        # Determine provider from model_id
         log.info(f"[MainWindow] DEBUG: model_id='{model_id}'")
         
-        if model_id.startswith("deepseek-") and "/" not in model_id:
-            # Native DeepSeek models (without /)
-            provider = "deepseek"
-        elif model_id.startswith("mistral-") or model_id.startswith("codestral-"):
-            # Mistral AI models
+        # Check if this is a performance mode (not an actual model)
+        performance_modes = ["efficient", "auto", "performance", "ultimate"]
+        if model_id.lower() in performance_modes:
+            # This is a performance mode, not a model ID
+            # Save it to settings for the performance mode system to use
+            try:
+                from src.config.settings import get_settings
+                settings = get_settings()
+                settings.set("ai", "performance_mode", model_id.lower())
+                log.info(f"[MainWindow] Performance mode changed to: {model_id}")
+                # Don't update agent with this - it's not a real model
+                return
+            except Exception as e:
+                log.error(f"[MainWindow] Failed to save performance mode: {e}")
+                return
+        
+        # This is an actual model ID - determine provider from model_id
+        if model_id.startswith("mistral-") or model_id.startswith("codestral-"):
+            # Mistral AI models (primary provider)
             provider = "mistral"
         elif model_id.startswith(("gpt-", "o1", "o3")):
             # OpenAI models - determine which API to use
@@ -3971,7 +4921,7 @@ class CortexMainWindow(QMainWindow):
             # Vendor models via SiliconFlow
             provider = "siliconflow"
         else:
-            provider = "deepseek"  # Default to DeepSeek
+            provider = "mistral"  # Default to Mistral
         
         log.info(f"[MainWindow] Model changed to: {model_id} (provider: {provider})")
         self._ai_agent.update_settings(provider=provider, model_id=model_id)
@@ -3991,6 +4941,52 @@ class CortexMainWindow(QMainWindow):
         self._ai_agent.enable_autogen(new_state)
         
         log.info(f"AutoGen {'enabled' if new_state else 'disabled'} via UI toggle")
+    
+    def _show_command_palette(self):
+        """Show the command palette"""
+        if hasattr(self, '_command_palette'):
+            self._command_palette.show_palette()
+    
+    def _on_command_selected(self, action: str, command_data: dict):
+        """Handle command selection from command palette"""
+        log.info(f"Command selected: {action}")
+        
+        # Route to appropriate handler
+        action_handlers = {
+            # AI Commands
+            "explain_code": lambda: self._ai_action("explain"),
+            "refactor_code": lambda: self._ai_action("refactor"),
+            "debug_code": lambda: self._ai_action("debug"),
+            "generate_tests": lambda: self._ai_action("tests"),
+            "create_file": lambda: self._ai_action("create_file"),
+            "search_codebase": lambda: self._ai_action("search"),
+            "optimize_code": lambda: self._ai_action("optimize"),
+            
+            # File Commands
+            "open_file": self._open_file_dialog,
+            "save_file": self._save_current,
+            "close_file": self._close_current_tab,
+            
+            # View Commands
+            "toggle_terminal": self._toggle_terminal,
+            "toggle_sidebar": self._toggle_sidebar,
+            "toggle_theme": self._toggle_theme,
+            
+            # Settings
+            "open_settings": self._open_settings,
+            "ai_settings": self._open_settings,
+            
+            # Git
+            "git_commit": self._git_commit,
+            "git_push": self._git_push,
+            "git_pull": self._git_pull,
+        }
+        
+        handler = action_handlers.get(action)
+        if handler:
+            handler()
+        else:
+            log.warning(f"No handler for command: {action}")
 
     def _on_generate_plan(self):
         log.info("MainWindow: Automated plan generation triggered")
@@ -4175,10 +5171,10 @@ class CortexMainWindow(QMainWindow):
         """Handle project close - show welcome page and clean up."""
         log.info("Project closed - showing welcome page")
 
-        # Stop Live Server if running
-        if self._live_server and self._live_server.is_running:
-            self._live_server.stop()
-            self._live_server = None
+        # Stop Live Server (removed in AI-first mode)
+        # if self._live_server and self._live_server.is_running:
+        #     self._live_server.stop()
+        self._live_server = None
 
         # Clear all state
         self._current_project_path = None
@@ -4210,14 +5206,22 @@ class CortexMainWindow(QMainWindow):
         self._show_welcome()
 
     def _update_welcome_project_info(self):
-        if not hasattr(self, '_welcome_project_info') or self._welcome_project_info is None:
-            return
-        if self._project_manager.root:
-            name = self._project_manager.root.name
-            path = str(self._project_manager.root)
-            self._welcome_project_info.setText(f"Project: <b>{name}</b><br/><span style='font-size:11px; color:#858585;'>{path}</span>")
-        else:
-            self._welcome_project_info.setText("No project opened")
+        """Update project info display."""
+        # Update AI chat with project info if available
+        if hasattr(self, '_ai_chat') and self._ai_chat:
+            if self._project_manager.root:
+                name = self._project_manager.root.name
+                path = str(self._project_manager.root)
+                # TODO: Update AI chat project indicator
+        
+        # Keep old welcome widget updated for backward compatibility
+        if hasattr(self, '_welcome_project_info') and self._welcome_project_info is not None:
+            if self._project_manager.root:
+                name = self._project_manager.root.name
+                path = str(self._project_manager.root)
+                self._welcome_project_info.setText(f"Project: <b>{name}</b><br/><span style='font-size:11px; color:#858585;'>{path}</span>")
+            else:
+                self._welcome_project_info.setText("No project opened")
 
 
     def _check_and_activate_venv(self, project_path: str):
@@ -4316,6 +5320,50 @@ class CortexMainWindow(QMainWindow):
                           "<p>Features: Multi-file editor · Syntax highlighting · "
                           "AI chat · File explorer · Terminal</p>"
                           "<p><b>Version:</b> 1.0.0</p>")
+
+    def _open_documentation(self):
+        """Open Cortex documentation in browser."""
+        import webbrowser
+        webbrowser.open("https://github.com/cortex-ai/docs")
+        log.info("Opening documentation")
+
+    def _show_whats_new(self):
+        """Show what's new dialog."""
+        log.info("What's new dialog requested")
+
+    def _show_automations(self):
+        """Show automations help."""
+        log.info("Automations help requested")
+
+    def _show_local_envs(self):
+        """Show local environments help."""
+        log.info("Local environments help requested")
+
+    def _show_worktrees(self):
+        """Show worktrees help."""
+        log.info("Worktrees help requested")
+
+    def _show_skills_help(self):
+        """Show skills help."""
+        log.info("Skills help requested")
+
+    def _show_mcp_help(self):
+        """Show Model Context Protocol help."""
+        log.info("MCP help requested")
+
+    def _show_troubleshooting(self):
+        """Show troubleshooting guide."""
+        log.info("Troubleshooting guide requested")
+
+    def _send_feedback(self):
+        """Send feedback."""
+        import webbrowser
+        webbrowser.open("https://github.com/cortex-ai/feedback")
+        log.info("Opening feedback page")
+
+    def _start_trace(self):
+        """Start trace recording for debugging."""
+        log.info("Trace recording started")
 
     def _show_keyboard_shortcuts(self):
         """Show keyboard shortcuts reference dialog (F1)."""
@@ -4590,11 +5638,9 @@ class CortexMainWindow(QMainWindow):
             self._settings.set("window", "width", self.width())
             self._settings.set("window", "height", self.height())
         
-        # Save splitter panel widths
-        sizes = self._main_splitter.sizes()
-        if len(sizes) == 3:
-            self._settings.set("window", "sidebar_width", sizes[0])
-            self._settings.set("window", "right_panel_width", sizes[2])
+        # Save panel widths (Codex 4-panel layout)
+        # Left sidebar: 220px, Review: 380px, File tree: 280px are fixed
+        # Only chat panel width varies and is not saved (flexible)
             
         # 4. Clean up terminals
         for i in range(self._terminal_tabs.count()):
@@ -4603,7 +5649,8 @@ class CortexMainWindow(QMainWindow):
                 term._kill_process()
 
         # 5. Stop Live Server if running
-        if self._live_server and self._live_server.is_running:
+        # Stop Live Server (removed in AI-first mode)
+        if False and self._live_server and self._live_server.is_running:
             self._live_server.stop()
                 
         event.accept()
@@ -4643,18 +5690,15 @@ class CortexMainWindow(QMainWindow):
         super().resizeEvent(event)
         w = event.size().width()
 
-        if hasattr(self, '_main_splitter'):
-            sizes = self._main_splitter.sizes()
-            sidebar_w = sizes[0] if sizes else 300
-            right_w   = sizes[2] if len(sizes) > 2 else 350
-
-            if w < 700:
-                # Very small window: collapse AI chat only, keep sidebar
-                self._main_splitter.setSizes([sidebar_w, max(150, w - sidebar_w), 0])
-            elif right_w == 0 and w >= 700:
-                # Restore AI chat when window grows back above threshold
-                restore_right = 350
-                self._main_splitter.setSizes([sidebar_w, max(200, w - sidebar_w - restore_right), restore_right])
+        # Codex 4-panel layout: fixed widths for sidebar (220), review (380), file tree (280)
+        # Chat panel is flexible. On very small screens, we may need to hide panels.
+        if w < 1000:
+            # Small window: hide file tree panel
+            if hasattr(self, '_file_tree_panel'):
+                self._file_tree_panel.setVisible(False)
+        else:
+            if hasattr(self, '_file_tree_panel'):
+                self._file_tree_panel.setVisible(True)
 
         if hasattr(self, '_welcome_widget') and self._welcome_widget is not None:
             self._apply_welcome_theme(self._theme_manager.is_dark)
@@ -4965,8 +6009,56 @@ class CortexMainWindow(QMainWindow):
             if response and len(response) > 10:
                 summary = response[:150].replace('\n', ' ').strip()
                 show_task_complete_notification(summary)
+            
+            # TODO: POINTS SYSTEM - Disabled for development
+            # Will be enabled when connecting to https://logic-practice.com backend
+            """
+            # Consume points based on actual response length
+            self._consume_points_for_response(response)
+            """
         except Exception:
             pass
+    
+    def _consume_points_for_response(self, response: str):
+        """Consume points based on actual AI response tokens."""
+        try:
+            points_mgr = get_points_manager()
+            perf_mode = self._get_current_performance_mode()
+            
+            # Estimate actual tokens used (response text)
+            actual_tokens = len(response) // 4
+            
+            # Consume points
+            result = points_mgr.consume_points(actual_tokens, perf_mode)
+            
+            log.info(
+                f"[MainWindow] Points consumed: {actual_tokens:,} tokens × "
+                f"{result['multiplier']}x = {result['points_consumed']:,} points. "
+                f"Remaining: {result['remaining_balance']:,}"
+            )
+            
+            # Update UI with remaining balance
+            if hasattr(self, '_ai_chat') and hasattr(self._ai_chat, 'update_points_balance'):
+                self._ai_chat.update_points_balance(result)
+                
+        except InsufficientPointsError as e:
+            log.error(f"[MainWindow] Points consumption error: {e}")
+            # Send warning to UI
+            if hasattr(self, '_ai_chat') and hasattr(self._ai_chat, 'on_error'):
+                self._ai_chat.on_error(
+                    f"Points consumed exceeded balance. Please purchase more points.\n"
+                    f"Required: {e.required:,}, Had: {e.balance:,}"
+                )
+        except Exception as e:
+            log.warning(f"[MainWindow] Failed to consume points: {e}")
+    
+    def _get_current_performance_mode(self) -> str:
+        """Get current performance mode from settings."""
+        try:
+            settings = get_settings()
+            return settings.get("ai", "performance_mode", default="auto")
+        except Exception:
+            return "auto"
 
     def _on_title_generated(self, conversation_id: str, title: str):
         """Handle auto-generated title - update chat tab and UI."""

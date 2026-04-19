@@ -7,6 +7,8 @@ Optimized for DeepSeek -> Mistral migration with stricter controls
 import os
 import json
 import time
+import random
+import requests
 from typing import List, Dict, Any, Generator, Optional, Callable
 from src.ai.providers import BaseProvider, ProviderType
 from src.utils.logger import get_logger
@@ -58,6 +60,8 @@ class MistralProvider(BaseProvider):
         super().__init__(ProviderType.MISTRAL)
         self.api_key = os.getenv("MISTRAL_API_KEY", "")
         self.base_url = "https://api.mistral.ai/v1"
+        # Reuse HTTP connections across calls (reduces TLS/handshake overhead).
+        self._session = requests.Session()
         self._token_count = {"input": 0, "output": 0}
         self._max_retries = 3
         self._retry_delay = 1.0
@@ -106,9 +110,9 @@ class MistralProvider(BaseProvider):
         """Return list of available models for this provider."""
         from src.ai.providers import ModelInfo
         return [
-            ModelInfo("mistral-large-latest", "Mistral Large", "mistral", 128000, 8192, True, False, 2.0, 6.0),
-            ModelInfo("mistral-medium-latest", "Mistral Medium", "mistral", 128000, 8192, True, False, 0.9, 0.9),
-            ModelInfo("mistral-small-latest", "Mistral Small", "mistral", 128000, 8192, True, False, 0.2, 0.6),
+            ModelInfo("mistral-large-latest", "Mistral Large", "mistral", 128000, 8192, True, True, 2.0, 6.0),
+            ModelInfo("mistral-medium-latest", "Mistral Medium", "mistral", 128000, 8192, True, True, 0.9, 0.9),
+            ModelInfo("mistral-small-latest", "Mistral Small", "mistral", 128000, 8192, True, True, 0.2, 0.6),
             ModelInfo("codestral-latest", "Codestral", "mistral", 128000, 8192, True, False, 0.2, 0.6),
         ]
         
@@ -320,10 +324,22 @@ class MistralProvider(BaseProvider):
         error_type is 'timeout', 'rate_limit', or 'error'.
         """
         
-        # Only enforce strict JSON prompt when NO tools are provided
-        # When tools are present, let Mistral use tool_calls format
-        if 'tools' not in kwargs or not kwargs['tools']:
-            messages = self._enforce_strict_prompt(messages)
+        # Only enforce strict JSON prompt when NO tools are provided AND message is complex
+        # For simple queries (no tools, short messages), use natural conversation
+        if ('tools' not in kwargs or not kwargs['tools']):
+            # Check if this looks like a simple query (short message, no code context)
+            is_likely_simple = True
+            for msg in messages:
+                if msg.get('role') == 'user':
+                    content = msg.get('content', '')
+                    # If user message is short (< 50 chars), likely simple query
+                    if len(content) > 50:
+                        is_likely_simple = False
+                    break
+            
+            # Only enforce strict JSON for complex queries
+            if not is_likely_simple:
+                messages = self._enforce_strict_prompt(messages)
         
         # Set temperature: higher for tool calling, lower for text-only
         if "temperature" not in kwargs:
@@ -360,6 +376,17 @@ class MistralProvider(BaseProvider):
                     error_type = 'timeout'
                 elif "429" in error_str or "rate limit" in error_str or "too many requests" in error_str:
                     error_type = 'rate_limit'
+                elif (
+                    "unreachable_backend" in error_str
+                    or "service unavailable" in error_str
+                    or "bad gateway" in error_str
+                    or "gateway timeout" in error_str
+                    or " 500 " in f" {error_str} "
+                    or " 502 " in f" {error_str} "
+                    or " 503 " in f" {error_str} "
+                    or " 504 " in f" {error_str} "
+                ):
+                    error_type = 'server_error'
                 else:
                     error_type = 'error'
 
@@ -382,7 +409,24 @@ class MistralProvider(BaseProvider):
                     else:
                         # Final attempt failed - provide clear error
                         raise Exception(f"Mistral API rate limit exceeded. Please wait {backoff_seconds} seconds before trying again. (429 Too Many Requests)")
-                
+
+                # Transient 5xx/server-side errors: back off a bit more than the default.
+                if error_type == 'server_error':
+                    log.warning(f"[Mistral] Server error (attempt {attempt + 1}/{max_retries})")
+
+                    # Exponential backoff with jitter (cap to keep UI responsive)
+                    backoff_seconds = min(2 ** (attempt + 1), 20) + random.random()
+                    log.info(f"[Mistral] Waiting {backoff_seconds:.1f}s before retry due to server error...")
+
+                    if attempt < max_retries - 1:
+                        if retry_callback:
+                            try:
+                                retry_callback(attempt + 2, max_retries, 'error')
+                            except Exception:
+                                pass
+                        time.sleep(backoff_seconds)
+                        continue
+
                 # Standard error handling (timeouts, network errors, etc.)
                 log.error(f"[Mistral] Attempt {attempt + 1} failed: {e}")
                 if attempt < max_retries - 1:
@@ -441,10 +485,8 @@ class MistralProvider(BaseProvider):
         url = f"{self.base_url}/chat/completions"
         
         try:
-            import requests
-            
             if stream:
-                response = requests.post(url, headers=headers, json=payload, stream=True, timeout=120)
+                response = self._session.post(url, headers=headers, json=payload, stream=True, timeout=120)
                 if not response.ok:
                     try:
                         error_body = response.json()
@@ -472,6 +514,12 @@ class MistralProvider(BaseProvider):
                                 if 'choices' in data and len(data['choices']) > 0:
                                     delta = data['choices'][0].get('delta', {})
                                     content = delta.get('content', '')
+                                    # Mistral can return content as list of blocks for multimodal
+                                    if isinstance(content, list):
+                                        content = ''.join(
+                                            c.get('text', '') if isinstance(c, dict) else str(c)
+                                            for c in content
+                                        )
                                     tool_calls = delta.get('tool_calls', [])
                                     
                                     # Yield content if available
@@ -518,7 +566,7 @@ class MistralProvider(BaseProvider):
                                 continue
                                 
             else:
-                response = requests.post(url, headers=headers, json=payload, timeout=120)
+                response = self._session.post(url, headers=headers, json=payload, timeout=120)
                 response.raise_for_status()
                 
                 result = response.json()
@@ -529,6 +577,12 @@ class MistralProvider(BaseProvider):
                     self._token_count["output"] = result['usage'].get('completion_tokens', 0)
                 
                 content = result['choices'][0]['message']['content']
+                # Mistral can return content as list of blocks for multimodal
+                if isinstance(content, list):
+                    content = ''.join(
+                        c.get('text', '') if isinstance(c, dict) else str(c)
+                        for c in content
+                    )
                 yield content
                 
         except requests.exceptions.RequestException as e:

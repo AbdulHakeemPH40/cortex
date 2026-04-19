@@ -227,8 +227,6 @@ def _calc_cost(model: str, input_tok: int, output_tok: int) -> float:
         "claude-haiku":   (0.00025, 0.00125),
         "gpt-4o":         (0.005, 0.015),
         "gpt-4o-mini":    (0.00015, 0.0006),
-        "deepseek-reasoner": (0.00055, 0.00219),
-        "deepseek-chat":  (0.00027, 0.0011),
         "gemini-1.5-pro": (0.00125, 0.005),
         "gemini-2.0":     (0.000035, 0.000105),
         "mistral-large":  (0.004, 0.012),

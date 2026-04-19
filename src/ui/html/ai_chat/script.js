@@ -11,6 +11,12 @@ var _lastUserHasImages = false;
 var _lastUserImageData = null;
 var _rateLimitRetryTimer = null;
 var _rateLimitRetryRemaining = 0;
+
+// Debug logging in hot paths (streaming, persistence). Keep false for performance.
+var _CHAT_DEBUG = false;
+
+// Debounced persistence to avoid blocking the UI / delaying message submission.
+var _saveChatsTimer = null;
 var _currentDiffGroup = null; // {id, el} – active group container for current AI turn
 var _currentFileOpGroup = null; // {id, el} – active file op group for current AI turn
 
@@ -219,7 +225,7 @@ function saveProjectChats(chatList) {
             var isDuplicate = lastMsg && (lastMsg.role === 'assistant' || lastMsg.sender === 'assistant') && (lastMsg.text === currentContent || lastMsg.content === currentContent);
             
             if (!isDuplicate) {
-                console.log('[CHAT] SAVE - Capturing partial AI response:', currentContent.substring(0, 30) + '...');
+                if (_CHAT_DEBUG) console.log('[CHAT] SAVE - Capturing partial AI response:', currentContent.substring(0, 30) + '...');
                 if (!chat.messages) chat.messages = [];
                 chat.messages.push({ 
                     text: currentContent, 
@@ -233,7 +239,7 @@ function saveProjectChats(chatList) {
     }
     
     var key = getStorageKey();
-    var fullData = JSON.stringify(chatList);
+    var fullData = null;
     
     // Truncate for localStorage (performance)
     var MAX_LOCAL_MESSAGES = 50;
@@ -251,7 +257,7 @@ function saveProjectChats(chatList) {
     });
     var lsData = JSON.stringify(storageChats);
     
-    console.log('[CHAT] SAVE - Persisting', chatList.length, 'chat(s) to LS and SQLite');
+    if (_CHAT_DEBUG) console.log('[CHAT] SAVE - Persisting', chatList.length, 'chat(s) to LS and SQLite');
     
     try {
         localStorage.setItem(key, lsData);
@@ -263,6 +269,7 @@ function saveProjectChats(chatList) {
             bridge.save_single_chat_to_sqlite(key, activeData);
         } else if (bridge && typeof bridge.save_chats_to_sqlite === 'function') {
             // Fallback: Full Sync
+            if (fullData === null) fullData = JSON.stringify(chatList);
             bridge.save_chats_to_sqlite(key, fullData);
         }
     } catch (e) {
@@ -494,9 +501,20 @@ function initMarked() {
 
             heading: function(text, depth) {
                 text = text || '';
+                // Strip HTML tags for clean ID generation
                 var cleanText = text.replace(/<[^>]+>/g, '');
-                var id = cleanText.toLowerCase().replace(/[^\w]+/g, '-');
-                return '<h' + depth + ' id="' + id + '" class="md-heading md-h' + depth + '">' + text + '</h' + depth + '>';
+                // Decode HTML entities for ID (e.g. &amp; -> &)
+                var tmp = document.createElement('span');
+                tmp.innerHTML = cleanText;
+                cleanText = tmp.textContent || tmp.innerText || cleanText;
+                // Generate safe slug: strip non-word, trim leading/trailing dashes
+                var id = cleanText.toLowerCase()
+                    .replace(/[^\w\s-]+/g, '') // remove non-word except spaces and dashes
+                    .replace(/\s+/g, '-')        // spaces to dashes
+                    .replace(/^-+|-+$/g, '')     // trim leading/trailing dashes
+                    .replace(/-{2,}/g, '-');      // collapse multiple dashes
+                if (!id) id = 'heading-' + depth; // fallback if empty
+                return '<h' + depth + ' id="' + escapeHtml(id) + '" class="md-heading md-h' + depth + '">' + text + '</h' + depth + '>';
             },
 
             listitem: function(text, task, checked) {
@@ -585,9 +603,10 @@ function initMarked() {
             // In v4.3.0: text(text) receives a string, not a token object
             text: function(text) {
                 if (typeof text !== 'string') return text || '';
-                    
+                        
                 // Pattern to detect file paths with optional line numbers
-                var filePattern = /(`?)([\.w\-/.\\]+\.(?:py|js|ts|jsx|tsx|html|css|scss|java|cpp|c|go|rs|php|rb|swift|kt|json|xml|yaml|yml|md|vue))(?::(\d+))?(`?)/gi;
+                // Fixed: [\w] instead of [w] for proper word character matching
+                var filePattern = /(`?)([\w\.\/\\-]+\.(?:py|js|ts|jsx|tsx|html|css|scss|java|cpp|c|go|rs|php|rb|swift|kt|json|xml|yaml|yml|md|vue))(?::(\d+))?(`?)/gi;
                     
                 return text.replace(filePattern, function(match, backtick1, filePath, lineNum, backtick2) {
                     if (backtick1 === '`' && backtick2 === '`') {
@@ -1122,10 +1141,11 @@ document.addEventListener('DOMContentLoaded', function () {
             var visionModels = [
                 'Qwen', 'VL', 'Vision',  // Qwen-VL family (includes SiliconFlow)
                 'GPT-4', 'Claude', 'gemini',
+                'Mistral', 'Pixtral',    // Mistral vision models (OCR supported)
             ];
             
             // Models that explicitly do NOT support vision
-            var nonVisionModels = ['deepseek-chat', 'DeepSeek-V3', 'deepseek-ai/DeepSeek', 'QwQ', 'Coder'];
+            var nonVisionModels = ['QwQ', 'Coder', 'Codestral'];
             
             var supportsVision = false;
             var isNonVision = nonVisionModels.some(function(m) { 
@@ -1165,11 +1185,14 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     // Event Listeners
-    var toggle = document.getElementById('toggle-history-btn');
-    if (toggle) toggle.onclick = toggleSidebar;
+    // File Explorer Panel Toggle
+    var closeExplorer = document.getElementById('close-explorer-btn');
+    if (closeExplorer) closeExplorer.onclick = toggleFileExplorer;
 
-    var close = document.getElementById('close-sidebar-btn');
-    if (close) close.onclick = toggleSidebar;
+
+    // Toggle file explorer button in header (optional - can add later)
+    var toggleExplorer = document.getElementById('toggle-explorer-btn');
+    if (toggleExplorer) toggleExplorer.onclick = toggleFileExplorer;
 
     var newChatBtn = document.getElementById('new-chat-btn');
     if (newChatBtn) newChatBtn.onclick = startNewChat;
@@ -1310,7 +1333,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 // Check if model supports vision
                 var selectedModel = document.getElementById('selected-model');
                 var modelText = selectedModel ? selectedModel.textContent : '';
-                var nonVisionModels = ['deepseek-chat', 'DeepSeek-V3', 'deepseek-ai/DeepSeek', 'QwQ', 'Coder'];
+                var nonVisionModels = ['QwQ', 'Coder', 'Codestral'];
                 var isNonVision = nonVisionModels.some(function(m) { 
                     return modelText.toLowerCase().includes(m.toLowerCase()); 
                 });
@@ -1318,7 +1341,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 if (isNonVision) {
                     alert('NOTE: Image paste requires a vision-capable model.\n\n' +
                           'Current model: ' + modelText + '\n\n' +
-                          'Please switch to a vision model like Qwen-VL.');
+                          'Please switch to a vision model like Qwen-VL or Mistral.');
                     return;
                 }
                 
@@ -1551,17 +1574,60 @@ document.addEventListener('DOMContentLoaded', function () {
 
 // --- Chat Management ---
 
-function toggleSidebar() {
-    var sidebar = document.getElementById('history-sidebar');
-    if (sidebar) sidebar.classList.toggle('collapsed');
+function toggleFileExplorer() {
+    var panel = document.getElementById('file-explorer-panel');
+    if (panel) panel.classList.toggle('collapsed');
+}
+
+function openFileExplorer() {
+    var panel = document.getElementById('file-explorer-panel');
+    if (panel) panel.classList.remove('collapsed');
+}
+
+function populateFileExplorer(files) {
+    var container = document.getElementById('file-tree');
+    if (!container) return;
+    
+    container.innerHTML = '';
+    
+    files.forEach(function(file) {
+        var item = document.createElement('div');
+        item.className = 'file-item';
+        item.innerHTML = '<span class="file-icon">' + getFileIcon(file.name) + '</span><span class="file-name">' + escapeHtml(file.name) + '</span>';
+        item.title = file.path;
+        item.onclick = function() {
+            if (window.bridge && window.bridge.openFile) {
+                window.bridge.openFile(file.path);
+            }
+        };
+        container.appendChild(item);
+    });
+}
+
+
+function getFileIcon(filename) {
+    var ext = filename.split('.').pop().toLowerCase();
+    var icons = {
+        'js': '<svg width="14" height="14" viewBox="0 0 24 24" fill="#f7df1e"><rect x="2" y="2" width="20" height="20" rx="2"/><path d="M7 15v-4.5l1.5-0.5-1.5-3.5 2 0.5 1 2.5 1.5-2.5-2-0.5L11 13.5V15h2z" fill="#000"/></svg>',
+        'ts': '<svg width="14" height="14" viewBox="0 0 24 24" fill="#3178c6"><rect x="2" y="2" width="20" height="20" rx="2"/><path d="M7 15v-4.5l1.5-0.5-1.5-3.5 2 0.5 1 2.5 1.5-2.5-2-0.5L11 13.5V15h2z" fill="#fff"/></svg>',
+        'py': '<svg width="14" height="14" viewBox="0 0 24 24" fill="#3776ab"><rect x="2" y="2" width="20" height="20" rx="2"/><text x="12" y="16" text-anchor="middle" fill="#fff" font-size="10" font-weight="bold">Py</text></svg>',
+        'html': '<svg width="14" height="14" viewBox="0 0 24 24" fill="#e34f26"><rect x="2" y="2" width="20" height="20" rx="2"/><text x="12" y="16" text-anchor="middle" fill="#fff" font-size="8" font-weight="bold">HTML</text></svg>',
+        'css': '<svg width="14" height="14" viewBox="0 0 24 24" fill="#1572b6"><rect x="2" y="2" width="20" height="20" rx="2"/><text x="12" y="16" text-anchor="middle" fill="#fff" font-size="10" font-weight="bold">CSS</text></svg>',
+        'json': '<svg width="14" height="14" viewBox="0 0 24 24" fill="#292929"><rect x="2" y="2" width="20" height="20" rx="2"/><text x="12" y="16" text-anchor="middle" fill="#fff" font-size="8" font-weight="bold">JSON</text></svg>',
+        'md': '<svg width="14" height="14" viewBox="0 0 24 24" fill="#083fa1"><rect x="2" y="2" width="20" height="20" rx="2"/><text x="12" y="16" text-anchor="middle" fill="#fff" font-size="10" font-weight="bold">M</text></svg>'
+    };
+    
+    var defaultIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>';
+    
+    return icons[ext] || defaultIcon;
 }
 
 function saveChats() {
     if (!currentProjectPath) {
-        console.log('[CHAT] saveChats: currentProjectPath is empty, cannot save!');
+        if (_CHAT_DEBUG) console.log('[CHAT] saveChats: currentProjectPath is empty, cannot save!');
         return;
     }
-    console.log('[CHAT] saveChats called, saving', chats.length, 'chats for path:', currentProjectPath);
+    if (_CHAT_DEBUG) console.log('[CHAT] saveChats called, saving', chats.length, 'chats for path:', currentProjectPath);
     
     // Save changed files and todos with current chat
     var currentChat = chats.find(function(c) { return c.id === currentChatId; });
@@ -1574,49 +1640,42 @@ function saveChats() {
     renderHistoryList();
 }
 
+function scheduleSaveChats(delayMs) {
+    delayMs = (typeof delayMs === 'number') ? delayMs : 150;
+    if (_saveChatsTimer) {
+        clearTimeout(_saveChatsTimer);
+        _saveChatsTimer = null;
+    }
+    _saveChatsTimer = setTimeout(function() {
+        _saveChatsTimer = null;
+        try {
+            saveChats();
+        } catch (e) {
+            console.warn('[CHAT] scheduleSaveChats: save failed:', e && e.message ? e.message : e);
+        }
+    }, delayMs);
+}
+
+function flushScheduledSaveChats() {
+    if (_saveChatsTimer) {
+        clearTimeout(_saveChatsTimer);
+        _saveChatsTimer = null;
+    }
+    saveChats();
+}
+
+window.scheduleSaveChats = scheduleSaveChats;
+window.flushScheduledSaveChats = flushScheduledSaveChats;
+
 function loadChatHistory() {
     chats = loadProjectChats();
     renderHistoryList();
 }
 
 function renderHistoryList() {
-    var list = document.getElementById('chat-history-list');
-    if (!list) return;
-    
-    // Use DocumentFragment for batch DOM insertion
-    var fragment = document.createDocumentFragment();
-    var html = '';
-    
-    // Build HTML string for better performance with large lists
-    for (var i = 0; i < chats.length; i++) {
-        var chat = chats[i];
-        var isActive = chat.id === currentChatId ? ' active' : '';
-        html += '<div class="history-item' + isActive + '" data-chat-id="' + chat.id + '">' +
-            '<span class="title-text">' + escapeHtml(chat.title) + '</span>' +
-            '<button class="delete-chat-btn" title="Delete Chat" data-chat-id="' + chat.id + '">' +
-            '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
-            '<polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>' +
-            '</button></div>';
-    }
-    
-    list.innerHTML = html;
-    
-    // Attach event listeners using event delegation for better performance
-    list.onclick = function(e) {
-        var deleteBtn = e.target.closest('.delete-chat-btn');
-        if (deleteBtn) {
-            e.stopPropagation();
-            var chatId = deleteBtn.getAttribute('data-chat-id');
-            if (chatId) deleteChat(chatId);
-            return;
-        }
-        
-        var item = e.target.closest('.history-item');
-        if (item) {
-            var chatId = item.getAttribute('data-chat-id');
-            if (chatId) loadChat(chatId);
-        }
-    };
+    // Chat history is now rendered in the Qt left sidebar
+    // This function is kept for compatibility but does nothing
+    return;
 }
 
 // Helper function to escape HTML entities
@@ -1851,12 +1910,6 @@ function loadChat(id) {
     }
     
     renderHistoryList();
-    
-    // Auto-close sidebar on mobile/small screens or whenever a chat is selected
-    var sidebar = document.getElementById('history-sidebar');
-    if (sidebar && !sidebar.classList.contains('collapsed')) {
-        sidebar.classList.add('collapsed');
-    }
 }
 
 function clearMessages() {
@@ -2148,7 +2201,7 @@ function _buildMessageBubble(text, sender) {
 }
 
 function appendMessage(text, sender, shouldSave) {
-    console.log('[CHAT] appendMessage called:', sender, 'length:', text ? text.length : 0);
+    if (_CHAT_DEBUG) console.log('[CHAT] appendMessage called:', sender, 'length:', text ? text.length : 0);
     
     // Check if this is a memory saved message
     if (text && typeof text === 'string' && text.startsWith('[Memory saved:')) {
@@ -2179,9 +2232,27 @@ function appendMessage(text, sender, shouldSave) {
     bubble.className = 'message-bubble ' + sender;
     
     if (sender === 'user') {
+        // Check if there are image attachments to render as thumbnails
+        var pendingImages = window._pendingImageAttachments || null;
+
         // Check if there are chip metadata to render as visual chips
         var chipMeta = window._pendingChipMeta || [];
         window._pendingChipMeta = null;
+
+        // Render image thumbnails as chips in the user bubble
+        if (pendingImages && pendingImages.length > 0) {
+            var imgChipsHtml = '<div class="message-image-chips">';
+            for (var ii = 0; ii < pendingImages.length; ii++) {
+                var imgItem = pendingImages[ii];
+                var imgName = imgItem.name || ('Image ' + (ii + 1));
+                imgChipsHtml += '<div class="message-image-chip">' +
+                    '<img class="message-image-thumb" src="' + imgItem.data + '" alt="' + imgName + '" />' +
+                    '<span class="message-image-name">' + imgName + '</span>' +
+                    '</div>';
+            }
+            imgChipsHtml += '</div>';
+            bubble.insertAdjacentHTML('beforeend', imgChipsHtml);
+        }
 
         if (chipMeta.length > 0) {
             // Determine display text
@@ -2316,7 +2387,7 @@ function appendMessage(text, sender, shouldSave) {
                 text.includes('Cortex is working')
             );
             if (isThinkingMessage) {
-                console.log('[CHAT] Skipping persistence of temporary thinking indicator');
+                if (_CHAT_DEBUG) console.log('[CHAT] Skipping persistence of temporary thinking indicator');
                 return bubble;
             }
             
@@ -2334,7 +2405,8 @@ function appendMessage(text, sender, shouldSave) {
             if (chat.messages.length === 1 && sender === 'user') {
                 chat.title = text.substring(0, 30) + (text.length > 30 ? '...' : '');
             }
-            saveChats();
+            // Debounce persistence so we don't delay outgoing LLM requests.
+            scheduleSaveChats();
         }
     }
     
@@ -2398,6 +2470,14 @@ function _parseChipMetaFromText(text) {
     return chips;
 }
 window._parseChipMetaFromText = _parseChipMetaFromText;
+
+function quickAction(action) {
+    var input = document.getElementById('chatInput');
+    if (!input) return;
+    input.value = action;
+    input.focus();
+    sendMessage();
+}
 
 function sendMessage() {
     var input = document.getElementById('chatInput');
@@ -4188,7 +4268,7 @@ function onChunk(chunk) {
         return;
     }
     chunk = String(chunk);
-    console.log('[JS] onChunk received:', chunk.substring(0, 50));
+    if (_CHAT_DEBUG) console.log('[JS] onChunk received:', chunk.substring(0, 50));
     var container = document.getElementById('chatMessages');
     if (!container) {
         console.error('[JS] chatMessages container not found in onChunk');
@@ -4305,11 +4385,36 @@ function normalizeMarkdownText(text) {
     if (!text) return '';
     // Remove zero-width / invisible characters that break markdown parsing
     text = text.replace(/[\u200B\u200C\u200D\u200E\u200F\uFEFF\u2060\u00AD]/g, '');
-    // Fix OpenAI pattern: "** text**" (space after opening **) -> "**text**"
-    // This is safe: only removes space immediately AFTER opening **, never before
-    text = text.replace(/\*\*\s+([^*\s])/g, '**$1');
     // Normalize Windows line endings
     text = text.replace(/\r\n/g, '\n');
+    // Fix OpenAI pattern: "** text**" (space after opening **) -> "**text**"
+    text = text.replace(/\*\*\s+([^*\s])/g, '**$1');
+
+    // --- Strip raw HTML tags the AI model sometimes echoes back ---
+    // Models sometimes return rendered HTML (from chat history or training data)
+    // e.g. "</h2><h3 id=...>" — must be stripped BEFORE markdown parsing
+    // Only strip block-level HTML tags that would break markdown rendering;
+    // preserve legitimate inline tags like <br>
+    text = text.replace(/<\/?(?:h[1-6]|div|section|article|header|footer|nav|aside|main|figure|figcaption|details|summary)(?:\s[^>]*)?>\s*/gi, '\n');
+    // Strip orphaned HTML attributes that leak when tags are partially stripped
+    text = text.replace(/\s+(?:id|class|style|data-[\w-]+)\s*=\s*"[^"]*"/gi, '');
+    text = text.replace(/\s+(?:id|class|style|data-[\w-]+)\s*=\s*'[^']*'/gi, '');
+
+    // --- Convert Unicode bullets to standard markdown bullets ---
+    // AI models often use • (U+2022), ◦ (U+25E6), ▪ (U+25AA), ‣ (U+2023)
+    text = text.replace(/^\s*[\u2022\u25E6\u25AA\u2023\u25CF\u25CB]\s*/gm, '- ');
+
+    // --- Convert → > or →> patterns to just > (blockquote) ---
+    text = text.replace(/^\s*\u2192\s*>/gm, '> ');
+    // Convert standalone → at line start to - (list item) if followed by text
+    text = text.replace(/^\s*\u2192\s+(?=[^\s>])/gm, '- ');
+
+    // --- Fix numbered lists with special chars: "1) item" → "1. item" ---
+    text = text.replace(/^(\s*\d+)\)\s+/gm, '$1. ');
+
+    // --- Normalize multiple consecutive blank lines to max 2 ---
+    text = text.replace(new RegExp('\n{4,}', 'g'), '\n\n\n');
+
     return text;
 }
 
@@ -4321,19 +4426,28 @@ function normalizeMarkdownText(text) {
  */
 function convertSuggestionChips(html) {
     if (!html) return html;
-    // Match "text" or \u201Ctext\u201D at the START of list items or standalone paragraphs
-    // Pattern: opening tag, optional numbering, then quoted text
-    var chipPattern = /([\u201C\u201D"\u2018\u2019])([^"\u201C\u201D\u2018\u2019]{3,60})([\u201C\u201D"\u2018\u2019])\s*([\u2013\u2014–—-])/g;
+    // Split HTML into tags and text segments to avoid matching across tag boundaries
+    // This prevents regex from corrupting HTML attributes that contain " characters
+    var segments = html.split(/(<[^>]+>)/g);
     var chipCount = 0;
-    var result = html.replace(chipPattern, function(match, q1, text, q2, dash) {
-        chipCount++;
-        var escapedText = text.replace(/'/g, "\\'").replace(/"/g, '&quot;');
-        return '<button class="suggestion-chip" onclick="selectOption(\'' + escapedText + '\')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>' + escapeHtml(text) + '</button>' + ' ' + dash;
-    });
+    var chipPattern = /([\u201C\u201D"\u2018\u2019])([^"\u201C\u201D\u2018\u2019]{3,60})([\u201C\u201D"\u2018\u2019])\s*([\u2013\u2014\u2013\u2014-])/g;
+    for (var si = 0; si < segments.length; si++) {
+        var seg = segments[si];
+        // Skip HTML tags (they start with <)
+        if (seg.charAt(0) === '<') continue;
+        // Only apply chip pattern to text segments
+        var replaced = seg.replace(chipPattern, function(match, q1, text, q2, dash) {
+            chipCount++;
+            var escapedText = text.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+            return '<button class="suggestion-chip" onclick="selectOption(\'' + escapedText + '\')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>' + escapeHtml(text) + '</button>' + ' ' + dash;
+        });
+        segments[si] = replaced;
+    }
+    var result = segments.join('');
     // Also handle standalone quoted paragraphs ("text" alone in a <p>)
     if (chipCount === 0) {
         var pPattern = /(<p>\s*(?:<br>\s*)?)[\u201C\u201D"\u2018\u2019]([^"\u201C\u201D\u2018\u2019]{3,60})[\u201C\u201D"\u2018\u2019](\s*<\/p>)/gi;
-        result = html.replace(pPattern, function(match, before, text, after) {
+        result = result.replace(pPattern, function(match, before, text, after) {
             chipCount++;
             var escapedText = text.replace(/'/g, "\\'").replace(/"/g, '&quot;');
             return before + '<button class="suggestion-chip" onclick="selectOption(\'' + escapedText + '\')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>' + escapeHtml(text) + '</button>' + after;
@@ -4459,59 +4573,91 @@ function formatMarkdownFallback(text) {
     // First, normalize line endings (Windows \r\n -> \n)
     text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     
+    // Pre-process: convert Unicode bullets to standard bullets
+    text = text.replace(/^\s*[\u2022\u25E6\u25AA\u2023\u25CF\u25CB]\s*/gm, '- ');
+    
+    // Process code blocks FIRST (before line-by-line processing)
+    var codeBlocks = [];
+    text = text.replace(/```(\w*)\n([\s\S]*?)\n?```/g, function(match, lang, code) {
+        var idx = codeBlocks.length;
+        codeBlocks.push({ lang: lang || 'text', code: code });
+        return '\n%%CODEBLOCK_' + idx + '%%\n';
+    });
+    
     // Process line by line for better control
     var lines = text.split('\n');
     var result = [];
     var inList = false;
+    var listType = ''; // 'ul' or 'ol'
     
     for (var i = 0; i < lines.length; i++) {
         var line = lines[i];
         var trimmed = line.trim();
         
+        // Code block placeholder
+        var cbMatch = trimmed.match(/^%%CODEBLOCK_(\d+)%%$/);
+        if (cbMatch) {
+            if (inList) { result.push('</' + listType + '>'); inList = false; }
+            var cb = codeBlocks[parseInt(cbMatch[1])];
+            if (cb) {
+                var codeHtml = escapeHtml(cb.code);
+                result.push('<pre data-lang="' + escapeHtml(cb.lang) + '"><code class="hljs language-' + escapeHtml(cb.lang) + '">' + codeHtml + '</code></pre>');
+            }
+            continue;
+        }
+        
         // Horizontal rule
         if (trimmed.match(/^(-{3,}|\*{3,}|_{3,})$/)) {
-            if (inList) {
-                result.push('</ul>');
-                inList = false;
-            }
+            if (inList) { result.push('</' + listType + '>'); inList = false; }
             result.push('<hr>');
             continue;
         }
         
         // Headers
         if (trimmed.match(/^#{1,6}\s/)) {
-            if (inList) {
-                result.push('</ul>');
-                inList = false;
-            }
+            if (inList) { result.push('</' + listType + '>'); inList = false; }
             var level = trimmed.match(/^(#+)/)[1].length;
             var content = trimmed.replace(/^#{1,6}\s*/, '');
-            result.push('<h' + level + '>' + processInlineMarkdown(content) + '</h' + level + '>');
+            result.push('<h' + level + ' class="md-heading md-h' + level + '">' + processInlineMarkdown(content) + '</h' + level + '>');
             continue;
         }
         
-        // List items
+        // Unordered list items (- or *)
         if (trimmed.match(/^[-*]\s/)) {
-            if (!inList) {
+            if (!inList || listType !== 'ul') {
+                if (inList) result.push('</' + listType + '>');
                 result.push('<ul>');
                 inList = true;
+                listType = 'ul';
             }
             var content = trimmed.replace(/^[-*]\s*/, '');
             result.push('<li>' + processInlineMarkdown(content) + '</li>');
             continue;
-        } else if (inList) {
-            result.push('</ul>');
+        }
+        
+        // Ordered list items (1. or 1))
+        if (trimmed.match(/^\d+[.)]\s/)) {
+            if (!inList || listType !== 'ol') {
+                if (inList) result.push('</' + listType + '>');
+                result.push('<ol>');
+                inList = true;
+                listType = 'ol';
+            }
+            var content = trimmed.replace(/^\d+[.)]\s*/, '');
+            result.push('<li>' + processInlineMarkdown(content) + '</li>');
+            continue;
+        }
+        
+        // Close list if current line isn't a list item
+        if (inList) {
+            result.push('</' + listType + '>');
             inList = false;
         }
         
         // Blockquotes
         if (trimmed.startsWith('>')) {
-            if (inList) {
-                result.push('</ul>');
-                inList = false;
-            }
             var quoteContent = trimmed.substring(1).trim();
-            result.push('<blockquote>' + processInlineMarkdown(quoteContent) + '</blockquote>');
+            result.push('<blockquote class="md-blockquote">' + processInlineMarkdown(quoteContent) + '</blockquote>');
             continue;
         }
         
@@ -4527,7 +4673,7 @@ function formatMarkdownFallback(text) {
     }
     
     if (inList) {
-        result.push('</ul>');
+        result.push('</' + listType + '>');
     }
     
     return result.join('');
@@ -4696,7 +4842,7 @@ function onComplete() {
         var chat = chats.find(function(c) { return c.id == currentChatId; });
         if (chat && displayText && displayText.trim() !== '' && displayText !== 'undefined') {
             chat.messages.push({ text: displayText, sender: 'assistant', role: 'assistant' });
-            saveChats();
+            scheduleSaveChats(50);
         }
 
         // -- Final touches on already-rendered content (NO re-render) ------
@@ -5386,18 +5532,23 @@ function handleImageAttachment(file) {
     var reader = new FileReader();
     reader.onload = function(e) {
         var base64 = e.target.result;
+        var safeName = file.name;
+        if (!safeName || safeName.trim() === '') {
+            // Clipboard images sometimes come through with an empty name.
+            safeName = 'pasted-image-' + Date.now() + '.png';
+        }
         
         // Store the image data
         _attachedImages.push({
-            name: file.name,
+            name: safeName,
             type: file.type,
             data: base64
         });
         
         // Add image preview to input area or show notification
-        showImageAttachmentPreview(file.name, base64);
+        showImageAttachmentPreview(safeName, base64);
         
-        console.log('[Cortex] Image attached:', file.name, '(' + Math.round(file.size / 1024) + 'KB)');
+        console.log('[Cortex] Image attached:', safeName, '(' + Math.round(file.size / 1024) + 'KB)');
     };
     reader.onerror = function() {
         alert('Failed to read image file.');
@@ -5406,38 +5557,85 @@ function handleImageAttachment(file) {
 }
 
 function showImageAttachmentPreview(filename, base64) {
-    // Create a preview badge near the input
-    var inputArea = document.getElementById('input-area');
-    if (!inputArea) return;
-    
-    // Remove existing preview if any
-    var existingPreview = document.getElementById('image-attachment-preview');
-    if (existingPreview) existingPreview.remove();
-    
-    var preview = document.createElement('div');
-    preview.id = 'image-attachment-preview';
-    preview.className = 'image-attachment-preview';
-    preview.innerHTML = 
-        '<img src="' + base64 + '" alt="' + escapeHtml(filename) + '" />' +
-        '<button class="remove-preview" onclick="removeImageAttachment()">x</button>' +
-        '<span class="preview-filename">' + escapeHtml(filename) + '</span>';
-    
-    // Insert after input container
-    var inputContainer = document.getElementById('input-container');
-    if (inputContainer && inputContainer.parentNode) {
-        inputContainer.parentNode.insertBefore(preview, inputContainer.nextSibling);
-    }
+    // Keep signature for callers, but render a compact chip row for all images.
+    renderImageAttachmentChips();
 }
 
 function removeImageAttachment() {
-    if (_attachedImages.length > 0) {
-        _attachedImages.pop();
-    }
-    var preview = document.getElementById('image-attachment-preview');
-    if (preview) preview.remove();
+    // Back-compat: remove the most recently attached image.
+    removeImageAttachmentAt(_attachedImages.length - 1);
 }
 
 window.removeImageAttachment = removeImageAttachment;
+window.removeImageAttachmentAt = removeImageAttachmentAt;
+window.renderImageAttachmentChips = renderImageAttachmentChips;
+
+function removeImageAttachmentAt(index) {
+    if (typeof index !== 'number' || index < 0 || index >= _attachedImages.length) return;
+    _attachedImages.splice(index, 1);
+    renderImageAttachmentChips();
+}
+
+function renderImageAttachmentChips() {
+    var inputContainer = document.getElementById('input-container');
+    if (!inputContainer || !inputContainer.parentNode) return;
+
+    var preview = document.getElementById('image-attachment-preview');
+
+    if (!_attachedImages || _attachedImages.length === 0) {
+        if (preview) preview.remove();
+        return;
+    }
+
+    if (!preview) {
+        preview = document.createElement('div');
+        preview.id = 'image-attachment-preview';
+        preview.className = 'image-attachment-preview';
+        preview.setAttribute('role', 'group');
+        preview.setAttribute('aria-label', 'Image attachments');
+        inputContainer.parentNode.insertBefore(preview, inputContainer.nextSibling);
+    }
+
+    // Rebuild chips (keeps logic simple and avoids index mismatch on removals).
+    preview.innerHTML = '';
+
+    var row = document.createElement('div');
+    row.className = 'image-chip-row';
+    preview.appendChild(row);
+
+    for (var i = 0; i < _attachedImages.length; i++) {
+        var imgMeta = _attachedImages[i];
+
+        var chip = document.createElement('div');
+        chip.className = 'image-chip';
+
+        var img = document.createElement('img');
+        img.className = 'image-chip-thumb';
+        img.src = imgMeta.data;
+        img.alt = imgMeta.name || ('image ' + (i + 1));
+        chip.appendChild(img);
+
+        var name = document.createElement('span');
+        name.className = 'image-chip-name';
+        name.textContent = imgMeta.name || ('Image ' + (i + 1));
+        name.title = imgMeta.name || '';
+        chip.appendChild(name);
+
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'image-chip-remove';
+        btn.setAttribute('aria-label', 'Remove image');
+        btn.textContent = '×';
+        (function(index) {
+            btn.addEventListener('click', function() {
+                removeImageAttachmentAt(index);
+            });
+        })(i);
+        chip.appendChild(btn);
+
+        row.appendChild(chip);
+    }
+}
 
 function escapeHtml(text) {
     var div = document.createElement('div');
@@ -5577,7 +5775,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (modeText) modeText.innerText = val;
             
             // Update textarea placeholder based on mode
-            var textarea = document.getElementById('user-input');
+            var textarea = document.getElementById('chatInput');
             if (textarea) {
                 switch(val) {
                     case 'Agent':
@@ -5618,6 +5816,21 @@ document.addEventListener('DOMContentLoaded', function() {
         var modelItems = modelDropdown.querySelectorAll('.dropdown-item');
         var modelText = document.getElementById('selected-model');
         var modelCostDisplay = document.getElementById('current-model-cost');
+        
+        // Initialize display with the active dropdown item on page load
+        var activeItem = modelDropdown.querySelector('.dropdown-item.active');
+        if (activeItem && modelText) {
+            var spanElement = activeItem.querySelector('.item-text span');
+            if (spanElement) {
+                modelText.innerText = spanElement.textContent;
+                console.log('[MODEL] Initialized with:', spanElement.textContent);
+            }
+            // Also set the cost display if available
+            var costValue = activeItem.dataset.cost || '$0.27/1M';
+            if (modelCostDisplay) {
+                modelCostDisplay.innerText = costValue;
+            }
+        }
 
         modelTrigger.onclick = function(e) {
             e.stopPropagation();
@@ -5827,6 +6040,18 @@ document.addEventListener('DOMContentLoaded', function() {
         if (input) input.focus();
     };
 
+    window.setInputText = function(text) {
+        var input = document.getElementById('chatInput');
+        if (input) input.value = text;
+    };
+
+    window.sendMessage = function() {
+        var input = document.getElementById('chatInput');
+        if (input && input.value.trim()) {
+            sendMessage();
+        }
+    };
+
     window.openFile = function(filePath) {
         if (bridge) bridge.on_open_file(filePath);
     };
@@ -6012,6 +6237,7 @@ document.addEventListener('DOMContentLoaded', function() {
     window.stopThinking = hideThinkingAnimation;
     window.showThinkingIndicator = showThinkingIndicator;
     window.hideThinkingIndicator = hideThinkingIndicator;
+    window._onGenerationComplete = _onGenerationComplete;
     window.addExploration = addExplorationItem;
     window.showDirectoryContents = showDirectoryContents;
     window.updateThinkingText = updateThinkingText;
@@ -8612,7 +8838,12 @@ function _sendNow(text) {
     
     // Store images data before clearing
     var imageData = '';
+    var imagesCopy = [];
     if (hasImages) {
+        // Keep a copy for rendering in the chat bubble
+        for (var i = 0; i < _attachedImages.length; i++) {
+            imagesCopy.push({ name: _attachedImages[i].name, data: _attachedImages[i].data });
+        }
         imageData = JSON.stringify(_attachedImages);
         // Clear attached images
         _attachedImages = [];
@@ -8620,7 +8851,10 @@ function _sendNow(text) {
         if (preview) preview.remove();
     }
 
+    // Pass image data so appendMessage can render thumbnails in user bubble
+    window._pendingImageAttachments = imagesCopy.length > 0 ? imagesCopy : null;
     appendMessage(text, 'user', true);
+    window._pendingImageAttachments = null;
 
     showThinkingIndicator();
 

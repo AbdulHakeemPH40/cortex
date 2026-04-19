@@ -6,7 +6,6 @@ Supports all 9+ LLM providers in Cortex IDE:
   - Anthropic (Claude)
   - OpenAI (GPT-4o, o1, o3, Codex)
   - Google Gemini
-  - DeepSeek
   - Mistral
   - Groq / Meta
   - Ollama (local)
@@ -31,7 +30,6 @@ APIProvider = Literal[
     'foundry',      # IBM/Microsoft Foundry
     'openai',       # OpenAI API
     'google',       # Google AI Studio
-    'deepseek',     # DeepSeek API
     'mistral',      # Mistral API
     'groq',         # Groq API
     'ollama',       # Local Ollama

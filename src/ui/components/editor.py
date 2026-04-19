@@ -30,49 +30,185 @@ from src.config.settings import get_settings
 from src.core.syntax_checker import get_syntax_checker, DiagnosticError
 from src.core.lsp_manager import get_lsp_manager
 from src.core.html_completion import get_html_completion_provider, get_closing_tag
-from src.core.code_formatter import get_code_formatter, FormatResult
+# Code formatter removed in AI-first mode - AI handles formatting
+# from src.core.code_formatter import get_code_formatter, FormatResult
 from src.utils.logger import get_logger
+# Code folding removed in AI-first mode - AI manages code structure
+# from src.ui.folding import FoldingManager, FoldingRange, get_folder_for_language
 
 
 log = get_logger("editor")
 
 
 # ---------------------------------------------------------------------------
+# Code Preview Wrapper - AI-First Mode
+# Wraps CodeEditor to provide read-only preview with optional edit mode
+# ---------------------------------------------------------------------------
+class CodePreview(QWidget):
+    """
+    Code Preview Panel for AI-First Mode
+    - Default: Read-only code display
+    - Optional: Toggle to edit mode for minimal inline editing
+    - Shows AI-generated code indicators
+    """
+    
+    edit_mode_toggled = pyqtSignal(bool)  # is_edit_mode
+    
+    def __init__(self, language="python", parent=None):
+        super().__init__(parent)
+        self.is_edit_mode = False
+        self.setup_ui(language)
+    
+    def setup_ui(self, language):
+        """Setup the preview UI"""
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        
+        # Create the underlying code editor
+        self.editor = CodeEditor(language=language)
+        self.editor.setReadOnly(True)  # Default to read-only
+        
+        # Top toolbar for preview controls
+        toolbar = self.create_preview_toolbar()
+        layout.addWidget(toolbar)
+        
+        # Editor takes all remaining space
+        layout.addWidget(self.editor, 1)
+    
+    def create_preview_toolbar(self) -> QWidget:
+        """Create minimal toolbar for preview controls"""
+        toolbar = QWidget()
+        toolbar.setFixedHeight(36)
+        toolbar.setObjectName("previewToolbar")
+        
+        layout = QHBoxLayout(toolbar)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setSpacing(8)
+        
+        # AI Generated indicator (hidden by default)
+        self.ai_indicator = QLabel("✨ AI Generated")
+        self.ai_indicator.setFont(QFont("Inter", 9))
+        self.ai_indicator.setObjectName("aiIndicator")
+        self.ai_indicator.setVisible(False)
+        layout.addWidget(self.ai_indicator)
+        
+        layout.addStretch()
+        
+        # Edit mode toggle button
+        self.edit_btn = QPushButton("✏️ Edit")
+        self.edit_btn.setFont(QFont("Inter", 10))
+        self.edit_btn.setFixedHeight(26)
+        self.edit_btn.setFixedWidth(80)
+        self.edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.edit_btn.clicked.connect(self.toggle_edit_mode)
+        self.edit_btn.setObjectName("editToggleBtn")
+        layout.addWidget(self.edit_btn)
+        
+        # Apply toolbar styling
+        toolbar.setStyleSheet("""
+            #previewToolbar {
+                background-color: #12121a;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            }
+            
+            #aiIndicator {
+                color: #6366f1;
+                background: rgba(99, 102, 241, 0.1);
+                padding: 2px 8px;
+                border-radius: 4px;
+            }
+            
+            #editToggleBtn {
+                background-color: #1a1a24;
+                color: #e2e8f0;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 6px;
+            }
+            
+            #editToggleBtn:hover {
+                background-color: rgba(99, 102, 241, 0.2);
+                border-color: #6366f1;
+                color: #6366f1;
+            }
+            
+            #editToggleBtn[editMode="true"] {
+                background-color: #6366f1;
+                color: #ffffff;
+                border-color: #6366f1;
+            }
+        """)
+        
+        return toolbar
+    
+    def toggle_edit_mode(self):
+        """Toggle between read-only and edit mode"""
+        self.is_edit_mode = not self.is_edit_mode
+        self.editor.setReadOnly(not self.is_edit_mode)
+        
+        # Update button appearance
+        if self.is_edit_mode:
+            self.edit_btn.setText("✓ Done")
+            self.edit_btn.setProperty("editMode", "true")
+        else:
+            self.edit_btn.setText("✏️ Edit")
+            self.edit_btn.setProperty("editMode", "false")
+        
+        self.edit_btn.style().unpolish(self.edit_btn)
+        self.edit_btn.style().polish(self.edit_btn)
+        
+        # Emit signal
+        self.edit_mode_toggled.emit(self.is_edit_mode)
+    
+    def set_content(self, content: str, language: str, filepath: str = None):
+        """Set the code content to display"""
+        self.editor.set_content(content, language, filepath)
+    
+    def set_ai_generated(self, is_ai: bool):
+        """Mark code as AI-generated"""
+        self.ai_indicator.setVisible(is_ai)
+    
+    def get_editor(self):
+        """Get the underlying editor instance"""
+        return self.editor
+
+
+# ---------------------------------------------------------------------------
 # Pygments-based syntax highlighter
 # ---------------------------------------------------------------------------
 def get_preferred_programming_font() -> str:
-    """Get industry-standard programming font family.
+    """Get industry-standard programming font family - VS Code Standard.
     
-    Uses comprehensive font detection for best available monospace font
-    commonly used in professional IDEs and code editors.
-    Cursor IDE prefers: Berkeley Mono, Geist Mono
+    VS Code uses 14px font size with premium programming fonts.
+    Priority: JetBrains Mono > Fira Code > Cascadia Code > system fonts
     """
-    # Industry-standard programming fonts (priority order)
-    # Tier 1: Cursor IDE fonts (Berkeley/Geist Mono)
-    # Tier 2: Modern purpose-built coding fonts
-    # Tier 3: Classic reliable system fonts
+    # VS Code Standard: Premium programming fonts (priority order)
+    # Tier 1: VS Code / JetBrains preferred fonts
+    # Tier 2: Modern purpose-built coding fonts with ligatures
+    # Tier 3: System fonts
     # Tier 4: Universal fallbacks
     preferred_fonts = [
-        # Tier 1: Cursor IDE Premium Fonts (per cursor-ide-design-tokens.md)
-        "Berkeley Mono",       # Cursor's marketing font - premium
-        "Geist Mono",          # Vercel's font - free alternative to Berkeley
+        # Tier 1: VS Code Premium (most popular in modern IDEs)
+        "JetBrains Mono",      # VS Code & JetBrains default - designed for IDEs
+        "Fira Code",           # Best ligatures support, very popular
+        "Cascadia Code",       # Microsoft's VS Code terminal font
+        "Cascadia Mono",       # Cascadia without ligatures
         
-        # Tier 2: Premium Programming Fonts (Best for syntax highlighting)
-        "JetBrains Mono",      # Best overall - designed for IDEs
-        "Fira Code",           # Best ligatures support
+        # Tier 2: Alternative Premium Fonts
+        "Berkeley Mono",       # Cursor's premium font
+        "Geist Mono",          # Vercel's modern font
         "Source Code Pro",     # Adobe's professional font
-        "Cascadia Code",       # Microsoft's modern terminal font
         "Hack",                # Optimized for readability
+        "SF Mono",             # Apple's modern system font
         
-        # Tier 3: Classic Programming Fonts
+        # Tier 3: System Fonts
         "Consolas",            # Windows standard (excellent ClearType)
         "Monaco",              # macOS classic
-        "SF Mono",             # Apple's modern system font
         "Roboto Mono",         # Google's material design font
-        
-        # Tier 4: Reliable Fallbacks
         "Inconsolata",         # High-quality open source
         "DejaVu Sans Mono",    # Extended character support
+        
+        # Tier 4: Reliable Fallbacks
         "Lucida Console",      # Windows legacy
         "Courier New"          # Universal fallback
     ]
@@ -86,7 +222,7 @@ def get_preferred_programming_font() -> str:
     
     # Ultimate fallback
     print("[Editor] Using default monospace font")
-    return ""  # Empty string uses system default monospace
+    return "Consolas"  # Safe fallback that exists on all systems
 
 
 class PygmentsSyntaxHighlighter(QSyntaxHighlighter):
@@ -309,21 +445,34 @@ class PygmentsSyntaxHighlighter(QSyntaxHighlighter):
         Token.Text:               ("#000000", False, False),     # Black - plain text
     }
     
-    def __init__(self, document, language: str = "python", is_dark: bool = True):
+    def __init__(self, document, language: str = "python", is_dark: bool = True, base_font: QFont = None):
         super().__init__(document)
         self._language = language
         self._is_dark = is_dark
         
-        # Set premium programming font
-        if is_dark:
-            # Cursor IDE theme font settings - 12px editor font
-            font_name = get_preferred_programming_font()  # Use module-level function
-            self._base_format = QTextCharFormat()
-            self._base_format.setFont(QFont(font_name, 12))
+        # Set premium programming font - VS Code Standard: 14px
+        # Use provided base_font from editor, or create default
+        if base_font is None:
+            font_name = get_preferred_programming_font()
+            base_font = QFont(font_name)
+            base_font.setPointSize(14)  # VS Code standard font size
+            base_font.setStyleHint(QFont.StyleHint.Monospace)
+            base_font.setFixedPitch(True)
+        
+        self._base_format = QTextCharFormat()
+        self._base_format.setFont(base_font)
+        self._editor_font_family = base_font.family()
         
         self._lexer = self._get_lexer(language)
         self._formats: dict = {}
         self._build_formats()
+    
+    def set_base_font(self, font: QFont):
+        """Update the base font for all syntax highlighting."""
+        self._base_format.setFont(font)
+        self._editor_font_family = font.family()
+        self._build_formats()
+        self.rehighlight()
     
     def _get_lexer(self, language: str):
         try:
@@ -513,18 +662,38 @@ class PygmentsSyntaxHighlighter(QSyntaxHighlighter):
 
 
 # ---------------------------------------------------------------------------
-# Line number gutter
+# Line number gutter with folding indicators
 # ---------------------------------------------------------------------------
 class LineNumberArea(QWidget):
+    """Enhanced line number gutter with fold indicators (▶/▼)."""
+    
     def __init__(self, editor):
         super().__init__(editor)
         self._editor = editor
+        self.setMouseTracking(True)
+        self._hovered_fold_line = -1
 
     def sizeHint(self) -> QSize:
         return QSize(self._editor.line_number_area_width(), 0)
 
     def paintEvent(self, event):
         self._editor.line_number_area_paint_event(event)
+        
+    def mouseMoveEvent(self, event):
+        """Track mouse for fold indicator hover effects."""
+        line = self._editor.line_at_y(int(event.position().y()))
+        if line != self._hovered_fold_line:
+            self._hovered_fold_line = line
+            self.update()
+        
+    def mousePressEvent(self, event):
+        """Handle clicks on fold indicators."""
+        line = self._editor.line_at_y(int(event.position().y()))
+        if line >= 0:
+            # Check if click is in fold indicator area (left part of gutter)
+            if event.position().x() < 20:  # Fold indicator width
+                self._editor.toggle_fold_at_line(line)
+            self.update()
 
 
 # ---------------------------------------------------------------------------
@@ -871,21 +1040,8 @@ class CodeEditor(QPlainTextEdit):
     code_copied = pyqtSignal(str, str, int, int)  # text, file_path, start_line, end_line
     _completion_results_ready = pyqtSignal(list)  # Thread-safe signal for completion items
 
-    def _get_preferred_programming_font(self) -> str:
-        """Get best available programming font."""
-        preferred_fonts = [
-            "JetBrains Mono",     # Best for coding
-            "Fira Code",          # Great ligatures
-            "Source Code Pro",    # Adobe's programming font
-            "Consolas",           # Windows classic
-            "Monaco",             # macOS classic
-            "Courier New"         # Universal fallback
-        ]
-        for font_name in preferred_fonts:
-            font = QFont(font_name)
-            if font.exactMatch():
-                return font_name
-        return "Consolas"
+    # VS Code Standard Font Size
+    VS_CODE_FONT_SIZE = 14  # VS Code default editor font size
     
     def _apply_editor_theme(self):
         """Apply dark theme colors to editor widget background and text."""
@@ -939,14 +1095,19 @@ class CodeEditor(QPlainTextEdit):
         self.setMouseTracking(True)
         self.viewport().setMouseTracking(True)
 
-        # Font - Premium programming fonts (Dracula theme style)
-        font_family = self._get_preferred_programming_font()
-        font_size = max(8, int(self._settings.get("editor", "font_size") or 12))
+        # Font - VS Code Standard: 14px with premium programming fonts
+        font_family = self._editor_font_family if hasattr(self, '_editor_font_family') else get_preferred_programming_font()
+        font_size = max(8, int(self._settings.get("editor", "font_size") or self.VS_CODE_FONT_SIZE))
         font = QFont(font_family)
         font.setPointSize(font_size)
         font.setFixedPitch(True)
         font.setStyleHint(QFont.StyleHint.Monospace)
+        font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)  # Smooth rendering
         self.setFont(font)
+        
+        # Store font info for highlighter
+        self._editor_font_family = font_family
+        self._editor_font_size = font_size
 
         # Tab stop
         metrics = QFontMetrics(font)
@@ -967,10 +1128,23 @@ class CodeEditor(QPlainTextEdit):
         self._update_line_number_area_width(0)
         self._highlight_current_line()
 
-        # Syntax highlighter
+        # Syntax highlighter - pass editor font for consistency
         self._highlighter = PygmentsSyntaxHighlighter(
-            self.document(), language=language, is_dark=True
+            self.document(), language=language, is_dark=True, base_font=font
         )
+
+        # Code Folding System
+        self._folding_manager = FoldingManager(self.document())
+        self._folding_manager.ranges_changed.connect(self._on_folding_changed)
+        self._folding_manager.range_collapsed.connect(self._on_range_collapsed)
+        self._folding_manager.range_expanded.connect(self._on_range_expanded)
+        self._folding_folder = get_folder_for_language(language)
+        self._folding_timer = QTimer(self)
+        self._folding_timer.setSingleShot(True)
+        self._folding_timer.timeout.connect(self._update_folding_ranges)
+        
+        # Initial fold computation (delayed)
+        QTimer.singleShot(500, self._update_folding_ranges)
 
         # Line wrap off
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
@@ -1021,6 +1195,31 @@ class CodeEditor(QPlainTextEdit):
         # Global shortcut for Format Code (Shift+Alt+F)
         self._format_shortcut = QShortcut(QKeySequence("Shift+Alt+F"), self)
         self._format_shortcut.activated.connect(self._format_current_code)
+        
+        # Folding shortcuts (VS Code style)
+        # Ctrl+Shift+[ - Collapse current region
+        self._collapse_shortcut = QShortcut(
+            QKeySequence("Ctrl+Shift+["), self
+        )
+        self._collapse_shortcut.activated.connect(self.collapse_current)
+        
+        # Ctrl+Shift+] - Expand current region
+        self._expand_shortcut = QShortcut(
+            QKeySequence("Ctrl+Shift+]"), self
+        )
+        self._expand_shortcut.activated.connect(self.expand_current)
+        
+        # Ctrl+K Ctrl+0 - Collapse all
+        self._collapse_all_shortcut = QShortcut(
+            QKeySequence("Ctrl+K,Ctrl+0"), self
+        )
+        self._collapse_all_shortcut.activated.connect(self.collapse_all)
+        
+        # Ctrl+K Ctrl+J - Expand all
+        self._expand_all_shortcut = QShortcut(
+            QKeySequence("Ctrl+K,Ctrl+J"), self
+        )
+        self._expand_all_shortcut.activated.connect(self.expand_all)
 
     # ── Drag & Drop: redirect external file/folder drops to main window ──
     def dragEnterEvent(self, event):
@@ -1119,6 +1318,31 @@ class CodeEditor(QPlainTextEdit):
         format_action.setShortcut("Shift+Alt+F")
         format_action.triggered.connect(self._format_current_code)
         menu.addAction(format_action)
+        
+        menu.addSeparator()
+        
+        # Folding submenu
+        folding_menu = QMenu("Folding", self)
+        
+        fold_action = QAction("Collapse Current (Ctrl+Shift+[)", self)
+        fold_action.triggered.connect(self.collapse_current)
+        folding_menu.addAction(fold_action)
+        
+        unfold_action = QAction("Expand Current (Ctrl+Shift+])", self)
+        unfold_action.triggered.connect(self.expand_current)
+        folding_menu.addAction(unfold_action)
+        
+        folding_menu.addSeparator()
+        
+        fold_all_action = QAction("Collapse All (Ctrl+K Ctrl+0)", self)
+        fold_all_action.triggered.connect(self.collapse_all)
+        folding_menu.addAction(fold_all_action)
+        
+        unfold_all_action = QAction("Expand All (Ctrl+K Ctrl+J)", self)
+        unfold_all_action.triggered.connect(self.expand_all)
+        folding_menu.addAction(unfold_all_action)
+        
+        menu.addMenu(folding_menu)
         
         menu.addSeparator()
         
@@ -1288,38 +1512,149 @@ class CodeEditor(QPlainTextEdit):
         # Initial local syntax check (delayed to not block UI)
         QTimer.singleShot(300, self._run_linting)
 
+    # ------------------------------------------------------------------
+    # Code Folding Methods
+    # ------------------------------------------------------------------
+    def _update_folding_ranges(self):
+        """Recompute foldable regions when document changes."""
+        text = self.toPlainText()
+        if not text:
+            return
+            
+        try:
+            ranges = self._folding_folder.compute_ranges(text)
+            self._folding_manager.set_ranges(ranges)
+        except Exception as e:
+            print(f"[Folding] Error computing ranges: {e}")
+    
+    def _on_folding_changed(self):
+        """Handle folding ranges updated."""
+        self._update_block_visibility()
+        self._line_number_area.update()
+        self.viewport().update()
+    
+    def _on_range_collapsed(self, line: int):
+        """Handle region collapsed."""
+        print(f"[Folding] Collapsed at line {line + 1}")
+        self._update_block_visibility()
+        self._line_number_area.update()
+        self.viewport().update()
+    
+    def _on_range_expanded(self, line: int):
+        """Handle region expanded."""
+        print(f"[Folding] Expanded at line {line + 1}")
+        self._update_block_visibility()
+        self._line_number_area.update()
+        self.viewport().update()
+    
+    def _update_block_visibility(self):
+        """Update QTextBlock visibility based on folding state."""
+        if not hasattr(self, '_folding_manager'):
+            return
+            
+        # First, make all blocks visible
+        block = self.document().firstBlock()
+        while block.isValid():
+            if not block.isVisible():
+                block.setVisible(True)
+            block = block.next()
+        
+        # Then hide lines that are folded
+        for region in self._folding_manager.get_all_ranges():
+            if region.is_collapsed:
+                # Hide all lines in the range except the first one
+                for line_num in range(region.start_line + 1, region.end_line + 1):
+                    block = self.document().findBlockByNumber(line_num)
+                    if block.isValid() and block.isVisible():
+                        block.setVisible(False)
+        
+        # Update layout
+        self.document().markContentsDirty(0, self.document().characterCount())
+    
+    def toggle_fold_at_line(self, line: int):
+        """Toggle fold state at given line."""
+        region = self._folding_manager.get_range_at_start(line)
+        if region:
+            self._folding_manager.toggle(region)
+    
+    def collapse_all(self):
+        """Collapse all foldable regions."""
+        self._folding_manager.collapse_all()
+    
+    def expand_all(self):
+        """Expand all foldable regions."""
+        self._folding_manager.expand_all()
+    
+    def collapse_current(self):
+        """Collapse region at cursor."""
+        line = self.textCursor().blockNumber()
+        region = self._folding_manager.get_range_at_line(line)
+        if region and not region.is_collapsed:
+            self._folding_manager.collapse(region)
+    
+    def expand_current(self):
+        """Expand region at cursor."""
+        line = self.textCursor().blockNumber()
+        region = self._folding_manager.get_range_at_line(line)
+        if region and region.is_collapsed:
+            self._folding_manager.expand(region)
+    
+    def folding_manager(self):
+        """Get the folding manager."""
+        return self._folding_manager
+    
+    def line_at_y(self, y: int) -> int:
+        """Convert Y coordinate to line number.
+        
+        Args:
+            y: Y coordinate in viewport
+            
+        Returns:
+            Line number (0-indexed), or -1 if invalid
+        """
+        cursor = self.cursorForPosition(QPoint(0, y))
+        return cursor.blockNumber()
+
     def set_theme(self, is_dark: bool):
         """Set theme and refresh font family."""
         self._is_dark = is_dark
         
-        # Update syntax highlighter colors
+        # Update syntax highlighter colors and font
         self._highlighter.set_dark(is_dark)
         
         # CRITICAL: Update widget background and text colors
         self._apply_editor_theme()
         
         # Refresh font family (in case user installed new fonts)
-        if is_dark:
-            # Re-apply premium programming font for dark theme
-            font_family = get_preferred_programming_font()  # ← Use module-level function
-            current_size = self.font().pointSize()
-            new_font = QFont(font_family, current_size)
-            new_font.setFixedPitch(True)
-            new_font.setStyleHint(QFont.StyleHint.Monospace)
-            self.setFont(new_font)
-            
-            # Update tab stop distance for new font metrics
-            metrics = QFontMetrics(new_font)
-            tab_size = 4  # Default tab width
-            self.setTabStopDistance(metrics.horizontalAdvance(' ') * tab_size)
+        font_family = get_preferred_programming_font()
+        current_size = self.font().pointSize() if self.font().pointSize() > 0 else self.VS_CODE_FONT_SIZE
+        new_font = QFont(font_family, current_size)
+        new_font.setFixedPitch(True)
+        new_font.setStyleHint(QFont.StyleHint.Monospace)
+        new_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+        self.setFont(new_font)
+        
+        # Update highlighter font to match
+        self._highlighter.set_base_font(new_font)
+        
+        # Update tab stop distance for new font metrics
+        metrics = QFontMetrics(new_font)
+        tab_size = self._settings.get("editor", "tab_size") or 4
+        self.setTabStopDistance(metrics.horizontalAdvance(' ') * tab_size)
+        
+        # Update line number area to match new font
+        self._line_number_area.update()
+        self._update_line_number_area_width(0)
         
         # Update line highlight
         self._highlight_current_line()
 
     def line_number_area_width(self) -> int:
+        """Calculate gutter width including line numbers and fold indicators."""
         digits = max(3, len(str(self.blockCount())))
         char_w = self.fontMetrics().horizontalAdvance('9')
-        return char_w * digits + 20
+        # Line number area + fold indicator space
+        return char_w * digits + 20 + 16  # 16px for fold indicator
 
     def _update_line_number_area_width(self, _):
         self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)
@@ -1380,6 +1715,35 @@ class CodeEditor(QPlainTextEdit):
                     painter.setPen(QPen(color, 5))
                     # Center the dot in the gutter area left of the line numbers
                     painter.drawPoint(8, top + (self.fontMetrics().height() // 2))
+                
+                # Draw Fold Indicator (▶/▼) for foldable regions
+                if hasattr(self, '_folding_manager'):
+                    region = self._folding_manager.get_range_at_start(line_idx)
+                    if region and region.start_line < region.end_line:
+                        # Draw fold indicator in left gutter
+                        fold_x = 6
+                        fold_y = top + (self.fontMetrics().height() // 2) - 5
+                        
+                        if region.is_collapsed:
+                            # Collapsed: draw ▶
+                            painter.setPen(QPen(QColor("#c0c0c0"), 1))
+                            painter.setBrush(QColor("#c0c0c0"))
+                            # Draw triangle pointing right
+                            painter.drawPolygon([
+                                QPoint(fold_x, fold_y),
+                                QPoint(fold_x, fold_y + 10),
+                                QPoint(fold_x + 6, fold_y + 5)
+                            ])
+                        else:
+                            # Expanded: draw ▼
+                            painter.setPen(QPen(QColor("#808080"), 1))
+                            painter.setBrush(QColor("#808080"))
+                            # Draw triangle pointing down
+                            painter.drawPolygon([
+                                QPoint(fold_x, fold_y + 2),
+                                QPoint(fold_x + 10, fold_y + 2),
+                                QPoint(fold_x + 5, fold_y + 8)
+                            ])
 
             block = block.next()
             top = bottom
@@ -1404,6 +1768,10 @@ class CodeEditor(QPlainTextEdit):
         
         # Start lint timer for local checker (separate from LSP)
         self._lint_timer.start(1500)
+        
+        # Schedule folding recomputation (debounced)
+        if hasattr(self, '_folding_timer'):
+            self._folding_timer.start(1000)
 
     def _run_linting(self):
         """Request a fresh syntax check from the engine (debounced, non-concurrent, background)."""

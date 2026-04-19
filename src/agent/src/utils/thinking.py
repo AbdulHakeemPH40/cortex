@@ -335,14 +335,6 @@ def get_provider_thinking_info(provider: str) -> dict:
             "config_param": None,
             "description": "Grok does not support extended thinking",
         },
-        "deepseek": {
-            "feature_name": "Reasoning",
-            "supports_thinking": True,
-            "supports_adaptive": True,
-            "models": ["deepseek-r1", "deepseek-reasoner"],
-            "config_param": None,
-            "description": "DeepSeek-R1 reasoning model (always reasons)",
-        },
         "qwen": {
             "feature_name": "Thinking",
             "supports_thinking": True,

@@ -46,9 +46,11 @@ Usage:
 - Supports full regex syntax (e.g., "log.*Error", "function\\s+\\w+")
 - Filter files with glob parameter (e.g., "*.js", "**/*.tsx") or type parameter (e.g., "js", "py", "rust")
 - Output modes: "content" shows matching lines, "files_with_matches" shows only file paths (default), "count" shows match counts
+- PREFER "files_with_matches" first to find relevant files, then use targeted "content" mode with specific file path
 - Use {AGENT_TOOL_NAME} tool for open-ended searches requiring multiple rounds
 - Pattern syntax: Uses ripgrep (not grep) - literal braces need escaping (use `interface\\{{\\}}` to find `interface{{}}` in Go code)
 - Multiline matching: By default patterns match within single lines only. For cross-line patterns like `struct \\{{[\\s\\S]*?field`, use `multiline: true`
+- IMPORTANT: Do NOT call {GREP_TOOL_NAME} more than 2-3 times consecutively. After finding relevant files/lines, take ACTION (Write/Edit) instead of searching more.
 """
 
 

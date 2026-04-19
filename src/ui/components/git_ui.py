@@ -1,5 +1,6 @@
 """
-Git UI Components for Cortex AI Agent IDE — VS Code-quality design.
+Git UI Components for Cortex AI Agent IDE — AI-First Futuristic Design.
+Enhanced with modern glassmorphism, gradient accents, and AI-powered features.
 Includes source control panel, diff view, commit dialog, and branch management.
 """
 
@@ -16,13 +17,13 @@ from PyQt6.QtGui import QColor, QFont, QTextCharFormat, QIcon, QPainter, QPen, Q
 from typing import List, Optional
 from src.core.git_manager import GitManager, GitFile, GitStatus
 
-# ── Status badge colors (VS Code standard) ──────────────────────────
+# ── AI-First Futuristic Status Badge Colors ─────────────────────────
 _STATUS_COLORS = {
-    GitStatus.MODIFIED:  "#E2C08D",   # M – yellow/gold
-    GitStatus.ADDED:     "#73C991",   # A – green
-    GitStatus.DELETED:   "#C74E39",   # D – red
-    GitStatus.RENAMED:   "#73C991",   # R – green
-    GitStatus.UNTRACKED: "#73C991",   # U – green
+    GitStatus.MODIFIED:  "#f59e0b",   # M - Amber/Warning
+    GitStatus.ADDED:     "#10b981",   # A - Emerald/Success
+    GitStatus.DELETED:   "#ef4444",   # D - Red/Error
+    GitStatus.RENAMED:   "#3b82f6",   # R - Blue/Info
+    GitStatus.UNTRACKED: "#8b5cf6",   # U - Purple/New
 }
 _STATUS_LETTERS = {
     GitStatus.MODIFIED:  "M",
@@ -32,30 +33,45 @@ _STATUS_LETTERS = {
     GitStatus.UNTRACKED: "U",
 }
 
-# ── Shared dark-theme stylesheet fragments ───────────────────────────
-_DARK_BG         = "#1e1e1e"
-_DARK_BG_SIDEBAR = "#252526"
-_DARK_BORDER     = "#3e3e42"
-_DARK_HOVER      = "#2a2d2e"
-_DARK_SELECT     = "#094771"
-_DARK_FG         = "#cccccc"
-_DARK_FG_DIM     = "#858585"
-_DARK_ACCENT     = "#0078d4"
+# ── AI-First Theme Colors ───────────────────────────────────────────
+_AI_FIRST_BG = "#0a0a0f"
+_AI_FIRST_BG_PANEL = "#12121a"
+_AI_FIRST_BG_CARD = "#1a1a24"
+_AI_FIRST_BG_HOVER = "#1e1e2e"
+_AI_FIRST_BORDER = "rgba(255, 255, 255, 0.08)"
+_AI_FIRST_ACCENT = "#6366f1"
+_AI_FIRST_ACCENT_GRADIENT = "qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #6366f1, stop:1 #8b5cf6)"
+_AI_FIRST_TEXT = "#f8fafc"
+_AI_FIRST_TEXT_SECONDARY = "#94a3b8"
+_AI_FIRST_TEXT_MUTED = "#64748b"
+
+# ── Dark Theme Compatibility Aliases ────────────────────────────────
+_DARK_BG_SIDEBAR = _AI_FIRST_BG_PANEL
+_DARK_BG = _AI_FIRST_BG
+_DARK_FG = _AI_FIRST_TEXT
+_DARK_BORDER = _AI_FIRST_BORDER
+_DARK_SELECT = "rgba(99, 102, 241, 0.3)"
+_DARK_ACCENT = _AI_FIRST_ACCENT
+_DARK_HOVER = _AI_FIRST_BG_HOVER
+_DARK_FG_DIM = _AI_FIRST_TEXT_MUTED
 
 _TOOL_BTN_STYLE = """
     QToolButton {
         background: transparent;
-        border: none;
-        border-radius: 4px;
-        color: #cccccc;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 6px;
+        color: #94a3b8;
         font-size: 14px;
-        padding: 3px;
+        padding: 6px;
     }
     QToolButton:hover {
-        background: #3e3e42;
+        background: rgba(99, 102, 241, 0.15);
+        border-color: #6366f1;
+        color: #6366f1;
     }
     QToolButton:pressed {
-        background: #094771;
+        background: #6366f1;
+        color: #ffffff;
     }
 """
 
@@ -64,10 +80,11 @@ _SECTION_HEADER_STYLE = f"""
         background: transparent;
     }}
     QLabel {{
-        color: {_DARK_FG};
+        color: {_AI_FIRST_TEXT};
         font-weight: 600;
         font-size: 11px;
         text-transform: uppercase;
+        letter-spacing: 0.5px;
     }}
 """
 
@@ -85,7 +102,7 @@ class _CommitMessageEdit(QTextEdit):
 
 
 class _FileItemWidget(QWidget):
-    """Single file row: icon + filename + status badge (VS Code style)."""
+    """Single file row: icon + filename + status badge (AI-First futuristic style)."""
 
     def __init__(self, filename: str, status: GitStatus, parent=None):
         super().__init__(parent)
@@ -93,8 +110,8 @@ class _FileItemWidget(QWidget):
         self.status = status
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(20, 2, 8, 2)
-        layout.setSpacing(6)
+        layout.setContentsMargins(16, 4, 12, 4)
+        layout.setSpacing(8)
 
         # File name (just the basename, with path dimmed)
         import os
@@ -102,37 +119,44 @@ class _FileItemWidget(QWidget):
         directory = os.path.dirname(filename)
 
         name_label = QLabel(base)
-        name_label.setStyleSheet(f"color: {_DARK_FG}; font-size: 13px;")
+        name_label.setStyleSheet(f"color: {_AI_FIRST_TEXT}; font-size: 13px; font-weight: 500;")
         name_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         layout.addWidget(name_label)
 
         if directory:
             dir_label = QLabel(directory)
-            dir_label.setStyleSheet(f"color: {_DARK_FG_DIM}; font-size: 11px;")
+            dir_label.setStyleSheet(f"color: {_AI_FIRST_TEXT_MUTED}; font-size: 11px;")
             layout.addWidget(dir_label)
 
-        # Status letter badge
+        # Status letter badge with rounded background
         letter = _STATUS_LETTERS.get(status, "?")
-        color = _STATUS_COLORS.get(status, _DARK_FG_DIM)
+        color = _STATUS_COLORS.get(status, _AI_FIRST_TEXT_MUTED)
         badge = QLabel(letter)
-        badge.setFixedWidth(18)
+        badge.setFixedWidth(22)
+        badge.setFixedHeight(22)
         badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         badge.setStyleSheet(f"""
-            color: {color};
-            font-size: 12px;
-            font-weight: bold;
-            font-family: 'Consolas', 'Courier New', monospace;
+            QLabel {{
+                color: {color};
+                font-size: 11px;
+                font-weight: bold;
+                font-family: 'JetBrains Mono', 'Consolas', monospace;
+                background: rgba({int(color[1:3], 16)}, {int(color[3:5], 16)}, {int(color[5:7], 16)}, 0.15);
+                border: 1px solid {color};
+                border-radius: 11px;
+                padding: 2px;
+            }}
         """)
         layout.addWidget(badge)
 
-        self.setFixedHeight(24)
+        self.setFixedHeight(32)
         self.setStyleSheet(f"""
             QWidget {{
                 background: transparent;
-                border-radius: 3px;
+                border-radius: 6px;
             }}
             QWidget:hover {{
-                background: {_DARK_HOVER};
+                background: {_AI_FIRST_BG_HOVER};
             }}
         """)
 

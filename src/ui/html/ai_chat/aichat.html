@@ -2686,25 +2686,9 @@
     </div>
     
     <div id="app-container" role="main" aria-label="Cortex AI Chat Interface">
-        <!-- History Sidebar -->
-        <aside id="history-sidebar" class="collapsed" role="complementary" aria-label="Chat History">
-            <div class="sidebar-header">
-                <h3>Recent Chats</h3>
-                <button id="close-sidebar-btn" title="Close Sidebar" aria-label="Close sidebar">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-                </button>
-            </div>
-            <div id="chat-history-list" role="list" aria-label="Previous conversations">
-                <!-- History items will be injected here -->
-            </div>
-        </aside>
-
         <div id="chat-container">
             <!-- Header -->
             <header id="header" role="banner">
-                <button id="toggle-history-btn" title="Show History" aria-label="Toggle chat history sidebar" aria-expanded="false">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8v4l3 3"></path><circle cx="12" cy="12" r="9"></circle><path d="M3.05 11a9 9 0 1 1 .5 4"></path></svg>
-                </button>
                 <div class="header-center">
                     <span class="logo" aria-hidden="true">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-2.54Z"></path><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-2.54Z"></path></svg>
@@ -2734,13 +2718,25 @@
             <!-- Chat Messages Container -->
             <div id="chatMessages" role="log" aria-live="polite" aria-atomic="false" aria-relevant="additions">
                 <div id="empty-state">
-                    <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto 20px auto; display: block; opacity: 0.6;" aria-hidden="true"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-2.54Z"></path><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-2.54Z"></path></svg>
+                    <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-2.54Z"></path><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-2.54Z"></path></svg>
                     <p>Start a conversation with Cortex AI</p>
-                    <div class="shortcut-hints">
-                        <div class="hint"><kbd>Enter</kbd> Send</div>
-                        <div class="hint"><kbd>Ctrl+Enter</kbd> New line</div>
-                        <div class="hint"><kbd>@</kbd> Add file</div>
-                        <div class="hint"><kbd>Esc</kbd> Stop</div>
+                    <div class="quick-actions">
+                        <button class="quick-action-btn" onclick="quickAction('Explain this code')">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                            Explain
+                        </button>
+                        <button class="quick-action-btn" onclick="quickAction('Refactor this code')">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+                            Refactor
+                        </button>
+                        <button class="quick-action-btn" onclick="quickAction('Find bugs in this code')">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                            Debug
+                        </button>
+                        <button class="quick-action-btn" onclick="quickAction('Generate tests for this code')">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1-7.94-7.94l3.77 3.77a1 1 0 0 0 1.4 0l1.6-1.6a1 1 0 0 0 0-1.4l-5-5a1 1 0 0 0-1.4 0l-1.6 1.6a1 1 0 0 0 0 1.4l5 5z"></path></svg>
+                            Test
+                        </button>
                     </div>
                 </div>
                 <!-- Thinking Indicator (shown while AI is processing) -->
@@ -2964,176 +2960,58 @@
                                         </div>
                                     </div>
                                     
-                                    
                                     <div class="dropdown-divider"></div>
                                     
-                                    <!-- DeepSeek - Direct API Access -->
-                                    <div class="dropdown-header">DeepSeek Models (Direct API)</div>
+                                    <!-- Performance Mode Selector -->
+                                    <div class="dropdown-header">Performance Mode</div>
                                     
-                                    <div class="dropdown-item" data-value="deepseek-chat" data-provider="deepseek" data-perf="9.5">
-                                        <div class="item-icon deepseek-icon">
+                                    <!-- Auto (1st position) - User's configured model -->
+                                    <div class="dropdown-item" data-value="auto" data-provider="multi-agent" data-mode="auto" data-perf="1.0" data-cost="Varies">
+                                        <div class="item-icon" style="color: #2196f3;">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"></circle><path d="M12 1v6m0 6v6m11-7h-6m-6 0H1"></path></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>Auto</span>
+                                            <small>1.0x - Balanced</small>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Efficient (2nd position, DEFAULT) - Mistral Small -->
+                                    <div class="dropdown-item active" data-value="efficient" data-provider="multi-agent" data-mode="efficient" data-perf="0.3" data-cost="$0.20/1M">
+                                        <div class="item-icon" style="color: #4caf50;">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
+                                        </div>
+                                        <div class="item-text">
+                                            <span>Efficient</span>
+                                            <small>0.3x - Fast</small>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Performance (3rd position) - Mistral Medium -->
+                                    <div class="dropdown-item" data-value="performance" data-provider="multi-agent" data-mode="performance" data-perf="1.1" data-cost="$1.50/1M">
+                                        <div class="item-icon" style="color: #ff9800;">
                                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
                                         </div>
                                         <div class="item-text">
-                                            <span>DeepSeek Chat</span>
+                                            <span>Performance</span>
+                                            <small>1.1x - Multi-Agent</small>
                                         </div>
                                     </div>
                                     
-                                    <div class="dropdown-item" data-value="deepseek-coder" data-provider="deepseek" data-perf="9.3">
-                                        <div class="item-icon deepseek-icon">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                                    <!-- Ultimate (4th position) - Mistral Large -->
+                                    <div class="dropdown-item" data-value="ultimate" data-provider="multi-agent" data-mode="ultimate" data-perf="1.6" data-cost="$3.00/1M">
+                                        <div class="item-icon" style="color: #f44336;">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
                                         </div>
                                         <div class="item-text">
-                                            <span>DeepSeek Coder</span>
+                                            <span>Ultimate</span>
+                                            <small>1.6x - Maximum</small>
                                         </div>
                                     </div>
-                                    
-                                    <div class="dropdown-item" data-value="deepseek-reasoner" data-provider="deepseek" data-perf="9.7">
-                                        <div class="item-icon deepseek-icon">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-                                        </div>
-                                        <div class="item-text">
-                                            <span>DeepSeek R1 (Reasoner)</span>
-                                        </div>
-                                    </div>
-                                    
-                                    <div class="dropdown-divider"></div>
-                                    
-                                    <!-- Mistral Models -->
-                                    <div class="dropdown-header">Mistral Models</div>
-                                    
-                                    <div class="dropdown-item" data-value="mistral-large-latest" data-provider="mistral" data-perf="9.0">
-                                        <div class="item-icon" style="color: #ff7043;">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
-                                        </div>
-                                        <div class="item-text">
-                                            <span>Mistral Large</span>
-                                        </div>
-                                    </div>
-                                    
-                                    <div class="dropdown-item" data-value="mistral-medium-latest" data-provider="mistral" data-perf="8.5">
-                                        <div class="item-icon" style="color: #ff7043;">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
-                                        </div>
-                                        <div class="item-text">
-                                            <span>Mistral Medium</span>
-                                        </div>
-                                    </div>
-                                    
-                                    <div class="dropdown-item" data-value="mistral-small-latest" data-provider="mistral" data-perf="7.5">
-                                        <div class="item-icon" style="color: #ff7043;">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
-                                        </div>
-                                        <div class="item-text">
-                                            <span>Mistral Small</span>
-                                        </div>
-                                    </div>
-                                    
-                                    <div class="dropdown-item" data-value="codestral-latest" data-provider="mistral" data-perf="8.8">
-                                        <div class="item-icon" style="color: #ff7043;">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
-                                        </div>
-                                        <div class="item-text">
-                                            <span>Codestral (Code)</span>
-                                        </div>
-                                    </div>
-                                    
-                                    <div class="dropdown-divider"></div>
-                                    
-                                    <!-- OpenAI Models -->
-                                    <div class="dropdown-header">OpenAI Models</div>
-                                    
-                                    <!-- Coding Models -->
-                                    <div class="dropdown-item" data-value="gpt-5.1-codex-mini" data-provider="openai_responses" data-perf="9.5">
-                                        <div class="item-icon" style="background: #10a37f; color: white;">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
-                                        </div>
-                                        <div class="item-text">
-                                            <span>GPT-5.1 Codex Mini <span class="model-tag recommended-tag">Coding</span></span>
-                                            <span class="model-cost">$0.15/$0.60</span>
-                                        </div>
-                                    </div>
-                                    
-                                    <div class="dropdown-item" data-value="gpt-4.1-mini" data-provider="openai" data-perf="9.0">
-                                        <div class="item-icon" style="background: #10a37f; color: white;">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
-                                        </div>
-                                        <div class="item-text">
-                                            <span>GPT-4.1 Mini <span class="model-tag recommended-tag">Best Value</span></span>
-                                            <span class="model-cost">$0.40/$1.60</span>
-                                        </div>
-                                    </div>
-                                    
-                                    <div class="dropdown-item" data-value="gpt-4.1-nano" data-provider="openai" data-perf="8.0">
-                                        <div class="item-icon" style="background: #10a37f; color: white;">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
-                                        </div>
-                                        <div class="item-text">
-                                            <span>GPT-4.1 Nano <span class="model-tag">Economy</span></span>
-                                            <span class="model-cost">$0.10/$0.40</span>
-                                        </div>
-                                    </div>
-                                    
-                                    <!-- Frontier Models -->
-                                    <div class="dropdown-item" data-value="gpt-5.4" data-provider="openai" data-perf="9.8">
-                                        <div class="item-icon" style="background: #10a37f; color: white;">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-                                        </div>
-                                        <div class="item-text">
-                                            <span>GPT-5.4 <span class="model-tag active-tag">Premium</span></span>
-                                            <span class="model-cost">$2.50/$15.00</span>
-                                        </div>
-                                    </div>
-                                    
-                                    <div class="dropdown-item" data-value="gpt-5.4-mini" data-provider="openai" data-perf="9.4">
-                                        <div class="item-icon" style="background: #10a37f; color: white;">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-                                        </div>
-                                        <div class="item-text">
-                                            <span>GPT-5.4 Mini</span>
-                                            <span class="model-cost">$0.75/$4.50</span>
-                                        </div>
-                                    </div>
-                                    
-                                    <!-- GPT-4o Series -->
-                                    <div class="dropdown-item" data-value="gpt-4o" data-provider="openai" data-perf="9.2">
-                                        <div class="item-icon" style="background: #10a37f; color: white;">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>
-                                        </div>
-                                        <div class="item-text">
-                                            <span>GPT-4o <span class="model-tag">Vision</span></span>
-                                            <span class="model-cost">$2.50/$10.00</span>
-                                        </div>
-                                    </div>
-                                    
-                                    <div class="dropdown-item" data-value="gpt-4o-mini" data-provider="openai" data-perf="8.5">
-                                        <div class="item-icon" style="background: #10a37f; color: white;">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>
-                                        </div>
-                                        <div class="item-text">
-                                            <span>GPT-4o Mini</span>
-                                            <span class="model-cost">$0.15/$0.60</span>
-                                        </div>
-                                    </div>
-                                    
-                                    <!-- Reasoning Models -->
-                                    <div class="dropdown-item" data-value="o3" data-provider="openai" data-perf="9.6">
-                                        <div class="item-icon" style="background: #7c3aed; color: white;">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>
-                                        </div>
-                                        <div class="item-text">
-                                            <span>o3 <span class="model-tag active-tag">Reasoning</span></span>
-                                            <span class="model-cost">$2.00/$8.00</span>
-                                        </div>
-                                    </div>
-                                    
-
-                                    
-
                                     
                                     <div class="dropdown-divider"></div>
                                     <div class="dropdown-footer">
-                                        API key required in Settings
+                                        Higher modes provide enhanced responses
                                     </div>
                                 </div>
                             </div>
@@ -3164,6 +3042,19 @@
                 </div>
             </div>
         </div>
+
+        <!-- File Explorer Panel -->
+        <aside id="file-explorer-panel" class="collapsed" role="complementary" aria-label="File Explorer">
+            <div class="panel-header">
+                <h3>Files</h3>
+                <button id="close-explorer-btn" title="Close Explorer" aria-label="Close file explorer">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </div>
+            <div id="file-tree" class="file-tree" role="list" aria-label="Project files">
+                <!-- File tree items will be injected here -->
+            </div>
+        </aside>
     </div>
 
     <!-- Debug Console Panel (toggle with Ctrl+Shift+D) -->

@@ -39,7 +39,9 @@ VCS_DIRECTORIES_TO_EXCLUDE = [
 ]
 
 # Default cap on grep results when head_limit is unspecified
-DEFAULT_HEAD_LIMIT = 250
+# IMPORTANT: Keep low to avoid flooding LLM context.
+# 80 lines × ~100 chars = ~8K chars per call — safe for 128K context models.
+DEFAULT_HEAD_LIMIT = 80
 
 
 # ============================================================
@@ -314,7 +316,7 @@ class GrepTool:
     
     name = GREP_TOOL_NAME
     search_hint = "search file contents with regex (ripgrep)"
-    max_result_size_chars = 20_000  # 20K chars - tool result persistence threshold
+    max_result_size_chars = 12_000  # 12K chars - max result returned to LLM
     strict = True
     
     # ------------------------------------------------------------------
@@ -731,7 +733,10 @@ class GrepTool:
     
     @staticmethod
     def map_tool_result_to_block(data: Dict, tool_use_id: str) -> Dict[str, Any]:
-        """Map tool result to LLM block format."""
+        """Map tool result to LLM block format.
+        
+        IMPORTANT: Enforces max_result_size_chars to prevent context overflow.
+        """
         mode = data.get("mode", "files_with_matches")
         num_files = data.get("numFiles", 0)
         filenames = data.get("filenames", [])
@@ -744,6 +749,10 @@ class GrepTool:
         
         if mode == 'content':
             result_content = content or 'No matches found'
+            # Enforce result size cap to prevent context overflow
+            _MAX = GrepTool.max_result_size_chars
+            if len(result_content) > _MAX:
+                result_content = result_content[:_MAX] + f"\n... [truncated: {len(content) - _MAX} chars omitted. Narrow your search pattern or use offset/head_limit.]"
             final_content = f"{result_content}\n\n[Showing results with pagination = {limit_info}]" if limit_info else result_content
             
             return {
@@ -757,7 +766,7 @@ class GrepTool:
             files = num_files
             summary = f"\n\nFound {num_matches} total {plural(num_matches, 'occurrence', 'occurrences')} across {files} {plural(files, 'file')}."
             if limit_info:
-                summary = summary[:-1] + f" with pagination = {limit_info}"
+                summary += f" (pagination: {limit_info})"
             
             return {
                 "tool_use_id": tool_use_id,

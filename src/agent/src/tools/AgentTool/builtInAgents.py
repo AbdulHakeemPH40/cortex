@@ -17,6 +17,29 @@ if TYPE_CHECKING:
 from ...bootstrap.state import get_is_non_interactive_session
 
 
+# Stub implementations for feature flags (would normally come from GrowthBook)
+def feature(name: str) -> bool:
+    """Check if a feature flag is enabled."""
+    env_var = f"FEATURE_{name.upper()}"
+    return os.environ.get(env_var, "false").lower() == "true"
+
+
+def get_feature_value_cached_may_be_stale(key: str, default: Any) -> Any:
+    """Get cached feature flag value."""
+    env_var = f"FEATURE_{key.upper()}"
+    value = os.environ.get(env_var)
+    if value is None:
+        return default
+    return value.lower() in ("true", "1", "yes")
+
+
+def is_env_truthy(value: str | None) -> bool:
+    """Check if environment variable value is truthy."""
+    if value is None:
+        return False
+    return value.lower() in ("true", "1", "yes")
+
+
 def are_explore_plan_agents_enabled() -> bool:
     """
     Check if explore/plan agents are enabled.
@@ -79,6 +102,22 @@ def get_built_in_agents() -> List[Dict[str, Any]]:
     try:
         from .built_in.statusline_setup_agent import STATUSLINE_SETUP_AGENT
         agents.append(STATUSLINE_SETUP_AGENT)
+    except ImportError:
+        pass
+    
+    # Vision Agent - for image analysis and OCR (multi-agent collaboration)
+    try:
+        from ..VisionAgentTool.system_prompt import VISION_AGENT_PROMPT
+        VISION_AGENT = {
+            "agent_type": "vision_agent",
+            "name": "Vision Analysis Agent",
+            "description": "Specialized agent for image analysis, OCR, and visual content extraction. Runs FIRST in collaboration workflow.",
+            "model": "mistral",  # Force vision-capable model
+            "system_prompt": VISION_AGENT_PROMPT,
+            "tools": ["FileRead", "VisionAPI"],
+            "memory_scope": "session"
+        }
+        agents.append(VISION_AGENT)
     except ImportError:
         pass
     

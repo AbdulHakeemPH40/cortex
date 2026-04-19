@@ -1,4 +1,4 @@
-"""
+﻿"""
 Cortex Agent Bridge
 ===================
 Connects Cortex IDE UI (ai_chat.py / script.js) to the real agent core at
@@ -414,8 +414,18 @@ class CortexToolContext:
     - Model-aware file reading limits (prevents context overflow)
     - Context budget tracking (monitors cumulative token usage)
     - File state tracking (read/modified files)
+    - LRU file read dedup cache (ported from Claude Code's fileStateCache.ts)
     - App state management, Wait/resume, MCP/Auth hooks
     """
+
+    # ── LRU File Read Cache constants ────────────────────────────────────
+    # Ported from Claude Code: fileStateCache.ts (100 entries, 25MB max)
+    _FILE_CACHE_MAX_ENTRIES = 100
+    _FILE_CACHE_MAX_SIZE_BYTES = 25 * 1024 * 1024  # 25MB
+    _FILE_UNCHANGED_STUB = (
+        "[File content unchanged since last read — using cached version. "
+        "No need to re-read. Proceed with the content you already have.]"
+    )
 
     def __init__(self, bridge: 'CortexAgentBridge', model_id: str = "gpt-4o"):
         self._bridge = bridge
@@ -432,11 +442,24 @@ class CortexToolContext:
             "maxTokens": 10_000,
         }
         
+        # ── LRU File Read Dedup Cache ────────────────────────────────────
+        # Tracks file content by normalized path. On re-read, if mtime + 
+        # offset/limit match, returns FILE_UNCHANGED_STUB instead of full
+        # content, saving massive context. Uses OrderedDict for LRU eviction.
+        # Ported from Claude Code's FileStateCache (fileStateCache.ts)
+        from collections import OrderedDict
+        self._file_cache: OrderedDict = OrderedDict()  # norm_path → {content, timestamp, offset, limit, size}
+        self._file_cache_total_size: int = 0
+        
         self.glob_limits = _GlobLimits()
         self.abort_controller = _create_abort_controller()
         self.dynamic_skill_dir_triggers: set = set()
         self.nested_memory_attachment_triggers: set = set()
         self.user_modified = False
+        
+        # Content replacement state for per-message budget enforcement
+        # (ported from Claude Code's ContentReplacementState)
+        self._content_replacement_state = None  # lazy init
 
         # File state tracking
         self._files_read: Dict[str, float] = {}
@@ -487,6 +510,84 @@ class CortexToolContext:
         return self._budget_tracker.is_over_budget()
     def get_budget_warnings(self) -> List[str]:
         return self._budget_tracker.get_warnings()
+
+    # ── LRU File Read Dedup Cache methods ─────────────────────────────────
+    # Ported from Claude Code's FileStateCache (fileStateCache.ts)
+
+    def file_cache_get(self, norm_path: str, offset=None, limit=None):
+        """
+        Check if a file read can be served from cache.
+        Returns FILE_UNCHANGED_STUB if cached content matches current disk mtime
+        and same offset/limit. Returns None if cache miss.
+        """
+        entry = self._file_cache.get(norm_path)
+        if entry is None:
+            return None
+        
+        # Check mtime
+        try:
+            current_mtime = os.path.getmtime(norm_path)
+        except OSError:
+            return None
+        
+        if entry['timestamp'] != current_mtime:
+            # File changed — invalidate cache entry
+            self._file_cache_evict(norm_path)
+            return None
+        
+        # Check offset/limit match
+        if entry['offset'] != offset or entry['limit'] != limit:
+            return None
+        
+        # Cache HIT — move to end (most recently used)
+        self._file_cache.move_to_end(norm_path)
+        log.info(f"[CTX] File cache HIT: {os.path.basename(norm_path)} (saved {entry['size']:,} chars)")
+        return self._FILE_UNCHANGED_STUB
+
+    def file_cache_put(self, norm_path: str, content: str, mtime: float, offset=None, limit=None):
+        """Store a file read result in the LRU cache."""
+        content_size = len(content.encode('utf-8', errors='replace'))
+        
+        # Evict if already present (to update size tracking)
+        if norm_path in self._file_cache:
+            self._file_cache_evict(norm_path)
+        
+        # Evict LRU entries until under size limit
+        while (self._file_cache_total_size + content_size > self._FILE_CACHE_MAX_SIZE_BYTES
+               and self._file_cache):
+            oldest_key = next(iter(self._file_cache))
+            self._file_cache_evict(oldest_key)
+        
+        # Evict if too many entries
+        while len(self._file_cache) >= self._FILE_CACHE_MAX_ENTRIES:
+            oldest_key = next(iter(self._file_cache))
+            self._file_cache_evict(oldest_key)
+        
+        self._file_cache[norm_path] = {
+            'content': content,
+            'timestamp': mtime,
+            'offset': offset,
+            'limit': limit,
+            'size': content_size,
+        }
+        self._file_cache_total_size += content_size
+
+    def _file_cache_evict(self, norm_path: str):
+        """Remove an entry from the file cache."""
+        entry = self._file_cache.pop(norm_path, None)
+        if entry:
+            self._file_cache_total_size -= entry['size']
+
+    def file_cache_invalidate(self, norm_path: str):
+        """Invalidate cache for a file (e.g. after edit/write)."""
+        self._file_cache_evict(os.path.normpath(os.path.abspath(norm_path)))
+
+    def get_content_replacement_state(self):
+        """Get or create the per-conversation content replacement state."""
+        if self._content_replacement_state is None:
+            from src.ai.tool_result_storage import ContentReplacementState
+            self._content_replacement_state = ContentReplacementState()
+        return self._content_replacement_state
 
     # Real tools call context.get_app_state()
     def get_app_state(self) -> _AppState:
@@ -1744,7 +1845,7 @@ class CortexAgentBridge(QObject):
         # without any progress.  After _MAX_STALE_CYCLES, auto-cancel them.
         self._continue_cycle_count: int = 0
         self._last_pending_ids: set = set()
-        self._MAX_STALE_CYCLES: int = 2
+        self._MAX_STALE_CYCLES: int = 1
         self._stop_requested: bool = False  # Set to interrupt the streaming loop
         # Persistent memory dir — computed once per project root
         self._memory_dir: Optional[str] = None
@@ -1766,7 +1867,7 @@ class CortexAgentBridge(QObject):
         self._init_agent_state()
 
         # Build tool context for real agent tools (use model from settings if available)
-        _initial_model = getattr(settings, 'model_id', 'deepseek-chat') if 'settings' in dir() else 'deepseek-chat'
+        _initial_model = getattr(settings, 'model_id', 'mistral-large-latest') if 'settings' in dir() else 'mistral-large-latest'
         self._tool_ctx = CortexToolContext(self, _initial_model)
         self._current_model_id = _initial_model
 
@@ -1873,6 +1974,11 @@ Shell: PowerShell (use semicolons ; not &&)
 ## Tools Available
 You MUST call tools to take real action. Never describe what you "would" do — actually do it.
 
+## Performance Rules
+- Minimize tool calls. Prefer 1–2 high-signal reads over repeated directory listings.
+- Batch independent tool calls in the SAME turn when possible (e.g., multiple Reads), instead of a back-and-forth loop.
+- Avoid repeating the same tool call (especially `LS`) unless the filesystem likely changed.
+
 ### TodoWrite(todos)
 Plan and track multi-step tasks in the UI. **CALL THIS FIRST** — before any other tool — whenever you start a task with 3+ steps. Use it to immediately show your plan in the sidebar. Mark tasks in_progress BEFORE starting them, completed IMMEDIATELY after finishing each one. Provide both content (imperative, e.g. 'Run tests') and activeForm (present continuous, e.g. 'Running tests') for every item.
 
@@ -1880,7 +1986,14 @@ Plan and track multi-step tasks in the UI. **CALL THIS FIRST** — before any ot
 
 ### Read(file_path, offset?, limit?)
 Read file contents. Always Read a file BEFORE editing it.
-Example: Read(file_path="src/main.py")
+**SMART READING**: Files >250 lines automatically return a SKELETON (structure + line numbers)
+instead of full content. Use line numbers from the skeleton for targeted reads.
+**WORKFLOW for any file**:
+  1. Read(file_path="file.py") → if small: full content; if large: skeleton with line numbers
+  2. Find the section you need from the skeleton
+  3. Read(file_path="file.py", offset=LINE, limit=80) → get just that section
+  4. OR use Grep(pattern="keyword") first to find exact line numbers
+NEVER try to read an entire large file at once — it wastes your context budget.
 Example: Read(file_path="src/main.py", offset=100, limit=50)  # lines 100-149
 
 ### Edit(file_path, old_string, new_string)
@@ -1904,6 +2017,8 @@ Example: Glob(pattern="**/test_*.py", path="tests/")
 
 ### Grep(pattern, path?, glob?, case_insensitive?)
 Search file contents with regex. Find definitions, usages, imports.
+BEST PRACTICE: Use Grep BEFORE Read to find exact line numbers, then Read with offset/limit.
+This avoids wasting context on irrelevant code. Do NOT call Grep more than 2-3 times in a row.
 Example: Grep(pattern="def process_message", glob="*.py")
 Example: Grep(pattern="import requests", path="src/")
 
@@ -1922,23 +2037,22 @@ Example: LS(path="src/")
    you don't need to read it again unless it was modified.
 8. CHAIN TOOLS: You can call multiple tools in one turn for independent operations.
 9. HANDLE ERRORS: If a tool fails, try an alternative approach rather than giving up.
-10. LARGE FILES — SKELETON-FIRST READING:
-    Files such as script.js, ai_chat.html, agent_bridge.py can be 5,000-10,000+ lines.
-    When you Read a large file WITHOUT offset/limit, you get a SKELETON VIEW instead
-    of the full content. The skeleton shows class/function signatures with LINE NUMBERS.
+10. LARGE FILES — SMART CHUNK-BASED READING:
+    Your IDE uses the SAME strategy as Cursor, VS Code Copilot, and Claude Code:
+    Files >250 lines automatically return a SKELETON (not full content).
+    The skeleton shows class/function signatures with LINE NUMBERS.
     
-    CRITICAL: Your model has a FIXED context window. The system will AUTOMATICALLY
-    return a skeleton for files exceeding your model's limit.
+    CRITICAL: Your model has a FIXED context window. Reading entire large files
+    wastes 90%+ of your token budget on irrelevant code.
     
-    Correct workflow for large files:
-      a) Read(file_path="large_file.py") → you get a SKELETON with line numbers
-      b) Find the function/class you need from the skeleton
-      c) Read with targeted offset: Read(file_path="large_file.py", offset=LINE, limit=80)
-      d) If you need more context, read the next chunk: offset=LINE+80, limit=80
+    Smart workflow:
+      a) Read(file_path="file.py") → skeleton with line numbers (auto for >250 lines)
+      b) Identify the function/class you need from the skeleton
+      c) Read(file_path="file.py", offset=LINE, limit=80) → just that section
+      d) OR: Grep(pattern="keyword") first, THEN targeted Read with offset/limit
     
-    Alternative: Use Grep(pattern="functionName") to find exact line numbers first.
-    Files >500 lines are always considered large. When in doubt, use skeleton + offset.
-    NEVER attempt to read the entire content of a large file at once.
+    NEVER attempt to read the entire content of a file >250 lines at once.
+    Use Grep → Read(offset, limit) pattern for maximum efficiency.
 """
         if context.get("code_context"):
             prompt += f"\n## User's Selected Code\n```\n{context['code_context']}\n```\n"
@@ -2132,21 +2246,24 @@ Example: LS(path="src/")
 
     def _create_context_checkpoint(self, messages: list, user_message: str = "") -> str:
         """
-        Create a structured checkpoint of the current conversation state.
+        Create a structured checkpoint of the current conversation state
+        and persist it to MEMORY.md for cross-session recovery.
 
         Captures:
         - Current task / user request
         - Todo items with statuses
         - Files read and modified this session
-        - Key tool results summary
+        - Key assistant decisions
+        - Conversation summary digest
 
-        The checkpoint is saved to the persistent memory dir so
-        _load_memory_section() injects it into the system prompt
-        automatically on the next turn.
+        The checkpoint is saved to:
+          1. A timestamped .md file in the memory dir
+          2. MEMORY.md index (so it's loaded automatically on next session)
 
         Returns the checkpoint text (also used inline by _compact_messages).
         """
         import time as _time
+        from datetime import datetime as _dt
 
         parts = []
 
@@ -2156,7 +2273,7 @@ Example: LS(path="src/")
             for msg in reversed(messages):
                 if getattr(msg, 'role', None) == 'user':
                     _content = getattr(msg, 'content', '') or ''
-                    if not _content.startswith('[System note'):
+                    if not _content.startswith('[System note') and not _content.startswith('[Context Recovery'):
                         _user_msg = _content[:500]
                         break
         if _user_msg:
@@ -2192,6 +2309,23 @@ Example: LS(path="src/")
         if _decisions:
             parts.append("**Key Decisions:**\n" + "\n".join(f"- {d}" for d in reversed(_decisions)))
 
+        # 5. Conversation summary digest (collect all user+assistant exchanges)
+        _summary_lines = []
+        _msg_count = 0
+        for msg in messages:
+            _role = getattr(msg, 'role', None)
+            _content = getattr(msg, 'content', '') or ''
+            if _role == 'user' and _content and not _content.startswith('['):
+                _summary_lines.append(f"User: {_content[:150]}")
+                _msg_count += 1
+            elif _role == 'assistant' and _content and not getattr(msg, 'tool_calls', None):
+                _summary_lines.append(f"Assistant: {_content[:150]}")
+                _msg_count += 1
+            if _msg_count >= 10:  # Keep last 10 exchanges max
+                break
+        if _summary_lines:
+            parts.append("**Conversation Digest:**\n" + "\n".join(_summary_lines))
+
         checkpoint_text = "\n\n".join(parts)
 
         # Save to persistent memory dir
@@ -2199,11 +2333,12 @@ Example: LS(path="src/")
             memory_dir = self._get_memory_dir()
             self._ensure_memory_dir(memory_dir)
             ts = int(_time.time())
+            now_str = _dt.now().strftime('%Y-%m-%d %H:%M')
             filename = f"checkpoint_{ts}.md"
             filepath = os.path.join(memory_dir, filename)
             frontmatter = (
                 "---\n"
-                f"name: Context Checkpoint {ts}\n"
+                f"name: Context Checkpoint {now_str}\n"
                 "description: Auto-saved conversation state before context compaction\n"
                 "type: project\n"
                 "---\n\n"
@@ -2211,10 +2346,111 @@ Example: LS(path="src/")
             with open(filepath, 'w', encoding='utf-8') as fh:
                 fh.write(frontmatter + checkpoint_text)
             log.info(f"[BRIDGE] Context checkpoint saved: {filename}")
+
+            # ── UPDATE MEMORY.md with conversation summary ────────────────
+            # This is the KEY feature: MEMORY.md acts as the persistent
+            # conversation summary that survives across sessions.
+            # On next session start, _load_memory_section() reads it
+            # and injects it into the system prompt automatically.
+            self._update_memory_md(memory_dir, checkpoint_text, now_str, filename)
+
+            # Clean up old checkpoints (keep only last 3)
+            self._cleanup_old_checkpoints(memory_dir, keep=3)
+
         except Exception as exc:
             log.warning(f"[BRIDGE] Failed to save context checkpoint: {exc}")
 
         return checkpoint_text
+
+    def _update_memory_md(self, memory_dir: str, checkpoint_text: str, timestamp: str, checkpoint_file: str):
+        """
+        Update MEMORY.md with the latest compaction summary.
+        
+        MEMORY.md serves as the persistent conversation summary that:
+        - Survives across IDE sessions
+        - Gets auto-loaded into system prompt via _load_memory_section()
+        - Lets the LLM continue work seamlessly after context compaction
+        
+        Like Qoder/VS Code Copilot: "Compacting conversation" -> save summary -> continue.
+        """
+        memory_md_path = os.path.join(memory_dir, 'MEMORY.md')
+        
+        # Build the new MEMORY.md content
+        # Keep existing non-checkpoint entries, replace/append the latest summary
+        existing_entries = []
+        try:
+            with open(memory_md_path, 'r', encoding='utf-8') as fh:
+                content = fh.read()
+            # Parse existing entries (lines starting with "- [")
+            for line in content.split('\n'):
+                line = line.strip()
+                if line.startswith('- [') and 'checkpoint_' not in line.lower():
+                    existing_entries.append(line)
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
+
+        # Build updated MEMORY.md
+        lines = [
+            '# Cortex Memory Index',
+            '',
+            '## Conversation Summary (auto-updated on compaction)',
+            '',
+            f'Last compacted: {timestamp}',
+            '',
+        ]
+        
+        # Add the summary section directly in MEMORY.md
+        # This is what gets loaded into the system prompt on next session
+        _summary_lines = checkpoint_text.split('\n')
+        # Truncate to ~2000 chars to keep MEMORY.md lean
+        _truncated = []
+        _total = 0
+        for sl in _summary_lines:
+            if _total + len(sl) > 2000:
+                _truncated.append('...(truncated)')
+                break
+            _truncated.append(sl)
+            _total += len(sl)
+        lines.extend(_truncated)
+        lines.append('')
+        
+        # Add pointer to full checkpoint file
+        lines.append(f'- [Full checkpoint]({checkpoint_file}) — {timestamp}')
+        lines.append('')
+
+        # Preserve existing non-checkpoint memory entries
+        if existing_entries:
+            lines.append('## Other Memories')
+            lines.append('')
+            lines.extend(existing_entries)
+            lines.append('')
+
+        try:
+            with open(memory_md_path, 'w', encoding='utf-8') as fh:
+                fh.write('\n'.join(lines))
+            log.info(f"[BRIDGE] MEMORY.md updated with compaction summary ({len(checkpoint_text)} chars)")
+        except Exception as exc:
+            log.warning(f"[BRIDGE] Failed to update MEMORY.md: {exc}")
+
+    def _cleanup_old_checkpoints(self, memory_dir: str, keep: int = 3):
+        """Remove old checkpoint files, keeping only the most recent N."""
+        try:
+            checkpoints = []
+            for fname in os.listdir(memory_dir):
+                if fname.startswith('checkpoint_') and fname.endswith('.md'):
+                    fpath = os.path.join(memory_dir, fname)
+                    checkpoints.append((os.path.getmtime(fpath), fpath))
+            checkpoints.sort(reverse=True)  # newest first
+            for _, fpath in checkpoints[keep:]:
+                try:
+                    os.remove(fpath)
+                    log.debug(f"[BRIDGE] Removed old checkpoint: {os.path.basename(fpath)}")
+                except OSError:
+                    pass
+        except Exception:
+            pass
 
     def _estimate_message_tokens(self, messages: list) -> int:
         """
@@ -2233,17 +2469,29 @@ Example: LS(path="src/")
     def _compact_messages(self, messages: list, PCM: type) -> list:
         """
         Trim conversation history so the next API call fits in the context window.
+        Saves the conversation summary to MEMORY.md for cross-session recovery.
 
         Strategy
         --------
         • Always keep the system message (index 0).
         • Create a context checkpoint capturing task state, todos, files.
+        • Persist the checkpoint to MEMORY.md (like Qoder/VS Code “Compacting conversation”).
         • Drop the oldest messages in the middle, keeping the last
           KEEP_TAIL messages so recent context is intact.
         • Walk the tail forward to the first safe boundary (a user or
           assistant turn) so we never orphan a tool-result block.
         • Inject the checkpoint as a rich summary so the LLM continues seamlessly.
         """
+        # ── Emit UI status: "Compacting conversation..." ────────────────
+        try:
+            self._safe_emit(
+                self.agent_status_update,
+                'compacting',
+                'Compacting conversation — saving summary to memory...'
+            )
+        except Exception:
+            pass
+
         KEEP_TAIL = 10
         if len(messages) <= KEEP_TAIL + 2:
             return messages  # nothing meaningful to drop
@@ -2264,13 +2512,14 @@ Example: LS(path="src/")
                 tail = tail[i:]
                 break
 
-        # Create checkpoint with rich context instead of generic note
+        # Create checkpoint with rich context + persist to MEMORY.md
         checkpoint_text = self._create_context_checkpoint(messages)
 
         summary = PCM(
             role='user',
             content=(
                 f'[Context Recovery: {dropped_count} earlier messages were compacted. '
+                f'Conversation summary has been saved to MEMORY.md for persistence. '
                 f'Here is the saved state of your work so far:]\n\n'
                 f'{checkpoint_text}\n\n'
                 f'[Continue completing the task based on this checkpoint and the '
@@ -2280,15 +2529,26 @@ Example: LS(path="src/")
         compacted = [system_msg, summary] + tail
         log.info(
             f'[BRIDGE] Context compacted: {len(messages)} \u2192 {len(compacted)} messages '
-            f'(dropped {dropped_count} middle messages, checkpoint saved)'
+            f'(dropped {dropped_count} middle messages, summary saved to MEMORY.md)'
         )
+
+        # ── Emit completion status ───────────────────────────────────────
+        try:
+            self._safe_emit(
+                self.agent_status_update,
+                'ready',
+                f'Conversation compacted — {dropped_count} messages summarized to MEMORY.md'
+            )
+        except Exception:
+            pass
+
         return compacted
 
     # ============================================================
     # PROVIDER FAILOVER HELPERS
     # ============================================================
 
-    # Failover priority chain: DeepSeek -> Mistral -> OpenAI
+    # Failover priority chain: Mistral only
     _FAILOVER_CHAIN = None  # lazily built
 
     def _get_failover_provider(self, current_type, registry):
@@ -2300,9 +2560,7 @@ Example: LS(path="src/")
         from src.ai.providers import ProviderType
         if self._FAILOVER_CHAIN is None:
             self._FAILOVER_CHAIN = [
-                ProviderType.DEEPSEEK,
                 ProviderType.MISTRAL,
-                ProviderType.OPENAI,
             ]
 
         _attempted = getattr(self, '_failover_attempted', set())
@@ -2336,9 +2594,7 @@ Example: LS(path="src/")
         _is_small = any(x in _model_lower for x in ['mini', 'nano', 'small', 'lite'])
 
         _defaults = {
-            ProviderType.DEEPSEEK: 'deepseek-chat',
             ProviderType.MISTRAL: 'mistral-small-latest' if _is_small else 'mistral-medium-latest',
-            ProviderType.OPENAI: 'gpt-4.1-mini' if _is_small else 'gpt-4.1',
         }
         return _defaults.get(provider_type, original_model)
 
@@ -2372,10 +2628,10 @@ Example: LS(path="src/")
             from src.ai.providers import get_provider_registry, ProviderType, ChatMessage as PCM
 
             registry      = get_provider_registry()
-            provider_name = merged.get("provider", "deepseek")
+            provider_name = merged.get("provider", "mistral")
             
             # Determine provider type based on model
-            model_id = merged.get("model_id", merged.get("model", "deepseek-chat"))
+            model_id = merged.get("model_id", merged.get("model", "mistral-large-latest"))
             model_lower = model_id.lower() if model_id else ""
             
             # Update tool context with current model (for model-aware file limits)
@@ -2400,57 +2656,75 @@ Example: LS(path="src/")
                     max_turns              = 25
                 _limits = _FallbackLimits()
             
-            # Models requiring Responses API
-            needs_responses = any(x in model_lower for x in ["codex", "gpt-5", "o1", "o3"])
+            # Models requiring Responses API (removed - no longer supported)
+            # needs_responses = any(x in model_lower for x in ["codex", "gpt-5", "o1", "o3"])
             
-            provider_type = (
-                ProviderType.MISTRAL if provider_name == "mistral"
-                else ProviderType.OPENAI_RESPONSES if needs_responses
-                else ProviderType.OPENAI if provider_name == "openai"
-                else ProviderType.DEEPSEEK
-            )
+            provider_type = ProviderType.MISTRAL
             provider = registry.get_provider(provider_type)
             model    = model_id
 
             log.info(f"[BRIDGE] provider={provider_name} model={model}")
 
             # ── Build initial message list ─────────────────────
-            system_prompt = merged.get("system_prompt") or self._build_system_prompt(context)
+            # Fast-path: for very simple messages (e.g. greetings), skip the heavy
+            # IDE system prompt + history + tool schema. This reduces payload size
+            # and improves time-to-first-token on slow/latent providers.
+            _simple_query = False
+            try:
+                _simple_query = self._is_simple_query(message)
+            except Exception:
+                _simple_query = False
 
-            messages: List[PCM] = [PCM(role="system", content=system_prompt)]
+            if _simple_query:
+                system_prompt = (
+                    "You are Cortex AI Chat inside a coding IDE. "
+                    "Answer the user directly and concisely. "
+                    "Do not mention internal tools or system details."
+                )
+                messages: List[PCM] = [
+                    PCM(role="system", content=system_prompt),
+                    PCM(role="user", content=message),
+                ]
+                tool_defs = []
+                log.info("[BRIDGE] Simple-query fast path: skipping tools + history + project prompt")
+                MAX_TURNS = 1
+            else:
+                system_prompt = merged.get("system_prompt") or self._build_system_prompt(context)
+                messages = [PCM(role="system", content=system_prompt)]
 
-            # Inject conversation history (last 20 turns).
-            # Truncate very large messages (e.g. pasted file contents) so the
-            # Continue run does not re-pay the full context cost of the first request.
-            _MAX_HIST_CONTENT = _limits.max_hist_chars  # scaled to model context window
-            for hist_msg in self._conversation_history[-20:]:
-                if hist_msg.role in ("user", "assistant"):
-                    hist_content = hist_msg.content or ""
-                    if len(hist_content) > _MAX_HIST_CONTENT:
-                        hist_content = (
-                            hist_content[:_MAX_HIST_CONTENT]
-                            + f"\n... [context trimmed: {len(hist_msg.content) - _MAX_HIST_CONTENT} chars omitted]"
+                # Inject conversation history (last 20 turns).
+                # Truncate very large messages (e.g. pasted file contents) so the
+                # Continue run does not re-pay the full context cost of the first request.
+                _MAX_HIST_CONTENT = _limits.max_hist_chars  # scaled to model context window
+                for hist_msg in self._conversation_history[-20:]:
+                    if hist_msg.role in ("user", "assistant"):
+                        hist_content = hist_msg.content or ""
+                        if len(hist_content) > _MAX_HIST_CONTENT:
+                            hist_content = (
+                                hist_content[:_MAX_HIST_CONTENT]
+                                + f"\n... [context trimmed: {len(hist_msg.content) - _MAX_HIST_CONTENT} chars omitted]"
+                            )
+                        cm = PCM(role=hist_msg.role, content=hist_content)
+                        if hist_msg.tool_calls:
+                            cm.tool_calls = hist_msg.tool_calls
+                        messages.append(cm)
+                    elif hist_msg.role == "tool":
+                        hist_content = hist_msg.content or ""
+                        if len(hist_content) > _MAX_HIST_CONTENT:
+                            hist_content = hist_content[:_MAX_HIST_CONTENT] + "\n... [context trimmed]"
+                        messages.append(
+                            PCM(role="tool", content=hist_content,
+                                tool_call_id=hist_msg.tool_call_id)
                         )
-                    cm = PCM(role=hist_msg.role, content=hist_content)
-                    if hist_msg.tool_calls:
-                        cm.tool_calls = hist_msg.tool_calls
-                    messages.append(cm)
-                elif hist_msg.role == "tool":
-                    hist_content = hist_msg.content or ""
-                    if len(hist_content) > _MAX_HIST_CONTENT:
-                        hist_content = hist_content[:_MAX_HIST_CONTENT] + "\n... [context trimmed]"
-                    messages.append(
-                        PCM(role="tool", content=hist_content,
-                            tool_call_id=hist_msg.tool_call_id)
-                    )
 
-            # Current user turn
-            messages.append(PCM(role="user", content=message))
+                # Current user turn
+                messages.append(PCM(role="user", content=message))
 
-            tool_defs    = _get_tool_definitions()
-            log.info(f"[BRIDGE] Total tools after merge: {len(tool_defs)}")
+                tool_defs = _get_tool_definitions()
+                log.info(f"[BRIDGE] Total tools after merge: {len(tool_defs)}")
+                MAX_TURNS = _limits.max_turns
+
             full_response = ""
-            MAX_TURNS     = _limits.max_turns
 
             # ── Circuit breaker: track consecutive failures per tool ──
             # If the same tool fails 3+ times in a row, disable it and
@@ -2463,12 +2737,39 @@ Example: LS(path="src/")
             if not hasattr(self, '_tool_total_calls'):
                 self._tool_total_calls = {}
             _tool_total_calls = self._tool_total_calls
-            _REPETITIVE_CALL_LIMIT = 10  # increased from 5: legitimate exploration needs more reads
+            _REPETITIVE_CALL_LIMIT = 6  # Prevent wasteful loops (Grep/Read cycling)
+
+            # ── Consecutive same-tool detector ─────────────────────────────────
+            # If the model calls the SAME read-only tool 3+ turns in a row without
+            # any write/edit action, force it to stop exploring and take action.
+            _last_tool_name = None
+            _consecutive_same_tool = 0
+            _CONSECUTIVE_READONLY_LIMIT = 3  # Max same read-only tool in a row
 
             _compacted_once = False  # Track if we already compacted
 
+            # ── Auto-compact state (ported from Claude Code's autoCompact.ts) ───
+            _auto_compact_state = None
+            try:
+                from src.ai.conversation_compactor import AutoCompactState
+                _auto_compact_state = AutoCompactState()
+            except ImportError:
+                pass
+
             for turn in range(MAX_TURNS):
                 log.info(f"[BRIDGE] === Agentic turn {turn + 1}/{MAX_TURNS} ===")
+
+                # ── Micro-compact: clear old tool results (cheap, no LLM) ────
+                # Ported from Claude Code's microCompact.ts. Runs every turn
+                # to keep context lean by clearing stale tool result content.
+                if turn > 0:
+                    try:
+                        from src.ai.conversation_compactor import microcompact_messages
+                        messages, _mc_saved = microcompact_messages(messages, keep_recent=6)
+                        if _mc_saved > 0:
+                            log.info(f"[BRIDGE] Micro-compact saved ~{_mc_saved:,} tokens on turn {turn + 1}")
+                    except Exception as _mc_err:
+                        log.debug(f"[BRIDGE] Micro-compact skipped: {_mc_err}")
 
                 # ── Emit token budget update to UI ─────────────────────────
                 _est_tokens = self._estimate_message_tokens(messages)
@@ -2537,8 +2838,36 @@ Example: LS(path="src/")
                     tool_acc  = {}
                     turn_text = ""
                     try:
+                        # Get max_tokens from model_limits
+                        max_tokens = _limits.max_output_tokens
+                        
+                        # Apply performance mode token multiplier if set
+                        try:
+                            from src.config.settings import get_settings
+                            settings = get_settings()
+                            token_multiplier = float(settings.get("ai", "token_multiplier", default=1.0) or 1.0)
+                            if token_multiplier != 1.0:
+                                # Calculate with multiplier
+                                calculated_tokens = int(max_tokens * token_multiplier)
+                                
+                                # CRITICAL: Cap at model's hard limit to avoid API errors
+                                # APIs enforce strict max_output_tokens limits
+                                if calculated_tokens > max_tokens:
+                                    log.warning(
+                                        f"[BRIDGE] Token multiplier {token_multiplier}x would exceed "
+                                        f"model limit ({calculated_tokens} > {max_tokens}). "
+                                        f"Capping at {max_tokens}"
+                                    )
+                                    calculated_tokens = max_tokens
+                                
+                                max_tokens = calculated_tokens
+                                log.info(f"[BRIDGE] Applied performance token_multiplier: {token_multiplier}x, "
+                                        f"max_tokens: {_limits.max_output_tokens} -> {max_tokens}")
+                        except Exception as _mult_err:
+                            pass  # Use base max_tokens if multiplier not available
+                        
                         for chunk in provider.chat_stream(
-                            messages, model=model, max_tokens=_limits.max_output_tokens, tools=tool_defs,
+                            messages, model=model, max_tokens=max_tokens, tools=tool_defs,
                             retry_callback=_retry_notify
                         ):
                             # Respect a stop request from the user
@@ -2640,6 +2969,33 @@ Example: LS(path="src/")
                     + ", ".join(p["function"]["name"] for p in pending)
                 )
 
+                # ── Consecutive same read-only tool detection ─────────────
+                # If model calls the SAME read-only tool (Grep/Read) multiple
+                # turns in a row without doing writes, inject a nudge message.
+                _readonly_tools = {"Grep", "Read", "Glob", "LS"}
+                _turn_tool_names = set(p["function"]["name"] for p in pending)
+                if len(_turn_tool_names) == 1:
+                    _single_name = next(iter(_turn_tool_names))
+                    if _single_name in _readonly_tools:
+                        if _single_name == _last_tool_name:
+                            _consecutive_same_tool += 1
+                        else:
+                            _last_tool_name = _single_name
+                            _consecutive_same_tool = 1
+                        
+                        if _consecutive_same_tool >= _CONSECUTIVE_READONLY_LIMIT:
+                            log.warning(f"[BRIDGE] Consecutive read-only tool: {_single_name} called {_consecutive_same_tool} turns in a row. Injecting nudge.")
+                            _nudge = (f"WARNING: You have called {_single_name} {_consecutive_same_tool} turns in a row without writing any code. "
+                                      f"Stop searching and START IMPLEMENTING. Use Write or Edit tools to create/modify files. "
+                                      f"Summarize what you know and take action NOW.")
+                            messages.append(PCM(role="user", content=_nudge))
+                    else:
+                        _last_tool_name = _single_name
+                        _consecutive_same_tool = 0
+                else:
+                    _last_tool_name = None
+                    _consecutive_same_tool = 0
+
                 # ── Append assistant turn with tool_calls ──────
                 assistant_tool_calls = [
                     {
@@ -2712,16 +3068,13 @@ Example: LS(path="src/")
                             # Check repetitive call limit
                             _tool_total_calls[t_name] = _tool_total_calls.get(t_name, 0) + 1
                             if _tool_total_calls[t_name] > _REPETITIVE_CALL_LIMIT:
-                                log.warning(f"[BRIDGE] Repetitive call limit: {t_name} called {_tool_total_calls[t_name]} times (limit={_REPETITIVE_CALL_LIMIT})")
-                                _rep_msg = (f"Warning: You have called {t_name} {_tool_total_calls[t_name]} times this session. "
-                                            f"This is excessive. Stop calling {t_name} repeatedly. "
-                                            f"Summarize what you have learned and proceed with a different approach. "
-                                            f"For code search, use Read with offset/limit instead of Grep.")
+                                # HARD STOP: disable tool immediately at limit
+                                _disabled_tools.add(t_name)
+                                log.warning(f"[BRIDGE] Repetitive call limit reached: {t_name} called {_tool_total_calls[t_name]} times (limit={_REPETITIVE_CALL_LIMIT}). Tool DISABLED.")
+                                _rep_msg = (f"STOPPED: {t_name} has been called {_tool_total_calls[t_name]} times (limit={_REPETITIVE_CALL_LIMIT}). "
+                                            f"Tool is now disabled. You MUST use a different approach. "
+                                            f"Summarize what you have learned so far and proceed without {t_name}.")
                                 messages.append(PCM(role="tool", content=_rep_msg, tool_call_id=t_id))
-                                if _tool_total_calls[t_name] > _REPETITIVE_CALL_LIMIT + 2:
-                                    # Hard cutoff: disable the tool entirely
-                                    _disabled_tools.add(t_name)
-                                    log.warning(f"[BRIDGE] Hard cutoff: {t_name} disabled after {_tool_total_calls[t_name]} calls")
                             else:
                                 filtered_batch.append(call)
 
@@ -2749,10 +3102,23 @@ Example: LS(path="src/")
                             if getattr(msg, 'tool_call_id', None) == t_id:
                                 _content = getattr(msg, 'content', '') or ''
                                 if _content.startswith('Error:'):
-                                    _tool_fail_counts[t_name] = _tool_fail_counts.get(t_name, 0) + 1
-                                    if _tool_fail_counts[t_name] >= _CIRCUIT_BREAKER_THRESHOLD:
-                                        _disabled_tools.add(t_name)
-                                        log.warning(f"[BRIDGE] Circuit breaker TRIPPED for {t_name} after {_tool_fail_counts[t_name]} consecutive failures")
+                                    # Only trip the breaker on likely tool-internal failures.
+                                    # User/path errors (e.g. reading a missing file) should not disable the tool.
+                                    _err = _content[6:].strip().lower()
+                                    _expected_error = (
+                                        ('file does not exist' in _err)
+                                        or ('no such file' in _err)
+                                        or ('permission denied' in _err)
+                                        or ('access is denied' in _err)
+                                        or ('invalid argument' in _err)
+                                    )
+                                    if _expected_error:
+                                        _tool_fail_counts[t_name] = 0
+                                    else:
+                                        _tool_fail_counts[t_name] = _tool_fail_counts.get(t_name, 0) + 1
+                                        if _tool_fail_counts[t_name] >= _CIRCUIT_BREAKER_THRESHOLD:
+                                            _disabled_tools.add(t_name)
+                                            log.warning(f"[BRIDGE] Circuit breaker TRIPPED for {t_name} after {_tool_fail_counts[t_name]} consecutive failures" )
                                 else:
                                     # Success — reset counter
                                     _tool_fail_counts[t_name] = 0
@@ -2764,6 +3130,18 @@ Example: LS(path="src/")
                         break
 
                 log.info(f"[BRIDGE] Tool results sent — continuing to turn {turn + 2}")
+
+                # ── Per-message budget enforcement ─────────────────────────────
+                # Ported from Claude Code's enforceToolResultBudget().
+                # Caps total tool results per turn to prevent N parallel tools
+                # from collectively blowing up context.
+                try:
+                    from src.ai.tool_result_storage import enforce_tool_result_budget
+                    _rep_state = self._tool_ctx.get_content_replacement_state()
+                    messages = enforce_tool_result_budget(messages, _rep_state)
+                except Exception as _budget_err:
+                    log.debug(f"[BRIDGE] Budget enforcement skipped: {_budget_err}")
+
                 # Emit a paragraph break before the next turn's text so the UI
                 # doesn't run the continuation sentence directly onto the previous
                 # turn's last word (e.g. "fix this.Now let me check...").
@@ -2774,18 +3152,35 @@ Example: LS(path="src/")
             # check whether we're stuck in a loop (same todos, no progress).
             # After _MAX_STALE_CYCLES consecutive stale cycles, auto-cancel
             # the stuck todos instead of showing "Continue" again.
+            #
+            # IMPORTANT: Compare by CONTENT (not IDs) because the model
+            # often creates fresh todos with new IDs each cycle even when
+            # the actual tasks are identical.  Also track the count of
+            # pending items — if the count stays the same or increases
+            # across cycles, that's a strong stale signal.
             if not self._stop_requested:
                 _pending_todos = [
                     t for t in self._current_todos
                     if str(t.get('status', '')).upper() in ('PENDING', 'IN_PROGRESS')
                 ]
                 if _pending_todos:
-                    _cur_ids = {t.get('id', t.get('content', '')) for t in _pending_todos}
-                    if _cur_ids == self._last_pending_ids:
+                    # Use content-based fingerprint instead of IDs
+                    _cur_fingerprint = frozenset(
+                        t.get('content', t.get('description', '')).strip().lower()[:80]
+                        for t in _pending_todos
+                    )
+                    _cur_count = len(_pending_todos)
+
+                    # Stale if: same content OR same/higher count of pending items
+                    _content_same = (_cur_fingerprint == self._last_pending_ids)
+                    _count_same = (_cur_count >= getattr(self, '_last_pending_count', 0))
+                    # Both checks together = high confidence of no progress
+                    if _content_same or (_count_same and self._continue_cycle_count > 0):
                         self._continue_cycle_count += 1
                     else:
                         self._continue_cycle_count = 1
-                        self._last_pending_ids = _cur_ids
+                    self._last_pending_ids = _cur_fingerprint
+                    self._last_pending_count = _cur_count
 
                     if self._continue_cycle_count >= self._MAX_STALE_CYCLES:
                         log.warning(
@@ -2874,21 +3269,37 @@ Example: LS(path="src/")
             if not _silent:
                 self._safe_emit(self.tool_activity, activity, result_str[:500], "error")
 
-        # Feed result back to LLM — truncate very large results to stay within context window.
-        # Cap is derived from the model's actual context window via model_limits.py so
-        # large-context models (128 K+) get proportionally bigger slices while tiny
-        # models (8 K) are protected from context overflow.
+        # Feed result back to LLM — persist large results to disk instead of truncating.
+        # Ported from Claude Code's toolResultStorage.ts: results exceeding
+        # the threshold are saved to disk; LLM gets a 2KB preview + file path.
+        # Falls back to truncation if persistence fails.
         _MAX_TOOL_RESULT = (_limits.max_tool_result_chars if _limits is not None else 15_000)
-        if len(result_str) > _MAX_TOOL_RESULT:
-            result_str_for_history = (
-                result_str[:_MAX_TOOL_RESULT]
-                + f"\n... [truncated: {len(result_str) - _MAX_TOOL_RESULT} chars omitted]"
+        try:
+            from src.ai.tool_result_storage import maybe_persist_large_result
+            result_str_for_history = maybe_persist_large_result(
+                result_str, tool_name, tool_id, threshold=_MAX_TOOL_RESULT
             )
-        else:
-            result_str_for_history = result_str
+        except Exception as _persist_err:
+            log.debug(f"[BRIDGE] Persistence fallback: {_persist_err}")
+            # Fallback: simple truncation
+            if len(result_str) > _MAX_TOOL_RESULT:
+                result_str_for_history = (
+                    result_str[:_MAX_TOOL_RESULT]
+                    + f"\n... [truncated: {len(result_str) - _MAX_TOOL_RESULT} chars omitted]"
+                )
+            else:
+                result_str_for_history = result_str
         messages.append(
             PCM(role="tool", content=result_str_for_history, tool_call_id=tool_id)
         )
+
+        # Invalidate file read cache for write/edit tools so next Read sees fresh content
+        if tool_name in ("Write", "Edit"):
+            _wp = args.get("file_path", "")
+            if _wp:
+                if not os.path.isabs(_wp) and self._project_root:
+                    _wp = os.path.join(self._project_root, _wp)
+                self._tool_ctx.file_cache_invalidate(_wp)
 
     # ── Tool dispatch ──────────────────────────────────────────
 
@@ -2974,6 +3385,22 @@ Example: LS(path="src/")
         if not os.path.isabs(path) and self._project_root:
             args = {**args, "file_path": os.path.join(self._project_root, path)}
 
+        # ── FILE READ DEDUP (ported from Claude Code's fileStateCache.ts) ───
+        # If we already read this file with same offset/limit and it hasn't
+        # changed on disk, return a stub instead of the full content.
+        _fpath_resolved = args.get("file_path", "")
+        _norm = os.path.normpath(os.path.abspath(_fpath_resolved)) if _fpath_resolved else ""
+        _req_offset = args.get("offset")
+        _req_limit = args.get("limit")
+        if _norm and os.path.isfile(_norm):
+            _cached = self._tool_ctx.file_cache_get(_norm, _req_offset, _req_limit)
+            if _cached is not None:
+                return ToolResult(tool_id=tool_id, result={
+                    "path": _fpath_resolved,
+                    "content": _cached,
+                    "cached": True,
+                })
+
         if self._real_read_tool is not None:
             try:
                 raw = await self._real_read_tool.call(
@@ -2998,6 +3425,11 @@ Example: LS(path="src/")
                         "offset": args.get("offset"),
                         "limit": args.get("limit"),
                     }
+                    # Populate LRU dedup cache
+                    self._tool_ctx.file_cache_put(
+                        _norm, content, os.path.getmtime(args["file_path"]),
+                        args.get("offset"), args.get("limit")
+                    )
                 except Exception:
                     pass
                 return ToolResult(tool_id=tool_id, result={"path": args["file_path"], "content": content})
@@ -3107,9 +3539,43 @@ Example: LS(path="src/")
             pass
         # ────────────────────────────────────────────────────────────────────────
 
+        # ── SMART CHUNK-BASED READING (like Cursor/Copilot/Claude Code) ─────
+        # Instead of dumping an entire file into context, check line count first.
+        # If the file is large and no pagination was requested, return a skeleton
+        # so the LLM can do targeted reads with offset/limit.
+        _SKELETON_LINE_THRESHOLD = 250  # Files with more lines → skeleton-first
         try:
             with open(fpath, "r", encoding="utf-8", errors="replace") as f:
                 lines = f.readlines()
+            _has_pagination = args.get("offset") or args.get("limit")
+            _total_lines = len(lines)
+
+            # ── Skeleton-first for medium/large files without pagination ────
+            if _total_lines > _SKELETON_LINE_THRESHOLD and not _has_pagination:
+                _basename = os.path.basename(fpath)
+                try:
+                    from src.ai.file_skeleton import generate_skeleton
+                    skeleton = generate_skeleton(fpath)
+                    if skeleton:
+                        log.info(f"[BRIDGE] Smart read: {_basename} has {_total_lines} lines → returning skeleton (threshold={_SKELETON_LINE_THRESHOLD})")
+                        self._tool_ctx.mark_file_read(fpath)
+                        # Track skeleton size (much smaller) instead of full file
+                        self._tool_ctx.track_file_read(fpath, len(skeleton))
+                        return ToolResult(tool_id=tool_id, result={
+                            "path": fpath,
+                            "content": skeleton,
+                            "skeleton": True,
+                            "total_lines": _total_lines,
+                            "hint": (
+                                f"This file has {_total_lines:,} lines — too large to read at once. "
+                                f"Above is a SKELETON showing structure with line numbers. "
+                                f"To read a specific section: Read(file_path='{_basename}', offset=LINE_NUMBER, limit=80). "
+                                f"Or use Grep(pattern='keyword', path='{_basename}') to find exact locations first."
+                            )
+                        })
+                except Exception as skel_err:
+                    log.warning(f"[BRIDGE] Skeleton gen failed for smart read, falling back to full read: {skel_err}")
+
             offset = max(1, int(args.get("offset", 1))) - 1
             limit = int(args.get("limit", len(lines)))
             content = "".join(lines[offset: offset + limit])
@@ -3128,12 +3594,19 @@ Example: LS(path="src/")
                 _norm = os.path.abspath(fpath)
                 _off_raw = args.get("offset")
                 _lim_raw = args.get("limit")
+                _mtime = os.path.getmtime(fpath)
                 self._tool_ctx.read_file_state[_norm] = {
                     "content": content,
-                    "timestamp": os.path.getmtime(fpath),
+                    "timestamp": _mtime,
                     "offset": int(_off_raw) if _off_raw is not None else None,
                     "limit": int(_lim_raw) if _lim_raw is not None else None,
                 }
+                # Populate LRU dedup cache
+                self._tool_ctx.file_cache_put(
+                    _norm, content, _mtime,
+                    int(_off_raw) if _off_raw is not None else None,
+                    int(_lim_raw) if _lim_raw is not None else None,
+                )
             except Exception:
                 pass
             return ToolResult(tool_id=tool_id, result={"path": fpath, "content": content})
@@ -3357,6 +3830,7 @@ Example: LS(path="src/")
         # Fallback: pure-Python grep — no rg/grep binary required
         import re as _re
         import fnmatch as _fnmatch
+        _FALLBACK_MATCH_LIMIT = 80  # Consistent with GrepTool.DEFAULT_HEAD_LIMIT
         pattern  = args.get("pattern", "")
         search_path = args.get("path", self._project_root or os.getcwd())
         if not os.path.isabs(search_path) and self._project_root:
@@ -3386,13 +3860,16 @@ Example: LS(path="src/")
                         for lineno, line in enumerate(fh, 1):
                             if compiled.search(line):
                                 results.append(f"{fpath}:{lineno}:{line.rstrip()}")
-                                if len(results) >= 500:
+                                if len(results) >= _FALLBACK_MATCH_LIMIT:
                                     break
                 except (OSError, PermissionError):
                     pass
-                if len(results) >= 500:
+                if len(results) >= _FALLBACK_MATCH_LIMIT:
                     break
-            output = "\n".join(results)
+            if len(results) >= _FALLBACK_MATCH_LIMIT:
+                output = "\n".join(results) + f"\n... (truncated at {_FALLBACK_MATCH_LIMIT} matches, refine your search pattern)"
+            else:
+                output = "\n".join(results)
             return ToolResult(tool_id=tool_id, result={
                 "pattern": pattern, "matches": output or "(no matches)",
             })
@@ -3688,38 +4165,21 @@ Example: LS(path="src/")
         Searches the web for information.
         """
         query = args.get("query", "")
-        allowed_domains = args.get("allowed_domains", [])
-        blocked_domains = args.get("blocked_domains", [])
 
         if not query:
             return ToolResult(tool_id=tool_id, result=None, success=False,
                               error="WebSearch requires 'query' parameter")
 
-        # Use the search_web tool if available
-        try:
-            from ..agent.src.tools.WebSearchTool.WebSearchTool import WebSearchTool
-            # The real implementation would call the search tool
-            # For now, return a helpful message
-            return ToolResult(tool_id=tool_id, result={
-                "query": query,
-                "results": [],
-                "message": (
-                    f"Web search for '{query}'. "
-                    f"The WebSearch tool is not fully configured. "
-                    f"Ask the user to provide information or use WebFetch on specific URLs."
-                ),
-            })
-        except ImportError:
-            pass
-
-        # Fallback: return guidance
+        # WebSearch is not fully configured — return guidance so the LLM
+        # does NOT retry this tool and instead proceeds with available info.
         return ToolResult(tool_id=tool_id, result={
             "query": query,
             "results": [],
             "message": (
-                f"Web search for '{query}' is not available. "
-                f"Ask the user to provide the information you need, "
-                f"or use WebFetch if you know the specific URL to check."
+                f"Web search for '{query}' is not available in this environment. "
+                f"Do NOT call WebSearch again. "
+                f"Proceed with the information you already have, "
+                f"or ask the user to provide the information you need."
             ),
         })
 
@@ -4012,11 +4472,89 @@ Example: LS(path="src/")
             ChatMessage(role="assistant", content=response)
         )
 
+    def inject_vision_history(self, user_text: str, assistant_response: str):
+        """Inject a vision exchange into conversation history.
+        
+        Called when vision processing completes outside the normal agent flow.
+        This ensures follow-up text messages have context about what was in images.
+        
+        IMPORTANT: Truncate the vision response to avoid eating the entire hist_cap.
+        The full response is already displayed in the UI; we only need a summary
+        in history so the model knows what was discussed.
+        """
+        _MAX_VISION_HIST = 3000  # Max chars for vision response in history
+        
+        if len(assistant_response) > _MAX_VISION_HIST:
+            truncated = assistant_response[:_MAX_VISION_HIST]
+            assistant_response = (
+                truncated + 
+                f"\n\n[... vision analysis truncated from {len(assistant_response)} to {_MAX_VISION_HIST} chars for history context]"
+            )
+        
+        log.info(f"[BRIDGE] Injecting vision exchange into history: user={len(user_text)} chars, assistant={len(assistant_response)} chars")
+        self._conversation_history.append(
+            ChatMessage(role="user", content=user_text)
+        )
+        self._conversation_history.append(
+            ChatMessage(role="assistant", content=assistant_response)
+        )
+
     def _on_chunk_ready(self, chunk: str):
         self.response_chunk.emit(chunk)
 
     def _on_error(self, error: str):
         self.request_error.emit(error)
+    
+    def _is_simple_query(self, text: str) -> bool:
+        """Check if query is a pure greeting/ack that needs no tools.
+        
+        CONSERVATIVE: Only skip tools for pure social messages (hi, thanks, bye).
+        Any message that MIGHT involve coding, files, or project work MUST get
+        the full agentic loop with tools enabled.
+        
+        Returns:
+            True if pure greeting/ack (skip tools), False otherwise (load tools)
+        """
+        import re
+        text_lower = text.strip().lower()
+        
+        # Only exact greetings and social messages skip tools
+        greeting_patterns = [
+            r'^(hi|hello|hey|yo|sup|greetings)[!.\s]*$',
+            r'^(thanks?|thank you|thx)[!.\s]*$',
+            r'^(ok|okay|got it|sure|alright)[!.\s]*$',
+            r'^(bye|goodbye|see you|good night)[!.\s]*$',
+            r'^(good (morning|afternoon|evening))[!.\s]*$',
+            r'^how are you[?!.\s]*$',
+            r'^what\'?s up[?!.\s]*$',
+        ]
+        
+        for pattern in greeting_patterns:
+            if re.match(pattern, text_lower):
+                return True
+        
+        # Everything else gets full agentic capabilities
+        return False
+
+    def _is_greeting(self, text: str) -> bool:
+        """Return True for pure greeting/ack messages.
+
+        Used to bypass the LLM entirely for instant UX on trivial inputs.
+        """
+        t = (text or "").strip().lower()
+        if not t:
+            return False
+        # Normalize common punctuation
+        t = t.replace("!", "").replace(".", "").replace(",", "").strip()
+
+        greetings = {
+            "hi", "hello", "hey", "hiya", "yo",
+            "hi there", "hello there", "hey there",
+            "good morning", "good afternoon", "good evening",
+        }
+        acks = {"thanks", "thank you", "thx", "ty"}
+        byes = {"bye", "goodbye", "see you", "cya"}
+        return t in greetings or t in acks or t in byes
 
     # ============================================================
     # PUBLIC INTERFACE (matching StubAIAgent so ai_chat.py works)
@@ -4213,3 +4751,4 @@ __all__ = [
     "ToolCall",
     "ToolResult",
 ]
+

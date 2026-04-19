@@ -2,7 +2,7 @@
 Unified LLM Client for Cortex IDE
 Extracted from claude-code-main/src/services/api/claude.ts
 
-Provides a single interface over Claude (Anthropic), OpenAI, Gemini, DeepSeek,
+Provides a single interface over Claude (Anthropic), OpenAI, Gemini,
 Mistral and any other OpenAI-compatible provider — replacing the Claude-only
 SDK wiring in the original TypeScript source.
 
@@ -47,7 +47,6 @@ class Provider(str, Enum):
     ANTHROPIC   = "anthropic"
     OPENAI      = "openai"
     GEMINI      = "gemini"
-    DEEPSEEK    = "deepseek"
     MISTRAL     = "mistral"
     GROQ        = "groq"
     OLLAMA      = "ollama"
@@ -152,7 +151,7 @@ class LLMResponse:
 class BaseProviderClient(ABC):
     """
     Abstract provider client.  Concrete implementations live in
-    src/ai/providers/ (DeepSeek, Mistral, SiliconFlow …) and can be wrapped
+    src/ai/providers/ (Mistral, SiliconFlow …) and can be wrapped
     by this client layer without modification.
     """
 
@@ -246,19 +245,18 @@ class BaseProviderClient(ABC):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# OpenAI-compatible client (Claude / DeepSeek / Groq / Ollama / custom)
+# OpenAI-compatible client (Claude / Groq / Ollama / custom)
 # ═════════════════════════════════════════════════════════════════════════════
 
 class OpenAICompatibleClient(BaseProviderClient):
     """
     Generic client for any OpenAI-API-compatible provider.
-    Used directly for: OpenAI, DeepSeek, Groq, Ollama, custom endpoints.
+    Used directly for: OpenAI, Groq, Ollama, custom endpoints.
     For Anthropic the AnthropicClient subclass below adds extra headers.
     """
 
     DEFAULT_BASE_URLS: Dict[Provider, str] = {
         Provider.OPENAI:   "https://api.openai.com/v1",
-        Provider.DEEPSEEK: "https://api.deepseek.com/v1",
         Provider.GROQ:     "https://api.groq.com/openai/v1",
         Provider.OLLAMA:   "http://localhost:11434/v1",
     }
@@ -334,7 +332,6 @@ class OpenAICompatibleClient(BaseProviderClient):
         """Return a cheap/fast model for key-verification pings."""
         defaults = {
             Provider.OPENAI:   "gpt-4o-mini",
-            Provider.DEEPSEEK: "deepseek-chat",
             Provider.GROQ:     "llama-3.1-8b-instant",
             Provider.OLLAMA:   "llama3",
         }
@@ -974,7 +971,6 @@ class LLMClient:
         self._clients: Dict[Provider, BaseProviderClient] = {
             Provider.ANTHROPIC: AnthropicClient(),
             Provider.OPENAI:    OpenAICompatibleClient(Provider.OPENAI),
-            Provider.DEEPSEEK:  OpenAICompatibleClient(Provider.DEEPSEEK),
             Provider.GEMINI:    GeminiClient(),
             Provider.GROQ:      OpenAICompatibleClient(Provider.GROQ),
             Provider.MISTRAL:   OpenAICompatibleClient(
