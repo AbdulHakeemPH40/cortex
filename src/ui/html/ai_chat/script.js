@@ -1728,6 +1728,15 @@ function startNewChat() {
     clearMessages();
     // Clear TODOs and Changed Files for new chat
     clearTodosAndChangedFiles();
+    
+    // Notify Python to refresh sidebar chat list
+    if (window.bridge && window.bridge.notify_chat_list_updated) {
+        // Small delay to ensure chat is fully created
+        setTimeout(function() {
+            window.bridge.notify_chat_list_updated(JSON.stringify(window.getChatList()));
+        }, 100);
+    }
+    console.log('[CHAT] New chat created and sidebar notified');
 }
 
 // Clear TODOs and Changed Files when switching projects or starting new chat
@@ -2404,6 +2413,14 @@ function appendMessage(text, sender, shouldSave) {
             chat.messages.push(messageData);
             if (chat.messages.length === 1 && sender === 'user') {
                 chat.title = text.substring(0, 30) + (text.length > 30 ? '...' : '');
+                
+            // Notify Python to refresh sidebar with new title
+                if (window.bridge && window.bridge.notify_chat_list_updated) {
+                    // Small delay to ensure chat is fully created
+                    setTimeout(function() {
+                        window.bridge.notify_chat_list_updated(JSON.stringify(window.getChatList()));
+                    }, 100);
+                }
             }
             // Debounce persistence so we don't delay outgoing LLM requests.
             scheduleSaveChats();
@@ -2416,6 +2433,14 @@ function appendMessage(text, sender, shouldSave) {
         if (chat && (chat.messages.length === 1 || !chat.title || chat.title === 'New Chat')) {
              chat.title = text.substring(0, 40) + (text.length > 40 ? '...' : '');
              renderHistoryList();
+             
+             // Notify Python to refresh sidebar with new title
+             if (window.bridge && window.bridge.notify_chat_list_updated) {
+                 // Small delay to ensure chat title is set
+                 setTimeout(function() {
+                     window.bridge.notify_chat_list_updated(JSON.stringify(window.getChatList()));
+                 }, 100);
+             }
         }
     }
     
@@ -2622,49 +2647,41 @@ function _updateCurrentTerminalCard(line) {
      * Update the most recent running terminal card with streaming output.
      * This allows terminal cards to show live output instead of 'running...' forever.
      */
-    // Find the most recent running terminal card (supports both old and new class names)
-    var cards = document.querySelectorAll('.term-card.term-running, .tc.tc-running');
+    // Find the most recent running terminal card (NEW design: .tool-operation-card.terminal)
+    var cards = document.querySelectorAll('.tool-operation-card.terminal');
     if (cards.length === 0) return;
 
-    var card = cards[cards.length - 1];
-    var cardId = card.id;
-    var outputId = cardId + '-output';  // buildTerminalCard uses '-output' suffix
-    
-    var outputEl = document.getElementById(outputId);
-    if (!outputEl) {
-        // Create output section if it doesn't exist yet (legacy fallback)
-        outputEl = document.createElement('div');
-        outputEl.className = 'term-output-body';
-        outputEl.id = outputId;
-        outputEl.style.display = 'block';
-        outputEl.style.maxHeight = '200px';
-        outputEl.style.overflowY = 'auto';
-        var pre = document.createElement('pre');
-        pre.className = 'term-output-text';
-        outputEl.appendChild(pre);
-        // Insert before footer
-        var footer = card.querySelector('.term-footer');
-        if (footer) {
-            card.insertBefore(outputEl, footer);
-        } else {
-            card.appendChild(outputEl);
+    // Find the last card with running status
+    var card = null;
+    for (var i = cards.length - 1; i >= 0; i--) {
+        if (cards[i].dataset.status === 'running') {
+            card = cards[i];
+            break;
         }
+    }
+    if (!card) return;
+
+    // Find or create the scrollable content area
+    var scrollable = card.querySelector('.tool-card-scrollable');
+    if (!scrollable) {
+        var content = card.querySelector('.tool-card-content');
+        if (!content) return;
+        scrollable = document.createElement('div');
+        scrollable.className = 'tool-card-scrollable tool-card-terminal';
+        content.appendChild(scrollable);
     }
 
     // Append line to output (limit to last 200 lines to avoid memory bloat)
-    var pre = outputEl.querySelector('pre');
-    if (pre) {
-        pre.textContent += line + '\n';
+    scrollable.textContent += line + '\n';
 
-        // Trim if too long
-        var lines = pre.textContent.split('\n');
-        if (lines.length > 200) {
-            pre.textContent = lines.slice(-200).join('\n');
-        }
-
-        // Auto-scroll output area
-        outputEl.scrollTop = outputEl.scrollHeight;
+    // Trim if too long
+    var lines = scrollable.textContent.split('\n');
+    if (lines.length > 200) {
+        scrollable.textContent = lines.slice(-200).join('\n');
     }
+
+    // Auto-scroll output area
+    scrollable.scrollTop = scrollable.scrollHeight;
 }
 
 function renderPermissionBlock(permData) {
@@ -2804,10 +2821,16 @@ function stopGeneration() {
     }
 
     // ── Stop all running terminal cards (clear spinner) ──────────────
-    document.querySelectorAll('.term-card.term-running').forEach(function(card) {
-        card.classList.remove('term-running');
-        card.classList.add('term-stopped');
-        card.dataset.status = 'stopped';
+    document.querySelectorAll('.tool-operation-card.terminal').forEach(function(card) {
+        if (card.dataset.status === 'running') {
+            card.dataset.status = 'stopped';
+            // Update status badge to stopped
+            var badge = card.querySelector('.tool-card-status');
+            if (badge) {
+                badge.className = 'tool-card-status pending';
+                badge.textContent = 'Stopped';
+            }
+        }
 
         // New card-container structure
         if (card.classList.contains('card-container')) {
@@ -5230,16 +5253,20 @@ function renderFileEditedBlock(data, isStreaming) {
     
     var escapedPath = filePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     
-    return '<div class="file-edit-card" data-path="' + escapeHtml(filePath) + '">' +
-        '<div class="fec-left">' +
-          '<svg class="fec-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>' +
-          '<button class="fec-filename" onclick="openFileInEditor(\'' + escapedPath + '\')">' + escapeHtml(fileName) + '</button>' +
-          (changeStats ? '<span class="fec-stats">' + escapeHtml(changeStats) + '</span>' : '') +
+    // Use NEW tool-operation-card design for file edit
+    var fileExt = fileName.split('.').pop().toLowerCase();
+    return '<div class="tool-operation-card edit collapsed" data-path="' + escapeHtml(filePath) + '" id="edit-card-' + Date.now() + '">' +
+        '<div class="tool-card-header" onclick="toggleToolCardById(this.parentElement.id)">' +
+            '<svg class="tool-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
+            '<div class="tool-card-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></div>' +
+            '<div class="tool-card-info">' +
+                '<div class="tool-card-title">Edit</div>' +
+                '<div class="tool-card-file" onclick="openFileInEditor(\'' + escapedPath + '\'); event.stopPropagation();" style="cursor:pointer;">' + escapeHtml(fileName) + '</div>' +
+            '</div>' +
+            '<div class="tool-card-status running">Editing</div>' +
         '</div>' +
-        '<div class="fec-actions">' +
-          '<button class="fec-btn fec-diff" data-path="' + escapeHtml(filePath) + '" onclick="event.stopPropagation(); requestFecDiff(this)" title="View diff">Diff</button>' +
-          '<button class="fec-btn fec-accept" onclick="acceptFileEdit(\'' + escapedPath + '\', this)" title="Accept changes">?</button>' +
-          '<button class="fec-btn fec-reject" onclick="rejectFileEdit(\'' + escapedPath + '\', this)" title="Reject changes">?</button>' +
+        '<div class="tool-card-content">' +
+            '<div class="tool-card-scrollable" style="display:none;">' + escapeHtml(fileExt.toUpperCase()) + ' file</div>' +
         '</div>' +
     '</div>';
 }
@@ -6003,6 +6030,14 @@ document.addEventListener('DOMContentLoaded', function() {
             // Also update the page title
             document.title = title ? 'Cortex - ' + title : 'Cortex AI Chat';
             console.log('[CHAT] Title updated:', title);
+            
+            // Notify Python to refresh sidebar
+            if (window.bridge && window.bridge.notify_chat_list_updated) {
+                // Small delay to ensure title is updated
+                setTimeout(function() {
+                    window.bridge.notify_chat_list_updated(JSON.stringify(window.getChatList()));
+                }, 100);
+            }
         }
     };
     
@@ -7680,11 +7715,13 @@ window.showDirectoryTree = function(rootPath, items) {
 function buildTerminalCard(command, output, status, exitCode, cardId) {
     var card = document.createElement('div');
     var id = cardId || ('term-' + Date.now());
-    card.className = 'card-container expanded term-card term-' + status;
+    // Use NEW tool-operation-card design
+    var isExpanded = true; // Default expanded for terminal
+    card.className = 'tool-operation-card terminal ' + (isExpanded ? 'expanded' : 'collapsed');
     card.id = id;
     card.dataset.command = command;
-    card.dataset.status  = status;
-    card.dataset.expanded = 'true';
+    card.dataset.status = status;
+    card.dataset.expanded = isExpanded ? 'true' : 'false';
 
     // Parse command if passed as JSON string
     var displayCmd = command;
@@ -7697,48 +7734,59 @@ function buildTerminalCard(command, output, status, exitCode, cardId) {
 
     var esc = (displayCmd || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
-    // Copy button (always in header)
-    var copyBtn = '<button class="term-hdr-btn" title="Copy command" onclick="event.stopPropagation();_copyTermCmd(\'' + esc + '\')">' +
-        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>' +
-    '</button>';
+    // Terminal icon
+    var terminalIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>';
 
-    // Right-side status area (with id for later updates)
-    var rightInner;
-    if (status === 'running') {
-        rightInner = '<span class="term-status-right" style="color:rgba(255,255,255,0.35);font-size:10px;" id="' + id + '-status">Running...</span>';
-    } else if (status === 'success') {
-        rightInner = '<span class="term-status-right" style="font-size:10px;opacity:0.5;cursor:pointer;" id="' + id + '-status" onclick="event.stopPropagation();openTerminalPanel(\'' + esc + '\')">View Output \u2197</span>';
-    } else if (status === 'error') {
-        rightInner = '<span class="term-status-right" style="font-size:10px;color:#ef4444;" id="' + id + '-status">Failed</span>';
-    } else {
-        rightInner = '<span class="term-status-right" id="' + id + '-status"></span>';
-    }
+    // Status badge
+    var statusClass = status === 'running' ? 'running' : (status === 'success' ? 'completed' : 'pending');
+    var statusText = status === 'running' ? 'Running' : (status === 'success' ? 'Completed' : 'Pending');
 
     // Chevron icon
-    var chevronSvg = '<svg class="chevron term-chevron" fill="currentColor" viewBox="0 0 20 20"><path d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"/></svg>';
+    var chevronSvg = '<svg class="tool-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>';
 
-    // Terminal viewport - always show command, output only when present
+    // Terminal output content
     var outputContent = output || '';
     var viewportContent = '$ ' + escapeHtml(displayCmd);
     if (outputContent) {
         viewportContent += '\n' + escapeHtml(outputContent);
     }
-    var viewportBody = '<div class="terminal-viewport" id="' + id + '-viewport">' + viewportContent + '</div>';
 
+    // Build card with NEW design
     card.innerHTML =
-        '<div class="card-header" onclick="toggleCard(this)">' +
+        '<div class="tool-card-header" onclick="toggleTerminalToolCard(this)">' +
             chevronSvg +
-            '<span class="term-title-text">Run in terminal</span>' +
-            '<span class="ml-auto" style="display:flex;align-items:center;gap:6px;">' +
-                copyBtn +
-                rightInner +
-            '</span>' +
+            '<div class="tool-card-icon">' + terminalIcon + '</div>' +
+            '<div class="tool-card-info">' +
+                '<div class="tool-card-title">Terminal</div>' +
+                '<div class="tool-card-file">' + escapeHtml(displayCmd.substring(0, 50)) + (displayCmd.length > 50 ? '...' : '') + '</div>' +
+            '</div>' +
+            '<div class="tool-card-status ' + statusClass + '">' + statusText + '</div>' +
         '</div>' +
-        '<div class="card-body">' +
-            viewportBody +
+        '<div class="tool-card-content">' +
+            '<div class="tool-card-scrollable tool-card-terminal">' + viewportContent + '</div>' +
         '</div>';
 
     return card;
+}
+
+// Toggle terminal card using new tool-operation-card design
+function toggleTerminalToolCard(headerEl) {
+    var card = headerEl.closest('.tool-operation-card');
+    if (!card) return;
+    
+    var isExpanded = card.classList.contains('expanded');
+    var scrollable = card.querySelector('.tool-card-scrollable');
+    
+    if (isExpanded) {
+        card.classList.remove('expanded');
+        card.classList.add('collapsed');
+        card.dataset.expanded = 'false';
+    } else {
+        card.classList.remove('collapsed');
+        card.classList.add('expanded');
+        card.dataset.expanded = 'true';
+        if (scrollable) scrollable.style.display = 'block';
+    }
 }
 
 // Copy terminal command to clipboard
@@ -7822,22 +7870,17 @@ function showFileOperationCard(cardId, filePath, opType) {
     if (!_currentFileOpGroup) {
         var groupId = 'fileop-group-' + Date.now();
         var groupEl = document.createElement('div');
-        groupEl.className = 'fileop-group-container';
+        // Use NEW tool-operations-container design for the group
+        groupEl.className = 'tool-operations-container';
         groupEl.id = groupId;
         groupEl.innerHTML =
-            '<div class="fileop-group-header">' +
-                '<div class="fileop-group-header-left">' +
-                    '<span class="fileop-group-chevron">&#9654;</span>' +
-                    '<span class="fileop-group-label">AI Edits</span>' +
-                    '<span class="fileop-group-count">0 files</span>' +
-                '</div>' +
-                '<span class="fileop-group-status"></span>' +
+            '<div class="tool-ops-header" onclick="this.parentElement.classList.toggle(\'collapsed\')">' +
+                '<svg class="tool-ops-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
+                '<span class="tool-ops-label">AI Edits</span>' +
+                '<span class="tool-ops-count">0 files</span>' +
+                '<span class="tool-ops-status"></span>' +
             '</div>' +
-            '<div class="fileop-group-children"></div>';
-
-        groupEl.querySelector('.fileop-group-header').addEventListener('click', function() {
-            groupEl.classList.toggle('collapsed');
-        });
+            '<div class="tool-ops-children"></div>';
 
         messages.appendChild(groupEl);
         messages.scrollTop = messages.scrollHeight;
@@ -7845,25 +7888,42 @@ function showFileOperationCard(cardId, filePath, opType) {
     }
 
     var isCreate = opType === 'create';
-    var iconColor = isCreate ? '#5b9bd5' : '#e8a857';
+    var cardType = isCreate ? 'create' : 'edit';
+    var fileName = filePath.split(/[\\/]/).pop() || filePath;
+    var escapedPath = filePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
-    // ---- Build child card (loading/animated state) ----
+    // ---- Build child card using NEW tool-operation-card design ----
     var card = document.createElement('div');
-    card.className = 'fileop-child-card loading';
+    card.className = 'tool-operation-card ' + cardType + ' running';
     card.id = cardId;
+    card.dataset.filePath = filePath;
+    card.dataset.opType = opType;
+    
+    // Icons for the new design
+    var icons = {
+        create: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>',
+        edit: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>'
+    };
+    
     card.innerHTML =
-        '<div class="fileop-child-header">' +
-            '<svg class="pulse-timer" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="' + iconColor + '" stroke-width="2.5">' +
-                '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>' +
-            '</svg>' +
-            '<span class="fileop-child-label">' + (isCreate ? 'Creating file…' : 'Editing file…') + '</span>' +
+        '<div class="tool-card-header" onclick="toggleToolCardById(\'' + cardId + '\')">' +
+            '<svg class="tool-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
+            '<div class="tool-card-icon">' + icons[cardType] + '</div>' +
+            '<div class="tool-card-info">' +
+                '<div class="tool-card-title">' + (isCreate ? 'Create' : 'Edit') + '</div>' +
+                '<div class="tool-card-file" onclick="openFileInEditor(\'' + escapedPath + '\'); event.stopPropagation();" style="cursor:pointer;">' + escapeHtml(fileName) + '</div>' +
+            '</div>' +
+            '<div class="tool-card-status running">' + (isCreate ? 'Creating' : 'Editing') + '</div>' +
+        '</div>' +
+        '<div class="tool-card-content" style="display:none;">' +
+            '<div class="tool-card-scrollable">Processing...</div>' +
         '</div>';
 
     // Append to group children and update badge
-    var children = _currentFileOpGroup.el.querySelector('.fileop-group-children');
+    var children = _currentFileOpGroup.el.querySelector('.tool-ops-children');
     children.appendChild(card);
-    var count = children.querySelectorAll('.fileop-child-card').length;
-    var countEl = _currentFileOpGroup.el.querySelector('.fileop-group-count');
+    var count = children.querySelectorAll('.tool-operation-card').length;
+    var countEl = _currentFileOpGroup.el.querySelector('.tool-ops-count');
     if (countEl) countEl.textContent = count + (count === 1 ? ' file' : ' files');
 
     messages.scrollTop = messages.scrollHeight;
@@ -7891,26 +7951,30 @@ function completeFileOperationCard(cardId, filePath, lineCount, opType) {
 
     var isCreate = opType === 'create';
     var fileName = filePath.split(/[\\/]/).pop() || filePath;
-    var statusBadge = isCreate
-        ? '<span class="status-tag text-add">CREATED</span>'
-        : '<span class="status-tag text-mod">MODIFIED</span>';
+    var escapedPath = filePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    var cardType = isCreate ? 'create' : 'edit';
+    
+    // Icons for the new design
+    var icons = {
+        create: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>',
+        edit: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>'
+    };
 
-    // Transform to completed state — collapsed by default, click header to expand
-    card.className = 'fileop-child-card completed collapsed';
+    // Transform to completed state using NEW design
+    card.className = 'tool-operation-card ' + cardType + ' collapsed';
     card.innerHTML =
-        '<div class="fileop-child-header clickable">' +
-            '<svg class="fileop-child-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>' +
-            '<span class="fileop-child-filename">' + escapeHtml(fileName) + '</span>' +
-            statusBadge +
+        '<div class="tool-card-header" onclick="toggleToolCardById(\'' + cardId + '\')">' +
+            '<svg class="tool-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
+            '<div class="tool-card-icon">' + icons[cardType] + '</div>' +
+            '<div class="tool-card-info">' +
+                '<div class="tool-card-title">' + (isCreate ? 'Create' : 'Edit') + '</div>' +
+                '<div class="tool-card-file" onclick="openFileInEditor(\'' + escapedPath + '\'); event.stopPropagation();" style="cursor:pointer;">' + escapeHtml(fileName) + '</div>' +
+            '</div>' +
+            '<div class="tool-card-status completed">' + (isCreate ? 'Created' : 'Modified') + '</div>' +
         '</div>' +
-        '<div class="fileop-child-body">' +
-            '<div class="fileop-child-path">' + escapeHtml(filePath) + ' · ' + lineCount + ' lines</div>' +
+        '<div class="tool-card-content">' +
+            '<div class="tool-card-scrollable">' + escapeHtml(filePath) + '\n' + lineCount + ' lines</div>' +
         '</div>';
-
-    card.querySelector('.fileop-child-header').addEventListener('click', function() {
-        card.classList.toggle('collapsed');
-        card.classList.toggle('expanded');
-    });
 
     delete _fileOpCards[cardId];
 }
@@ -8243,7 +8307,37 @@ function updateTerminalCard(cardId, status, exitCode, output) {
 
     card.dataset.status = status;
 
-    // ── NEW card-container structure (built by buildTerminalCard) ──
+    // ── NEW tool-operation-card design ──
+    if (card.classList.contains('tool-operation-card')) {
+        // Update status badge
+        var badge = card.querySelector('.tool-card-status');
+        if (badge) {
+            if (status === 'success') {
+                badge.className = 'tool-card-status completed';
+                badge.textContent = 'Completed';
+            } else if (status === 'error') {
+                badge.className = 'tool-card-status pending';
+                badge.textContent = 'Failed' + (exitCode !== undefined && exitCode !== 0 ? ' (exit ' + exitCode + ')' : '');
+            } else if (status === 'stopped') {
+                badge.className = 'tool-card-status pending';
+                badge.textContent = 'Stopped';
+            }
+        }
+
+        // Update terminal output content
+        if (output) {
+            var scrollable = card.querySelector('.tool-card-scrollable');
+            if (scrollable) {
+                var cmd = card.dataset.command || '';
+                var displayCmd = cmd;
+                try { var p = JSON.parse(cmd); if (p.command) displayCmd = p.command; } catch(e) {}
+                scrollable.textContent = '$ ' + displayCmd + '\n' + output;
+            }
+        }
+        return;
+    }
+
+    // ── OLD card-container structure (legacy fallback) ──
     if (card.classList.contains('card-container')) {
         // Update card class
         card.className = 'card-container expanded term-card term-' + status;
@@ -9532,25 +9626,60 @@ window.createToolCard = function(toolName, params, status) {
     var cardId = 'tool-' + Date.now();
     
     var card = document.createElement('div');
-    card.className = 'tool-card';
+    // Use NEW tool-operation-card design
+    var cardType = toolName.toLowerCase().includes('create') ? 'create' :
+                   toolName.toLowerCase().includes('edit') ? 'edit' :
+                   toolName.toLowerCase().includes('delete') ? 'delete' :
+                   toolName.toLowerCase().includes('read') ? 'read' : 'terminal';
+    card.className = 'tool-operation-card ' + cardType + ' expanded';
     card.id = cardId;
     
-    var statusClass = status || 'pending';
-    var statusText = status ? status.charAt(0).toUpperCase() + status.slice(1) : 'Pending';
+    var statusClass = status === 'completed' ? 'completed' : 
+                      status === 'failed' ? 'pending' : 'running';
+    var statusText = status ? status.charAt(0).toUpperCase() + status.slice(1) : 'Running';
     
-    card.innerHTML = `
-        <div class="tool-header">
-            <span class="tool-icon">TOOL</span>
-            <span class="tool-name">${toolName}</span>
-            <span class="tool-status ${statusClass}">${statusText}</span>
-        </div>
-        <div class="tool-progress">
-            <div class="tool-progress-bar" style="width: ${status === 'completed' ? '100%' : '0%'}"></div>
-        </div>
-        <div class="tool-params">${JSON.stringify(params, null, 2)}</div>
-    `;
+    // Map to new card icons
+    var icons = {
+        create: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>',
+        edit: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>',
+        delete: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>',
+        read: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>',
+        terminal: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>'
+    };
+    
+    card.innerHTML = 
+        '<div class="tool-card-header" onclick="toggleToolCardById(\'' + cardId + '\')">' +
+            '<svg class="tool-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
+            '<div class="tool-card-icon">' + (icons[cardType] || icons.terminal) + '</div>' +
+            '<div class="tool-card-info">' +
+                '<div class="tool-card-title">' + toolName + '</div>' +
+                '<div class="tool-card-file">' + (params.file || params.path || 'Operation') + '</div>' +
+            '</div>' +
+            '<div class="tool-card-status ' + statusClass + '">' + statusText + '</div>' +
+        '</div>' +
+        '<div class="tool-card-content">' +
+            '<div class="tool-card-scrollable">' + JSON.stringify(params, null, 2) + '</div>' +
+        '</div>';
     
     return { card: card, id: cardId };
+};
+
+// Toggle function for tool cards created by createToolCard
+function toggleToolCardById(cardId) {
+    var card = document.getElementById(cardId);
+    if (!card) return;
+    
+    var isExpanded = card.classList.contains('expanded');
+    var scrollable = card.querySelector('.tool-card-scrollable');
+    
+    if (isExpanded) {
+        card.classList.remove('expanded');
+        card.classList.add('collapsed');
+    } else {
+        card.classList.remove('collapsed');
+        card.classList.add('expanded');
+        if (scrollable) scrollable.style.display = 'block';
+    }
 };
 
 /**
@@ -9563,6 +9692,27 @@ window.updateToolCard = function(cardId, status, result) {
     var card = document.getElementById(cardId);
     if (!card) return;
     
+    // Check if using new tool-operation-card design
+    if (card.classList.contains('tool-operation-card')) {
+        var statusEl = card.querySelector('.tool-card-status');
+        
+        if (statusEl) {
+            var statusClass = status === 'completed' ? 'completed' : 
+                              status === 'failed' ? 'pending' : 'running';
+            statusEl.className = 'tool-card-status ' + statusClass;
+            statusEl.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+        }
+        
+        if (result) {
+            var scrollable = card.querySelector('.tool-card-scrollable');
+            if (scrollable) {
+                scrollable.textContent += '\n' + result;
+            }
+        }
+        return;
+    }
+    
+    // Legacy design fallback
     var statusEl = card.querySelector('.tool-status');
     var progressBar = card.querySelector('.tool-progress-bar');
     
@@ -10765,6 +10915,28 @@ window.renderToolAsCard = function(toolData) {
 };
 
 console.log('[CardUI] Cursor IDE card components initialized');
+
+// Expose chat list to Python for sidebar synchronization
+window.getChatList = function() {
+    var chatList = chats.map(function(chat) {
+        return {
+            id: chat.id,
+            title: chat.title || 'New Chat',
+            timestamp: chat.timestamp || Date.now(),
+            messageCount: chat.messages ? chat.messages.length : 0
+        };
+    });
+    console.log('[CHAT] getChatList called, returning', chatList.length, 'chats:', JSON.stringify(chatList));
+    return chatList;
+};
+
+// Expose newChat function globally
+window.newChat = function() {
+    if (typeof startNewChat === 'function') {
+        startNewChat();
+        console.log('[CHAT] New chat created via window.newChat()');
+    }
+};
 
 
 

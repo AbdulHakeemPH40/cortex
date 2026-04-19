@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cortex AI Chat - Agent Mode Cards Demo</title>
+    
+    <!-- Import existing CSS -->
+    <link rel="stylesheet" href="style.css">
+    
+    <style>
+        body {
+            background: #1a1a1a;
+            padding: 40px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            overflow-y: auto;
+            overflow-x: hidden;
+            min-height: 100vh;
+            margin: 0;
+        }
+        
+        html {
+            overflow-y: scroll;
+            height: 100%;
+        }
+        
+        .demo-title {
+            color: #fff;
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        
+        .demo-subtitle {
+            color: #888;
+            font-size: 14px;
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        
+        .demo-section {
+            max-width: 600px;
+            margin: 0 auto 40px;
+            overflow: visible;
+        }
+        
+        /* Ensure tool cards container allows scrolling */
+        .tool-operations-container {
+            max-height: none;
+            overflow: visible;
+        }
+        
+        .section-label {
+            color: #666;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 15px;
+            padding-left: 5px;
+        }
+        
+        /* Override for demo display */
+        #agent-mode-indicator {
+            display: block !important;
+        }
+        
+        /* Bottom padding for smooth scrolling */
+        body::after {
+            content: '';
+            display: block;
+            height: 60px;
+        }
+        
+        .card-type-label {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            margin-left: 10px;
+        }
+        
+        .card-type-label.create { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
+        .card-type-label.edit { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
+        .card-type-label.delete { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+        .card-type-label.terminal { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+        
+        /* Demo controls */
+        .demo-controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+            margin-top: 30px;
+            padding: 20px;
+            background: rgba(255,255,255,0.03);
+            border-radius: 8px;
+        }
+        
+        .demo-btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            background: #3a3a3a;
+            color: #ccc;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .demo-btn:hover {
+            background: #4a4a4a;
+            color: #fff;
+        }
+        
+        .demo-btn.active {
+            background: #3b82f6;
+            color: #fff;
+        }
+    </style>
+</head>
+<body>
+    <h1 class="demo-title">Cortex AI Chat - Card System Demo</h1>
+    <p class="demo-subtitle">Agent Mode Grid + Collapsible Tool Operation Cards</p>
+    
+    <!-- Section 1: Agent Mode Cards -->
+    <div class="demo-section">
+        <div class="section-label">Agent Mode Grid <span class="card-type-label edit">4×2 Layout</span></div>
+        <div id="agent-mode-indicator">
+            <div class="agent-mode-container">
+                <div class="mode-indicator" data-mode="think" title="Thinking">
+                    <svg class="mode-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M12 2a3 3 0 0 0-3 3v14a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
+                        <path d="M12 11v6"></path>
+                        <path d="M9 8h6"></path>
+                    </svg>
+                    <span>Think</span>
+                </div>
+                <div class="mode-indicator" data-mode="read" title="Reading">
+                    <svg class="mode-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path>
+                        <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path>
+                    </svg>
+                    <span>Read</span>
+                </div>
+                <div class="mode-indicator" data-mode="search" title="Searching">
+                    <svg class="mode-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <path d="m21 21-4.35-4.35"></path>
+                    </svg>
+                    <span>Search</span>
+                </div>
+                <div class="mode-indicator" data-mode="grep" title="Grepping">
+                    <svg class="mode-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                    </svg>
+                    <span>Grep</span>
+                </div>
+                <div class="mode-indicator" data-mode="find" title="Finding">
+                    <svg class="mode-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                        <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                    </svg>
+                    <span>Find</span>
+                </div>
+                <div class="mode-indicator" data-mode="explore" title="Exploring">
+                    <svg class="mode-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <path d="M2 12h20"></path>
+                    </svg>
+                    <span>Explore</span>
+                </div>
+                <div class="mode-indicator" data-mode="surf" title="Surfing">
+                    <svg class="mode-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="2" y1="12" x2="22" y2="12"></line>
+                        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+                    </svg>
+                    <span>Surf</span>
+                </div>
+                <div class="mode-indicator" data-mode="dive" title="Diving">
+                    <svg class="mode-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1-7.94-7.94l3.77 3.77a1 1 0 0 0 1.4 0l1.6-1.6a1 1 0 0 0 0-1.4l-5-5a1 1 0 0 0-1.4 0l-1.6 1.6a1 1 0 0 0 0 1.4l5 5z"></path>
+                    </svg>
+                    <span>Dive</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Demo Controls for Agent Modes -->
+    <div class="demo-controls">
+        <span style="color:#666; font-size:11px; width:100%; text-align:center; margin-bottom:8px;">Click to activate agent mode:</span>
+        <button class="demo-btn" onclick="setActiveMode('think')">Think</button>
+        <button class="demo-btn" onclick="setActiveMode('read')">Read</button>
+        <button class="demo-btn" onclick="setActiveMode('search')">Search</button>
+        <button class="demo-btn" onclick="setActiveMode('grep')">Grep</button>
+        <button class="demo-btn" onclick="setActiveMode('find')">Find</button>
+        <button class="demo-btn" onclick="setActiveMode('explore')">Explore</button>
+        <button class="demo-btn" onclick="setActiveMode('surf')">Surf</button>
+        <button class="demo-btn" onclick="setActiveMode('dive')">Dive</button>
+        <button class="demo-btn" onclick="clearActive()" style="background:#dc2626;">Clear All</button>
+    </div>
+    
+    <!-- Section 2: Tool Operation Cards -->
+    <div class="demo-section">
+        <div class="section-label">Tool Operation Cards <span class="card-type-label create">Collapsible</span></div>
+        
+        <div class="tool-operations-container">
+            <!-- Create Card - Collapsed -->
+            <div class="tool-operation-card create collapsed">
+                <div class="tool-card-header" onclick="toggleDemoCard(this)">
+                    <svg class="tool-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                    <div class="tool-card-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg></div>
+                    <div class="tool-card-info">
+                        <div class="tool-card-title">Create</div>
+                        <div class="tool-card-file">src/components/NewFeature.tsx</div>
+                    </div>
+                    <div class="tool-card-status completed">Completed</div>
+                </div>
+                <div class="tool-card-content">
+                    <div class="tool-card-scrollable" style="display:none;"></div>
+                </div>
+            </div>
+            
+            <!-- Edit Card - Expanded with Content -->
+            <div class="tool-operation-card edit expanded">
+                <div class="tool-card-header" onclick="toggleDemoCard(this)">
+                    <svg class="tool-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                    <div class="tool-card-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></div>
+                    <div class="tool-card-info">
+                        <div class="tool-card-title">Edit</div>
+                        <div class="tool-card-file">src/utils/helpers.js</div>
+                    </div>
+                    <div class="tool-card-status running">Running</div>
+                </div>
+                <div class="tool-card-content">
+                    <div class="tool-card-scrollable tool-card-code">function calculateTotal(items) {
+  return items.reduce((sum, item) => {
+    return sum + (item.price * item.quantity);
+  }, 0);
+}</div>
+                </div>
+            </div>
+            
+            <!-- Terminal Card - Expanded -->
+            <div class="tool-operation-card terminal expanded">
+                <div class="tool-card-header" onclick="toggleDemoCard(this)">
+                    <svg class="tool-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                    <div class="tool-card-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg></div>
+                    <div class="tool-card-info">
+                        <div class="tool-card-title">Terminal</div>
+                        <div class="tool-card-file">npm run build</div>
+                    </div>
+                    <div class="tool-card-status running">Running</div>
+                </div>
+                <div class="tool-card-content">
+                    <div class="tool-card-scrollable tool-card-terminal">> npm run build
+
+&gt; cortex-ai@1.0.0 build
+&gt; webpack --mode production
+
+Building...
+✓ Entry module built (2.4s)
+✓ Optimizing assets (1.8s)
+✓ Chunk optimization (0.9s)</div>
+                </div>
+            </div>
+            
+            <!-- Delete Card - Collapsed -->
+            <div class="tool-operation-card delete collapsed">
+                <div class="tool-card-header" onclick="toggleDemoCard(this)">
+                    <svg class="tool-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                    <div class="tool-card-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></div>
+                    <div class="tool-card-info">
+                        <div class="tool-card-title">Delete</div>
+                        <div class="tool-card-file">temp/old_backup.tar.gz</div>
+                    </div>
+                    <div class="tool-card-status pending">Pending</div>
+                </div>
+                <div class="tool-card-content">
+                    <div class="tool-card-scrollable" style="display:none;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Demo Controls for Tool Cards -->
+    <div class="demo-controls">
+        <span style="color:#666; font-size:11px; width:100%; text-align:center; margin-bottom:8px;">Tool card actions:</span>
+        <button class="demo-btn" onclick="addRandomCard()">Add Random Card</button>
+        <button class="demo-btn" onclick="expandAllCards()">Expand All</button>
+        <button class="demo-btn" onclick="collapseAllCards()">Collapse All</button>
+        <button class="demo-btn" onclick="clearToolCards()" style="background:#dc2626;">Clear All</button>
+    </div>
+    
+    <script>
+        // Agent Mode Functions
+        function setActiveMode(mode) {
+            document.querySelectorAll('.mode-indicator').forEach(el => {
+                el.classList.remove('active');
+            });
+            document.querySelectorAll('.demo-btn').forEach(el => {
+                el.classList.remove('active');
+            });
+            
+            const activeEl = document.querySelector(`[data-mode="${mode}"]`);
+            if (activeEl) {
+                activeEl.classList.add('active');
+            }
+            event.target.classList.add('active');
+        }
+        
+        function clearActive() {
+            document.querySelectorAll('.mode-indicator').forEach(el => {
+                el.classList.remove('active');
+            });
+            document.querySelectorAll('.demo-btn').forEach(el => {
+                el.classList.remove('active');
+            });
+        }
+        
+        // Tool Card Functions
+        function toggleDemoCard(header) {
+            const card = header.closest('.tool-operation-card');
+            if (card.classList.contains('expanded')) {
+                card.classList.remove('expanded');
+                card.classList.add('collapsed');
+            } else {
+                card.classList.remove('collapsed');
+                card.classList.add('expanded');
+                const scrollable = card.querySelector('.tool-card-scrollable');
+                if (scrollable) scrollable.style.display = 'block';
+            }
+        }
+        
+        function expandAllCards() {
+            document.querySelectorAll('.tool-operation-card').forEach(card => {
+                card.classList.remove('collapsed');
+                card.classList.add('expanded');
+                const scrollable = card.querySelector('.tool-card-scrollable');
+                if (scrollable) scrollable.style.display = 'block';
+            });
+        }
+        
+        function collapseAllCards() {
+            document.querySelectorAll('.tool-operation-card').forEach(card => {
+                card.classList.remove('expanded');
+                card.classList.add('collapsed');
+            });
+        }
+        
+        function clearToolCards() {
+            const container = document.querySelector('.tool-operations-container');
+            const cards = container.querySelectorAll('.tool-operation-card');
+            cards.forEach(card => {
+                card.classList.add('removing');
+                setTimeout(() => card.remove(), 300);
+            });
+            setTimeout(() => location.reload(), 350);
+        }
+        
+        let cardId = 0;
+        const cardTypes = ['create', 'edit', 'delete', 'terminal'];
+        const files = [
+            'src/components/Button.tsx',
+            'src/utils/api.js',
+            'config/webpack.prod.js',
+            'tests/unit/helpers.test.js',
+            'README.md',
+            'package.json'
+        ];
+        
+        function addRandomCard() {
+            const type = cardTypes[Math.floor(Math.random() * cardTypes.length)];
+            const file = files[Math.floor(Math.random() * files.length)];
+            const statuses = ['pending', 'running', 'completed'];
+            const status = statuses[Math.floor(Math.random() * statuses.length)];
+            
+            const icons = {
+                create: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>',
+                edit: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>',
+                delete: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>',
+                terminal: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>'
+            };
+            
+            const titles = { create: 'Create', edit: 'Edit', delete: 'Delete', terminal: 'Terminal' };
+            
+            const card = document.createElement('div');
+            card.className = `tool-operation-card ${type} collapsed`;
+            card.innerHTML = `
+                <div class="tool-card-header" onclick="toggleDemoCard(this)">
+                    <svg class="tool-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                    <div class="tool-card-icon">${icons[type]}</div>
+                    <div class="tool-card-info">
+                        <div class="tool-card-title">${titles[type]}</div>
+                        <div class="tool-card-file">${file}</div>
+                    </div>
+                    <div class="tool-card-status ${status}">${status}</div>
+                </div>
+                <div class="tool-card-content">
+                    <div class="tool-card-scrollable" style="display:none;"></div>
+                </div>
+            `;
+            
+            document.querySelector('.tool-operations-container').appendChild(card);
+            
+            // Auto-scroll to new card
+            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    </script>
+</body>
+</html>

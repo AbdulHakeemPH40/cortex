@@ -29,7 +29,8 @@ from pygments.token import Token
 from src.config.settings import get_settings
 from src.core.syntax_checker import get_syntax_checker, DiagnosticError
 from src.core.lsp_manager import get_lsp_manager
-from src.core.html_completion import get_html_completion_provider, get_closing_tag
+# HTML completion removed - using basic editor completion instead
+# from src.core.html_completion import get_html_completion_provider, get_closing_tag
 # Code formatter removed in AI-first mode - AI handles formatting
 # from src.core.code_formatter import get_code_formatter, FormatResult
 from src.utils.logger import get_logger
@@ -1133,18 +1134,18 @@ class CodeEditor(QPlainTextEdit):
             self.document(), language=language, is_dark=True, base_font=font
         )
 
-        # Code Folding System
-        self._folding_manager = FoldingManager(self.document())
-        self._folding_manager.ranges_changed.connect(self._on_folding_changed)
-        self._folding_manager.range_collapsed.connect(self._on_range_collapsed)
-        self._folding_manager.range_expanded.connect(self._on_range_expanded)
-        self._folding_folder = get_folder_for_language(language)
-        self._folding_timer = QTimer(self)
-        self._folding_timer.setSingleShot(True)
-        self._folding_timer.timeout.connect(self._update_folding_ranges)
-        
-        # Initial fold computation (delayed)
-        QTimer.singleShot(500, self._update_folding_ranges)
+        # Code Folding System - REMOVED in AI-first mode
+        # self._folding_manager = FoldingManager(self.document())
+        # self._folding_manager.ranges_changed.connect(self._on_folding_changed)
+        # self._folding_manager.range_collapsed.connect(self._on_range_collapsed)
+        # self._folding_manager.range_expanded.connect(self._on_range_expanded)
+        # self._folding_folder = get_folder_for_language(language)
+        # self._folding_timer = QTimer(self)
+        # self._folding_timer.setSingleShot(True)
+        # self._folding_timer.timeout.connect(self._update_folding_ranges)
+        # 
+        # # Initial fold computation (delayed)
+        # QTimer.singleShot(500, self._update_folding_ranges)
 
         # Line wrap off
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
@@ -1517,91 +1518,48 @@ class CodeEditor(QPlainTextEdit):
     # ------------------------------------------------------------------
     def _update_folding_ranges(self):
         """Recompute foldable regions when document changes."""
-        text = self.toPlainText()
-        if not text:
-            return
-            
-        try:
-            ranges = self._folding_folder.compute_ranges(text)
-            self._folding_manager.set_ranges(ranges)
-        except Exception as e:
-            print(f"[Folding] Error computing ranges: {e}")
+        # Folding removed in AI-first mode
+        pass
     
     def _on_folding_changed(self):
         """Handle folding ranges updated."""
-        self._update_block_visibility()
-        self._line_number_area.update()
-        self.viewport().update()
+        pass
     
     def _on_range_collapsed(self, line: int):
         """Handle region collapsed."""
-        print(f"[Folding] Collapsed at line {line + 1}")
-        self._update_block_visibility()
-        self._line_number_area.update()
-        self.viewport().update()
+        pass
     
     def _on_range_expanded(self, line: int):
         """Handle region expanded."""
-        print(f"[Folding] Expanded at line {line + 1}")
-        self._update_block_visibility()
-        self._line_number_area.update()
-        self.viewport().update()
+        pass
     
     def _update_block_visibility(self):
         """Update QTextBlock visibility based on folding state."""
-        if not hasattr(self, '_folding_manager'):
-            return
-            
-        # First, make all blocks visible
-        block = self.document().firstBlock()
-        while block.isValid():
-            if not block.isVisible():
-                block.setVisible(True)
-            block = block.next()
-        
-        # Then hide lines that are folded
-        for region in self._folding_manager.get_all_ranges():
-            if region.is_collapsed:
-                # Hide all lines in the range except the first one
-                for line_num in range(region.start_line + 1, region.end_line + 1):
-                    block = self.document().findBlockByNumber(line_num)
-                    if block.isValid() and block.isVisible():
-                        block.setVisible(False)
-        
-        # Update layout
-        self.document().markContentsDirty(0, self.document().characterCount())
+        pass
     
     def toggle_fold_at_line(self, line: int):
         """Toggle fold state at given line."""
-        region = self._folding_manager.get_range_at_start(line)
-        if region:
-            self._folding_manager.toggle(region)
+        pass
     
     def collapse_all(self):
         """Collapse all foldable regions."""
-        self._folding_manager.collapse_all()
+        pass
     
     def expand_all(self):
         """Expand all foldable regions."""
-        self._folding_manager.expand_all()
+        pass
     
     def collapse_current(self):
         """Collapse region at cursor."""
-        line = self.textCursor().blockNumber()
-        region = self._folding_manager.get_range_at_line(line)
-        if region and not region.is_collapsed:
-            self._folding_manager.collapse(region)
+        pass
     
     def expand_current(self):
         """Expand region at cursor."""
-        line = self.textCursor().blockNumber()
-        region = self._folding_manager.get_range_at_line(line)
-        if region and region.is_collapsed:
-            self._folding_manager.expand(region)
+        pass
     
     def folding_manager(self):
         """Get the folding manager."""
-        return self._folding_manager
+        return None
     
     def line_at_y(self, y: int) -> int:
         """Convert Y coordinate to line number.
@@ -2143,14 +2101,14 @@ class CodeEditor(QPlainTextEdit):
             doc = self.document()
             text_before = doc.toPlainText()[:position]
             
-            # Check if we need to auto-close
-            closing_tag = get_closing_tag(text_before)
-            if closing_tag:
-                # Insert the closing tag
-                self.insertPlainText(closing_tag)
-                # Move cursor back between tags
-                cursor.setPosition(position)
-                self.setTextCursor(cursor)
+            # HTML auto-close removed - using basic editor instead
+            # closing_tag = get_closing_tag(text_before)
+            # if closing_tag:
+            #     # Insert the closing tag
+            #     self.insertPlainText(closing_tag)
+            #     # Move cursor back between tags
+            #     cursor.setPosition(position)
+            #     self.setTextCursor(cursor)
         
         if event.text().isalnum() or event.text() in (".", "_"):
             self._completion_timer.start(200) # 200ms delay to prevent flood
@@ -2416,42 +2374,8 @@ class CodeEditor(QPlainTextEdit):
     
     def _trigger_html_completion(self, line: int, col: int, prefix: str):
         """Trigger HTML-specific completions using built-in provider."""
-        try:
-            content = self.toPlainText()
-            provider = get_html_completion_provider()
-            completions = provider.get_completions(content, line - 1, col - 1)
-            
-            items = []
-            for comp in completions:
-                # Map HTML completion kinds to LSP kinds
-                kind_map = {
-                    "tag": 10,      # Property
-                    "attribute": 5, # Field
-                    "value": 12,    # Value
-                    "emmet": 15     # Snippet
-                }
-                
-                item = {
-                    "label": comp.label,
-                    "kind": kind_map.get(comp.kind, 1),
-                    "detail": comp.detail,
-                    "documentation": comp.documentation,
-                    "insertText": comp.insert_text
-                }
-                items.append(item)
-            
-            print(f"[Completion] HTML provider returned {len(items)} items")
-            
-            # Filter by prefix if provided
-            if prefix and items:
-                items = [i for i in items if i.get("label", "").lower().startswith(prefix)]
-            
-            self._completion_results_ready.emit(items[:30])
-        except Exception as e:
-            print(f"[Completion] ERROR in HTML completion: {e}")
-            import traceback
-            traceback.print_exc()
-            self._completion_results_ready.emit([])
+        # HTML completion removed - using LSP/basic completion instead
+        self._completion_results_ready.emit([])
 
     def _extract_words(self, exclude_prefix: str) -> List[str]:
         """Extract unique words from document matching exclude_prefix."""

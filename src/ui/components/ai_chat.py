@@ -448,6 +448,8 @@ class ChatBridge(QObject):
     # Chat persistence signals
     save_chats_requested = pyqtSignal(str, str)  # storage_key, json_data
     load_chats_requested = pyqtSignal(str)       # storage_key
+    chat_list_updated = pyqtSignal()              # Emitted when chat list changes
+    chat_list_updated_with_data = pyqtSignal(str) # Emitted with chat list JSON data
     load_full_chat_requested = pyqtSignal(str)   # conversation_id (lazy load full chat)
     save_finished = pyqtSignal(str)              # status
     
@@ -981,6 +983,13 @@ class ChatBridge(QObject):
         # Emit signal to notify waiting components (like MainWindow.closeEvent)
         self.save_finished.emit(status)
     
+    @pyqtSlot(str)
+    def notify_chat_list_updated(self, chat_list_json: str):
+        """Called by JS to notify that chat list has been updated, passing the chat list data directly."""
+        log.info("[ChatList] JS notified chat list updated with data")
+        self.chat_list_updated_with_data.emit(chat_list_json)
+        log.info("[ChatList] chat_list_updated_with_data signal emitted")
+    
     @pyqtSlot(str, result=str)
     def load_chats_from_sqlite(self, storage_key: str) -> str:
         """
@@ -1023,7 +1032,11 @@ class ChatBridge(QObject):
                 result.append(chat_data)
             
             json_result = json.dumps(result)
-            log.debug(f'âœ“ Loaded {len(result)} chat metadata ({len(json_result)} chars)')
+            log.debug(f'âœ" Loaded {len(result)} chat metadata ({len(json_result)} chars)')
+                        
+            # Emit signal to update sidebar chat list
+            self.chat_list_updated.emit()
+                        
             return json_result
             
         except Exception as e:
@@ -1122,6 +1135,10 @@ class AIChatWidget(QWidget):
 
     # Smart paste signal - emitted when user pastes code, to check if it matches editor selection
     smart_paste_check_requested = pyqtSignal(str)  # pasted_text
+    
+    # Chat list update signal - emitted when chats are loaded/created/updated
+    chat_list_updated = pyqtSignal()
+    chat_list_updated_with_data = pyqtSignal(str)  # emitted with chat list JSON
     
     # AutoGen multi-agent toggle signal
     toggle_autogen_requested = pyqtSignal()
@@ -1295,6 +1312,10 @@ class AIChatWidget(QWidget):
         self._bridge.diff_line_commented.connect(self._on_diff_line_commented)
         
         self._bridge.save_finished.connect(self.save_finished.emit)
+        
+        # Forward chat list updated signal from bridge to widget
+        self._bridge.chat_list_updated.connect(self.chat_list_updated.emit)
+        self._bridge.chat_list_updated_with_data.connect(self.chat_list_updated_with_data.emit)
         
         # NEW: Lazy load full chat when JS requests it
         self._bridge.load_full_chat_requested.connect(self._on_load_full_chat_requested)
@@ -2894,6 +2915,9 @@ class AIChatWidget(QWidget):
                 QTimer.singleShot(500, lambda: self._view.page().runJavaScript(js_code))
         
         self._view.page().runJavaScript(js_code, _on_first_result)
+        
+        # Emit signal to refresh sidebar chat list after project info is applied
+        QTimer.singleShot(1000, self.chat_list_updated.emit)
 
     def clear_chat(self):
         """Clear the chat window."""
