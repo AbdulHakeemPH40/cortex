@@ -1646,19 +1646,26 @@ button svg,
 }
 
 /* ================================================
-   CODE BLOCKS
+   CODE BLOCKS & FILE REFERENCE CARDS
    ================================================ */
 
-/* Wrapper — handles border, radius, margin. Header lives here, NOT inside pre. */
+/* Enhanced Code Block Wrapper - Professional Card Design */
 .code-block-wrapper {
     display: flex;
     flex-direction: column;
-    background: var(--bg-code);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
+    background: linear-gradient(145deg, #1a1a1f, #141418);
+    border: 1px solid #3d3d47;
+    border-radius: 10px;
     margin: 12px 0;
-    overflow: hidden;          /* clips child radius edges cleanly */
+    overflow: hidden;
     max-width: 100%;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.code-block-wrapper:hover {
+    border-color: #8b5cf6;
+    box-shadow: 0 6px 20px rgba(139, 92, 246, 0.2);
 }
 
 /* pre inside wrapper strips its own border/radius/margin (wrapper owns those) */
@@ -1680,15 +1687,14 @@ pre[data-lang] {
     max-width: 100%;
 }
 
-/* Code block header (language label + action buttons) */
+/* Enhanced Code Block Header - Much Darker */
 .code-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 7px 12px;
-    /* No negative margins — header is outside the scrollable pre */
-    background: rgba(255, 255, 255, 0.04);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    padding: 10px 16px;
+    background: linear-gradient(90deg, #1a1a1f, #121216);
+    border-bottom: 1px solid #4a4a57;
     flex-shrink: 0;
     user-select: none;
 }
@@ -1698,17 +1704,117 @@ pre[data-lang] {
     font-weight: 700;
     letter-spacing: 0.8px;
     text-transform: uppercase;
-    color: var(--text-secondary, #888);
-    background: rgba(255, 255, 255, 0.07);
-    padding: 2px 8px;
-    border-radius: 4px;
+    color: #a78bfa;
+    background: rgba(139, 92, 246, 0.15);
+    padding: 4px 12px;
+    border-radius: 5px;
     font-family: 'Geist Mono', 'Fira Code', monospace;
+    border: 1px solid #8b5cf6;
 }
 
 .code-actions {
     display: flex;
     align-items: center;
     gap: 6px;  /* gap between Run / Copy / Insert */
+}
+
+/* ================================================
+   FILE REFERENCE BLOCK CARDS
+   ================================================ */
+
+/* File Reference Block - Enhanced Dark Design */
+.file-reference-block {
+    background: linear-gradient(145deg, #1a1a1f, #141418);
+    border: 1.5px solid #4a4a57;
+    border-radius: 10px;
+    margin: 12px 0;
+    overflow: hidden;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.file-reference-block:hover {
+    border-color: #8b5cf6;
+    box-shadow: 0 6px 24px rgba(139, 92, 246, 0.2);
+}
+
+.file-reference-header {
+    display: flex;
+    align-items: center;
+    padding: 14px 18px;
+    background: linear-gradient(90deg, #1a1a1f, #121216);
+    border-bottom: 1.5px solid #4a4a57;
+    gap: 14px;
+}
+
+.file-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    background: rgba(139, 92, 246, 0.15);
+    border: 1px solid #8b5cf6;
+    border-radius: 8px;
+    color: #a78bfa;
+    font-size: 16px;
+}
+
+.file-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: #e4e4e7;
+    cursor: pointer;
+    transition: color 0.2s ease;
+    flex: 1;
+}
+
+.file-name:hover {
+    color: #a78bfa;
+    text-decoration: underline;
+}
+
+.file-line {
+    font-size: 11px;
+    color: #a1a1aa;
+    background: #2d2d35;
+    border: 1px solid #3d3d47;
+    padding: 3px 10px;
+    border-radius: 4px;
+}
+
+.file-reference-content {
+    padding: 18px;
+    background: #0d0d10;
+    border-top: 1px solid #3d3d47;
+}
+
+.file-reference-content pre {
+    margin: 0;
+    background: transparent;
+    border: none;
+    padding: 0;
+}
+
+.file-action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    font-size: 11px;
+    font-weight: 500;
+    background: rgba(139, 92, 246, 0.15);
+    border: 1px solid #8b5cf6;
+    border-radius: 6px;
+    color: #a78bfa;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.file-action-btn:hover {
+    background: rgba(139, 92, 246, 0.25);
+    border-color: #a78bfa;
+    transform: translateY(-1px);
 }
 
 /* Shared button base for Run / Copy / Insert */
@@ -1730,12 +1836,13 @@ pre[data-lang] {
 
 /* Copy button */
 .code-copy-btn {
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(139, 92, 246, 0.08);
+    border: 1px solid rgba(139, 92, 246, 0.2);
     color: var(--text-secondary, #aaa);
 }
 .code-copy-btn:hover {
-    background: rgba(255, 255, 255, 0.11);
+    background: rgba(139, 92, 246, 0.15);
+    border-color: rgba(139, 92, 246, 0.35);
     color: var(--text-main, #e0e0e0);
     transform: translateY(-1px);
 }
@@ -1754,14 +1861,30 @@ pre[data-lang] {
 
 /* Run button (shell/bash only) */
 .code-run-btn {
-    background: rgba(34, 197, 94, 0.1);
-    border: 1px solid rgba(34, 197, 94, 0.22);
+    background: rgba(34, 197, 94, 0.12);
+    border: 1px solid rgba(34, 197, 94, 0.25);
     color: var(--green-bright, #22c55e);
 }
 .code-run-btn:hover {
-    background: rgba(34, 197, 94, 0.2);
-    border-color: rgba(34, 197, 94, 0.4);
+    background: rgba(34, 197, 94, 0.22);
+    border-color: rgba(34, 197, 94, 0.45);
     transform: translateY(-1px);
+}
+
+/* Standalone pre (no wrapper) - Enhanced Dark */
+pre[data-lang] {
+    background: linear-gradient(145deg, #1a1a1f, #141418);
+    border: 1.5px solid #4a4a57;
+    border-radius: 10px;
+    padding: 18px;
+    margin: 12px 0;
+    overflow-x: auto;
+    max-width: 100%;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+pre[data-lang]:hover {
+    border-color: #8b5cf6;
 }
 
 pre code.hljs {
