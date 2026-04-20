@@ -15,6 +15,17 @@ var _rateLimitRetryRemaining = 0;
 // Debug logging in hot paths (streaming, persistence). Keep false for performance.
 var _CHAT_DEBUG = false;
 
+// Global error handler to catch uncaught stack overflows and log their origin
+window.onerror = function(message, source, lineno, colno, error) {
+    if (message && message.toString().includes('call stack')) {
+        console.error('[CRITICAL] Stack overflow caught at line ' + lineno + ':', message);
+        if (error && error.stack) {
+            console.error('[CRITICAL] Stack trace:', error.stack.substring(0, 500));
+        }
+    }
+    return false; // Don't suppress default error reporting
+};
+
 // Debounced persistence to avoid blocking the UI / delaying message submission.
 var _saveChatsTimer = null;
 var _currentDiffGroup = null; // {id, el} – active group container for current AI turn
@@ -535,12 +546,14 @@ function initMarked() {
 
             codespan: function(code) {
                 code = code || '';
-                
+                // Skip hljs for long inline code to prevent potential stack overflow
+                if (code.length > 500) {
+                    return '<code class="inline-code">' + code + '</code>';
+                }
                 // Try to detect language and highlight inline code if it looks like code
                 var highlighted = code;
+                var lang = null;
                 try {
-                    // Check if inline code contains keywords that suggest a language
-                    var lang = null;
                     
                     // Python detection
                     if (/\b(def|class|import|from|return|if|elif|else|for|while|try|except|with|lambda)\b/.test(code)) {
@@ -1371,12 +1384,36 @@ document.addEventListener('DOMContentLoaded', function () {
 
     var input = document.getElementById('chatInput');
     if (input) {
-        input.onkeydown = function (e) {
-            if (e.key === 'Enter' && !e.shiftKey) {
+        // Use both onkeydown (fires before addEventListener) and addEventListener for maximum reliability
+        function _handleChatKeydown(e) {
+            if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey) {
                 e.preventDefault();
-                sendMessage();
+                try { sendMessage(); } catch(err) { console.error('[CHAT] sendMessage error:', err); }
+            } else if (e.key === 'Enter' && (e.ctrlKey || e.shiftKey)) {
+                // Ctrl+Enter or Shift+Enter = new line
+                e.preventDefault();
+                var start = input.selectionStart;
+                var end = input.selectionEnd;
+                input.value = input.value.substring(0, start) + '\n' + input.value.substring(end);
+                input.selectionStart = input.selectionEnd = start + 1;
+                // Directly resize without dispatchEvent to avoid triggering input listeners
+                if (input._resizeRaf) cancelAnimationFrame(input._resizeRaf);
+                input._resizeRaf = requestAnimationFrame(function() {
+                    input.style.height = 'auto';
+                    input.style.height = Math.min(input.scrollHeight, 280) + 'px';
+                });
             }
-        };
+        }
+        // onkeydown property fires first (before addEventListener handlers)
+        input.onkeydown = _handleChatKeydown;
+        // addEventListener as backup in case onkeydown is overwritten
+        input.addEventListener('keydown', function(e) {
+            // Only fire if onkeydown was somehow removed/replaced and didn't handle it
+            if (e.key === 'Enter' && !e.defaultPrevented && !e.shiftKey && !e.ctrlKey) {
+                e.preventDefault();
+                try { sendMessage(); } catch(err) { console.error('[CHAT] sendMessage error (backup):', err); }
+            }
+        });
         input.oninput = function () {
             // Debounced resize via rAF to avoid forced reflow on each keystroke
             if (input._resizeRaf) cancelAnimationFrame(input._resizeRaf);
@@ -2190,7 +2227,11 @@ function _buildMessageBubble(text, sender) {
         try {
             var normalizedText = normalizeMarkdownText(text);
             if (typeof marked !== 'undefined' && marked.parse) {
-                parsedHtml = marked.parse(normalizedText) || '';
+                if (normalizedText.length > 200000) {
+                    parsedHtml = formatMarkdownFallback(normalizedText);
+                } else {
+                    parsedHtml = marked.parse(normalizedText) || '';
+                }
             } else {
                 parsedHtml = formatMarkdownFallback(normalizedText);
             }
@@ -2316,7 +2357,11 @@ function appendMessage(text, sender, shouldSave) {
         try {
             var normalizedText = normalizeMarkdownText(text);
             if (typeof marked !== 'undefined' && marked.parse) {
-                parsedHtml = marked.parse(normalizedText) || '';
+                if (normalizedText.length > 200000) {
+                    parsedHtml = formatMarkdownFallback(normalizedText);
+                } else {
+                    parsedHtml = marked.parse(normalizedText) || '';
+                }
             } else {
                 parsedHtml = formatMarkdownFallback(normalizedText);
             }
@@ -4406,6 +4451,13 @@ function onChunk(chunk) {
  */
 function normalizeMarkdownText(text) {
     if (!text) return '';
+    // Guard: skip complex processing for very large text to prevent stack overflow
+    if (text.length > 200000) {
+        // Only do safe, non-recursive operations
+        text = text.replace(/\r\n/g, '\n');
+        text = text.replace(new RegExp('\\n{4,}', 'g'), '\n\n\n');
+        return text;
+    }
     // Remove zero-width / invisible characters that break markdown parsing
     text = text.replace(/[\u200B\u200C\u200D\u200E\u200F\uFEFF\u2060\u00AD]/g, '');
     // Normalize Windows line endings
@@ -4509,7 +4561,12 @@ function updateStreamingUI() {
         var html = '';
         try {
             if (typeof marked !== 'undefined' && marked.parse) {
-                html = marked.parse(cleanText) || '';
+                // Guard: skip marked.parse for excessively large content to prevent stack overflow
+                if (cleanText.length > 500000) {
+                    html = formatMarkdownFallback(cleanText);
+                } else {
+                    html = marked.parse(cleanText) || '';
+                }
             } else {
                 html = formatMarkdownFallback(cleanText);
             }
@@ -5088,10 +5145,13 @@ function handleOptionsTag() {
         var textBefore = currentContent.substring(0, startIndex);
         var data = currentContent.substring(startIndex + startTag.length, endIndex);
         var textAfter = currentContent.substring(endIndex + endTag.length);
-        
-        var optBeforeHtml = (marked.parse(textBefore) || '');
-        var optAfterHtml = (marked.parse(textAfter) || '');
-        contentDiv.innerHTML = optBeforeHtml + renderOptionsBlock(data) + optAfterHtml;
+        try {
+            var optBeforeHtml = (marked && marked.parse ? (marked.parse(textBefore) || '') : textBefore);
+            var optAfterHtml = (marked && marked.parse ? (marked.parse(textAfter) || '') : textAfter);
+            contentDiv.innerHTML = optBeforeHtml + renderOptionsBlock(data) + optAfterHtml;
+        } catch(e) {
+            contentDiv.innerHTML = textBefore + renderOptionsBlock(data) + textAfter;
+        }
     }
 }
 
@@ -5133,13 +5193,17 @@ function handleExplorationTag() {
         if (endIndex !== -1) {
             explorationData = currentContent.substring(startIndex + startTag.length, endIndex);
             var textAfter = currentContent.substring(endIndex + endTag.length);
-            var beforeHtml = (marked.parse(textBefore) || '');
-            var afterHtml = (marked.parse(textAfter) || '');
-            contentDiv.innerHTML = beforeHtml + renderExplorationBlock(explorationData) + afterHtml;
+            try {
+                var beforeHtml = (marked && marked.parse ? (marked.parse(textBefore) || '') : textBefore);
+                var afterHtml = (marked && marked.parse ? (marked.parse(textAfter) || '') : textAfter);
+                contentDiv.innerHTML = beforeHtml + renderExplorationBlock(explorationData) + afterHtml;
+            } catch(e) { contentDiv.innerHTML = textBefore + renderExplorationBlock(explorationData) + textAfter; }
         } else {
             explorationData = currentContent.substring(startIndex + startTag.length);
-            var beforeHtml2 = (marked.parse(textBefore) || '');
-            contentDiv.innerHTML = beforeHtml2 + renderExplorationBlock(explorationData, true);
+            try {
+                var beforeHtml2 = (marked && marked.parse ? (marked.parse(textBefore) || '') : textBefore);
+                contentDiv.innerHTML = beforeHtml2 + renderExplorationBlock(explorationData, true);
+            } catch(e) { contentDiv.innerHTML = textBefore + renderExplorationBlock(explorationData, true); }
         }
     }
 }
@@ -5183,9 +5247,11 @@ function handleTaskSummaryTag() {
         var textBefore = currentContent.substring(0, startIndex);
         var summaryData = currentContent.substring(startIndex + startTag.length, endIndex);
         var textAfter = currentContent.substring(endIndex + endTag.length);
-        var beforeHtml3 = (marked.parse(textBefore) || '');
-        var afterHtml3 = (marked.parse(textAfter) || '');
-        contentDiv.innerHTML = beforeHtml3 + renderTaskSummary(summaryData) + afterHtml3;
+        try {
+            var beforeHtml3 = (marked && marked.parse ? (marked.parse(textBefore) || '') : textBefore);
+            var afterHtml3 = (marked && marked.parse ? (marked.parse(textAfter) || '') : textAfter);
+            contentDiv.innerHTML = beforeHtml3 + renderTaskSummary(summaryData) + afterHtml3;
+        } catch(e) { contentDiv.innerHTML = textBefore + renderTaskSummary(summaryData) + textAfter; }
     }
 }
 
@@ -5204,13 +5270,17 @@ function handleDiffTag() {
         if (endIndex !== -1) {
             diffData = currentContent.substring(startIndex + startTag.length, endIndex);
             var textAfter = currentContent.substring(endIndex + endTag.length);
-            var diffBeforeHtml = (marked.parse(textBefore) || '');
-            var diffAfterHtml = (marked.parse(textAfter) || '');
-            contentDiv.innerHTML = diffBeforeHtml + renderDiffBlock(diffData) + diffAfterHtml;
+            try {
+                var diffBeforeHtml = (marked && marked.parse ? (marked.parse(textBefore) || '') : textBefore);
+                var diffAfterHtml = (marked && marked.parse ? (marked.parse(textAfter) || '') : textAfter);
+                contentDiv.innerHTML = diffBeforeHtml + renderDiffBlock(diffData) + diffAfterHtml;
+            } catch(e) { contentDiv.innerHTML = textBefore + renderDiffBlock(diffData) + textAfter; }
         } else {
             diffData = currentContent.substring(startIndex + startTag.length);
-            var diffBeforeHtml2 = (marked.parse(textBefore) || '');
-            contentDiv.innerHTML = diffBeforeHtml2 + renderDiffBlock(diffData, true);
+            try {
+                var diffBeforeHtml2 = (marked && marked.parse ? (marked.parse(textBefore) || '') : textBefore);
+                contentDiv.innerHTML = diffBeforeHtml2 + renderDiffBlock(diffData, true);
+            } catch(e) { contentDiv.innerHTML = textBefore + renderDiffBlock(diffData, true); }
         }
     }
 }
@@ -5733,10 +5803,11 @@ document.addEventListener('DOMContentLoaded', function() {
         var menu = modeDropdown.querySelector('.dropdown-menu');
         var items = modeDropdown.querySelectorAll('.dropdown-item');
         var modeText = document.getElementById('current-mode');
-        var modeIcon = trigger.querySelector('i');
+        var modeIcon = trigger ? trigger.querySelector('i') : null;
 
+        if (!trigger || !menu) { /* skip if elements missing */ }
+        else {
         trigger.onclick = function(e) {
-            e.stopPropagation();
             e.preventDefault();
             
             // Close other dropdowns first
@@ -5833,7 +5904,8 @@ document.addEventListener('DOMContentLoaded', function() {
             menu.classList.remove('show');
             menu.style.display = 'none';
         });
-    }
+        } // closes else block (trigger && menu)
+    } // closes if (modeDropdown)
 
     // Model Selector Logic
     var modelDropdown = document.getElementById('model-selector');
@@ -6080,10 +6152,13 @@ document.addEventListener('DOMContentLoaded', function() {
         if (input) input.value = text;
     };
 
+    // Capture the real sendMessage before overwriting window.sendMessage,
+    // otherwise the wrapper would call itself and cause infinite recursion.
+    var _realSendMessage = sendMessage;
     window.sendMessage = function() {
         var input = document.getElementById('chatInput');
         if (input && input.value.trim()) {
-            sendMessage();
+            _realSendMessage();
         }
     };
 
@@ -7536,7 +7611,7 @@ function onToolActivity(toolType, info, status) {
             if (dd && dd.style.display !== 'none') {
                 if (e.key === 'ArrowDown') { e.preventDefault(); navigateMentionDropdown(1); return; }
                 if (e.key === 'ArrowUp')   { e.preventDefault(); navigateMentionDropdown(-1); return; }
-                if (e.key === 'Enter')     { e.preventDefault(); selectActiveMentionItem(); return; }
+                if (e.key === 'Enter')     { e.preventDefault(); e.stopImmediatePropagation(); selectActiveMentionItem(); return; }
                 if (e.key === 'Escape')    { hideMentionDropdown(); return; }
             }
         });
@@ -10282,7 +10357,7 @@ function setupCompletionKeyboardShortcuts() {
         }
         
         // Handle completion popup navigation
-        if (window.codeCompletionState.isVisible) {
+        if (window.codeCompletionState && window.codeCompletionState.isVisible) {
             if (e.key === 'ArrowDown') {
                 e.preventDefault();
                 var nextIndex = (window.codeCompletionState.selectedIndex + 1) % window.codeCompletionState.completions.length;
@@ -10292,13 +10367,15 @@ function setupCompletionKeyboardShortcuts() {
                 var prevIndex = window.codeCompletionState.selectedIndex - 1;
                 if (prevIndex < 0) prevIndex = window.codeCompletionState.completions.length - 1;
                 updateCompletionSelection(prevIndex);
-            } else if (e.key === 'Enter') {
+            } else if (e.key === 'Tab') {
+                // Tab accepts completion
                 e.preventDefault();
                 window.acceptCodeCompletion();
             } else if (e.key === 'Escape') {
                 e.preventDefault();
                 window.dismissCodeCompletion();
             }
+            // Note: Enter is NOT intercepted here — the textarea's own Enter handler sends the message
         }
     });
 }

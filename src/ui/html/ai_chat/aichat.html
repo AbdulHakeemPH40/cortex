@@ -230,17 +230,24 @@
       // Syntax highlighting with full embedded language support
       window.highlightCodeWithEmbedded = function(code, lang) {
         if (!code) return '';
+        // Guard: skip hljs for very large code to prevent stack overflow
+        if (code.length > 50000) {
+          return code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
         lang = (lang || 'text').toLowerCase();
         
         // Normalize language (handle aliases)
         var normalizedLang = window.getNormalizedLanguage(lang);
+        
+        // Safe escape fallback used in all catch blocks
+        var safeEscape = function(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
         
         // For HTML, use highlightAuto which properly handles embedded CSS/JS
         if (normalizedLang === 'html' || normalizedLang === 'xml') {
           try {
             return hljs.highlightAuto(code, ['html', 'css', 'javascript', 'typescript', 'json']).value;
           } catch (e) {
-            return hljs.highlight(code, { language: 'xml' }).value;
+            try { return hljs.highlight(code, { language: 'plaintext' }).value; } catch(e2) { return safeEscape(code); }
           }
         }
         
@@ -250,7 +257,7 @@
             // Use auto detection with web languages priority
             return hljs.highlightAuto(code, ['html', 'css', 'javascript', 'typescript', 'json', 'xml']).value;
           } catch (e) {
-            return hljs.highlight(code, { language: 'xml' }).value;
+            try { return hljs.highlight(code, { language: 'plaintext' }).value; } catch(e2) { return safeEscape(code); }
           }
         }
         
@@ -262,7 +269,7 @@
           // Fallback to auto detection
           return hljs.highlightAuto(code).value;
         } catch (e) {
-          return code.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          return safeEscape(code);
         }
       };
     </script>
@@ -2895,7 +2902,7 @@
                 <div id="input-container">
                     <textarea 
                         id="chatInput" 
-                        placeholder="Plan and build, @ for context, / for commands&#10;Ctrl+Enter for new line, Enter to send" 
+                        placeholder="Plan and build, @ for context, / for commands&#10;Ctrl+Enter for new line · Shift+Enter for line break · Enter to send"
                         rows="1"
                         aria-label="Type your message"
                         aria-multiline="true"

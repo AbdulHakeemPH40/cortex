@@ -1649,23 +1649,22 @@ button svg,
    CODE BLOCKS & FILE REFERENCE CARDS
    ================================================ */
 
-/* Enhanced Code Block Wrapper - Professional Card Design */
+/* Enhanced Code Block Wrapper - Dark Jet Metallic Border */
 .code-block-wrapper {
     display: flex;
     flex-direction: column;
     background: linear-gradient(145deg, #1a1a1f, #141418);
-    border: 1px solid #3d3d47;
+    border: 1px solid #4a4a57;
     border-radius: 10px;
     margin: 12px 0;
     overflow: hidden;
     max-width: 100%;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 .code-block-wrapper:hover {
-    border-color: #8b5cf6;
-    box-shadow: 0 6px 20px rgba(139, 92, 246, 0.2);
+    border-color: #6b6b7b;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 /* pre inside wrapper strips its own border/radius/margin (wrapper owns those) */
@@ -1871,20 +1870,20 @@ pre[data-lang] {
     transform: translateY(-1px);
 }
 
-/* Standalone pre (no wrapper) - Enhanced Dark */
+/* Standalone pre (no wrapper) - Dark Jet Metallic Border */
 pre[data-lang] {
     background: linear-gradient(145deg, #1a1a1f, #141418);
-    border: 1.5px solid #4a4a57;
+    border: 1px solid #4a4a57;
     border-radius: 10px;
     padding: 18px;
     margin: 12px 0;
     overflow-x: auto;
     max-width: 100%;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 pre[data-lang]:hover {
-    border-color: #8b5cf6;
+    border-color: #6b6b7b;
 }
 
 pre code.hljs {

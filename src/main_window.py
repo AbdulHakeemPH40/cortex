@@ -814,137 +814,62 @@ class CortexMainWindow(QMainWindow):
         # --- Compact confirmation dialog ---
         dialog = QDialog(self)
         dialog.setWindowTitle('Delete Chat')
-        dialog.setFixedSize(280, 115)
-        # Frameless for dark custom title bar look
-        dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
-        dialog.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        dialog.setFixedSize(240, 100)
         dialog.setStyleSheet("""
             QDialog {
-                background-color: #1a1a1a;
-                border: 1px solid #404040;
-                border-radius: 8px;
+                background-color: #1e1e1e;
+                border: 1px solid #3a3a3a;
+                border-radius: 6px;
             }
         """)
         
         dlg_layout = QVBoxLayout(dialog)
-        dlg_layout.setContentsMargins(16, 10, 16, 12)
+        dlg_layout.setContentsMargins(14, 10, 14, 8)
         dlg_layout.setSpacing(6)
         
-        # Custom title bar (since frameless)
-        title_bar = QWidget()
-        title_layout = _HBox(title_bar)
-        title_layout.setContentsMargins(0, 0, 0, 0)
-        title_layout.setSpacing(0)
-        
-        title_text = _Label('Delete Chat')
-        title_text.setStyleSheet('color: #ffffff; font-size: 13px; font-weight: 600;')
-        title_layout.addWidget(title_text)
-        title_layout.addStretch()
-        
-        close_btn = _Btn('✕')
-        close_btn.setFixedSize(24, 24)
-        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        close_btn.setStyleSheet("""
-            QPushButton {
-                background: transparent;
-                color: #888888;
-                border: none;
-                font-size: 14px;
-                font-weight: bold;
-            }
-            QPushButton:hover { color: #ffffff; }
-        """)
-        close_btn.clicked.connect(dialog.reject)
-        title_layout.addWidget(close_btn)
-        
-        dlg_layout.addWidget(title_bar)
-        
-        # Separator line
-        separator = QWidget()
-        separator.setFixedHeight(1)
-        separator.setStyleSheet('background-color: #333333;')
-        dlg_layout.addWidget(separator)
-        
-        # Content with icon
-        content_widget = QWidget()
-        content_layout = _HBox(content_widget)
-        content_layout.setContentsMargins(0, 8, 0, 0)
-        content_layout.setSpacing(12)
-        
-        # Warning icon
-        icon_lbl = _Label('⚠️')
-        icon_lbl.setStyleSheet('font-size: 20px;')
-        content_layout.addWidget(icon_lbl)
-        
         # Message
-        msg_lbl = _Label(f'Delete "{chat_title}"?')
-        msg_lbl.setStyleSheet('color: #a0a0a0; font-size: 13px;')
-        content_layout.addWidget(msg_lbl)
-        content_layout.addStretch()
-        
-        dlg_layout.addWidget(content_widget)
+        msg_lbl = _Label(f"Delete '{chat_title}'?")
+        msg_lbl.setStyleSheet('color: #d0d0d0; font-size: 12px;')
+        dlg_layout.addWidget(msg_lbl)
         
         dlg_layout.addStretch()
         
-        # Buttons row - centered in dialog
+        # Buttons row
         btn_row = QWidget()
         btn_layout = _HBox(btn_row)
         btn_layout.setContentsMargins(0, 0, 0, 0)
-        btn_layout.setSpacing(10)
+        btn_layout.setSpacing(6)
         btn_layout.addStretch()
         
-        # Buttons with consistent sizing and flat styling
-        btn_width, btn_height = 65, 26
-        btn_radius = 4
-        btn_font = 11
-        
         cancel_btn = _Btn('Cancel')
-        cancel_btn.setFixedSize(btn_width, btn_height)
-        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        cancel_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: #4a4a4a;
-                color: #e0e0e0;
-                border: 1px solid #555555;
-                border-radius: {btn_radius}px;
-                font-size: {btn_font}px;
-                font-weight: 500;
-            }}
-            QPushButton:hover {{ 
-                background-color: #555555;
-                border-color: #666666;
-            }}
-            QPushButton:pressed {{
-                background-color: #404040;
-            }}
+        cancel_btn.setFixedSize(64, 24)
+        cancel_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2d2d2d;
+                color: #aaaaaa;
+                border: 1px solid #444;
+                border-radius: 4px;
+                font-size: 11px;
+            }
+            QPushButton:hover { background-color: #383838; }
         """)
         cancel_btn.clicked.connect(dialog.reject)
         btn_layout.addWidget(cancel_btn)
         
         delete_btn = _Btn('Delete')
-        delete_btn.setFixedSize(btn_width, btn_height)
-        delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        delete_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: #dc2626;
+        delete_btn.setFixedSize(64, 24)
+        delete_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #c0392b;
                 color: #ffffff;
-                border: 1px solid #dc2626;
-                border-radius: {btn_radius}px;
-                font-size: {btn_font}px;
-                font-weight: 600;
-            }}
-            QPushButton:hover {{ 
-                background-color: #ef4444;
-                border-color: #ef4444;
-            }}
-            QPushButton:pressed {{
-                background-color: #b91c1c;
-                border-color: #b91c1c;
-            }}
+                border: none;
+                border-radius: 4px;
+                font-size: 11px;
+            }
+            QPushButton:hover { background-color: #e74c3c; }
         """)
         delete_btn.clicked.connect(dialog.accept)
         btn_layout.addWidget(delete_btn)
-        btn_layout.addStretch()
         
         dlg_layout.addWidget(btn_row)
         
@@ -1198,6 +1123,12 @@ class CortexMainWindow(QMainWindow):
 
         # Initialize Git summary after UI is built
         QTimer.singleShot(500, self._update_git_summary)
+        
+        # Auto-refresh git status every 10 seconds to detect push/commit from terminal
+        self._git_refresh_timer = QTimer(self)
+        self._git_refresh_timer.setInterval(10000)  # 10 seconds
+        self._git_refresh_timer.timeout.connect(self._update_git_summary)
+        self._git_refresh_timer.start()
 
     def _show_welcome(self):
         """Show a VS Code-like welcome screen in the editor tabs."""
@@ -1723,14 +1654,19 @@ class CortexMainWindow(QMainWindow):
         branch_label.setStyleSheet("color: #aaaaaa; font-size: 12px; font-weight: bold; margin-top: 8px;")
         summary_layout.addWidget(branch_label)
 
+        # Current branch name (will be updated dynamically)
+        self._branch_name_label = QLabel("🌿 No repository")
+        self._branch_name_label.setStyleSheet("color: #888888; font-size: 13px; padding: 4px 0;")
+        summary_layout.addWidget(self._branch_name_label)
+
         # GitHub CLI status (will be updated dynamically)
-        self._github_status_label = QLabel("🐙 Checking GitHub CLI...")
-        self._github_status_label.setStyleSheet("color: #888888; font-size: 13px; padding: 8px 0;")
+        self._github_status_label = QLabel("🐙 GitHub CLI not installed")
+        self._github_status_label.setStyleSheet("color: #888888; font-size: 13px; padding: 4px 0;")
         summary_layout.addWidget(self._github_status_label)
 
         # Changes count (will be updated dynamically)
-        self._changes_label = QLabel("✏️ Changes 0 unstaged, 0 untracked")
-        self._changes_label.setStyleSheet("color: #cccccc; font-size: 13px; padding: 8px 0;")
+        self._changes_label = QLabel("✏️ 0 unstaged, 0 untracked")
+        self._changes_label.setStyleSheet("color: #cccccc; font-size: 13px; padding: 4px 0;")
         summary_layout.addWidget(self._changes_label)
 
         # Artifacts
@@ -1827,11 +1763,11 @@ class CortexMainWindow(QMainWindow):
         self._file_list_container = QWidget()
         self._file_list_layout = QVBoxLayout(self._file_list_container)
         self._file_list_layout.setContentsMargins(0, 0, 0, 0)
-        self._file_list_layout.setSpacing(4)
+        self._file_list_layout.setSpacing(0)  # No spacing between files
         
         self._file_list_scroll.setWidget(self._file_list_container)
         review_layout.addWidget(self._file_list_scroll, 1)
-        review_layout.addStretch()
+        # NOTE: No addStretch() here — scroll area must fill all remaining space
 
         self._review_stack.addWidget(review_content)
         self._review_stack.setCurrentIndex(0)  # Show Summary by default
@@ -1856,19 +1792,38 @@ class CortexMainWindow(QMainWindow):
         """Update Summary panel with real Git status."""
         if not hasattr(self, '_git_manager'):
             log.warning("[GIT] GitManager not available")
-            self._changes_label.setText("✏️ No git repository")
-            if hasattr(self, '_unstaged_count_label'):
-                self._unstaged_count_label.setText("0 ▾")
+            self._set_no_git_status()
             return
 
         if not self._git_manager.is_repo():
             log.info("[GIT] No repository set")
-            self._changes_label.setText("✏️ No git repository")
-            if hasattr(self, '_unstaged_count_label'):
-                self._unstaged_count_label.setText("0 ▾")
+            self._set_no_git_status()
             return
 
         log.info("[GIT] Updating git summary...")
+        
+        # Get current branch name
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=self._git_manager._repo_path,
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                branch_name = result.stdout.strip()
+                self._branch_name_label.setText(f"🌿 {branch_name}")
+                self._branch_name_label.setStyleSheet("color: #4ec94e; font-size: 13px; padding: 4px 0;")
+            else:
+                self._branch_name_label.setText("🌿 Unknown branch")
+                self._branch_name_label.setStyleSheet("color: #888888; font-size: 13px; padding: 4px 0;")
+        except Exception as e:
+            log.warning(f"[GIT] Failed to get branch name: {e}")
+            self._branch_name_label.setText("🌿 Unknown branch")
+            self._branch_name_label.setStyleSheet("color: #888888; font-size: 13px; padding: 4px 0;")
+        
         # Get git status
         git_files = self._git_manager.get_status()
         log.info(f"[GIT] Found {len(git_files)} changed files")
@@ -1879,13 +1834,16 @@ class CortexMainWindow(QMainWindow):
         # Count files by status
         unstaged_count = sum(1 for f in git_files if not f.staged)
         untracked_count = sum(1 for f in git_files if f.status.name == 'UNTRACKED')
+        staged_count = sum(1 for f in git_files if f.staged)
         total_changes = len(git_files)
 
         # Update changes label
         if total_changes > 0:
-            self._changes_label.setText(f"✏️ Changes {unstaged_count} unstaged, {untracked_count} untracked")
+            self._changes_label.setText(f"✏️ {unstaged_count} unstaged, {untracked_count} untracked, {staged_count} staged")
+            self._changes_label.setStyleSheet("color: #e6a817; font-size: 13px; padding: 4px 0;")
         else:
             self._changes_label.setText("✏️ No changes")
+            self._changes_label.setStyleSheet("color: #4ec94e; font-size: 13px; padding: 4px 0;")
 
         # Update unstaged count in Review tab
         if hasattr(self, '_unstaged_count_label'):
@@ -1893,6 +1851,20 @@ class CortexMainWindow(QMainWindow):
 
         # Update file list in Review tab
         self._update_review_file_list(git_files)
+    
+    def _set_no_git_status(self):
+        """Set all git status labels to 'no repository' state."""
+        if hasattr(self, '_branch_name_label'):
+            self._branch_name_label.setText("🌿 No repository")
+            self._branch_name_label.setStyleSheet("color: #888888; font-size: 13px; padding: 4px 0;")
+        if hasattr(self, '_github_status_label'):
+            self._github_status_label.setText("🐙 GitHub CLI not installed")
+            self._github_status_label.setStyleSheet("color: #888888; font-size: 13px; padding: 4px 0;")
+        if hasattr(self, '_changes_label'):
+            self._changes_label.setText("✏️ No changes")
+            self._changes_label.setStyleSheet("color: #888888; font-size: 13px; padding: 4px 0;")
+        if hasattr(self, '_unstaged_count_label'):
+            self._unstaged_count_label.setText("0 ▾")
 
     def _check_github_cli(self):
         """Check if GitHub CLI is available."""
@@ -1927,10 +1899,10 @@ class CortexMainWindow(QMainWindow):
                 child.widget().deleteLater()
 
         if not git_files:
-            # Show "No changes" message
             no_changes = QLabel("No changed files")
-            no_changes.setStyleSheet("color: #888888; font-size: 13px; padding: 16px 0;")
+            no_changes.setStyleSheet("color: #888888; font-size: 13px; padding: 8px 0;")
             self._file_list_layout.addWidget(no_changes)
+            self._file_list_layout.addStretch()  # pin to top
             self._diff_notice.hide()
             return
 
@@ -1945,36 +1917,42 @@ class CortexMainWindow(QMainWindow):
         added_count = 0
         
         # Add each file with diff stats (deduplicated)
-        for git_file in git_files[:100]:  # Limit to 100 files for performance
-            # Skip duplicates
+        for git_file in git_files[:100]:
             if git_file.path in seen_files:
                 continue
             seen_files.add(git_file.path)
             
             file_widget = self._create_file_diff_item(git_file)
-            if file_widget:  # Only add if not None
+            if file_widget:
                 self._file_list_layout.addWidget(file_widget)
                 added_count += 1
         
-        # If no files with changes, show message
         if added_count == 0:
             no_changes = QLabel("No files with changes")
-            no_changes.setStyleSheet("color: #888888; font-size: 13px; padding: 16px 0;")
+            no_changes.setStyleSheet("color: #888888; font-size: 13px; padding: 8px 0;")
             self._file_list_layout.addWidget(no_changes)
+        
+        # Always add stretch at the end to keep files pinned to top
+        self._file_list_layout.addStretch()
 
     def _create_file_diff_item(self, git_file) -> QWidget:
         """Create a file diff item widget."""
         # Get diff stats
         additions, deletions = self._get_file_diff_stats(git_file.path)
         
-        # Show all files except purely untracked files with no content
-        # (Modified, Added, Deleted, Renamed files should all show)
+        # Skip files with no actual changes (0 additions and 0 deletions)
+        if additions == 0 and deletions == 0:
+            return None
+        
+        # Also skip purely untracked files with no content
         if git_file.status.name == 'UNTRACKED' and additions == 0 and deletions == 0:
             return None
 
         file_item = QWidget()
+        file_item.setFixedHeight(28)  # Compact height
         file_layout = QHBoxLayout(file_item)
-        file_layout.setContentsMargins(0, 6, 0, 6)
+        file_layout.setContentsMargins(0, 2, 0, 2)  # Minimal vertical padding
+        file_layout.setSpacing(8)
 
         # File name (only filename, not full path)
         from pathlib import Path
@@ -1985,14 +1963,16 @@ class CortexMainWindow(QMainWindow):
 
         file_layout.addStretch()
 
-        # Show diff stats (always show, even if 0)
-        additions_label = QLabel(f"+{additions}")
-        additions_label.setStyleSheet("color: #4ec94e; font-size: 13px; font-weight: 500;")
-        file_layout.addWidget(additions_label)
+        # Show diff stats only if there are changes
+        if additions > 0:
+            additions_label = QLabel(f"+{additions}")
+            additions_label.setStyleSheet("color: #4ec94e; font-size: 13px; font-weight: 500;")
+            file_layout.addWidget(additions_label)
 
-        deletions_label = QLabel(f"-{deletions}")
-        deletions_label.setStyleSheet("color: #e05252; font-size: 13px; font-weight: 500;")
-        file_layout.addWidget(deletions_label)
+        if deletions > 0:
+            deletions_label = QLabel(f"-{deletions}")
+            deletions_label.setStyleSheet("color: #e05252; font-size: 13px; font-weight: 500;")
+            file_layout.addWidget(deletions_label)
 
         # Expand icon
         expand_icon = QLabel("▾")
@@ -2002,29 +1982,53 @@ class CortexMainWindow(QMainWindow):
         return file_item
 
     def _get_file_diff_stats(self, file_path: str) -> tuple:
-        """Get additions and deletions for a file."""
+        """Get additions and deletions for a file (checks both staged and unstaged)."""
         if not hasattr(self, '_git_manager') or not self._git_manager.is_repo():
             return 0, 0
 
-        try:
-            import subprocess
-            result = subprocess.run(
-                ["git", "diff", "--numstat", file_path],
-                cwd=self._git_manager._repo_path,
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                parts = result.stdout.strip().split('\t')
+        import subprocess
+        cwd = self._git_manager._repo_path
+        total_add, total_del = 0, 0
+
+        def _parse_numstat(output: str):
+            for line in output.strip().splitlines():
+                parts = line.split('\t')
                 if len(parts) >= 2:
-                    additions = int(parts[0]) if parts[0] != '-' else 0
-                    deletions = int(parts[1]) if parts[1] != '-' else 0
-                    return additions, deletions
-        except:
+                    try:
+                        a = int(parts[0]) if parts[0] != '-' else 0
+                        d = int(parts[1]) if parts[1] != '-' else 0
+                        return a, d
+                    except ValueError:
+                        pass
+            return 0, 0
+
+        try:
+            # Unstaged changes (working tree vs index)
+            r = subprocess.run(
+                ["git", "diff", "--numstat", file_path],
+                cwd=cwd, capture_output=True, text=True, timeout=5
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                a, d = _parse_numstat(r.stdout)
+                total_add += a
+                total_del += d
+        except Exception:
             pass
 
-        return 0, 0
+        try:
+            # Staged changes (index vs HEAD)
+            r = subprocess.run(
+                ["git", "diff", "--cached", "--numstat", file_path],
+                cwd=cwd, capture_output=True, text=True, timeout=5
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                a, d = _parse_numstat(r.stdout)
+                total_add += a
+                total_del += d
+        except Exception:
+            pass
+
+        return total_add, total_del
 
     def _create_file_tree_panel(self) -> QWidget:
         """Create File Tree Panel (280px) - Project Explorer."""
@@ -5448,6 +5452,9 @@ class CortexMainWindow(QMainWindow):
         
         # Update welcome tab if it exists
         self._update_welcome_project_info()
+        
+        # Update git status in Summary/Review panel
+        QTimer.singleShot(300, self._update_git_summary)
         
         # Auto-detect and activate virtual environment
         self._check_and_activate_venv(folder_path)
