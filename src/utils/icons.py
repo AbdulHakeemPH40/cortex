@@ -945,6 +945,76 @@ _UI_SVG_TEMPLATES = {
         <path d="M9 3h6M10 3v5.2L5 19a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3L14 8.2V3"/>
         <path d="M7 15h10"/>
     </svg>''',
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Panel Toggle Icons — 4 buttons, one per panel group
+    # Each icon switches between visible (panel shown) ↔ hidden (panel collapsed)
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    # ── 1. Left Sidebar: Layout with left pane ──
+    "panel-left-sidebar-visible": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+        <rect x="3" y="3" width="18" height="18" rx="2" stroke="{color}" stroke-width="1.8"/>
+        <rect x="3" y="3" width="7" height="18" rx="2" fill="{color}" opacity="0.35"/>
+        <line x1="10" y1="3" x2="10" y2="21" stroke="{color}" stroke-width="1.2"/>
+    </svg>''',
+    "panel-left-sidebar-hidden": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+        <rect x="3" y="3" width="18" height="18" rx="2" stroke="{color}" stroke-width="1.8" stroke-dasharray="3,2"/>
+        <polyline points="10,7 6,12 10,17" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>''',
+
+    # ── 2. Right Sidebar (Explore): Layout with right pane ──
+    "panel-right-sidebar-visible": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+        <rect x="3" y="3" width="18" height="18" rx="2" stroke="{color}" stroke-width="1.8"/>
+        <rect x="14" y="3" width="7" height="18" rx="2" fill="{color}" opacity="0.35"/>
+        <line x1="14" y1="3" x2="14" y2="21" stroke="{color}" stroke-width="1.2"/>
+    </svg>''',
+    "panel-right-sidebar-hidden": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+        <rect x="3" y="3" width="18" height="18" rx="2" stroke="{color}" stroke-width="1.8" stroke-dasharray="3,2"/>
+        <polyline points="14,7 18,12 14,17" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>''',
+
+    # ── 3. AI Chat: Speech bubble ──
+    "panel-ai-chat-visible": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        <line x1="8" y1="9" x2="16" y2="9" stroke-width="1.5"/>
+        <line x1="8" y1="13" x2="13" y2="13" stroke-width="1.5"/>
+    </svg>''',
+    "panel-ai-chat-hidden": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke-dasharray="4,2"/>
+        <line x1="9" y1="10" x2="15" y2="10" stroke-width="2"/>
+        <line x1="12" y1="7" x2="12" y2="13" stroke-width="2"/>
+    </svg>''',
+
+    # ── 4. Review/Summary/Git Panel: Clipboard with checkmark ──
+    "panel-review-visible": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/>
+        <rect x="9" y="3" width="6" height="4" rx="1"/>
+        <polyline points="9 14 11 16 15 12" stroke="#4ec94e" stroke-width="2"/>
+        <line x1="9" y1="20" x2="15" y2="20" stroke-width="1.3"/>
+    </svg>''',
+    "panel-review-hidden": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" stroke-dasharray="4,2"/>
+        <rect x="9" y="3" width="6" height="4" rx="1"/>
+        <line x1="9" y1="14" x2="15" y2="14" stroke-width="1.5"/>
+    </svg>''',
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Chat List Action Icons — Pencil (rename) & Trash (delete)
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    # Pencil icon — clean edit/rename icon (gold/amber color expected)
+    "chat-pencil": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
+    </svg>''',
+
+    # Trash icon — clean wastebasket (red color expected)
+    "chat-trash": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="3 6 5 6 21 6"/>
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
+        <line x1="10" y1="11" x2="10" y2="17"/>
+        <line x1="14" y1="11" x2="14" y2="17"/>
+        <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+    </svg>''',
 }
 
 

@@ -926,42 +926,44 @@ class CortexMainWindow(QMainWindow):
         # --- Compact confirmation dialog ---
         dialog = QDialog(self)
         dialog.setWindowTitle('Delete Chat')
-        dialog.setFixedSize(240, 100)
+        dialog.setFixedSize(280, 110)
+        dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
         dialog.setStyleSheet("""
             QDialog {
-                background-color: #1e1e1e;
-                border: 1px solid #3a3a3a;
-                border-radius: 6px;
+                background-color: #0a0a0a;
+                border: 1px solid #333;
+                border-radius: 5px;
             }
+            QWidget { background-color: transparent; }
         """)
         
         dlg_layout = QVBoxLayout(dialog)
-        dlg_layout.setContentsMargins(14, 10, 14, 8)
-        dlg_layout.setSpacing(6)
+        dlg_layout.setContentsMargins(20, 16, 20, 14)
+        dlg_layout.setSpacing(16)
         
         # Message
         msg_lbl = _Label(f"Delete '{chat_title}'?")
-        msg_lbl.setStyleSheet('color: #d0d0d0; font-size: 12px;')
+        msg_lbl.setStyleSheet('color: #d0d0d0; font-size: 13px; font-weight: 500;')
+        msg_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         dlg_layout.addWidget(msg_lbl)
         
         dlg_layout.addStretch()
         
-        # Buttons row
-        btn_row = QWidget()
-        btn_layout = _HBox(btn_row)
+        # Buttons row - centered equally, no extra container widget
+        btn_layout = _HBox()
         btn_layout.setContentsMargins(0, 0, 0, 0)
-        btn_layout.setSpacing(6)
-        btn_layout.addStretch()
+        btn_layout.setSpacing(12)
+        btn_layout.addStretch(1)
         
         cancel_btn = _Btn('Cancel')
-        cancel_btn.setFixedSize(64, 24)
+        cancel_btn.setFixedSize(80, 30)
         cancel_btn.setStyleSheet("""
             QPushButton {
                 background-color: #2d2d2d;
-                color: #aaaaaa;
-                border: 1px solid #444;
-                border-radius: 4px;
-                font-size: 11px;
+                color: #c0c0c0;
+                border: 1px solid #555;
+                border-radius: 5px;
+                font-size: 12px;
             }
             QPushButton:hover { background-color: #383838; }
         """)
@@ -969,21 +971,22 @@ class CortexMainWindow(QMainWindow):
         btn_layout.addWidget(cancel_btn)
         
         delete_btn = _Btn('Delete')
-        delete_btn.setFixedSize(64, 24)
+        delete_btn.setFixedSize(80, 30)
         delete_btn.setStyleSheet("""
             QPushButton {
                 background-color: #c0392b;
                 color: #ffffff;
                 border: none;
-                border-radius: 4px;
-                font-size: 11px;
+                border-radius: 5px;
+                font-size: 12px;
             }
             QPushButton:hover { background-color: #e74c3c; }
         """)
         delete_btn.clicked.connect(dialog.accept)
         btn_layout.addWidget(delete_btn)
         
-        dlg_layout.addWidget(btn_row)
+        btn_layout.addStretch(1)
+        dlg_layout.addLayout(btn_layout)
         
         if dialog.exec() == QDialog.DialogCode.Accepted:
             row = self._sidebar_chat_list.row(item)
@@ -1056,8 +1059,9 @@ class CortexMainWindow(QMainWindow):
             log.warning(traceback.format_exc())
     
     def _create_chat_list_item(self, title: str, chat_id: str):
-        """Create a QListWidgetItem + custom widget with pencil and trash icons."""
+        """Create a QListWidgetItem + custom widget with SVG pencil and trash icons."""
         from PyQt6.QtCore import QSize
+        from src.utils.icons import make_icon
         
         item = QListWidgetItem()
         item.setData(Qt.ItemDataRole.UserRole, chat_id)
@@ -1069,46 +1073,41 @@ class CortexMainWindow(QMainWindow):
         widget.setStyleSheet("""
             QWidget#chat_item_widget { background: transparent; }
             QLabel { color: #a0a0a0; font-size: 13px; background: transparent; }
-            QPushButton#pencil_btn { background: transparent; border: none; color: #e6a817; font-size: 13px; padding: 0px 2px; }
-            QPushButton#pencil_btn:hover { color: #ffc233; }
-            QPushButton#trash_btn { background: transparent; border: none; color: #cc3333; font-size: 13px; padding: 0px 2px; }
-            QPushButton#trash_btn:hover { color: #ff4444; }
+            QPushButton#pencil_btn { background: transparent; border: none; padding: 0px; }
+            QPushButton#pencil_btn:hover { background: rgba(255, 255, 255, 0.08); border-radius: 3px; }
+            QPushButton#trash_btn { background: transparent; border: none; padding: 0px; }
+            QPushButton#trash_btn:hover { background: rgba(255, 80, 80, 0.15); border-radius: 3px; }
         """)
         
         row_layout = QHBoxLayout(widget)
         row_layout.setContentsMargins(8, 2, 4, 2)
-        row_layout.setSpacing(2)
+        row_layout.setSpacing(4)
         
         # Title label (truncated)
         title_label = QLabel(title)
         title_label.setObjectName('chat_title_label')
         title_label.setMaximumWidth(160)
-        # Truncate with ellipsis if too long
         metrics_text = title if len(title) <= 22 else title[:22] + '…'
         title_label.setText(metrics_text)
         title_label.setToolTip(title)
         row_layout.addWidget(title_label, 1)
         
-        # Pencil (rename) button - angled pencil icon via rotated text
+        # Pencil (rename) button — clean SVG icon in gold
         pencil_btn = QPushButton()
         pencil_btn.setObjectName('pencil_btn')
-        pencil_btn.setFixedSize(22, 22)
+        pencil_btn.setFixedSize(24, 24)
+        pencil_btn.setIcon(make_icon('chat-pencil', '#e6a817', 16))
+        pencil_btn.setIconSize(QSize(16, 16))
         pencil_btn.setToolTip('Rename')
         pencil_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        pencil_btn.setStyleSheet("""
-            QPushButton#pencil_btn {
-                background: transparent; border: none;
-                color: #e6a817; font-size: 14px;
-                padding: 0px; qproperty-text: "✎";
-            }
-            QPushButton#pencil_btn:hover { color: #ffc233; }
-        """)
         row_layout.addWidget(pencil_btn)
         
-        # Trash (delete) button
-        trash_btn = QPushButton('🗑')
+        # Trash (delete) button — clean SVG icon in red
+        trash_btn = QPushButton()
         trash_btn.setObjectName('trash_btn')
-        trash_btn.setFixedSize(22, 22)
+        trash_btn.setFixedSize(24, 24)
+        trash_btn.setIcon(make_icon('chat-trash', '#cc3333', 16))
+        trash_btn.setIconSize(QSize(16, 16))
         trash_btn.setToolTip('Delete')
         trash_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         row_layout.addWidget(trash_btn)
@@ -1196,6 +1195,20 @@ class CortexMainWindow(QMainWindow):
 
         # Store reference for later access
         self._main_splitter = main_splitter
+
+        # Panel toggle state tracking
+        self._left_sidebar_hidden = False
+        self._file_tree_hidden = False
+        self._chat_panel_hidden = False
+        self._review_panel_hidden = False
+        self._summary_panel_hidden = False
+        self._git_panel_hidden = False
+
+        # Store minimum widths for panel toggle restore
+        self._left_sidebar_min_width = 220
+        self._chat_panel_min_width = 300
+        self._review_panel_min_width = 380
+        self._file_tree_min_width = 280
 
         # Keep old components for backward compatibility
         self._ai_splitter = None  # Replaced by 4-panel layout
@@ -2482,7 +2495,7 @@ class CortexMainWindow(QMainWindow):
         view_menu.addSeparator()
         self._add_action(view_menu, "Toggle Sidebar", self._toggle_sidebar, "Ctrl+B")
         self._add_action(view_menu, "Toggle File Tree", self._toggle_file_tree, "Ctrl+Shift+I")
-        self._add_action(view_menu, "Toggle Review Panel", self._toggle_review_panel, "Alt+Ctrl+B")
+        self._add_action(view_menu, "Toggle Review Panel", self._toggle_review_panel_menu, "Alt+Ctrl+B")
         view_menu.addSeparator()
         self._add_action(view_menu, "Zoom In", self._zoom_in, "Ctrl++")
         self._add_action(view_menu, "Zoom Out", self._zoom_out, "Ctrl+-")
@@ -2561,6 +2574,21 @@ class CortexMainWindow(QMainWindow):
         help_menu.addSeparator()
         self._add_action(help_menu, "About Cortex", self._show_about, "")
 
+        # ═══════════════════════════════════════════════════════════════════════
+        # Panel Toggle Button Group — right corner of menu bar
+        # ═══════════════════════════════════════════════════════════════════════
+        self._panel_toggle_bar = self._build_panel_toggle_bar()
+
+        # QMenuBar doesn't support custom widgets in the same way, so we add
+        # them as a QAction with a QWidget. We use a spacer trick:
+        # Create a spacer action to push buttons right.
+        spacer_action = QAction(self)
+        spacer_action.setVisible(False)  # Won't show but allows layout control
+        # Instead, we'll place buttons in a QWidget that sits on the right
+        # by using a custom approach: a QWidget placed next to menu bar via layout.
+        # For simplicity, add directly to menuBar's cornerWidget.
+        self.menuBar().setCornerWidget(self._panel_toggle_bar, Qt.Corner.TopRightCorner)
+
     def _add_action(self, menu, text, slot, shortcut=""):
         action = QAction(text, self)
         if shortcut:
@@ -2575,6 +2603,100 @@ class CortexMainWindow(QMainWindow):
     # Toolbar removed in AI-first mode - replaced by TopNavBar component
     # def _build_toolbar(self):
 
+
+    # ------------------------------------------------------------------
+    # Panel Toggle Buttons
+    # ------------------------------------------------------------------
+    def _build_panel_toggle_bar(self) -> QWidget:
+        """Build a horizontal bar of 4 toggle buttons — one per panel group."""
+        bar = QWidget()
+        bar.setObjectName("panelToggleBar")
+        bar.setStyleSheet("""
+            QWidget#panelToggleBar {
+                background: transparent;
+                padding: 0px 8px;
+            }
+            QPushButton {
+                background: transparent;
+                border: none;
+                border-radius: 4px;
+                padding: 2px;
+                margin: 1px 0px;
+            }
+            QPushButton:hover {
+                background: rgba(255, 255, 255, 0.08);
+            }
+            QPushButton:pressed {
+                background: rgba(255, 255, 255, 0.15);
+            }
+        """)
+
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(0, 0, 4, 0)
+        layout.setSpacing(1)
+
+        from src.utils.icons import make_icon
+
+        icon_size = 22
+        btn_size = 26
+
+        def _make_toggle(visible_icon: str, hidden_icon: str, tooltip_v: str, tooltip_h: str,
+                         is_visible_getter, toggle_fn):
+            """Single toggle button — switches icon/tooltip when panel visibility changes."""
+            btn = QPushButton()
+            btn.setFixedSize(btn_size, btn_size)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+
+            is_dark = self._settings.theme == "dark"
+            icon_color = "#c8c8c8" if is_dark else "#444444"
+
+            _visible = is_visible_getter()
+            btn.setIcon(make_icon(visible_icon if _visible else hidden_icon, icon_color, icon_size))
+            btn.setToolTip(tooltip_v if _visible else tooltip_h)
+
+            def on_click():
+                nonlocal _visible
+                _visible = not _visible
+                btn.setIcon(make_icon(visible_icon if _visible else hidden_icon, icon_color, icon_size))
+                btn.setToolTip(tooltip_v if _visible else tooltip_h)
+                toggle_fn(_visible)
+
+            btn.clicked.connect(on_click)
+            return btn
+
+        # 1. Left Sidebar toggle
+        layout.addWidget(_make_toggle(
+            "panel-left-sidebar-visible", "panel-left-sidebar-hidden",
+            "Hide Left Sidebar", "Show Left Sidebar",
+            lambda: not getattr(self, '_left_sidebar_hidden', False),
+            lambda v: self._toggle_left_sidebar(v)
+        ))
+
+        # 2. Right Sidebar (Explore/File Tree) toggle
+        layout.addWidget(_make_toggle(
+            "panel-right-sidebar-visible", "panel-right-sidebar-hidden",
+            "Hide Explore Panel", "Show Explore Panel",
+            lambda: not getattr(self, '_file_tree_hidden', False),
+            lambda v: self._toggle_file_tree_panel(v)
+        ))
+
+        # 3. AI Chat toggle
+        layout.addWidget(_make_toggle(
+            "panel-ai-chat-visible", "panel-ai-chat-hidden",
+            "Hide AI Chat", "Show AI Chat",
+            lambda: not getattr(self, '_chat_panel_hidden', False),
+            lambda v: self._toggle_ai_chat_panel(v)
+        ))
+
+        # 4. Review/Summary/Git panel toggle (all 3 tabs share one panel)
+        layout.addWidget(_make_toggle(
+            "panel-review-visible", "panel-review-hidden",
+            "Hide Review Panel", "Show Review Panel",
+            lambda: not getattr(self, '_review_panel_hidden', False),
+            lambda v: self._toggle_review_panel(v)
+        ))
+
+        return bar
 
     def _make_spacer(self) -> QWidget:
         spacer = QWidget()
@@ -4369,6 +4491,23 @@ class CortexMainWindow(QMainWindow):
             if term:
                 term.setFocus()
 
+    def _toggle_left_sidebar(self, show: bool = True):
+        """Toggle left sidebar via splitter — show=True to expand, False to collapse."""
+        sizes = self._main_splitter.sizes()
+        if len(sizes) < 4:
+            return
+        widget = self._main_splitter.widget(0)
+        if show:
+            widget.setMinimumWidth(180)
+            widget.setMaximumWidth(400)
+            sizes[0] = self._left_sidebar_min_width
+        else:
+            widget.setMinimumWidth(0)
+            widget.setMaximumWidth(0)
+            sizes[0] = 0
+        self._main_splitter.setSizes(sizes)
+        self._left_sidebar_hidden = not show
+
     def _toggle_sidebar(self):
         """Toggle sidebar visibility (hidden by default in AI-first mode)"""
         visible = self._sidebar.isVisible()
@@ -4376,17 +4515,95 @@ class CortexMainWindow(QMainWindow):
         if self._sidebar.isVisible():
             self._sidebar.setFocus()
 
+    def _toggle_file_tree_panel(self, show: bool = True):
+        """Toggle file tree panel via splitter (Ctrl+Shift+I)."""
+        sizes = self._main_splitter.sizes()
+        if len(sizes) < 4:
+            return
+        widget = self._main_splitter.widget(3)
+        if show:
+            widget.setMinimumWidth(200)
+            widget.setMaximumWidth(500)
+            sizes[3] = self._file_tree_min_width
+        else:
+            widget.setMinimumWidth(0)
+            widget.setMaximumWidth(0)
+            sizes[3] = 0
+        self._main_splitter.setSizes(sizes)
+        self._file_tree_hidden = not show
+
     def _toggle_file_tree(self):
         """Toggle File Tree panel visibility (Ctrl+Shift+I)."""
         if hasattr(self, '_file_tree_panel'):
             visible = self._file_tree_panel.isVisible()
             self._file_tree_panel.setVisible(not visible)
+            self._file_tree_hidden = not visible
 
-    def _toggle_review_panel(self):
-        """Toggle Review panel visibility (Alt+Ctrl+B)."""
+    def _toggle_ai_chat_panel(self, show: bool = True):
+        """Toggle AI chat panel via splitter."""
+        sizes = self._main_splitter.sizes()
+        if len(sizes) < 4:
+            return
+        widget = self._main_splitter.widget(1)
+        if show:
+            widget.setMinimumWidth(300)
+            widget.setMaximumWidth(16777215)  # QWIDGETSIZE_MAX
+            sizes[1] = self._chat_panel_min_width
+        else:
+            widget.setMinimumWidth(0)
+            widget.setMaximumWidth(0)
+            sizes[1] = 0
+        self._main_splitter.setSizes(sizes)
+        self._chat_panel_hidden = not show
+
+    def _toggle_review_panel(self, show: bool = True):
+        """Toggle Review panel via splitter (Alt+Ctrl+B)."""
+        sizes = self._main_splitter.sizes()
+        if len(sizes) < 4:
+            return
+        widget = self._main_splitter.widget(2)
+        if show:
+            widget.setMinimumWidth(250)
+            widget.setMaximumWidth(600)
+            sizes[2] = self._review_panel_min_width
+        else:
+            widget.setMinimumWidth(0)
+            widget.setMaximumWidth(0)
+            sizes[2] = 0
+        self._main_splitter.setSizes(sizes)
+        self._review_panel_hidden = not show
+
+    def _toggle_review_panel_menu(self):
+        """Toggle Review panel visibility (Alt+Ctrl+B) — menu bar action."""
         if hasattr(self, '_review_panel'):
             visible = self._review_panel.isVisible()
             self._review_panel.setVisible(not visible)
+            self._review_panel_hidden = not visible
+
+    def _toggle_summary_panel(self, show: bool = True):
+        """Toggle summary panel visibility (switch between Summary and Review tabs)."""
+        if show:
+            if hasattr(self, '_summary_tab_btn'):
+                self._summary_tab_btn.setChecked(True)
+                self._review_stack.setCurrentIndex(0)
+        else:
+            if hasattr(self, '_review_tab_btn'):
+                self._review_tab_btn.setChecked(True)
+                self._review_stack.setCurrentIndex(1)
+        self._summary_panel_hidden = not show
+
+    def _toggle_git_panel(self, show: bool = True):
+        """Toggle git panel visibility — implemented as a panel-level toggle."""
+        if show:
+            # Expand review panel to show git content
+            if hasattr(self, '_review_panel'):
+                self._review_panel.setVisible(True)
+                self._review_panel_hidden = False
+        else:
+            if hasattr(self, '_review_panel'):
+                self._review_panel.setVisible(False)
+                self._review_panel_hidden = True
+        self._git_panel_hidden = not show
 
     def _toggle_fullscreen(self):
         """Toggle full screen mode (F11)."""
