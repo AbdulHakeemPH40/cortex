@@ -1077,6 +1077,12 @@ function initBridge() {
             bridgeReady = true;
             var sendBtn = document.getElementById('sendBtn');
             if (sendBtn) sendBtn.disabled = false;
+            
+            // Listen for file edit notifications
+            bridge.file_edit_notification.connect(function (filePath, editType, status) {
+                console.log("Received file edit notification:", filePath, editType, status);
+                updateAIEditsContainer();
+            });
 
             // Start with empty chat - project-specific history will load when setProjectInfo is called
             console.log('Bridge ready, waiting for setProjectInfo to load project chats');
@@ -4635,7 +4641,7 @@ function updateStreamingUI() {
 
         // -- 4. Inject code block headers on new blocks -----------------
         contentDiv.querySelectorAll('pre code').forEach(function(block) {
-            injectCodeBlockHeader(block);
+            injectCodeBlockHeader(block, {});
         });
 
     } catch (e) {
@@ -4958,7 +4964,7 @@ function onComplete() {
                     if (!block.dataset.highlighted && window.hljs) {
                         try { hljs.highlightElement(block); } catch(e) {}
                     }
-                    injectCodeBlockHeader(block);
+                    injectCodeBlockHeader(block, {});
                 });
             } catch (renderErr) {
                 console.error('[CHAT] onComplete: post-render error:', renderErr.message);
@@ -5228,7 +5234,7 @@ function handleFileEditedTag() {
     // Inject code block headers
     contentDiv.querySelectorAll('pre code').forEach(function(block) {
         if (window.hljs) hljs.highlightElement(block);
-        injectCodeBlockHeader(block);
+        injectCodeBlockHeader(block, {});
     });
 
     // Append .fec cards below message content
@@ -7181,7 +7187,9 @@ function renderCustomTagsInto(msgEl, fullText) {
 // ================================================================
 // CODE BLOCK HEADER INJECTION
 // ================================================================
-function injectCodeBlockHeader(codeEl) {
+// Button modes: 'full' (Run+Copy+Insert), 'standard' (Copy+Insert), 'copy-only' (Copy only)
+function injectCodeBlockHeader(codeEl, options) {
+    options = options || {};
     var pre = codeEl.parentElement;
     if (!pre || pre.tagName !== 'PRE') return;
     // Skip if already wrapped (idempotent)
@@ -7199,36 +7207,76 @@ function injectCodeBlockHeader(codeEl) {
 
     var escapedCode = codeEl.textContent || '';
     var isShell = ['bash', 'sh', 'powershell', 'ps1', 'cmd', 'shell', 'zsh'].includes(lang);
+    
+    // Determine button mode
+    var buttonMode = options.buttonMode || (isShell ? 'full' : 'standard');
+    if (options.copyOnly) buttonMode = 'copy-only';
 
     var header = document.createElement('div');
-    header.className = 'code-header';
+    header.className = 'code-header' + (buttonMode === 'copy-only' ? ' copy-only' : '');
+    
+    // Build buttons based on mode
+    var buttonsHtml = '';
+    if (buttonMode === 'full' && isShell) {
+        buttonsHtml += '<button class="code-run-btn" title="Run in terminal">Run</button>';
+    }
+    if (buttonMode !== 'copy-only') {
+        buttonsHtml += '<button class="code-copy-btn">Copy</button>';
+        buttonsHtml += '<button class="code-insert-btn">Insert</button>';
+    } else {
+        buttonsHtml += '<button class="code-copy-btn" title="Copy to clipboard">Copy</button>';
+    }
+    
     header.innerHTML =
-        '<span class="code-lang">' + escapeHtml(lang.toUpperCase()) + '</span>' +
-        '<div class="code-actions">' +
-            (isShell ? '<button class="code-run-btn" title="Run in terminal">Run</button>' : '') +
-            '<button class="code-copy-btn">Copy</button>' +
-            '<button class="code-insert-btn">Insert</button>' +
-        '</div>';
+        (buttonMode !== 'copy-only' ? '<span class="code-lang">' + escapeHtml(lang.toUpperCase()) + '</span>' : '') +
+        '<div class="code-actions">' + buttonsHtml + '</div>';
 
-    header.querySelector('.code-copy-btn').onclick = function() {
-        var btn = header.querySelector('.code-copy-btn');
-        if (navigator.clipboard) {
-            navigator.clipboard.writeText(escapedCode).then(function() {
-                btn.textContent = '\u2713 Copied';
-                setTimeout(function() { btn.textContent = 'Copy'; }, 1800);
-            });
-        } else {
-            btn.textContent = '\u2713 Copied';
-            setTimeout(function() { btn.textContent = 'Copy'; }, 1800);
-        }
-    };
+    // Copy button handler with green state and notification
+    var copyBtn = header.querySelector('.code-copy-btn');
+    if (copyBtn) {
+        copyBtn.onclick = function() {
+            var btn = this;
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(escapedCode).then(function() {
+                    // Show green copied state
+                    btn.classList.add('copied');
+                    btn.textContent = 'Copied';
+                    btn.setAttribute('data-copied', 'true');
+                    
+                    // Show toast notification
+                    showToast('Code copied to clipboard');
+                    
+                    // Reset after 2 seconds
+                    setTimeout(function() { 
+                        btn.classList.remove('copied');
+                        btn.textContent = 'Copy'; 
+                        btn.removeAttribute('data-copied');
+                    }, 2000);
+                });
+            } else {
+                btn.classList.add('copied');
+                btn.textContent = 'Copied';
+                showToast('Code copied to clipboard');
+                setTimeout(function() { 
+                    btn.classList.remove('copied');
+                    btn.textContent = 'Copy'; 
+                }, 2000);
+            }
+        };
+    }
 
-    header.querySelector('.code-insert-btn').onclick = function() {
-        if (window.bridge && bridge.on_insert_code) bridge.on_insert_code(escapedCode, lang);
-    };
+    // Insert button handler
+    var insertBtn = header.querySelector('.code-insert-btn');
+    if (insertBtn) {
+        insertBtn.onclick = function() {
+            if (window.bridge && bridge.on_insert_code) bridge.on_insert_code(escapedCode, lang);
+        };
+    }
 
-    if (isShell) {
-        header.querySelector('.code-run-btn').onclick = function() {
+    // Run button handler
+    var runBtn = header.querySelector('.code-run-btn');
+    if (runBtn) {
+        runBtn.onclick = function() {
             if (window.bridge) bridge.on_run_command(escapedCode);
         };
     }
@@ -7240,6 +7288,36 @@ function injectCodeBlockHeader(codeEl) {
     pre.parentNode.insertBefore(wrapper, pre);
     wrapper.appendChild(pre);
     wrapper.insertBefore(header, pre); // header above pre, not inside it
+}
+
+/**
+ * Helper: Inject code block with Copy button only (for cards)
+ * Usage: injectCopyOnlyCodeBlock(preElement)
+ */
+function injectCopyOnlyCodeBlock(preEl) {
+    var codeEl = preEl.querySelector('code');
+    if (!codeEl) return;
+    injectCodeBlockHeader(codeEl, { copyOnly: true });
+}
+
+/**
+ * Helper: Inject code block with standard buttons (Copy + Insert)
+ * Usage: injectStandardCodeBlock(preElement)
+ */
+function injectStandardCodeBlock(preEl) {
+    var codeEl = preEl.querySelector('code');
+    if (!codeEl) return;
+    injectCodeBlockHeader(codeEl, { buttonMode: 'standard' });
+}
+
+/**
+ * Helper: Inject code block with all buttons (Run + Copy + Insert for shell)
+ * Usage: injectFullCodeBlock(preElement)
+ */
+function injectFullCodeBlock(preEl) {
+    var codeEl = preEl.querySelector('code');
+    if (!codeEl) return;
+    injectCodeBlockHeader(codeEl, { buttonMode: 'full' });
 }
 
 // ================================================================
@@ -11014,6 +11092,257 @@ window.newChat = function() {
         console.log('[CHAT] New chat created via window.newChat()');
     }
 };
+
+// ================================================
+// AGENT MODE GRID - Dynamic Tool Activation
+// ================================================
+
+/**
+ * Show the Agent Mode grid indicator
+ * Called when AI agent starts working with tools
+ */
+window.showAgentMode = function() {
+    var indicator = document.getElementById('agent-mode-indicator');
+    if (indicator) {
+        indicator.style.display = 'block';
+        console.log('[AGENT] Mode grid shown');
+    }
+};
+
+/**
+ * Hide the Agent Mode grid indicator
+ * Called when AI agent finishes all tool operations
+ */
+window.hideAgentMode = function() {
+    var indicator = document.getElementById('agent-mode-indicator');
+    if (indicator) {
+        indicator.style.display = 'none';
+        console.log('[AGENT] Mode grid hidden');
+    }
+    // Clear all active modes when hiding
+    window.clearActiveAgentMode();
+};
+
+/**
+ * Set active agent mode (highlight specific tool in grid)
+ * @param {string} mode - One of: think, read, search, grep, find, explore, surf, dive
+ */
+window.setActiveAgentMode = function(mode) {
+    // First show the grid if hidden
+    window.showAgentMode();
+    
+    // Clear any previously active mode
+    document.querySelectorAll('.mode-indicator').forEach(function(el) {
+        el.classList.remove('active');
+    });
+    
+    // Activate the specified mode
+    var modeEl = document.querySelector('.mode-indicator[data-mode="' + mode + '"]');
+    if (modeEl) {
+        modeEl.classList.add('active');
+        console.log('[AGENT] Mode activated:', mode);
+        
+        // Update thinking indicator text based on mode
+        var thinkingLabel = document.querySelector('.thinking-label');
+        if (thinkingLabel) {
+            var modeLabels = {
+                'think': 'Thinking...',
+                'read': 'Reading files...',
+                'search': 'Searching codebase...',
+                'grep': 'Grepping patterns...',
+                'find': 'Finding symbols...',
+                'explore': 'Exploring structure...',
+                'surf': 'Surfing web...',
+                'dive': 'Deep diving...'
+            };
+            thinkingLabel.textContent = modeLabels[mode] || 'Cortex is working...';
+        }
+    } else {
+        console.warn('[AGENT] Unknown mode:', mode);
+    }
+};
+
+/**
+ * Clear all active agent modes (remove highlighting)
+ */
+window.clearActiveAgentMode = function() {
+    document.querySelectorAll('.mode-indicator').forEach(function(el) {
+        el.classList.remove('active');
+    });
+    console.log('[AGENT] All modes cleared');
+};
+
+/**
+ * Agent mode activation with auto-clear timeout
+ * @param {string} mode - Mode to activate
+ * @param {number} durationMs - Duration to keep active (default: 3000ms)
+ */
+window.flashAgentMode = function(mode, durationMs) {
+    durationMs = durationMs || 3000;
+    window.setActiveAgentMode(mode);
+    
+    setTimeout(function() {
+        // Only clear if this mode is still active (not overridden by another call)
+        var activeEl = document.querySelector('.mode-indicator.active');
+        if (activeEl && activeEl.dataset.mode === mode) {
+            window.clearActiveAgentMode();
+        }
+    }, durationMs);
+};
+
+// Map tool names to agent modes for automatic activation
+window.agentModeToolMap = {
+    'code_search': 'grep',
+    'grep_search': 'grep',
+    'semantic_search': 'search',
+    'file_search': 'search',
+    'read_file': 'read',
+    'read_multiple': 'read',
+    'file_edit': 'think',
+    'code_edit': 'think',
+    'edit_file': 'think',
+    'apply_diff': 'think',
+    'terminal': 'explore',
+    'run_command': 'explore',
+    'execute_command': 'explore',
+    'web_search': 'surf',
+    'web_browse': 'surf',
+    'fetch_url': 'surf',
+    'deep_analysis': 'dive',
+    'analyze_code': 'dive',
+    'code_explore': 'explore',
+    'list_directory': 'explore',
+    'find_symbol': 'find',
+    'go_to_definition': 'find',
+    'locate_symbol': 'find'
+};
+
+// Extended tool labels for more specific tool display
+window.agentModeToolLabels = {
+    'read_file': 'Reading',
+    'read_multiple': 'Reading',
+    'file_edit': 'Editing',
+    'code_edit': 'Editing',
+    'edit_file': 'Editing',
+    'apply_diff': 'Applying',
+    'code_search': 'Grepping',
+    'grep_search': 'Grepping',
+    'semantic_search': 'Searching',
+    'file_search': 'Searching',
+    'terminal': 'Terminal',
+    'run_command': 'Running',
+    'execute_command': 'Executing',
+    'web_search': 'Browsing',
+    'web_browse': 'Browsing',
+    'fetch_url': 'Fetching',
+    'deep_analysis': 'Analyzing',
+    'analyze_code': 'Analyzing',
+    'code_explore': 'Exploring',
+    'list_directory': 'Listing',
+    'find_symbol': 'Locating',
+    'go_to_definition': 'Defining',
+    'locate_symbol': 'Finding'
+};
+
+/**
+ * Activate agent mode based on tool name
+ * @param {string} toolName - Name of the tool being used
+ * @param {string} customLabel - Optional custom label to display
+ */
+window.activateModeForTool = function(toolName, customLabel) {
+    var mode = window.agentModeToolMap[toolName];
+    if (mode) {
+        window.setActiveAgentMode(mode);
+        
+        // Update label if custom label provided or we have a mapped label
+        var label = customLabel || window.agentModeToolLabels[toolName];
+        if (label) {
+            window.updateAgentModeLabel(mode, label);
+        }
+        
+        console.log('[AGENT] Auto-activated mode for tool:', toolName, '->', mode);
+    }
+};
+
+/**
+ * Update the label text for a specific mode
+ * @param {string} mode - Mode to update (think, read, search, etc.)
+ * @param {string} label - New label text
+ */
+window.updateAgentModeLabel = function(mode, label) {
+    var modeEl = document.querySelector('.mode-indicator[data-mode="' + mode + '"]');
+    if (modeEl) {
+        var span = modeEl.querySelector('span');
+        if (span) {
+            span.textContent = label;
+            console.log('[AGENT] Updated label for', mode, 'to:', label);
+        }
+    }
+};
+
+/**
+ * Reset all mode labels to their defaults
+ */
+window.resetAgentModeLabels = function() {
+    var defaultLabels = {
+        'think': 'Think',
+        'read': 'Read',
+        'search': 'Search',
+        'grep': 'Grep',
+        'find': 'Find',
+        'explore': 'Explore',
+        'surf': 'Surf',
+        'dive': 'Dive'
+    };
+    
+    Object.keys(defaultLabels).forEach(function(mode) {
+        window.updateAgentModeLabel(mode, defaultLabels[mode]);
+    });
+    console.log('[AGENT] Reset all mode labels to defaults');
+};
+
+/**
+ * Show tool execution card with dynamic icon and label
+ * @param {string} toolName - Name of the tool
+ * @param {string} fileName - Optional file being operated on
+ * @param {string} status - Status: running, completed, error
+ */
+window.showToolExecution = function(toolName, fileName, status) {
+    // Show and activate the appropriate mode
+    window.activateModeForTool(toolName);
+    
+    // Track activity for summary
+    trackActivity('tool', toolName + (fileName ? ' ' + fileName : ''), status);
+    
+    console.log('[AGENT] Tool execution:', toolName, fileName, status);
+};
+
+/**
+ * Debug function to test agent mode grid visibility
+ * Call this from browser console: window.testAgentMode()
+ */
+window.testAgentMode = function() {
+    console.log('[AGENT TEST] Showing all modes for testing...');
+    window.showAgentMode();
+    
+    // Activate each mode sequentially for testing
+    var modes = ['think', 'read', 'search', 'grep', 'find', 'explore', 'surf', 'dive'];
+    modes.forEach(function(mode, index) {
+        setTimeout(function() {
+            window.setActiveAgentMode(mode);
+            console.log('[AGENT TEST] Activated:', mode);
+        }, index * 1000);
+    });
+    
+    // Clear after showing all
+    setTimeout(function() {
+        window.clearActiveAgentMode();
+        console.log('[AGENT TEST] Cleared all modes');
+    }, modes.length * 1000 + 500);
+};
+
+console.log('[AGENT] Agent Mode Grid system initialized with tool-based icons');
+console.log('[AGENT] Run window.testAgentMode() in console to test icons');
 
 
 

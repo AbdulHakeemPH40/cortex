@@ -651,13 +651,16 @@ class GitPanelWidget(QWidget):
                 background: {_DARK_BG_SIDEBAR};
             }}
             QScrollBar:vertical {{
-                width: 8px;
-                background: transparent;
+                width: 5px;
+                background: #252525;
             }}
             QScrollBar::handle:vertical {{
                 background: #5a5a5a;
                 border-radius: 4px;
                 min-height: 20px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: #6a6a6a;
             }}
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
                 height: 0;

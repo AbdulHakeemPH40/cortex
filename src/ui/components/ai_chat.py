@@ -1164,6 +1164,87 @@ class AIChatWidget(QWidget):
         """Hide indexing status in the chat UI."""
         self._view.page().runJavaScript("if(window.hideIndexingStatus) window.hideIndexingStatus();")
 
+    # ================================================
+    # AGENT MODE GRID - Dynamic Tool Activation
+    # ================================================
+
+    def show_agent_mode(self):
+        """Show the Agent Mode grid indicator in chat UI."""
+        self._view.page().runJavaScript("if(window.showAgentMode) window.showAgentMode();")
+
+    def hide_agent_mode(self):
+        """Hide the Agent Mode grid indicator in chat UI."""
+        self._view.page().runJavaScript("if(window.hideAgentMode) window.hideAgentMode();")
+
+    def set_active_agent_mode(self, mode: str):
+        """Activate a specific agent mode in the grid.
+        
+        Args:
+            mode: One of: think, read, search, grep, find, explore, surf, dive
+        """
+        safe_mode = json.dumps(mode)
+        self._view.page().runJavaScript(f"if(window.setActiveAgentMode) window.setActiveAgentMode({safe_mode});")
+
+    def clear_active_agent_mode(self):
+        """Clear all active agent mode highlights."""
+        self._view.page().runJavaScript("if(window.clearActiveAgentMode) window.clearActiveAgentMode();")
+
+    def flash_agent_mode(self, mode: str, duration_ms: int = 3000):
+        """Flash an agent mode for a short duration.
+        
+        Args:
+            mode: Mode to activate
+            duration_ms: Duration in milliseconds (default: 3000)
+        """
+        safe_mode = json.dumps(mode)
+        js_code = f"if(window.flashAgentMode) window.flashAgentMode({safe_mode}, {duration_ms});"
+        self._view.page().runJavaScript(js_code)
+
+    def activate_mode_for_tool(self, tool_name: str, custom_label: str = None):
+        """Automatically activate the appropriate mode for a tool.
+        
+        Args:
+            tool_name: Name of the tool being used (e.g., 'code_search', 'read_file')
+            custom_label: Optional custom label to display
+        """
+        safe_tool = json.dumps(tool_name)
+        if custom_label:
+            safe_label = json.dumps(custom_label)
+            js_code = f"if(window.activateModeForTool) window.activateModeForTool({safe_tool}, {safe_label});"
+        else:
+            js_code = f"if(window.activateModeForTool) window.activateModeForTool({safe_tool});"
+        self._view.page().runJavaScript(js_code)
+
+    def show_tool_execution(self, tool_name: str, file_name: str = None, status: str = "running"):
+        """Show tool execution in the agent mode grid with dynamic labeling.
+        
+        Args:
+            tool_name: Name of the tool being executed
+            file_name: Optional file being operated on
+            status: Execution status (running, completed, error)
+        """
+        safe_tool = json.dumps(tool_name)
+        safe_file = json.dumps(file_name or "")
+        safe_status = json.dumps(status)
+        js_code = f"if(window.showToolExecution) window.showToolExecution({safe_tool}, {safe_file}, {safe_status});"
+        self._view.page().runJavaScript(js_code)
+
+    def update_agent_mode_label(self, mode: str, label: str):
+        """Update the display label for an agent mode.
+        
+        Args:
+            mode: Mode to update (think, read, search, grep, find, explore, surf, dive)
+            label: New label text
+        """
+        safe_mode = json.dumps(mode)
+        safe_label = json.dumps(label)
+        js_code = f"if(window.updateAgentModeLabel) window.updateAgentModeLabel({safe_mode}, {safe_label});"
+        self._view.page().runJavaScript(js_code)
+
+    def reset_agent_mode_labels(self):
+        """Reset all agent mode labels to their defaults."""
+        self._view.page().runJavaScript("if(window.resetAgentModeLabels) window.resetAgentModeLabels();")
+
     def clear_project_info(self):
         """Clear project-specific info from the chat UI."""
         self._current_project_path = ""

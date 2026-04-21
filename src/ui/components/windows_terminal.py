@@ -100,6 +100,7 @@ class WindowsTerminalWidget(QWidget):
         self._render_timer = QTimer(self)
         self._render_timer.timeout.connect(self._render_buffers)
         self._render_timer.start(30)  # ~33fps refresh rate
+        self._idle_ticks = 0  # count consecutive empty renders for adaptive throttle
     
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -421,6 +422,8 @@ class WindowsTerminalWidget(QWidget):
             
     def _render_buffers(self):
         """Render any buffered stdout/stderr text and clear buffers."""
+        has_data = bool(self._stdout_buffer or self._stderr_buffer)
+
         if self._stdout_buffer:
             text = self._stdout_buffer.decode("utf-8", errors="replace")
             self._stdout_buffer.clear()
@@ -430,6 +433,18 @@ class WindowsTerminalWidget(QWidget):
             text = self._stderr_buffer.decode("utf-8", errors="replace")
             self._stderr_buffer.clear()
             self._append_ansi(text, is_stderr=True)
+
+        # Adaptive throttle: speed up when active, slow down when idle
+        if has_data:
+            self._idle_ticks = 0
+            if self._render_timer.interval() != 30:
+                self._render_timer.setInterval(30)   # active: ~33 fps
+        else:
+            self._idle_ticks += 1
+            if self._idle_ticks == 10 and self._render_timer.interval() < 60:
+                self._render_timer.setInterval(60)    # slight idle: ~16 fps
+            elif self._idle_ticks == 50 and self._render_timer.interval() < 150:
+                self._render_timer.setInterval(150)   # deep idle: ~7 fps
     
     def _append_ansi(self, text: str, is_stderr: bool = False):
         """Append text with ANSI escape sequence parsing."""

@@ -113,6 +113,48 @@ def read_file_sync_with_metadata(path: str) -> Dict[str, Any]:
         "lineEndings": endings,
     }
 
+def atomic_edit(path: str, old_string: str, new_string: str, replace_all: bool) -> bool:
+    """Atomically edit a file by replacing old_string with new_string.
+    Returns True if successful, False otherwise.
+    """
+    try:
+        with open(path, 'r') as f:
+            content = f.read()
+        
+        if old_string not in content:
+            return False
+        
+        new_content = content.replace(old_string, new_string) if replace_all else content.replace(old_string, new_string, 1)
+        
+        # Write to temp file
+        temp_path = f"{path}.tmp"
+        with open(temp_path, 'w') as temp:
+            temp.write(new_content)
+        
+        # Atomic replace
+        os.replace(temp_path, path)
+        return True
+    except Exception as e:
+        print(f"Atomic edit failed: {e}")
+        return False
+
+def verify_edit(path: str, old_string: str, new_string: str, replace_all: bool) -> bool:
+    """Verify that the edit was applied correctly.
+    Returns True if the edit is verified, False otherwise.
+    """
+    try:
+        with open(path, 'r') as f:
+            content = f.read()
+        
+        if replace_all:
+            return old_string not in content and new_string in content
+        else:
+            # For single replace, ensure old_string is gone and new_string is present
+            return old_string not in content and new_string in content
+    except Exception as e:
+        print(f"Edit verification failed: {e}")
+        return False
+
 def write_text_content(path: str, content: str, encoding: str, line_endings: str) -> None:
     """Write text content with specified encoding and line endings."""
     if line_endings == "CRLF":

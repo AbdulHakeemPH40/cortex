@@ -701,8 +701,8 @@
 
 /* Liquid/fluid scrollbar styling */
 .diff-content::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
 }
 
 .diff-content::-webkit-scrollbar-track {
@@ -1240,7 +1240,7 @@
 }
 
 .term-output-body::-webkit-scrollbar {
-    width: 4px;
+    width: 6px;
 }
 
 .term-output-body::-webkit-scrollbar-track {
@@ -1714,7 +1714,7 @@
 }
 
 .activity-list::-webkit-scrollbar {
-    width: 4px;
+    width: 6px;
 }
 
 .activity-list::-webkit-scrollbar-track {
@@ -2119,7 +2119,7 @@
 }
 
 .ptree-list::-webkit-scrollbar {
-    width: 4px;
+    width: 6px;
 }
 
 .ptree-list::-webkit-scrollbar-track {

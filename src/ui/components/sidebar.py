@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy, QComboBox, QSlider, QStyledItemDelegate, QStyle,
     QApplication
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QDir, QModelIndex, QSize, QRect, QTimer
+from PyQt6.QtCore import Qt, pyqtSignal, QDir, QModelIndex, QSize, QRect, QTimer, QThread
 from PyQt6.QtGui import (
     QIcon, QAction, QFont, QFileSystemModel, QColor, QPainter,
     QFontMetrics, QPalette
@@ -330,6 +330,30 @@ QTreeView::branch:open:has-children:has-siblings  {
     image: none;
     border-image: none;
 }
+/* Dark scrollbar styling */
+QTreeView QScrollBar:vertical {
+    background: #252525;
+    width: 5px;
+    border: none;
+}
+QTreeView QScrollBar::handle:vertical {
+    background: #5a5a5a;
+    min-height: 20px;
+    border-radius: 5px;
+    margin: 2px;
+}
+QTreeView QScrollBar::handle:vertical:hover {
+    background: #6a6a6a;
+}
+QTreeView QScrollBar::add-line:vertical,
+QTreeView QScrollBar::sub-line:vertical {
+    height: 0px;
+    background: none;
+}
+QTreeView QScrollBar::add-page:vertical,
+QTreeView QScrollBar::sub-page:vertical {
+    background: none;
+}
 """
 
 TREE_QSS_LIGHT = """
@@ -356,6 +380,30 @@ QTreeView::item:selected   {
 }
 QTreeView::branch {
     background: #ffffff;
+}
+/* Light scrollbar styling */
+QTreeView QScrollBar:vertical {
+    background: #f3f3f3;
+    width: 10px;
+    border: none;
+}
+QTreeView QScrollBar::handle:vertical {
+    background: #c0c0c0;
+    min-height: 20px;
+    border-radius: 5px;
+    margin: 2px;
+}
+QTreeView QScrollBar::handle:vertical:hover {
+    background: #a0a0a0;
+}
+QTreeView QScrollBar::add-line:vertical,
+QTreeView QScrollBar::sub-line:vertical {
+    height: 0px;
+    background: none;
+}
+QTreeView QScrollBar::add-page:vertical,
+QTreeView QScrollBar::sub-page:vertical {
+    background: none;
 }
 """
 
@@ -618,7 +666,6 @@ class VsCodeFileTree(QTreeView):
                         else:
                             self.expand(index)
                         QTimer.singleShot(50, self.viewport().update)
-                        # We still want to select it
                         self.setCurrentIndex(index)
                         return
                 else:
@@ -634,9 +681,7 @@ class VsCodeFileTree(QTreeView):
                         # Since the CodeEditor explicitly tries to steal focus when opened,
                         # we must assertively steal it back.
                         self.setFocus()
-                        QTimer.singleShot(10, self.setFocus)
-                        QTimer.singleShot(100, self.setFocus)
-                        QTimer.singleShot(250, self.setFocus)
+                        QTimer.singleShot(50, self.setFocus)
         super().mousePressEvent(event)
 
 
@@ -771,8 +816,12 @@ class FileExplorerPanel(QWidget):
         # Repaint after expand/collapse so open-folder icon updates
         self._tree.expanded.connect(self._on_expanded)
         self._tree.collapsed.connect(self._on_collapsed)
-        # Repaint when async directory listing finishes loading
-        self._model.directoryLoaded.connect(lambda _: self._tree.viewport().update())
+        # Repaint when async directory listing finishes loading (debounced)
+        self._viewport_update_timer = QTimer(self)
+        self._viewport_update_timer.setSingleShot(True)
+        self._viewport_update_timer.setInterval(50)
+        self._viewport_update_timer.timeout.connect(lambda: self._tree.viewport().update())
+        self._model.directoryLoaded.connect(lambda _: self._viewport_update_timer.start())
         # Connect file deletion signal
         self._tree.file_deleted.connect(self.file_deleted)
 
@@ -785,6 +834,9 @@ class FileExplorerPanel(QWidget):
         self._tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
 
         layout.addWidget(self._tree)
+        
+        # Apply initial scrollbar styling
+        self.set_theme(True)
         self._tree_visible = True
 
     # ── Public ────────────────────────────────────────────────────────────────
@@ -926,16 +978,45 @@ class FileExplorerPanel(QWidget):
         for btn in [self._btn_new_file, self._btn_new_folder, self._btn_refresh]:
             btn.setStyleSheet(btn_qss)
 
+        # Apply scrollbar styling to the panel (affects all scrollbars within)
+        scrollbar_bg = "#1e1e1e" if is_dark else "#f3f3f3"
+        scrollbar_handle = "#4a4a4a" if is_dark else "#c0c0c0"
+        scrollbar_handle_hover = "#5a5a5a" if is_dark else "#a0a0a0"
+        
+        self.setStyleSheet(f"""
+            FileExplorerPanel QScrollBar:vertical {{
+                background: {scrollbar_bg};
+                width: 10px;
+                border: none;
+            }}
+            FileExplorerPanel QScrollBar::handle:vertical {{
+                background: {scrollbar_handle};
+                min-height: 20px;
+                border-radius: 5px;
+                margin: 2px;
+            }}
+            FileExplorerPanel QScrollBar::handle:vertical:hover {{
+                background: {scrollbar_handle_hover};
+            }}
+            FileExplorerPanel QScrollBar::add-line:vertical,
+            FileExplorerPanel QScrollBar::sub-line:vertical {{
+                height: 0px;
+                background: none;
+            }}
+            FileExplorerPanel QScrollBar::add-page:vertical,
+            FileExplorerPanel QScrollBar::sub-page:vertical {{
+                background: none;
+            }}
+        """)
+
         self._tree.viewport().update()
 
     # ── Private ───────────────────────────────────────────────────────────────
     def _on_expanded(self, index: QModelIndex):
-        from PyQt6.QtCore import QTimer
-        QTimer.singleShot(30, self._tree.viewport().update)
+        self._viewport_update_timer.start()
 
     def _on_collapsed(self, index: QModelIndex):
-        from PyQt6.QtCore import QTimer
-        QTimer.singleShot(30, self._tree.viewport().update)
+        self._viewport_update_timer.start()
 
     def _is_explorer_focused(self) -> bool:
         focused = QApplication.focusWidget()
@@ -1305,6 +1386,43 @@ class FileExplorerPanel(QWidget):
             shutil.copy2(str(src), str(dest))
 
 
+class _FileSearchWorker(QThread):
+    """Background worker for file-content search so the UI stays responsive."""
+    results_ready = pyqtSignal(list)  # list of (rel, fpath, lineno, snippet)
+
+    def __init__(self, query: str, root: str):
+        super().__init__()
+        self._query = query.lower()
+        self._root = root
+
+    def run(self):
+        results = []
+        skip_dirs = {'.git', '__pycache__', 'node_modules', 'venv', '.venv'}
+        for dirpath, dirnames, files in os.walk(self._root):
+            if self.isInterruptionRequested():
+                break
+            # Prune skipped dirs in-place for os.walk
+            dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+            for fname in files:
+                if self.isInterruptionRequested():
+                    break
+                fpath = os.path.join(dirpath, fname)
+                try:
+                    with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
+                        for lineno, line in enumerate(f, 1):
+                            if self._query in line.lower():
+                                rel = os.path.relpath(fpath, self._root)
+                                results.append((rel, fpath, lineno, line.strip()[:60]))
+                                if len(results) >= 200:
+                                    break
+                except Exception:
+                    pass
+                if len(results) >= 200:
+                    break
+            if len(results) >= 200:
+                break
+        self.results_ready.emit(results)
+
 
 class SearchPanel(QWidget):
     file_opened = pyqtSignal(str, int)  # path, line number
@@ -1345,27 +1463,25 @@ class SearchPanel(QWidget):
         if not query or not self._root:
             return
         self._results.clear()
-        found = 0
-        for dirpath, _, files in os.walk(self._root):
-            if any(skip in dirpath for skip in ['.git', '__pycache__', 'node_modules', 'venv', '.venv']):
-                continue
-            for fname in files:
-                fpath = os.path.join(dirpath, fname)
-                try:
-                    with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
-                        for lineno, line in enumerate(f, 1):
-                            if query.lower() in line.lower():
-                                rel = os.path.relpath(fpath, self._root)
-                                item = QListWidgetItem(f"{rel}:{lineno}  {line.strip()[:60]}")
-                                item.setData(Qt.ItemDataRole.UserRole, (fpath, lineno))
-                                self._results.addItem(item)
-                                found += 1
-                                if found >= 200:
-                                    break
-                except Exception:
-                    pass
-                if found >= 200:
-                    break
+        self._status.setText("Searching...")
+
+        # Cancel any previous worker
+        if hasattr(self, '_search_worker') and self._search_worker is not None and self._search_worker.isRunning():
+            self._search_worker.requestInterruption()
+            self._search_worker.wait(500)
+
+        self._search_worker = _FileSearchWorker(query, self._root)
+        self._search_worker.results_ready.connect(self._on_search_results)
+        self._search_worker.start()
+
+    def _on_search_results(self, results: list):
+        """Receive search results from background thread."""
+        self._results.clear()
+        for rel, fpath, lineno, snippet in results:
+            item = QListWidgetItem(f"{rel}:{lineno}  {snippet}")
+            item.setData(Qt.ItemDataRole.UserRole, (fpath, lineno))
+            self._results.addItem(item)
+        found = len(results)
         self._status.setText(f"{found} result(s)" + (" (limited)" if found >= 200 else ""))
 
     def _open_result(self, item: QListWidgetItem):

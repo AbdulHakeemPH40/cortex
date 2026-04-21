@@ -3,6 +3,7 @@ Cortex AI Agent IDE — Main Window
 Full 3-panel layout: Sidebar | Editor Tabs | AI Chat + Terminal
 """
 
+import json
 import os
 import sys
 import platform
@@ -15,7 +16,7 @@ from PyQt6.QtWidgets import (
     QFrame, QSizePolicy, QApplication, QListWidget, QListWidgetItem, QComboBox, QDialog,
     QStackedWidget, QScrollArea, QTreeView, QLineEdit
 )
-from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtSlot, QTimer, QRect, QProcessEnvironment, QSignalBlocker, QEventLoop, QDir, QModelIndex
+from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtSlot, QTimer, QRect, QProcessEnvironment, QSignalBlocker, QEventLoop, QDir, QModelIndex, QThread
 from PyQt6.QtGui import QFileSystemModel, QAction, QKeySequence, QIcon, QFont, QPainter, QColor, QMouseEvent, QCloseEvent, QPixmap
 from PyQt6.QtWebEngineCore import QWebEnginePage
 
@@ -36,6 +37,113 @@ except ImportError:
 
 # File tree delegate for chevron arrows
 from src.ui.components.sidebar import FileTreeDelegate
+import subprocess as _subprocess
+import logging as _logging
+
+_log = _logging.getLogger(__name__)
+
+
+class _GitStatusWorker(QThread):
+    """Background worker that collects git status without blocking the UI."""
+    status_ready = pyqtSignal(dict)
+
+    def __init__(self, repo_path: str, git_manager, gh_cached: object = None):
+        super().__init__()
+        self._repo_path = repo_path
+        self._git_manager = git_manager
+        self._gh_cached = gh_cached  # None = not checked yet
+
+    # ---- helpers (run off-thread) ------------------------------------
+    @staticmethod
+    def _parse_numstat(output: str):
+        for line in output.strip().splitlines():
+            parts = line.split('\t')
+            if len(parts) >= 2:
+                try:
+                    a = int(parts[0]) if parts[0] != '-' else 0
+                    d = int(parts[1]) if parts[1] != '-' else 0
+                    return a, d
+                except ValueError:
+                    pass
+        return 0, 0
+
+    def _get_file_diff_stats(self, file_path: str):
+        total_add, total_del = 0, 0
+        try:
+            r = _subprocess.run(
+                ["git", "diff", "--numstat", file_path],
+                cwd=self._repo_path, capture_output=True, text=True, timeout=5
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                a, d = self._parse_numstat(r.stdout)
+                total_add += a; total_del += d
+        except Exception:
+            pass
+        try:
+            r = _subprocess.run(
+                ["git", "diff", "--cached", "--numstat", file_path],
+                cwd=self._repo_path, capture_output=True, text=True, timeout=5
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                a, d = self._parse_numstat(r.stdout)
+                total_add += a; total_del += d
+        except Exception:
+            pass
+        return total_add, total_del
+
+    # ---- main work (runs in QThread) --------------------------------
+    def run(self):
+        data = {}
+        # 1) branch name
+        try:
+            r = _subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=self._repo_path, capture_output=True, text=True, timeout=5
+            )
+            data['branch'] = r.stdout.strip() if r.returncode == 0 else None
+        except Exception:
+            data['branch'] = None
+
+        # 2) git file status
+        try:
+            git_files = self._git_manager.get_status()
+        except Exception:
+            git_files = []
+        data['git_files'] = git_files
+        data['unstaged'] = sum(1 for f in git_files if not f.staged)
+        data['untracked'] = sum(1 for f in git_files if f.status.name == 'UNTRACKED')
+        data['staged'] = sum(1 for f in git_files if f.staged)
+        data['total'] = len(git_files)
+
+        # 3) gh cli (cache-aware)
+        if self._gh_cached is not None:
+            data['gh'] = self._gh_cached
+        else:
+            try:
+                r = _subprocess.run(
+                    ["gh", "--version"], capture_output=True, text=True, timeout=5
+                )
+                if r.returncode == 0:
+                    data['gh'] = r.stdout.strip().split('\n')[0]
+                else:
+                    data['gh'] = ''
+            except FileNotFoundError:
+                data['gh'] = ''
+            except Exception:
+                data['gh'] = ''
+
+        # 4) per-file diff stats (batched, max 100)
+        file_stats = []
+        seen = set()
+        for gf in git_files[:100]:
+            if gf.path in seen:
+                continue
+            seen.add(gf.path)
+            a, d = self._get_file_diff_stats(gf.path)
+            file_stats.append((gf, a, d))
+        data['file_stats'] = file_stats
+
+        self.status_ready.emit(data)
 
 
 class CodeAnalyzer:
@@ -649,11 +757,6 @@ class CortexMainWindow(QMainWindow):
         self._restore_session()
         log.info("MainWindow: Initialization complete.")
 
-        # Heartbeat to check for event loop hang
-        self._heartbeat_timer = QTimer(self)
-        self._heartbeat_timer.timeout.connect(lambda: None)  # keep event loop alive, no logging
-        self._heartbeat_timer.start(2000)
-
         # Enable drag and drop of folders/files onto the main window
         self.setAcceptDrops(True)
 
@@ -682,6 +785,7 @@ class CortexMainWindow(QMainWindow):
         ]
 
         icon = QIcon()
+        found_icon = False
         for candidate in icon_candidates:
             if os.path.exists(candidate):
                 from PyQt6.QtGui import QPixmap
@@ -690,13 +794,21 @@ class CortexMainWindow(QMainWindow):
                 if not pm.isNull():
                     for sz in [16, 32, 48, 64, 128, 256]:
                         icon.addPixmap(pm.scaled(sz, sz, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+                    found_icon = True
+                    log.info(f"[ICON] Successfully loaded icon: {candidate}")
                     break
+
+        if not found_icon:
+            log.error(f"[ICON] No valid icon found in candidates: {icon_candidates}")
+            log.error(f"[ICON] Checked paths: {[os.path.abspath(candidate) for candidate in icon_candidates]}")
 
         if not icon.isNull():
             self.setWindowIcon(icon)
             # Also set app-level icon for taskbar grouping
             from PyQt6.QtWidgets import QApplication
             QApplication.instance().setWindowIcon(icon)
+        else:
+            log.error("[ICON] Failed to set window icon: QIcon is null")
 
         # Window geometry
         w = self._settings.get("window", "width") or 1400
@@ -1124,11 +1236,13 @@ class CortexMainWindow(QMainWindow):
         # Initialize Git summary after UI is built
         QTimer.singleShot(500, self._update_git_summary)
         
-        # Auto-refresh git status every 10 seconds to detect push/commit from terminal
+        # Auto-refresh git status every 30 seconds to detect push/commit from terminal
         self._git_refresh_timer = QTimer(self)
-        self._git_refresh_timer.setInterval(10000)  # 10 seconds
+        self._git_refresh_timer.setInterval(30000)  # 30 seconds
         self._git_refresh_timer.timeout.connect(self._update_git_summary)
         self._git_refresh_timer.start()
+        self._git_worker = None          # guard: only one worker at a time
+        self._gh_version_cache = None    # cache gh --version across session
 
     def _show_welcome(self):
         """Show a VS Code-like welcome screen in the editor tabs."""
@@ -1431,26 +1545,58 @@ class CortexMainWindow(QMainWindow):
 
         # Chat list with editable titles and delete functionality
         self._sidebar_chat_list = QListWidget()
+        self._sidebar_chat_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._sidebar_chat_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._sidebar_chat_list.setUniformItemSizes(True)
+        self._sidebar_chat_list.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding
+        )
         self._sidebar_chat_list.setStyleSheet(f"""
             QListWidget {{
                 background-color: transparent;
                 border: none;
                 color: {text_color};
                 font-size: 13px;
+                outline: none;
             }}
             QListWidget::item {{
-                padding: 6px 12px;
-                color: {muted_color};
+                padding: 0px;
                 border-radius: 4px;
                 margin: 2px 8px;
             }}
             QListWidget::item:selected {{
                 background-color: #2d2d2d;
-                color: {text_color};
             }}
             QListWidget::item:hover {{
                 background-color: #252525;
             }}
+        """)
+        # Style scrollbar directly on the scrollbar widget — most reliable approach
+        self._sidebar_chat_list.verticalScrollBar().setStyleSheet("""
+            QScrollBar:vertical {
+                background: #252525;
+                width: 6px;
+                border: none;
+                margin: 0px;
+            }
+            QScrollBar::handle:vertical {
+                background: #5a5a5a;
+                min-height: 20px;
+                border-radius: 3px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #6a6a6a;
+            }
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {
+                height: 0px;
+                background: none;
+            }
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {
+                background: none;
+            }
         """)
         
         # Double-click to rename, right-click for context menu, click to load chat
@@ -1736,17 +1882,17 @@ class CortexMainWindow(QMainWindow):
             QScrollBar:vertical {
                 border: none;
                 background: #252525;
-                width: 12px;
+                width: 5px;
                 margin: 0px;
                 border-radius: 6px;
             }
             QScrollBar::handle:vertical {
-                background: #4d78cc;
+                background: #5a5a5a;
                 min-height: 30px;
                 border-radius: 6px;
             }
             QScrollBar::handle:vertical:hover {
-                background: #5d88dd;
+                background: #6a6a6a;
             }
             QScrollBar::add-line:vertical,
             QScrollBar::sub-line:vertical {
@@ -1789,7 +1935,7 @@ class CortexMainWindow(QMainWindow):
         self._review_stack.setCurrentIndex(1)
 
     def _update_git_summary(self):
-        """Update Summary panel with real Git status."""
+        """Kick off a background thread to collect git status (non-blocking)."""
         if not hasattr(self, '_git_manager'):
             log.warning("[GIT] GitManager not available")
             self._set_no_git_status()
@@ -1800,57 +1946,58 @@ class CortexMainWindow(QMainWindow):
             self._set_no_git_status()
             return
 
-        log.info("[GIT] Updating git summary...")
-        
-        # Get current branch name
-        try:
-            import subprocess
-            result = subprocess.run(
-                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                cwd=self._git_manager._repo_path,
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if result.returncode == 0:
-                branch_name = result.stdout.strip()
-                self._branch_name_label.setText(f"🌿 {branch_name}")
-                self._branch_name_label.setStyleSheet("color: #4ec94e; font-size: 13px; padding: 4px 0;")
-            else:
-                self._branch_name_label.setText("🌿 Unknown branch")
-                self._branch_name_label.setStyleSheet("color: #888888; font-size: 13px; padding: 4px 0;")
-        except Exception as e:
-            log.warning(f"[GIT] Failed to get branch name: {e}")
+        # Guard: skip if a worker is already running
+        if self._git_worker is not None and self._git_worker.isRunning():
+            return
+
+        log.info("[GIT] Updating git summary (background)...")
+        self._git_worker = _GitStatusWorker(
+            self._git_manager._repo_path,
+            self._git_manager,
+            gh_cached=self._gh_version_cache,
+        )
+        self._git_worker.status_ready.connect(self._on_git_status_ready)
+        self._git_worker.start()
+
+    @pyqtSlot(dict)
+    def _on_git_status_ready(self, data: dict):
+        """Receive git data from background worker and update UI labels."""
+        # Branch
+        branch = data.get('branch')
+        if branch:
+            self._branch_name_label.setText(f"🌿 {branch}")
+            self._branch_name_label.setStyleSheet("color: #4ec94e; font-size: 13px; padding: 4px 0;")
+        else:
             self._branch_name_label.setText("🌿 Unknown branch")
             self._branch_name_label.setStyleSheet("color: #888888; font-size: 13px; padding: 4px 0;")
-        
-        # Get git status
-        git_files = self._git_manager.get_status()
-        log.info(f"[GIT] Found {len(git_files)} changed files")
 
-        # Check GitHub CLI availability
-        self._check_github_cli()
+        # GitHub CLI (cache the result for the session)
+        gh = data.get('gh', '')
+        self._gh_version_cache = gh
+        if gh:
+            self._github_status_label.setText(f"🐙 {gh}")
+            self._github_status_label.setStyleSheet("color: #4ec94e; font-size: 13px; padding: 8px 0;")
+        else:
+            self._github_status_label.setText("🐙 GitHub CLI not installed")
+            self._github_status_label.setStyleSheet("color: #888888; font-size: 13px; padding: 8px 0;")
 
-        # Count files by status
-        unstaged_count = sum(1 for f in git_files if not f.staged)
-        untracked_count = sum(1 for f in git_files if f.status.name == 'UNTRACKED')
-        staged_count = sum(1 for f in git_files if f.staged)
-        total_changes = len(git_files)
-
-        # Update changes label
-        if total_changes > 0:
-            self._changes_label.setText(f"✏️ {unstaged_count} unstaged, {untracked_count} untracked, {staged_count} staged")
+        # Changes summary
+        total = data.get('total', 0)
+        unstaged = data.get('unstaged', 0)
+        untracked = data.get('untracked', 0)
+        staged = data.get('staged', 0)
+        if total > 0:
+            self._changes_label.setText(f"✏️ {unstaged} unstaged, {untracked} untracked, {staged} staged")
             self._changes_label.setStyleSheet("color: #e6a817; font-size: 13px; padding: 4px 0;")
         else:
             self._changes_label.setText("✏️ No changes")
             self._changes_label.setStyleSheet("color: #4ec94e; font-size: 13px; padding: 4px 0;")
 
-        # Update unstaged count in Review tab
         if hasattr(self, '_unstaged_count_label'):
-            self._unstaged_count_label.setText(f"{unstaged_count} ▾")
+            self._unstaged_count_label.setText(f"{unstaged} ▾")
 
-        # Update file list in Review tab
-        self._update_review_file_list(git_files)
+        # Update review file list from pre-computed stats
+        self._update_review_file_list_from_stats(data.get('file_stats', []), data.get('git_files', []))
     
     def _set_no_git_status(self):
         """Set all git status labels to 'no repository' state."""
@@ -1867,31 +2014,17 @@ class CortexMainWindow(QMainWindow):
             self._unstaged_count_label.setText("0 ▾")
 
     def _check_github_cli(self):
-        """Check if GitHub CLI is available."""
-        try:
-            import subprocess
-            result = subprocess.run(
-                ["gh", "--version"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if result.returncode == 0:
-                version = result.stdout.strip().split('\n')[0]
-                self._github_status_label.setText(f"🐙 {version}")
-                self._github_status_label.setStyleSheet("color: #4ec94e; font-size: 13px; padding: 8px 0;")
-            else:
-                self._github_status_label.setText("🐙 GitHub CLI not installed")
-                self._github_status_label.setStyleSheet("color: #888888; font-size: 13px; padding: 8px 0;")
-        except FileNotFoundError:
-            self._github_status_label.setText("🐙 GitHub CLI not installed")
-            self._github_status_label.setStyleSheet("color: #888888; font-size: 13px; padding: 8px 0;")
-        except Exception:
-            self._github_status_label.setText("🐙 GitHub CLI unavailable")
-            self._github_status_label.setStyleSheet("color: #888888; font-size: 13px; padding: 8px 0;")
+        """Legacy stub — gh check now runs inside _GitStatusWorker."""
+        pass
 
     def _update_review_file_list(self, git_files):
-        """Update Review tab with actual file changes."""
+        """Legacy entry — delegates to stats-based variant."""
+        # Kept for any external callers; runs with empty stats (no diff numbers)
+        stats = [(gf, 0, 0) for gf in git_files[:100]]
+        self._update_review_file_list_from_stats(stats, git_files)
+
+    def _update_review_file_list_from_stats(self, file_stats, git_files):
+        """Update Review tab using pre-computed diff stats (no subprocess on UI thread)."""
         # Clear existing file list
         while self._file_list_layout.count():
             child = self._file_list_layout.takeAt(0)
@@ -1902,59 +2035,47 @@ class CortexMainWindow(QMainWindow):
             no_changes = QLabel("No changed files")
             no_changes.setStyleSheet("color: #888888; font-size: 13px; padding: 8px 0;")
             self._file_list_layout.addWidget(no_changes)
-            self._file_list_layout.addStretch()  # pin to top
+            self._file_list_layout.addStretch()
             self._diff_notice.hide()
             return
 
-        # Show large diff notice if many changes
         if len(git_files) > 50:
             self._diff_notice.show()
         else:
             self._diff_notice.hide()
 
-        # Track unique filenames to avoid duplicates
-        seen_files = set()
         added_count = 0
-        
-        # Add each file with diff stats (deduplicated)
-        for git_file in git_files[:100]:
-            if git_file.path in seen_files:
+        for gf, additions, deletions in file_stats:
+            if additions == 0 and deletions == 0:
                 continue
-            seen_files.add(git_file.path)
-            
-            file_widget = self._create_file_diff_item(git_file)
+            file_widget = self._create_file_diff_item_from_stats(gf, additions, deletions)
             if file_widget:
                 self._file_list_layout.addWidget(file_widget)
                 added_count += 1
-        
+
         if added_count == 0:
             no_changes = QLabel("No files with changes")
             no_changes.setStyleSheet("color: #888888; font-size: 13px; padding: 8px 0;")
             self._file_list_layout.addWidget(no_changes)
-        
-        # Always add stretch at the end to keep files pinned to top
+
         self._file_list_layout.addStretch()
 
     def _create_file_diff_item(self, git_file) -> QWidget:
-        """Create a file diff item widget."""
-        # Get diff stats
+        """Legacy wrapper — gets diff stats inline (kept for compatibility)."""
         additions, deletions = self._get_file_diff_stats(git_file.path)
-        
-        # Skip files with no actual changes (0 additions and 0 deletions)
+        return self._create_file_diff_item_from_stats(git_file, additions, deletions)
+
+    def _create_file_diff_item_from_stats(self, git_file, additions: int, deletions: int) -> QWidget:
+        """Create a file diff item widget from pre-computed stats."""
         if additions == 0 and deletions == 0:
-            return None
-        
-        # Also skip purely untracked files with no content
-        if git_file.status.name == 'UNTRACKED' and additions == 0 and deletions == 0:
             return None
 
         file_item = QWidget()
-        file_item.setFixedHeight(28)  # Compact height
+        file_item.setFixedHeight(28)
         file_layout = QHBoxLayout(file_item)
-        file_layout.setContentsMargins(0, 2, 0, 2)  # Minimal vertical padding
+        file_layout.setContentsMargins(0, 2, 0, 2)
         file_layout.setSpacing(8)
 
-        # File name (only filename, not full path)
         from pathlib import Path
         filename = Path(git_file.path).name
         file_name = QLabel(filename)
@@ -1963,7 +2084,6 @@ class CortexMainWindow(QMainWindow):
 
         file_layout.addStretch()
 
-        # Show diff stats only if there are changes
         if additions > 0:
             additions_label = QLabel(f"+{additions}")
             additions_label.setStyleSheet("color: #4ec94e; font-size: 13px; font-weight: 500;")
@@ -1974,7 +2094,6 @@ class CortexMainWindow(QMainWindow):
             deletions_label.setStyleSheet("color: #e05252; font-size: 13px; font-weight: 500;")
             file_layout.addWidget(deletions_label)
 
-        # Expand icon
         expand_icon = QLabel("▾")
         expand_icon.setStyleSheet("color: #888888; font-size: 12px;")
         file_layout.addWidget(expand_icon)
@@ -2103,17 +2222,17 @@ class CortexMainWindow(QMainWindow):
             QScrollBar:vertical {
                 border: none;
                 background: #252525;
-                width: 12px;
+                width: 5px;
                 margin: 0px;
                 border-radius: 6px;
             }
             QScrollBar::handle:vertical {
-                background: #4d78cc;
+                background: #5a5a5a;
                 min-height: 30px;
                 border-radius: 6px;
             }
             QScrollBar::handle:vertical:hover {
-                background: #5d88dd;
+                background: #6a6a6a;
             }
             QScrollBar::add-line:vertical,
             QScrollBar::sub-line:vertical {
@@ -2192,8 +2311,12 @@ class CortexMainWindow(QMainWindow):
         for col in (1, 2, 3):
             self._file_tree.setColumnHidden(col, True)
 
-        # Connect signals for tree updates (from sidebar.py)
-        self._file_model.directoryLoaded.connect(lambda _: self._file_tree.viewport().update())
+        # Connect signals for tree updates (debounced viewport repaints)
+        self._file_tree_update_timer = QTimer(self)
+        self._file_tree_update_timer.setSingleShot(True)
+        self._file_tree_update_timer.setInterval(50)
+        self._file_tree_update_timer.timeout.connect(lambda: self._file_tree.viewport().update())
+        self._file_model.directoryLoaded.connect(lambda _: self._file_tree_update_timer.start())
         self._file_tree.expanded.connect(self._on_tree_expanded)
         self._file_tree.collapsed.connect(self._on_tree_collapsed)
         
@@ -2236,11 +2359,11 @@ class CortexMainWindow(QMainWindow):
 
     def _on_tree_expanded(self, index: QModelIndex):
         """Handle tree item expansion."""
-        QTimer.singleShot(30, self._file_tree.viewport().update)
+        self._file_tree_update_timer.start()
 
     def _on_tree_collapsed(self, index: QModelIndex):
         """Handle tree item collapse."""
-        QTimer.singleShot(30, self._file_tree.viewport().update)
+        self._file_tree_update_timer.start()
 
     def _on_tree_clicked(self, index: QModelIndex):
         """Handle single-click to toggle folder expansion."""
@@ -5447,6 +5570,11 @@ class CortexMainWindow(QMainWindow):
             log.warning(f"Failed to load chats for project {folder_path}: {e}")
             chats_json = "[]"
         
+        # Populate Qt sidebar with loaded chats immediately
+        if chats_json and chats_json != "[]":
+            log.info(f"[ChatList] Initial population with {len(json.loads(chats_json))} chats")
+            self._refresh_sidebar_chat_list(chats_json)
+        
         # Update project indicator in AI chat (this triggers project-specific chat loading)
         self._ai_chat.set_project_info(project_name, folder_path, chats_json)
         
@@ -6401,6 +6529,14 @@ class CortexMainWindow(QMainWindow):
             return "auto"
 
     def _on_title_generated(self, conversation_id: str, title: str):
+        """Update the chat title in the sidebar when a new title is generated.
+        
+        Args:
+            conversation_id: The ID of the conversation.
+            title: The new title for the chat.
+        """
+        # Update the sidebar chat list with the new title
+        self._refresh_sidebar_chat_list()
         """Handle auto-generated title - update chat tab and UI."""
         # Update the chat tab title via JavaScript bridge
         if hasattr(self, '_ai_chat') and hasattr(self._ai_chat, '_view'):

@@ -1906,6 +1906,10 @@ class CortexAgentBridge(QObject):
         except Exception as e:
             log.warning(f"[BRIDGE] Provider pre-warm failed (will lazy-init): {e}")
 
+        # Initialize file_edit_notification signal for WebChannel
+        self.file_edit_notification = pyqtSignal(str, str, str)  # filePath, editType, status
+        log.info("[BRIDGE] file_edit_notification signal initialized")
+
     # ── Initialisation helpers ─────────────────────────────────
 
     def _init_agent_state(self):
@@ -3715,6 +3719,9 @@ Example: LS(path="src/")
                 if card_id:
                     self.file_operation_completed.emit(card_id, full_path, full_new, "edit")
                 self._tool_ctx.mark_file_modified(full_path)
+                
+                # Emit file edit notification for WebChannel
+                self._safe_emit(self.file_edit_notification, full_path, "edit", "complete")
                 await self._refresh_git_diff_stats(full_path)
                 return ToolResult(tool_id=tool_id, result={
                     "path": full_path, "edited": True,
@@ -3741,6 +3748,8 @@ Example: LS(path="src/")
                     "offset": None,
                     "limit": None,
                 }
+                # Emit file edit notification for WebChannel
+                self._safe_emit(self.file_edit_notification, full_path, "edit", "complete")
             except Exception:
                 pass
             self.file_edited_diff.emit(full_path, file_content, new_content)
@@ -3748,6 +3757,9 @@ Example: LS(path="src/")
             if card_id:
                 self.file_operation_completed.emit(card_id, full_path, new_content, "edit")
             self._tool_ctx.mark_file_modified(full_path)
+            
+            # Emit file edit notification for WebChannel
+            self._safe_emit(self.file_edit_notification, full_path, "edit", "complete")
             await self._refresh_git_diff_stats(full_path)
             return ToolResult(tool_id=tool_id, result={"path": full_path, "edited": True})
         except Exception as e:
