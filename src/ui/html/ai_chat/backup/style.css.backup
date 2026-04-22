@@ -1,121 +1,45 @@
 /* ================================================
-   CORTEX UNIFIED DESIGN TOKENS
-   Single source of truth for all AI Chat UI theming
+   CODEX DESIGN TOKENS
    ================================================ */
 
 :root {
-    /* ============================================
-       BACKGROUNDS
-       ============================================ */
-    --bg-void:      #0c0c0e;      /* Deepest background (void) */
-    --bg-base:      #111113;      /* App base */
-    --bg-surface:   #161618;      /* Card surfaces, panels */
-    --bg-elevated:  #1c1c1f;      /* Elevated cards, dropdowns */
-    --bg-float:     #222226;      /* Floating elements, tooltips */
-    --bg-hover:     #27272c;      /* Hover states */
-    --bg-card:      #161618;      /* Card backgrounds (unified) */
-    --bg-code:      #0a0a0a;      /* Terminal/code blocks */
-    --bg-selected:  #2a2a4a;      /* Selected items */
-
-    /* ============================================
-       BORDERS
-       ============================================ */
-    --border:         rgba(255, 255, 255, 0.06);   /* Default borders */
-    --border-light:   rgba(255, 255, 255, 0.10);   /* Subtle dividers */
-    --border-strong:  rgba(255, 255, 255, 0.16);   /* Active/focus borders */
-
-    /* ============================================
-       TEXT
-       ============================================ */
-    --text-main:      #f0f0f2;      /* Primary text (unified) */
-    --text-primary:   #f0f0f2;      /* Alias for main */
-    --text-secondary: #9a9aa8;      /* Secondary labels */
-    --text-dim:       #606068;      /* Tertiary, placeholders */
-    --text-faint:     #363640;      /* Disabled, very subtle */
-    --text-muted:     #888888;      /* Legacy alias */
-
-    /* ============================================
-       ACCENT
-       ============================================ */
-    --accent-primary: #63a0f6;      /* Primary blue (unified) */
-    --accent-dim:     rgba(99, 160, 246, 0.12);   /* Accent backgrounds */
-    --accent-border:  rgba(99, 160, 246, 0.28);   /* Accent borders */
-    --accent-amber:   #f0a500;      /* Legacy amber */
-    --accent-blue:    #4d78cc;      /* Legacy blue */
-
-    /* ============================================
-       SEMANTIC COLORS
-       ============================================ */
-    --green:          #22c55e;      /* Success */
-    --green-bright:   #4ade80;      /* Bright success */
-    --green-bg:       rgba(34, 197, 94, 0.10);
-    --red:            #f87171;      /* Error */
-    --red-bg:         rgba(248, 113, 113, 0.10);
-    --yellow:         #fbbf24;      /* Warning */
-    --yellow-bg:      rgba(251, 191, 36, 0.10);
-    --purple:         #a78bfa;      /* Purple accent */
-    --purple-bg:      rgba(167, 139, 250, 0.12);
-    --cyan:           #22d3ee;      /* Cyan accent */
-
-    /* Diff colors (legacy) */
-    --diff-add-bg:    #1a3a1a;
-    --diff-add-text:  #4ec94e;
+    /* Background Colors */
+    --bg-base: #1a1a1a;
+    --bg-surface: #1e1e1e;
+    --bg-elevated: #252525;
+    --bg-hover: #2d2d2d;
+    --bg-selected: #2a2a4a;
+    
+    /* Border Colors */
+    --border: #2a2a2a;
+    --border-light: #3e3e42;
+    
+    /* Text Colors */
+    --text-primary: #ffffff;
+    --text-secondary: #cccccc;
+    --text-muted: #888888;
+    --text-faint: #555555;
+    
+    /* Accent Colors */
+    --accent-amber: #f0a500;
+    --accent-blue: #4d78cc;
+    
+    /* Diff Colors */
+    --diff-add-bg: #1a3a1a;
+    --diff-add-text: #4ec94e;
     --diff-remove-bg: #3a1a1a;
     --diff-remove-text: #e05252;
-
-    /* ============================================
-       SYNTAX HIGHLIGHTING (Dracula)
-       ============================================ */
-    --dracula-bg:       #282a36;
-    --dracula-bg-light: #44475a;
-    --dracula-text:     #f8f8f2;
-    --dracula-text-faded: #6272a4;
-    --dracula-keyword:  #ff79c6;
-    --dracula-string:   #f1fa8c;
-    --dracula-number:   #bd93f9;
-    --dracula-comment:  #6272a4;
-    --dracula-function: #50fa7b;
-    --dracula-tag:      #ff79c6;
-    --dracula-variable: #f8f8f2;
-    --dracula-class:    #8be9fd;
-    --dracula-const:    #bd93f9;
-    --dracula-import:   #ff79c6;
-    --dracula-builtin:  #8be9fd;
-    --dracula-operator: #ff79c6;
-    --dracula-decorator: #ffb86c;
-    --dracula-regex:    #ffb86c;
-    --dracula-delimiter: #f8f8f2;
-    --dracula-invalid:  #ff5555;
-
-    /* ============================================
-       TYPOGRAPHY
-       ============================================ */
-    --font-ui:    'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    --font-mono:  'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
-    --font-sans:  'Inter', 'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif;
-
-    /* ============================================
-       RADII
-       ============================================ */
-    --radius-sm:  4px;
-    --radius-md:  6px;
-    --radius-lg:  8px;
-    --radius-xl:  12px;
+    
+    /* Typography */
+    --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'Consolas', 'Fira Code', 'Monaco', monospace;
+    
+    /* Spacing */
+    --panel-padding: 12px 16px;
+    --sidebar-item-padding: 6px 12px;
     --input-radius: 12px;
     --button-radius: 8px;
-
-    /* ============================================
-       CARD SIZING
-       ============================================ */
-    --card-header-height:     36px;
-    --terminal-header-height: 32px;
-
-    /* ============================================
-       SPACING
-       ============================================ */
-    --panel-padding:  12px 16px;
-    --sidebar-item-padding: 6px 12px;
-    --tree-indent:    16px;
+    --tree-indent: 16px;
 }
 
 /* ================================================
@@ -757,23 +681,6 @@ body:not(.light-mode) {
     contain: layout style; /* CSS containment for better performance */
 }
 
-/* Streaming Cursor Animation */
-@keyframes cursorBlink {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0; }
-}
-
-.streaming-cursor {
-    display: inline-block;
-    width: 2px;
-    height: 1.1em;
-    background: var(--accent-primary);
-    margin-left: 2px;
-    vertical-align: text-bottom;
-    animation: cursorBlink 1s step-end infinite;
-    border-radius: 1px;
-}
-
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(4px); }
     to { opacity: 1; transform: translateY(0); }
@@ -1203,11 +1110,11 @@ button svg,
     font-size: 14px;
     font-family: 'Inter', sans-serif;
     line-height: 1.5;
-    min-height: 40px;
-    max-height: 160px;
-    resize: vertical;
+    min-height: 40px; /* Reduced from 80px for compact design */
+    max-height: 200px; /* Limit maximum height */
+    resize: vertical; /* Allow user to resize if needed */
     outline: none;
-    overflow-y: auto;
+    overflow-y: auto; /* Scroll when content exceeds max-height */
 }
 
 /* User-friendly scrollbar for chat input */
@@ -1509,46 +1416,39 @@ button svg,
 
 /* Message Queue Bar */
 .msg-queue-bar {
-    background: var(--bg-surface);
+    background: var(--bg-card);
     border: 1px solid var(--border);
-    border-radius: var(--radius-md);
+    border-radius: 8px;
     padding: 8px 12px;
     margin-bottom: 8px;
-    width: 100%;
-    box-sizing: border-box;
 }
 
 .mq-header {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 6px 0;
-    min-height: 28px;
+    font-size: 12px;
+    color: var(--text-secondary);
 }
 
 .mq-header svg {
     display: block;
-    width: 12px;
-    height: 12px;
+    width: 11px;
+    height: 11px;
     flex-shrink: 0;
-    color: var(--text-secondary);
 }
 
 .mq-label {
-    font-weight: 600;
-    font-size: 12px;
-    color: var(--text-main);
+    font-weight: 500;
 }
 
 .mq-count {
     background: var(--accent-primary);
     color: #ffffff;
-    padding: 2px 8px;
+    padding: 2px 6px;
     border-radius: 10px;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
-    min-width: 20px;
-    text-align: center;
 }
 
 .mq-list {
@@ -1565,16 +1465,16 @@ button svg,
     display: flex;
     align-items: center;
     gap: 6px;
-    background: var(--bg-elevated);
-    border: 1px solid var(--border-light);
-    border-radius: var(--radius-sm);
-    padding: 5px 10px;
+    background: #252525; /* Dark metallic grey */
+    border: 1px solid #3d3d3d; /* Subtle border */
+    border-radius: 6px; /* Pill/tag shape */
+    padding: 5px 10px; /* Tight padding */
     min-width: 80px;
     max-width: 150px;
     font-size: 11px;
     color: var(--text-main);
     transition: all 0.2s ease;
-    animation: slideUp 0.2s ease;
+    animation: slideUp 0.2s ease; /* Fade in animation */
 }
 
 @keyframes slideUp {
@@ -1697,12 +1597,13 @@ button svg,
     margin-bottom: 8px;
     background: var(--bg-card);
     border: 1px solid var(--border);
-    border-radius: var(--radius-md);
+    border-radius: 8px;
     box-shadow: var(--shadow-lg);
     min-width: 200px;
     display: none;
     z-index: 1000;
     transform-origin: bottom center;
+    backdrop-filter: blur(8px); /* Premium metallic blur effect */
 }
 
 .custom-dropdown:hover .dropdown-menu {
@@ -2165,16 +2066,20 @@ code:not(pre code) {
    ================================================ */
 
 .agent-mode-container {
-    display: flex;
-    flex-direction: row;
-    gap: 6px;
-    padding: 8px 16px;
-    overflow-x: auto;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    margin: 8px 0;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    padding: 12px;
+    background: linear-gradient(145deg, rgba(30, 30, 30, 0.8), rgba(20, 20, 20, 0.9));
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    margin: 12px 16px;
     animation: fadeIn 0.3s ease-out;
+    backdrop-filter: blur(10px);
+    box-shadow: 
+        0 4px 6px -1px rgba(0, 0, 0, 0.3),
+        0 2px 4px -1px rgba(0, 0, 0, 0.2),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 /* Individual mode indicator cards */
@@ -2183,40 +2088,72 @@ code:not(pre code) {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 4px;
-    padding: 6px 8px;
-    border-radius: var(--radius-md);
-    color: var(--text-dim);
+    gap: 6px;
+    padding: 10px 8px;
+    border-radius: 8px;
+    color: var(--text-muted, rgba(255, 255, 255, 0.6));
     font-size: 10px;
-    font-weight: 500;
-    transition: all 0.2s ease;
-    background: transparent;
-    border: 1px solid var(--border);
-    cursor: pointer;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    opacity: 0.6;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    cursor: default;
     position: relative;
-    min-width: 60px;
-    flex-shrink: 0;
+    overflow: hidden;
 }
 
 /* Ensure icon inherits color from parent */
 .mode-indicator .mode-icon {
-    width: 20px;
-    height: 20px;
     color: inherit;
 }
 
-/* Completed modes - reduced opacity */
-.mode-indicator.completed {
-    opacity: 0.4;
-    border-color: var(--border);
-    color: var(--text-dim);
+/* Subtle gradient overlay on hover */
+.mode-indicator::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, transparent 50%);
+    opacity: 0;
+    transition: opacity 0.2s ease;
 }
 
-/* Active mode - highlighted with accent */
+.mode-indicator:hover::before {
+    opacity: 1;
+}
+
+/* Completed modes - success state */
+.mode-indicator.completed {
+    opacity: 0.8;
+    color: var(--green, #22c55e);
+    background: rgba(34, 197, 94, 0.1);
+    border-color: rgba(34, 197, 94, 0.2);
+}
+
+.mode-indicator.completed .mode-icon {
+    animation: checkmarkPop 0.3s ease-out;
+}
+
+/* Active mode - vibrant glowing card */
 .mode-indicator.active {
-    border-color: var(--accent-border);
-    color: var(--accent-primary);
-    background: var(--accent-dim);
+    opacity: 1;
+    transform: translateY(-2px);
+    box-shadow: 
+        0 4px 12px rgba(59, 130, 246, 0.25),
+        0 2px 4px rgba(0, 0, 0, 0.2),
+        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    animation: modeFloat 2s ease-in-out infinite;
+}
+
+/* Active icon with glow */
+.mode-indicator.active .mode-icon {
+    animation: iconGlow 1.5s ease-in-out infinite;
+    filter: drop-shadow(0 0 4px currentColor);
 }
 
 /* Icon styling - Enhanced for tool-based icons */
@@ -3357,9 +3294,9 @@ body.loaded #loading-overlay {
     animation: cardSlideIn 0.3s ease-out;
 }
 
-/* Collapsed State - Header Only (40px height) */
+/* Collapsed State - Header Only (45px height) */
 .tool-operation-card.collapsed {
-    max-height: 40px;
+    max-height: 45px;
 }
 
 /* Expanded State - Full Content */
@@ -3375,7 +3312,7 @@ body.loaded #loading-overlay {
     align-items: center;
     gap: 10px;
     padding: 10px 14px;
-    min-height: 40px;
+    min-height: 45px;
     cursor: pointer;
     user-select: none;
     position: relative;
@@ -4014,400 +3951,4 @@ body.loaded #loading-overlay {
 .ta-item-details::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.1);
     border-radius: 3px;
-}
-
-/* ================================================
-   LIGHT MODE TOKEN OVERRIDES
-   Inverted luminance palette for light theme
-   All accent, semantic, and code block colors stay the same
-   ================================================ */
-
-body.light-mode {
-    /* Backgrounds - inverted luminance */
-    --bg-void:      #f4f4f6;
-    --bg-base:      #f0f0f2;
-    --bg-surface:   #ffffff;
-    --bg-elevated:  #f0f0f3;
-    --bg-float:     #e8e8ec;
-    --bg-hover:     #e4e4e8;
-    --bg-card:      #ffffff;
-    --bg-code:      #1a1a1e;      /* Code blocks ALWAYS stay dark */
-
-    /* Borders - dark on light */
-    --border:         rgba(0, 0, 0, 0.07);
-    --border-light:   rgba(0, 0, 0, 0.11);
-    --border-strong:  rgba(0, 0, 0, 0.18);
-
-    /* Text - dark on light */
-    --text-main:      #1a1a1e;
-    --text-primary:   #1a1a1e;
-    --text-secondary: #52525a;
-    --text-dim:       #909098;
-    --text-faint:     #c0c0c4;
-    --text-muted:     #666666;
-
-    /* NOTE: These stay the same in light mode:
-       - --accent-primary, --accent-dim, --accent-border
-       - --green, --green-bright, --green-bg
-       - --red, --red-bg
-       - --yellow, --yellow-bg
-       - --purple, --purple-bg
-       - --cyan
-       - All --dracula-* syntax colors
-    */
-}
-
-/* ================================================
-   MESSAGE BUBBLES - Clean Separation
-   Extracted from aichat.html inline styles (lines 1450-1577)
-   User = right bubble, AI = full width
-   ================================================ */
-
-/* User messages - right-aligned bubble container */
-.message-bubble.user {
-    background: transparent !important;
-    max-width: 85% !important;
-    width: auto !important;
-    align-self: flex-end !important;
-    margin-left: auto !important;
-    margin-right: 16px !important;
-    padding: 8px 0 !important;
-    display: flex !important;
-    justify-content: flex-end !important;
-    overflow: visible !important;
-}
-
-/* User message content - single bubble with proper padding */
-.message-bubble.user .message-content {
-    background: var(--bg-elevated) !important;
-    border: 1px solid var(--border-light) !important;
-    border-radius: 18px 18px 4px 18px !important;
-    padding: 14px 18px !important;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2) !important;
-    max-width: 100% !important;
-    width: auto !important;
-    display: block !important;
-    flex: none !important;
-    min-width: auto !important;
-    overflow: visible !important;
-    word-wrap: break-word !important;
-    overflow-wrap: break-word !important;
-    white-space: pre-wrap !important;
-    text-align: left !important;
-}
-
-/* AI messages - full width, left-aligned, no bubble */
-.message-bubble.assistant {
-    background: transparent !important;
-    border: none !important;
-    border-radius: 0 !important;
-    padding: 12px 16px !important;
-    margin: 8px 0 !important;
-    width: 100% !important;
-    max-width: 100% !important;
-    box-sizing: border-box !important;
-    display: block !important;
-    text-align: left !important;
-}
-
-/* AI message content - transparent, full width */
-.message-bubble.assistant .message-content {
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    max-width: 100% !important;
-    width: 100% !important;
-    display: block !important;
-}
-
-.message-avatar {
-    width: 32px;
-    height: 32px;
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 14px;
-    flex-shrink: 0;
-}
-
-.message-avatar.user {
-    background: var(--bg-elevated);
-}
-
-.message-avatar.ai {
-    background: linear-gradient(135deg, var(--accent-primary), var(--purple));
-}
-
-.message-content {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-.message-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 12px;
-    color: var(--text-secondary);
-}
-
-.message.user .message-header {
-    flex-direction: row-reverse;
-}
-
-.message-author {
-    font-weight: 500;
-}
-
-.message-time {
-    font-size: 11px;
-    opacity: 0.7;
-}
-
-.message-bubble {
-    padding: 16px 20px;
-    font-size: 14px;
-    line-height: 1.7;
-    width: 100%;
-    max-width: 100%;
-    box-sizing: border-box;
-    display: flex;
-    flex-direction: column;
-    margin: 8px 0;
-}
-
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(8px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-/* ================================================
-   AI THINKING ANIMATION (Clean minimal)
-   Extracted from aichat.html inline styles (lines 1579-1696)
-   ================================================ */
-
-.thinking-message {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    padding: 14px 16px;
-    margin: 10px 0;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    animation: fadeIn 0.2s ease;
-}
-
-/* Pulsing Orb Animation */
-.thinking-orb {
-    position: relative;
-    width: 28px;
-    height: 28px;
-    flex-shrink: 0;
-}
-
-.thinking-orb-core {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 10px;
-    height: 10px;
-    background: var(--accent-primary);
-    border-radius: 50%;
-    animation: orbPulse 1.5s ease-in-out infinite;
-}
-
-.thinking-orb-ring {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 100%;
-    height: 100%;
-    border: 1.5px solid var(--accent-primary);
-    border-radius: 50%;
-    opacity: 0.3;
-    animation: orbRipple 2s ease-out infinite;
-}
-
-.thinking-orb-ring:nth-child(2) {
-    animation-delay: 0.5s;
-}
-
-@keyframes orbPulse {
-    0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
-    50% { transform: translate(-50%, -50%) scale(0.8); opacity: 0.6; }
-}
-
-@keyframes orbRipple {
-    0% { transform: translate(-50%, -50%) scale(0.5); opacity: 0.8; }
-    100% { transform: translate(-50%, -50%) scale(1.5); opacity: 0; }
-}
-
-/* Thinking Content */
-.thinking-content {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-.thinking-title {
-    font-weight: 500;
-    font-size: 13px;
-    letter-spacing: -0.1px;
-    color: #d0d0d8;
-    animation: silverWaveThink 1.8s ease-in-out infinite;
-}
-
-@keyframes silverWaveThink {
-    0%   { opacity: 0.5; color: var(--text-dim); }
-    25%  { opacity: 0.85; color: #c8c8d0; }
-    50%  { opacity: 1; color: var(--text-main); }
-    75%  { opacity: 0.85; color: #c8c8d0; }
-    100% { opacity: 0.5; color: var(--text-dim); }
-}
-
-.thinking-subtitle {
-    font-size: 11.5px;
-    color: #8a8a92;
-    animation: silverWaveThink 2.2s ease-in-out infinite;
-    animation-delay: 0.3s;
-}
-
-@keyframes textPulse {
-    0%, 100% { opacity: 0.6; }
-    50% { opacity: 1; }
-}
-
-.thinking-status {
-    font-size: 11px;
-    color: var(--text-muted) !important;
-    margin-top: 4px;
-}
-
-/* Timer with pulse animation */
-.thinking-timer {
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--text-dim);
-    font-variant-numeric: tabular-nums;
-    min-width: 30px;
-    text-align: right;
-    opacity: 0.6;
-}
-
-@keyframes timerPulse {
-    0%, 100% { opacity: 0.7; transform: scale(1); }
-    50% { opacity: 1; transform: scale(1.05); }
-}
-
-/* ================================================
-   ACTION BUTTON CONTAINER (prevents flickering)
-   Extracted from aichat.html inline styles (lines 1697-1724)
-   ================================================ */
-
-.action-btn-container {
-    position: relative;
-    width: 36px;
-    height: 32px;
-    flex-shrink: 0;
-    z-index: 10;
-}
-
-.action-btn-container .primary-btn,
-.action-btn-container .stop-btn {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    margin: 0;
-    padding: 0 !important;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-/* When hidden, ensure display:none works */
-.action-btn-container .primary-btn[style*="none"],
-.action-btn-container .stop-btn[style*="none"] {
-    display: none !important;
-}
-
-/* ================================================
-   STOP BUTTON (Cursor/Windsurf style)
-   Extracted from aichat.html inline styles (lines 1726-1790)
-   ================================================ */
-
-.stop-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    background: var(--red-bg);
-    border: 1.5px solid rgba(248, 113, 113, 0.5);
-    border-radius: var(--radius-md);
-    cursor: pointer;
-    transition: all 0.2s ease;
-    animation: stopBtnPulse 1.5s ease-in-out infinite;
-    position: relative;
-    overflow: hidden;
-}
-
-.stop-btn::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: radial-gradient(circle at center, rgba(239, 68, 68, 0.3), transparent 70%);
-    opacity: 0;
-    transition: opacity 0.3s ease;
-}
-
-.stop-btn:hover {
-    background: linear-gradient(135deg, rgba(239, 68, 68, 0.25), rgba(220, 38, 38, 0.2));
-    border-color: rgba(239, 68, 68, 0.8);
-    transform: scale(1.05);
-    box-shadow: 0 0 16px rgba(239, 68, 68, 0.4);
-}
-
-.stop-btn:hover::before {
-    opacity: 1;
-}
-
-.stop-btn:active {
-    transform: scale(0.95);
-}
-
-.stop-btn svg {
-    width: 14px;
-    height: 14px;
-    color: var(--red);
-    position: relative;
-    z-index: 1;
-    transition: all 0.2s ease;
-}
-
-.stop-btn:hover svg {
-    color: #f87171;
-    transform: scale(1.1);
-}
-
-@keyframes stopBtnPulse {
-    0%, 100% { 
-        box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.4);
-        border-color: rgba(248, 113, 113, 0.5);
-    }
-    50% { 
-        box-shadow: 0 0 0 4px rgba(248, 113, 113, 0);
-        border-color: rgba(248, 113, 113, 0.8);
-    }
 }

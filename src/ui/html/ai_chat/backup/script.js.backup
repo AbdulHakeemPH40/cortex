@@ -4592,10 +4592,6 @@ function updateStreamingUI() {
         html = highlightFileCreations(html);
         // Convert quoted suggestions to clickable chips
         html = convertSuggestionChips(html);
-        
-        // Append streaming cursor element
-        html += '<span class="streaming-cursor"></span>';
-        
         contentDiv.innerHTML = html;
 
         // -- 3. Syntax highlight (skip already-highlighted blocks) ----------
@@ -4947,10 +4943,6 @@ function onComplete() {
         
         if (contentDiv) {
             try {
-                // Remove streaming cursor before final touches
-                var cursorEl = contentDiv.querySelector('.streaming-cursor');
-                if (cursorEl) cursorEl.remove();
-                
                 // Batch all modifications into ONE innerHTML write
                 var finalHtml = contentDiv.innerHTML;
         
@@ -5895,13 +5887,13 @@ document.addEventListener('DOMContentLoaded', function() {
             if (textarea) {
                 switch(val) {
                     case 'Agent':
-                        textarea.placeholder = 'Ask, plan, or build...';
+                        textarea.placeholder = 'Plan and build...';
                         break;
                     case 'Ask':
                         textarea.placeholder = 'Ask a question...';
                         break;
                     case 'Plan':
-                        textarea.placeholder = 'Describe your plan...';
+                        textarea.placeholder = 'Create a plan...';
                         break;
                     default:
                         textarea.placeholder = 'Type a message...';
@@ -7881,7 +7873,7 @@ function buildTerminalCard(command, output, status, exitCode, cardId) {
     var card = document.createElement('div');
     var id = cardId || ('term-' + Date.now());
     // Use NEW tool-operation-card design
-    var isExpanded = false; // Default COLLAPSED for terminal (40px header only)
+    var isExpanded = true; // Default expanded for terminal
     card.className = 'tool-operation-card terminal ' + (isExpanded ? 'expanded' : 'collapsed');
     card.id = id;
     card.dataset.command = command;

@@ -237,46 +237,46 @@
     border-radius: 3px;
 }
 
-/* Light mode - UNIFIED: body.light-mode (was body.light) */
-body.light-mode #model-selector .dropdown-trigger {
-    background: var(--bg-hover);
-    border-color: var(--border);
+/* Light mode */
+body.light #model-selector .dropdown-trigger {
+    background: rgba(0, 0, 0, 0.05);
+    border-color: rgba(0, 0, 0, 0.1);
 }
 
-body.light-mode #model-selector .dropdown-trigger:hover {
-    background: var(--bg-elevated);
+body.light #model-selector .dropdown-trigger:hover {
+    background: rgba(0, 0, 0, 0.08);
 }
 
-body.light-mode .model-dropdown-menu {
-    background: var(--bg-surface);
-    border-color: var(--border-light);
+body.light .model-dropdown-menu {
+    background: #f5f5f5;
+    border-color: #ddd;
 }
 
-body.light-mode .dropdown-header {
-    color: var(--text-secondary);
-    border-bottom-color: var(--border);
+body.light .dropdown-header {
+    color: #666;
+    border-bottom-color: #e0e0e0;
 }
 
-body.light-mode .dropdown-item {
-    color: var(--text-main);
+body.light .dropdown-item {
+    color: #333;
 }
 
-body.light-mode .dropdown-item:hover {
-    background: var(--bg-hover);
+body.light .dropdown-item:hover {
+    background: rgba(0, 0, 0, 0.05);
 }
 
-body.light-mode .model-cost {
-    color: var(--accent-primary);
+body.light .model-cost {
+    color: #007acc;
 }
 
-body.light-mode .model-tag.active-tag {
-    background: var(--accent-dim);
-    color: var(--accent-primary);
-    border-color: var(--accent-border);
+body.light .model-tag.active-tag {
+    background: rgba(6, 182, 212, 0.1);
+    color: #0891b2;
+    border-color: rgba(6, 182, 212, 0.3);
 }
 
-body.light-mode .dropdown-item.active {
-    background: var(--accent-dim);
+body.light .dropdown-item.active {
+    background: rgba(6, 182, 212, 0.08);
 }
 
 /* Usage Display (Like Cursor) */
@@ -314,8 +314,8 @@ body.light-mode .dropdown-item.active {
     opacity: 0.8;
 }
 
-body.light-mode .usage-item #session-cost {
-    color: var(--accent-primary);
+body.light .usage-item #session-cost {
+    color: #007acc;
 }
 
 /* Mobile/Small screen adjustments */
