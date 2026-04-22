@@ -42,10 +42,22 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
 '''
         def run_powershell():
             try:
+                # FIX: Prevent console window popup in PyInstaller builds
+                import sys
+                startupinfo = None
+                creationflags = 0
+                if sys.platform == 'win32':
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = 0  # SW_HIDE
+                    creationflags = subprocess.CREATE_NO_WINDOW
+                
                 subprocess.run(
                     ['powershell', '-WindowStyle', 'hidden', '-Command', toast_script],
                     capture_output=True,
-                    timeout=duration + 2
+                    timeout=duration + 2,
+                    startupinfo=startupinfo,
+                    creationflags=creationflags
                 )
             except Exception:
                 pass

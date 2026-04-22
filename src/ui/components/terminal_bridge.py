@@ -199,6 +199,15 @@ class TerminalCommandExecutor(QThread):
         import platform
         
         try:
+            # FIX: Prevent console window popup in PyInstaller builds
+            startupinfo = None
+            creationflags = 0
+            if platform.system() == "Windows":
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 0  # SW_HIDE
+                creationflags = subprocess.CREATE_NO_WINDOW
+            
             # Use shell for command execution
             shell = True
             if platform.system() == "Windows":
@@ -216,7 +225,9 @@ class TerminalCommandExecutor(QThread):
                 cwd=self.cwd or os.getcwd(),
                 text=True,
                 encoding='utf-8',
-                errors='replace'
+                errors='replace',
+                startupinfo=startupinfo,
+                creationflags=creationflags
             )
             
             # Read output with timeout

@@ -311,7 +311,7 @@ def apply_edit_to_file(
     # Handle empty replacement - check if we should strip trailing newline
     strip_trailing_newline = (
         not old_string.endswith('\n') and
-        original_content.includes(old_string + '\n')
+        (old_string + '\n') in original_content
     )
     
     return (
@@ -351,15 +351,15 @@ def get_patch_for_edit(
     Returns:
         Dictionary with 'patch' (StructuredPatchHunk[]) and 'updatedFile' (str)
     """
-    return get_patch_for_edits({
-        "filePath": file_path,
-        "fileContents": file_contents,
-        "edits": [{
+    return get_patch_for_edits(
+        file_path=file_path,
+        file_contents=file_contents,
+        edits=[{
             "old_string": old_string,
             "new_string": new_string,
             "replace_all": replace_all,
         }],
-    })
+    )
 
 
 def get_patch_for_edits(

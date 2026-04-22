@@ -82,7 +82,7 @@ a = Analysis(
         ('node_modules/.bin/vscode-css-language-server*', 'node_modules/.bin'),
         ('node_modules/.bin/vscode-json-language-server*', 'node_modules/.bin'),
         # ── Environment / config ──────────────────────────────────────────────
-        ('.env', '.'),
+        # SECURITY: Do NOT include .env with API keys! Only .env.example
         ('.env.example', '.'),
     ],
     hiddenimports=[
@@ -110,8 +110,18 @@ a = Analysis(
         'src.core.file_watcher',
         'src.core.chat_history',
         'src.core.change_orchestrator',
-        'src.core.live_server',
-        'src.core.html_completion',
+        # Removed: src.core.live_server (does not exist)
+        # Removed: src.core.html_completion (does not exist)
+        # ── Additional core modules ────────────────────────────────────
+        'src.core.agent_memory',
+        'src.core.code_chunker',
+        'src.core.codebase_index',
+        'src.core.event_bus',
+        'src.core.file_manager',
+        'src.core.memory_storage',
+        'src.core.memory_types',
+        'src.core.project_manager',
+        'src.core.session_manager',
         # ── Services ────────────────────────────────────────────────────
         'src.services.llm_client',
         'src.services.streaming',
@@ -148,6 +158,48 @@ a = Analysis(
         'pygments.lexers',                  # Dynamic lexer loading
         'pygments.formatters',
         'pygments.styles',
+        # ── HTTP clients ─────────────────────────────────────────────
+        'requests',                         # HTTP client (used by AI providers)
+        'httpx',                            # Async HTTP client
+        'requests.adapters',                # Request adapters
+        'requests.auth',                    # Auth handlers
+        # ── AI Provider SDKs ─────────────────────────────────────────
+        'openai',                           # OpenAI SDK
+        'openai.types',                     # OpenAI types
+        'openai.types.chat',                # Chat completion types
+        'anthropic',                        # Anthropic SDK
+        'anthropic.types',                  # Anthropic types
+        'together',                         # Together AI SDK
+        'mistralai',                        # Mistral AI SDK
+        'mistralai.models',                 # Mistral models
+        'mistralai.models.chat_completion_request',
+        'groq',                             # Groq SDK
+        'litellm',                          # LiteLLM multi-provider
+        'litellm.llms',                     # LiteLLM providers
+        # ── Rich (terminal formatting) ───────────────────────────────
+        'rich',                             # Rich text formatting
+        'rich.console',                     # Console output
+        'rich.markdown',                    # Markdown rendering
+        # ── Windows-specific ─────────────────────────────────────────
+        'win32api',                         # pywin32 - Windows API
+        'win32con',                         # pywin32 - Constants
+        'win32gui',                         # pywin32 - GUI functions
+        'win32process',                     # pywin32 - Process management
+        # ── Data processing ────────────────────────────────────────
+        'numpy',                            # Numerical computing
+        'numpy.core',                       # NumPy core
+        'pandas',                           # Data analysis
+        'pandas.core',                      # Pandas core
+        # ── Scheduling ─────────────────────────────────────────────
+        'schedule',                         # Job scheduling
+        # ── Image processing ───────────────────────────────────────
+        'PIL',                              # Pillow - Image processing
+        'PIL.Image',                        # Image module
+        # ── Speech recognition ─────────────────────────────────────
+        'speech_recognition',               # Voice input
+        # ── Terminal utilities ─────────────────────────────────────
+        'InquirerPy',                       # Interactive prompts
+        'prompt_toolkit',                   # Terminal UI
     ],
     hookspath=[],
     hooksconfig={},
@@ -161,6 +213,11 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
+# Add runtime hook to prevent console window popups (stored safely in src/utils/)
+runtime_hooks = [
+    os.path.join(project_root, 'src', 'utils', 'runtime_hook_noconsole.py')
+]
+
 exe = EXE(
     pyz,
     a.scripts,
@@ -171,12 +228,13 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=False,
+    console=False,  # GUI app - no console window
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    runtime_hooks=runtime_hooks,  # Apply console suppression hook
     icon='src/assets/logo/logo.ico',
 )
 

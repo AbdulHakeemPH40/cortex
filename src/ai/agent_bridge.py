@@ -2703,13 +2703,18 @@ Example: LS(path="src/")
                 for hist_msg in self._conversation_history[-20:]:
                     if hist_msg.role in ("user", "assistant"):
                         hist_content = hist_msg.content or ""
+                        has_tool_calls = bool(hist_msg.tool_calls)
+                        # Skip empty assistant messages (no content + no tool_calls)
+                        # — these cause Mistral API errors
+                        if hist_msg.role == 'assistant' and not hist_content and not has_tool_calls:
+                            continue
                         if len(hist_content) > _MAX_HIST_CONTENT:
                             hist_content = (
                                 hist_content[:_MAX_HIST_CONTENT]
                                 + f"\n... [context trimmed: {len(hist_msg.content) - _MAX_HIST_CONTENT} chars omitted]"
                             )
                         cm = PCM(role=hist_msg.role, content=hist_content)
-                        if hist_msg.tool_calls:
+                        if has_tool_calls:
                             cm.tool_calls = hist_msg.tool_calls
                         messages.append(cm)
                     elif hist_msg.role == "tool":
@@ -3237,6 +3242,141 @@ Example: LS(path="src/")
         except RuntimeError:
             pass  # C++ object deleted during emit
 
+    def _build_activity_info(
+        self, activity: str, tool_name: str, args: Dict,
+        result_str: str | None, status: str,
+    ) -> str:
+        """Build structured JSON info for tool_activity signal.
+
+        Returns a JSON string with rich details for the UI to render
+        Cursor-style activity cards (file paths, line ranges, match results).
+        """
+        info: Dict[str, Any] = {}
+        try:
+            fp = args.get("file_path", "") or args.get("path", "")
+            # Make paths relative to project root for compact display
+            if fp and self._project_root:
+                try:
+                    rel = os.path.relpath(fp, self._project_root)
+                    if not rel.startswith('..'):
+                        fp = rel.replace('\\', '/')
+                except ValueError:
+                    pass
+
+            if activity == "read_file":
+                info["file_path"] = fp
+                info["offset"] = args.get("offset", 1)
+                info["limit"] = args.get("limit", "")
+                if status == "complete" and result_str:
+                    # Count lines read from result
+                    info["lines_read"] = result_str.count('\n') + (1 if result_str else 0)
+
+            elif activity == "edit_file":
+                info["file_path"] = fp
+                old_s = args.get("old_string", "")
+                new_s = args.get("new_string", "")
+                if old_s and new_s:
+                    info["description"] = "Editing"
+                elif not old_s:
+                    info["description"] = "Creating"
+                else:
+                    info["description"] = "Deleting lines"
+
+            elif activity in ("write_file", "create_file"):
+                info["file_path"] = fp
+                content = args.get("content", "")
+                info["lines"] = content.count('\n') + 1 if content else 0
+                info["description"] = "Creating" if activity == "create_file" else "Writing"
+
+            elif activity == "search":
+                # Grep tool
+                info["pattern"] = args.get("pattern", "")
+                info["path"] = fp or "."
+                info["include"] = args.get("include", "")
+                if status == "complete" and result_str:
+                    matches = self._parse_grep_matches(result_str)
+                    info["match_count"] = len(matches)
+                    info["matches"] = matches[:15]  # limit for UI
+
+            elif activity == "list_directory":
+                info["path"] = fp or args.get("pattern", "")
+                if status == "complete" and result_str:
+                    # Count files from result
+                    lines = [l for l in result_str.split('\n') if l.strip()]
+                    info["count"] = len(lines)
+
+            elif activity == "run_command":
+                cmd = args.get("command", "")
+                info["command"] = cmd[:200] if cmd else ""
+                info["timeout"] = args.get("timeout", "")
+                if status in ("complete", "error") and result_str:
+                    # Pass truncated output for terminal cards
+                    info["output"] = result_str[:2000]
+
+            else:
+                # Fallback: pass raw args
+                info = {"raw": json.dumps(args)[:400]}
+
+        except Exception as e:
+            log.debug(f"[BRIDGE] _build_activity_info error: {e}")
+            info = {"raw": json.dumps(args)[:400]}
+
+        return json.dumps(info)
+
+    def _parse_grep_matches(self, result_str: str) -> list:
+        """Parse grep/search result into structured match list for UI."""
+        matches = []
+        try:
+            # Try JSON parse first (real Grep tool returns structured results)
+            data = json.loads(result_str)
+            if isinstance(data, str):
+                # Plain text result — parse line-by-line
+                for line in data.split('\n'):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    # Format: "path/to/file.py:123: matched text"
+                    parts = line.split(':', 2)
+                    if len(parts) >= 2:
+                        fpath = parts[0].strip()
+                        try:
+                            lineno = int(parts[1].strip())
+                        except ValueError:
+                            lineno = 0
+                        fname = fpath.split('/')[-1].split('\\')[-1]
+                        matches.append({"file": fname, "line": lineno, "path": fpath})
+            elif isinstance(data, list):
+                for item in data[:15]:
+                    if isinstance(item, str):
+                        fname = item.split('/')[-1].split('\\')[-1]
+                        matches.append({"file": fname, "line": 0, "path": item})
+            elif isinstance(data, dict):
+                # Possible {files: [...]} or {matches: [...]}
+                items = data.get('files', data.get('matches', data.get('results', [])))
+                if isinstance(items, list):
+                    for item in items[:15]:
+                        if isinstance(item, str):
+                            fname = item.split('/')[-1].split('\\')[-1]
+                            matches.append({"file": fname, "line": 0, "path": item})
+        except (json.JSONDecodeError, TypeError):
+            # Plain text — parse lines
+            for line in result_str.split('\n')[:15]:
+                line = line.strip()
+                if not line or line.startswith('---') or line.startswith('==='):
+                    continue
+                parts = line.split(':', 2)
+                if len(parts) >= 2:
+                    fpath = parts[0].strip()
+                    try:
+                        lineno = int(parts[1].strip())
+                    except ValueError:
+                        lineno = 0
+                    fname = fpath.split('/')[-1].split('\\')[-1]
+                    matches.append({"file": fname, "line": lineno, "path": fpath})
+                else:
+                    matches.append({"file": line[:60], "line": 0, "path": line})
+        return matches
+
     async def _execute_single_tool(
         self, tool_name: str, tool_id: str, args: Dict,
         messages: list, PCM: type, _limits=None,
@@ -3254,7 +3394,8 @@ Example: LS(path="src/")
         # TodoWrite is a silent background tool — no tool-activity card in UI
         _silent = (tool_name == "TodoWrite")
         if not _silent:
-            self._safe_emit(self.tool_activity, activity, json.dumps(args)[:500], "running")
+            running_info = self._build_activity_info(activity, tool_name, args, None, "running")
+            self._safe_emit(self.tool_activity, activity, running_info, "running")
 
         result = await self._dispatch_tool(tool_name, tool_id, args)
 
@@ -3264,14 +3405,14 @@ Example: LS(path="src/")
                 if isinstance(result.result, (dict, list))
                 else str(result.result)
             )
-            # Bash tool: use larger truncation so output shows in UI card
-            ui_limit = 2000 if tool_name == "Bash" else 500
             if not _silent:
-                self._safe_emit(self.tool_activity, activity, result_str[:ui_limit], "complete")
+                complete_info = self._build_activity_info(activity, tool_name, args, result_str, "complete")
+                self._safe_emit(self.tool_activity, activity, complete_info, "complete")
         else:
             result_str = f"Error: {result.error}"
             if not _silent:
-                self._safe_emit(self.tool_activity, activity, result_str[:500], "error")
+                error_info = self._build_activity_info(activity, tool_name, args, result_str, "error")
+                self._safe_emit(self.tool_activity, activity, error_info, "error")
 
         # Feed result back to LLM — persist large results to disk instead of truncating.
         # Ported from Claude Code's toolResultStorage.ts: results exceeding
@@ -3626,6 +3767,31 @@ Example: LS(path="src/")
         full_path = args["file_path"]
         is_new = not os.path.exists(full_path)
 
+        # ── SAFETY: Prevent catastrophic overwrite of large files ──
+        # If the existing file is significantly larger than the new content,
+        # the LLM likely truncated its output. Refuse the write and tell
+        # the LLM to use Edit instead.
+        if not is_new:
+            try:
+                existing_size = os.path.getsize(full_path)
+                new_size = len(content.encode('utf-8'))
+                # If existing file is >500 bytes and new content is <30% of it,
+                # this is almost certainly a truncated overwrite.
+                if existing_size > 500 and new_size < existing_size * 0.30:
+                    return ToolResult(
+                        tool_id=tool_id, result=None, success=False,
+                        error=(
+                            f"SAFETY: Refusing to overwrite {os.path.basename(full_path)} "
+                            f"({existing_size} bytes) with much smaller content "
+                            f"({new_size} bytes, {new_size*100//existing_size}% of original). "
+                            f"This would destroy existing code. "
+                            f"Use the Edit tool to make targeted changes instead of "
+                            f"rewriting the entire file."
+                        ),
+                    )
+            except OSError:
+                pass  # File stat failed — proceed with write
+
         # Emit signal to show "Creating file..." card with animation
         card_id = None
         try:
@@ -3713,8 +3879,18 @@ Example: LS(path="src/")
                 actual_old = data.get("oldString", old_string)
                 actual_new = data.get("newString", new_string)
                 # Compute full file content for diff/cache: original → new
-                full_new = original_content.replace(actual_old, actual_new, 1) if original_content else actual_new
-                self.file_edited_diff.emit(full_path, original_content or actual_old, full_new)
+                # If we have original content, apply the replacement;
+                # otherwise re-read the file from disk (the real tool already wrote it)
+                if original_content:
+                    full_new = original_content.replace(actual_old, actual_new, 1)
+                else:
+                    try:
+                        with open(full_path, "r", encoding="utf-8") as _f:
+                            full_new = _f.read()
+                    except Exception:
+                        full_new = actual_new
+                    original_content = actual_old  # best-effort for diff display
+                self.file_edited_diff.emit(full_path, original_content, full_new)
                 # Emit completion signal for card animation
                 if card_id:
                     self.file_operation_completed.emit(card_id, full_path, full_new, "edit")

@@ -2,7 +2,7 @@
 ; Creates professional Windows installer with Next/Back wizard
 
 #define MyAppName "Cortex AI Agent"
-#define MyAppVersion "1.0.13"
+#define MyAppVersion "1.0.15"
 #define MyAppPublisher "Cortex AI"
 #define MyAppURL "https://github.com/cortex-ai"
 #define MyAppExeName "Cortex.exe"

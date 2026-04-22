@@ -671,8 +671,7 @@ class ChatBridge(QObject):
     def on_accept_file_edit(self, file_path: str):
         """User accepted a file edit from the card UI."""
         log.info(f'File edit accepted: {file_path}')
-        # Open file in editor and emit accept signal
-        self.open_file_requested.emit(file_path)
+        # Only emit accept signal — main_window handler opens the file
         self.accept_file_edit_requested.emit(file_path)
     
     # ========== PERMISSION DIALOG BRIDGE (NEW) ==========
@@ -709,10 +708,9 @@ class ChatBridge(QObject):
 
     @pyqtSlot(str)
     def on_reject_file_edit(self, file_path: str):
-        """User rejected a file edit â€” optionally restore from pre-edit snapshot."""
+        """User rejected a file edit — optionally restore from pre-edit snapshot."""
         log.info(f'File edit rejected: {file_path}')
-        # Open file in editor for review and emit reject signal
-        self.open_file_requested.emit(file_path)
+        # Only emit reject signal — main_window handler opens the file and reverts
         self.reject_file_edit_requested.emit(file_path)
 
     @pyqtSlot()
@@ -818,14 +816,19 @@ class ChatBridge(QObject):
     def on_open_folder(self, folder_path: str):
         """Open folder in OS file explorer."""
         try:
+            import subprocess
+            # FIX: Prevent console window popup in PyInstaller builds
+            startupinfo = None
+            creationflags = 0
             if sys.platform == 'win32':
-                import subprocess
-                subprocess.Popen(['explorer', folder_path])
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 0  # SW_HIDE
+                creationflags = subprocess.CREATE_NO_WINDOW
+                subprocess.Popen(['explorer', folder_path], startupinfo=startupinfo, creationflags=creationflags)
             elif sys.platform == 'darwin':
-                import subprocess
                 subprocess.Popen(['open', folder_path])
             else:
-                import subprocess
                 subprocess.Popen(['xdg-open', folder_path])
         except Exception as e:
             log.error(f"Cannot open folder: {e}")
@@ -2886,11 +2889,11 @@ class AIChatWidget(QWidget):
         self._view.page().runJavaScript(f"if(window.updateTodos) window.updateTodos({safe_todos}, {safe_task});")
 
     def show_tool_activity(self, tool_type: str, info: str, status: str):
-        """Show tool execution progress.
+        """Show tool execution progress with structured info.
         
         Args:
-            tool_type: Type of tool (e.g., 'read_file', 'write_file')
-            info: Tool execution info/details
+            tool_type: Type of tool (e.g., 'read_file', 'write_file', 'search')
+            info: JSON string with structured tool details
             status: Status of execution ('running', 'complete', 'error')
         """
         activity = {
@@ -2899,6 +2902,7 @@ class AIChatWidget(QWidget):
             'status': status
         }
         safe_activity = json.dumps(activity)
+        log.debug(f"[ToolActivity] {tool_type} [{status}] {info[:120]}")
         self._view.page().runJavaScript(f"if(window.showToolActivity) window.showToolActivity({safe_activity});")
 
     def show_directory_contents(self, data: dict):

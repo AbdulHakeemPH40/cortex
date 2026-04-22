@@ -604,19 +604,42 @@ class MistralProvider(BaseProvider):
         yield from self.chat(formatted_messages, model, stream=True, tools=tools, retry_callback=retry_callback, **kwargs)
     
     def _format_messages_for_mistral(self, messages) -> List[Dict[str, Any]]:
-        """Convert ChatMessage objects to Mistral-compatible format"""
+        """Convert ChatMessage objects to Mistral-compatible format.
+        
+        Mistral requires assistant messages to have either non-empty content
+        OR tool_calls — never both absent.
+        """
         formatted = []
         for msg in messages:
             if hasattr(msg, 'role') and hasattr(msg, 'content'):
-                m = {"role": msg.role, "content": msg.content}
+                role = msg.role
+                content = msg.content
+                has_tool_calls = hasattr(msg, 'tool_calls') and msg.tool_calls
+                has_tool_call_id = hasattr(msg, 'tool_call_id') and msg.tool_call_id
+
+                # Mistral: assistant messages MUST have content or tool_calls
+                if role == 'assistant' and not content and not has_tool_calls:
+                    # Skip empty assistant messages that would cause API error
+                    log.debug("[MISTRAL] Skipping empty assistant message (no content, no tool_calls)")
+                    continue
+
+                m = {"role": role, "content": content or ""}
                 if hasattr(msg, 'name') and msg.name:
                     m["name"] = msg.name
-                if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                if has_tool_calls:
                     m["tool_calls"] = msg.tool_calls
-                if hasattr(msg, 'tool_call_id') and msg.tool_call_id:
+                    # Mistral accepts null content when tool_calls are present
+                    if not content:
+                        m["content"] = ""
+                if has_tool_call_id:
                     m["tool_call_id"] = msg.tool_call_id
             else:
                 m = msg
+                # Also guard raw dict assistant messages
+                if isinstance(m, dict) and m.get('role') == 'assistant':
+                    if not m.get('content') and not m.get('tool_calls'):
+                        log.debug("[MISTRAL] Skipping empty assistant dict message")
+                        continue
             formatted.append(m)
         return formatted
     

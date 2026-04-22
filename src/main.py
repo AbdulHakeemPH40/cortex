@@ -52,6 +52,16 @@ try:
 except ImportError:
     print("[MAIN] WARNING: python-dotenv not installed")
 
+# CRITICAL FIX: Hide console window on Windows (prevents subprocess popups)
+# This MUST come before QApplication initialization
+if sys.platform == 'win32' and getattr(sys, 'frozen', False):
+    try:
+        import ctypes
+        # SW_HIDE = 0
+        ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
+    except Exception:
+        pass  # Ignore if fails
+
 # HiDPI + Windows platform setup (BEFORE QApplication)
 os.environ['QT_ENABLE_HIGHDPI_SCALING'] = '1'
 os.environ['QT_SCALE_FACTOR_ROUNDING_POLICY'] = 'PassThrough'

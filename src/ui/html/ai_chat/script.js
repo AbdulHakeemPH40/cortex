@@ -2931,11 +2931,13 @@ var currentPlan = "";
 var currentTasks = "";
 var currentWalkthrough = "";
 
-// Tool Activity Display - Industry Standard (Cursor/Qoder Style)
+// Tool Activity Display - Cursor-style Live Preview
 var activityStartTime = null;
 var thinkingInterval = null;
-var currentActivitySection = null;
-var fileCount = 0;
+var currentActivitySection = null; // used by thinking indicator system
+var _taCurrentGroup = null;   // current .ta-group element
+var _taFileCount = 0;
+var _taStats = { reads: 0, edits: 0, searches: 0, commands: 0 };
 
 function showToolActivity(type, info, status) {
     // Handle both calling conventions:
@@ -2947,413 +2949,404 @@ function showToolActivity(type, info, status) {
         info = obj.info;
         status = obj.status;
     }
-    
+
     var container = document.getElementById('chatMessages');
     if (!container) return;
 
     // When any real tool action starts, freeze/stop the Think indicator
-    // so Think and tool actions never show as simultaneously active
     if (status === 'running') {
         hideThinking();
     }
 
-    // Update thinking indicator with current activity
+    // Parse structured info from Python bridge
+    var data = {};
+    if (info) {
+        try { data = JSON.parse(info); } catch(e) {
+            // Legacy fallback: try Python dict conversion
+            try { data = JSON.parse(info.replace(/'/g,'"').replace(/True/g,'true').replace(/False/g,'false').replace(/None/g,'null')); } catch(e2) {
+                data = { raw: info };
+            }
+        }
+    }
+
+    // Update thinking status text
     var statusEl = document.getElementById('thinking-status');
     if (statusEl) {
         var activityText = '';
-        // Helper: extract readable label from JSON info string
-        var _parseInfoLabel = function(raw) {
-            if (!raw) return '';
-            if (raw.trim().startsWith('{')) {
-                try {
-                    var p = JSON.parse(raw);
-                    return p.command || p.file_path || p.path || raw;
-                } catch(e) {}
-            }
-            return raw;
-        };
-        if (type === 'read_file')      activityText = 'Reading: '   + _parseInfoLabel(info);
-        else if (type === 'list_directory') activityText = 'Exploring: ' + _parseInfoLabel(info);
-        else if (type === 'run_command')    activityText = 'Running: '   + _parseInfoLabel(info);
-        else if (type === 'git_status')     activityText = 'Checking git status...';
+        if (type === 'read_file')        activityText = 'Reading: ' + (data.file_path || '');
+        else if (type === 'search')      activityText = 'Searching: ' + (data.pattern || '');
+        else if (type === 'list_directory') activityText = 'Exploring: ' + (data.path || '');
+        else if (type === 'edit_file')   activityText = 'Editing: ' + (data.file_path || '');
+        else if (type === 'run_command') activityText = 'Running: ' + (data.command || '').substring(0, 60);
         else activityText = type + '...';
         statusEl.textContent = activityText;
     }
 
-    // -- File read/edit cards (INSIDE ACTIVITY SECTION) --------------
-    if (type === 'read_file' || type === 'edit_file' || type === 'write_file' || type === 'create_file') {
-        // Ensure activity section exists first
-        if (!currentActivitySection || !document.body.contains(currentActivitySection)) {
-            currentActivitySection = document.createElement('div');
-            currentActivitySection.className = 'activity-section';
-            fileCount = 0;
-                
-            // Create collapsible header
-            var header = document.createElement('div');
-            header.className = 'activity-header';
-            header.innerHTML = '<span class="activity-icon running"><span class="todo-spinner" style="width:10px;height:10px;"></span></span> <span class="activity-title">Exploring</span> <svg class="activity-toggle" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>';
-            header.style.cursor = 'pointer';
-                
-            // Click handler for toggle
-            header.onclick = function(e) {
-                e.stopPropagation();
-                var section = this.parentElement;
-                var isCollapsed = section.classList.toggle('collapsed');
-                var toggle = this.querySelector('.activity-toggle');
-                if (toggle) {
-                    toggle.style.transform = isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
-                    toggle.style.transition = 'transform 0.2s ease';
-                }
-            };
-                
-            currentActivitySection.appendChild(header);
-                
-            // Create activity list
-            var list = document.createElement('div');
-            list.className = 'activity-list';
-            currentActivitySection.appendChild(list);
-                
-            container.appendChild(currentActivitySection);
-        }
-            
-        // Create or get FEC cards container INSIDE activity section
-        var cardsEl = currentActivitySection.querySelector('.fec-cards-container');
-        if (!cardsEl) {
-            cardsEl = document.createElement('div');
-            cardsEl.className = 'fec-cards-container';
-            // Insert after activity-list
-            var activityList = currentActivitySection.querySelector('.activity-list');
-            if (activityList) {
-                activityList.parentNode.insertBefore(cardsEl, activityList.nextSibling);
-            } else {
-                currentActivitySection.appendChild(cardsEl);
-            }
-        }
-    
-        // Parse file path from info - robust extraction for Python dict / JSON / plain string
-        var filePath = '';
-        var rawInfo = info || '';
-        // 1) Regex-first: match 'path': '...' or "path": "..." (handles all Python dict formats)
-        var reMatch = rawInfo.match(/['"](?:path|PATH|file|FILE)['"]\s*:\s*['"]([^'"]+)['"]/i);
-        if (reMatch) {
-            filePath = reMatch[1];
-        } else {
-            // 2) JSON / Python dict parse
-            var parsedFec = null;
-            try { parsedFec = JSON.parse(rawInfo); } catch(e) {
-                try {
-                    parsedFec = JSON.parse(rawInfo.replace(/'/g,'"').replace(/True/g,'true').replace(/False/g,'false').replace(/None/g,'null'));
-                } catch(e2) {}
-            }
-            if (parsedFec) {
-                var pv = parsedFec.path || (parsedFec.PATH && (parsedFec.PATH.path || parsedFec.PATH)) || parsedFec.file || null;
-                if (pv && typeof pv === 'string') filePath = pv;
-            }
-        }
-        if (!filePath) filePath = rawInfo.split(' ')[0]; // last fallback: first word
-            
-        // Check if card already exists - match by data-path containing the resolved filename
-        var existingCard = null;
-        var allCards = cardsEl.querySelectorAll('.fec[data-path]');
-        var fileNameResolved = filePath ? filePath.split('/').pop().split('\\').pop() : '';
-        for (var ci = 0; ci < allCards.length; ci++) {
-            var cp = allCards[ci].dataset.path || '';
-            var cpName = cp.split('/').pop().split('\\').pop();
-            if (cpName && fileNameResolved && cpName === fileNameResolved && allCards[ci].dataset.status !== 'applied') {
-                existingCard = allCards[ci];
-                break;
-            }
-        }
-        if (existingCard) {
-            // Update existing pending card → show OK
-            if (status === 'complete') {
-                existingCard.classList.remove('fec-pending');
-                existingCard.classList.add('fec-applied');
-                existingCard.dataset.status = 'applied';
-                var rightEl = existingCard.querySelector('.fec-right');
-                if (rightEl) rightEl.innerHTML = '<span class="fec-status-text fec-status-applied">OK</span>';
-                // Also freeze the action label text (stop implying ongoing)
-                var labelEl = existingCard.querySelector('.fec-action-label');
-                if (labelEl) labelEl.style.opacity = '0.4';
-            }
-        } else {
-            // Create new file activity card
-            var card = document.createElement('div');
-            card.className = 'fec fec-' + (status === 'running' ? 'pending' : 'applied');
-            card.dataset.path = filePath;
-            card.dataset.status = status === 'running' ? 'pending' : 'applied';
-                
-            var fileName = filePath ? filePath.split('/').pop().split('\\').pop() : 'unknown';
-            var ext = (fileName && fileName.includes('.')) ? fileName.split('.').pop().toLowerCase() : '';
-            var extClass = 'fec-ext-' + (ext || 'default');
-    
-            // Action label + icon per type
-            var actionLabel = type === 'read_file' ? 'Reading'
-                           : type === 'edit_file'  ? 'Editing'
-                           : type === 'create_file' ? 'Creating'
-                           : 'Writing';
-            var actionColor = type === 'read_file'  ? '#60a5fa'
-                           : type === 'edit_file'   ? '#fbbf24'
-                           : type === 'create_file' ? '#a78bfa'
-                           : '#4ade80';
-    
-            var escapedPath = filePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-            card.innerHTML =
-                '<div class="fec-left">' +
-                    '<span class="fec-ext-badge ' + extClass + '">' + (ext ? ext.toUpperCase() : 'FILE') + '</span>' +
-                    '<button class="fec-name" onclick="openFileInEditor(\'' + escapedPath + '\')"'+'>'+ 
-                        escapeHtml(fileName) +
-                    '</button>' +
-                    '<span class="fec-action-label" style="font-size:11px;color:' + actionColor + ';margin-left:8px;opacity:0.7;">' + actionLabel + '</span>' +
-                '</div>' +
-                '<div class="fec-right">' +
-                    (status === 'running' ?
-                        '<span style="width:10px;height:10px;border:1.5px solid transparent;border-top-color:' + actionColor + ';border-radius:50%;display:inline-block;animation:spin 0.8s linear infinite;"></span>' :
-                        '<span class="fec-status-text fec-status-applied">OK</span>'
-                    ) +
-                '</div>';
-                
-            cardsEl.appendChild(card);
-        }
-    
-        // Update activity section stats
-        if (!currentActivitySection.stats) {
-            currentActivitySection.stats = { reads: 0, edits: 0, other: 0 };
-        }
-        if (type === 'read_file') {
-            currentActivitySection.stats.reads++;
-            fileCount++;
-        } else if (['write_file', 'edit_file', 'create_file'].includes(type)) {
-            currentActivitySection.stats.edits++;
-            fileCount++;
-        }
-            
-        // Update header with summary
-        var headerEl = currentActivitySection.querySelector('.activity-title');
-        if (headerEl && fileCount > 0) {
-            var stats = currentActivitySection.stats || { reads: 0, edits: 0 };
-            var summary = 'Exploring ' + fileCount + ' file' + (fileCount > 1 ? 's' : '');
-            if (status === 'complete') {
-                var details = [];
-                if (stats.reads > 0) details.push(stats.reads + ' read' + (stats.reads > 1 ? 's' : ''));
-                if (stats.edits > 0) details.push(stats.edits + ' edit' + (stats.edits > 1 ? 's' : ''));
-                if (details.length > 0) {
-                    summary += ' (' + details.join(', ') + ')';
-                }
-                // Update icon to complete
-                var iconEl = currentActivitySection.querySelector('.activity-icon');
-                if (iconEl) {
-                    iconEl.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color:#4ade80;"><polyline points="20 6 9 17 4 12"></polyline></svg>';
-                    iconEl.className = 'activity-icon complete';
-                }
-            }
-            headerEl.textContent = summary;
-        }
-    
-        smartScroll(container);
-        return;
-    }
-
-    // -- Terminal command card handling ------------------------------
+    // -- Terminal command: keep existing terminal card system --
     if (type === 'run_command') {
-        if (!currentAssistantMessage) {
-            currentAssistantMessage = document.createElement('div');
-            currentAssistantMessage.className = 'message-bubble assistant';
-            var ce = document.createElement('div');
-            ce.className = 'message-content';
-            currentAssistantMessage.appendChild(ce);
-            currentContent = "";
-            container.appendChild(currentAssistantMessage);
-            var es = document.getElementById('empty-state');
-            if (es) es.remove();
-        }
-
-        var cardsEl = currentAssistantMessage.querySelector('.fec-cards-container');
-        if (!cardsEl) {
-            cardsEl = document.createElement('div');
-            cardsEl.className = 'fec-cards-container';
-            currentAssistantMessage.appendChild(cardsEl);
-        }
-
-        if (status === 'running') {
-            var cardId = 'term-cmd-' + Date.now();
-            currentAssistantMessage.dataset.lastTermCardId = cardId;
-            // Parse actual command from info JSON: {"command": "...", "timeout": N}
-            var cmdStr = info;
-            try {
-                var infoObj = JSON.parse(info);
-                if (infoObj.command) cmdStr = infoObj.command;
-            } catch(e) {}
-            var card = buildTerminalCard(cmdStr, '', 'running', null, cardId);
-            cardsEl.appendChild(card);
-        } else {
-            var lastId = currentAssistantMessage.dataset.lastTermCardId;
-            if (lastId) {
-                var termSt   = status === 'error' ? 'error' : 'success';
-                var termExit = 0;
-                var termOut  = '';
-                // Parse output from result JSON: {"command":..., "stdout":..., "returncode":..., "output":...}
-                try {
-                    var resObj = JSON.parse(info);
-                    if (resObj.output)         termOut  = resObj.output;
-                    else if (resObj.stdout)    termOut  = resObj.stdout + (resObj.stderr ? '\n[stderr]\n' + resObj.stderr : '');
-                    if (resObj.returncode !== undefined && resObj.returncode !== 0) {
-                        termExit = resObj.returncode;
-                        termSt   = 'error';
-                    }
-                } catch(e) {
-                    termOut = info || '';
-                }
-                updateTerminalCard(lastId, termSt, termExit, termOut);
-            }
-        }
-
-        smartScroll(container);
+        _taHandleTerminal(container, data, status);
         return;
     }
 
-    // -- list_directory tree card ------------------------------------
-    if (type === 'list_directory' && status === 'complete') {
-        // Tree card is rendered via showDirectoryTree from Python
-        smartScroll(container);
+    // -- Ensure activity group exists --
+    if (!_taCurrentGroup || !document.body.contains(_taCurrentGroup)) {
+        _taCurrentGroup = _taCreateGroup(container);
+        _taFileCount = 0;
+        _taStats = { reads: 0, edits: 0, searches: 0, commands: 0 };
     }
 
-    // Always create a fresh activity section or use the current one
-    if (!currentActivitySection || !document.body.contains(currentActivitySection)) {
-        currentActivitySection = document.createElement('div');
-        currentActivitySection.className = 'activity-section';
-        fileCount = 0;
-        
-        // Create collapsible header
-        var header = document.createElement('div');
-        header.className = 'activity-header';
-        header.innerHTML = '<span class="activity-icon running"><span class="todo-spinner" style="width:10px;height:10px;"></span></span> <span class="activity-title">Exploring</span> <svg class="activity-toggle" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>';
-        header.style.cursor = 'pointer';
-        
-        // Click handler for toggle
-        header.onclick = function(e) {
-            e.stopPropagation();
-            var section = this.parentElement;
-            var isCollapsed = section.classList.toggle('collapsed');
-            var toggle = this.querySelector('.activity-toggle');
-            if (toggle) {
-                toggle.style.transform = isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
-                toggle.style.transition = 'transform 0.2s ease';
-            }
-        };
-        
-        currentActivitySection.appendChild(header);
-        
-        // Create activity list
-        var list = document.createElement('div');
-        list.className = 'activity-list';
-        currentActivitySection.appendChild(list);
-        
-        container.appendChild(currentActivitySection);
+    var itemsEl = _taCurrentGroup.querySelector('.ta-group-items');
+    if (!itemsEl) return;
+
+    // -- Route to item renderer --
+    if (type === 'read_file') {
+        _taRenderRead(itemsEl, data, status);
+    } else if (type === 'edit_file' || type === 'write_file' || type === 'create_file') {
+        _taRenderEdit(itemsEl, data, status, type);
+    } else if (type === 'search') {
+        _taRenderSearch(itemsEl, data, status);
+    } else if (type === 'list_directory') {
+        _taRenderListDir(itemsEl, data, status);
+    } else {
+        // Generic fallback
+        _taRenderGeneric(itemsEl, data, status, type);
     }
-    
-    var list = currentActivitySection.querySelector('.activity-list');
-    if (!list) return;
-    
-    // Check if this item already exists (match by type and resolved path)
-    var existingItem = null;
-    var items = list.querySelectorAll('.activity-item');
-    // Extract base path from info using same regex used in fec card
-    var reMatchAct = info ? info.match(/['"]((?:path|PATH|file|FILE))['"]\s*:\s*['"]([^'"]+)['"]/i) : null;
-    var baseInfo = reMatchAct ? reMatchAct[2].split(/[\\/]/).pop() : (info || '').split(' ')[0].split('(')[0];
-    
-    for (var i = 0; i < items.length; i++) {
-        var itemType = items[i].getAttribute('data-type');
-        var itemInfo = items[i].getAttribute('data-info');
-        var reMatchItem = itemInfo ? itemInfo.match(/['"]((?:path|PATH|file|FILE))['"]\s*:\s*['"]([^'"]+)['"]/i) : null;
-        var itemBaseInfo = reMatchItem ? reMatchItem[2].split(/[\\/]/).pop() : (itemInfo || '').split(' ')[0].split('(')[0];
-        
-        // Match by type and base filename
-        if (itemType === type && baseInfo && itemBaseInfo && 
-            (itemBaseInfo === baseInfo || itemInfo.includes(baseInfo) || info.includes(itemBaseInfo))) {
-            existingItem = items[i];
-            break;
-        }
-    }
-    
-    // If item exists and status is updating to complete, update it
-    // Update text if item already exists
-    if (existingItem && status === 'complete') {
-        existingItem.className = 'activity-item complete';
-        var badge = getStatusBadge(type, info);
-        if (badge && !existingItem.querySelector('.activity-badge')) {
-            existingItem.innerHTML += '<span class="activity-badge">' + badge + '</span>';
-        }
-        var textEl = existingItem.querySelector('.activity-text');
-        if (textEl) {
-            textEl.innerHTML = formatActivityLabel(type, info, 'complete');
-        }
-    } else if (!existingItem) {
-        // Track stats for header
-        if (!currentActivitySection.stats) {
-            currentActivitySection.stats = { reads: 0, edits: 0, other: 0 };
-        }
-        
-        if (type === 'read_file') {
-            currentActivitySection.stats.reads++;
-            fileCount++;
-        } else if (['write_file', 'edit_file', 'inject_after', 'add_import'].includes(type) || type.startsWith('terminal_create') || type.startsWith('terminal_edit')) {
-            currentActivitySection.stats.edits++;
-            fileCount++;
-        } else if (type === 'create_file' || type === 'create_directory' || type === 'delete_file' || type === 'delete_directory') {
-            currentActivitySection.stats.edits++;
-            fileCount++;
-        } else {
-            currentActivitySection.stats.other++;
-        }
-        
-        // Create new activity item
-        var item = document.createElement('div');
-        item.className = 'activity-item ' + (status || 'running');
-        item.setAttribute('data-type', type);
-        item.setAttribute('data-info', info);
-        
-        var icon = getFileIcon(type, info);
-        var label = formatActivityLabel(type, info, status);
-        var opBadge = getActivityOpBadge(type);
-        
-        item.innerHTML = opBadge + icon + '<span class="activity-text">' + label + '</span>';
-        
-        if (status === 'complete') {
-            var badge = getStatusBadge(type, info);
-            if (badge) {
-                item.innerHTML += '<span class="activity-badge">' + badge + '</span>';
-            }
-        }
-        
-        list.appendChild(item);
-    }
-    
-    // Update header
-    var header = currentActivitySection.querySelector('.activity-title');
-    if (header && fileCount > 0) {
-        var stats = currentActivitySection.stats || { reads: 0, edits: 0 };
-        var summary = 'Explored ' + fileCount + ' file' + (fileCount > 1 ? 's' : '');
-        if (status === 'complete') {
-            var details = [];
-            if (stats.reads > 0) details.push(stats.reads + ' read' + (stats.reads > 1 ? 's' : ''));
-            if (stats.edits > 0) details.push(stats.edits + ' edit' + (stats.edits > 1 ? 's' : ''));
-            if (details.length > 0) {
-                summary += ' (' + details.join(', ') + ')';
-            }
-        }
-        header.textContent = summary;
-    }
-    
-    if (status === 'complete') {
-        var iconEl = currentActivitySection.querySelector('.activity-icon');
-        if (iconEl) {
-            iconEl.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color:#4ade80;"><polyline points="20 6 9 17 4 12"></polyline></svg>';
-            iconEl.className = 'activity-icon complete';
-        }
-    }
-    
+
+    // -- Update group header stats --
+    _taUpdateGroupHeader();
     smartScroll(container);
+}
+
+// ── Create Activity Group ────────────────────────────────
+function _taCreateGroup(container) {
+    var group = document.createElement('div');
+    group.className = 'ta-group';
+    group.innerHTML =
+        '<div class="ta-group-header">' +
+            '<svg class="ta-group-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>' +
+            '<span class="ta-group-icon"><span class="todo-spinner" style="width:12px;height:12px;"></span></span>' +
+            '<span class="ta-group-title">Exploring</span>' +
+            '<span class="ta-group-stats"></span>' +
+        '</div>' +
+        '<div class="ta-group-items"></div>';
+    group.querySelector('.ta-group-header').onclick = function(e) {
+        e.stopPropagation();
+        group.classList.toggle('collapsed');
+    };
+    container.appendChild(group);
+    return group;
+}
+
+// ── Update Group Header ──────────────────────────────────
+function _taUpdateGroupHeader() {
+    if (!_taCurrentGroup) return;
+    var titleEl = _taCurrentGroup.querySelector('.ta-group-title');
+    var statsEl = _taCurrentGroup.querySelector('.ta-group-stats');
+    if (titleEl) {
+        titleEl.textContent = 'Explored ' + _taFileCount + ' file' + (_taFileCount !== 1 ? 's' : '');
+    }
+    if (statsEl) {
+        var parts = [];
+        if (_taStats.reads > 0) parts.push(_taStats.reads + ' read');
+        if (_taStats.edits > 0) parts.push(_taStats.edits + ' edit' + (_taStats.edits > 1 ? 's' : ''));
+        if (_taStats.searches > 0) parts.push(_taStats.searches + ' search' + (_taStats.searches > 1 ? 'es' : ''));
+        statsEl.textContent = parts.length ? parts.join(', ') : '';
+    }
+}
+
+// ── Mark Group Complete ──────────────────────────────────
+function _taMarkGroupComplete() {
+    if (!_taCurrentGroup) return;
+    var iconEl = _taCurrentGroup.querySelector('.ta-group-icon');
+    if (iconEl) {
+        iconEl.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+        iconEl.classList.add('complete');
+    }
+}
+
+// ── Render: Read File ────────────────────────────────────
+function _taRenderRead(itemsEl, data, status) {
+    var fp = data.file_path || '';
+    var fname = fp.split('/').pop().split('\\').pop() || 'file';
+    var ext = fname.includes('.') ? fname.split('.').pop().toLowerCase() : '';
+    var offset = data.offset || 1;
+    var limit = data.limit;
+    var lineRange = '';
+    if (limit) lineRange = ' (' + offset + ' - ' + (parseInt(offset) + parseInt(limit) - 1) + ')';
+
+    // Check for existing item with same filename
+    var existing = _taFindItem(itemsEl, 'read', fname);
+    if (existing) {
+        if (status === 'complete') {
+            var st = existing.querySelector('.ta-item-status');
+            if (st) st.innerHTML = '<span class="ta-ok">OK</span>';
+        }
+        return;
+    }
+
+    _taStats.reads++;
+    _taFileCount++;
+
+    var item = document.createElement('div');
+    item.className = 'ta-item ta-read';
+    item.dataset.taType = 'read';
+    item.dataset.taKey = fname;
+    item.innerHTML =
+        '<div class="ta-item-header">' +
+            '<span class="ta-item-icon">' + _taExtBadge(ext) + '</span>' +
+            '<span class="ta-item-label">' +
+                '<span class="ta-highlight">' + escapeHtml(fname) + '</span>' +
+                '<span class="ta-muted"> ' + escapeHtml(lineRange) + '  Reading</span>' +
+            '</span>' +
+            '<span class="ta-item-status">' +
+                (status === 'complete' ? '<span class="ta-ok">OK</span>' : '<span class="ta-spinner"></span>') +
+            '</span>' +
+        '</div>';
+    itemsEl.appendChild(item);
+}
+
+// ── Render: Edit / Write / Create ────────────────────────
+function _taRenderEdit(itemsEl, data, status, type) {
+    var fp = data.file_path || '';
+    var fname = fp.split('/').pop().split('\\').pop() || 'file';
+    var ext = fname.includes('.') ? fname.split('.').pop().toLowerCase() : '';
+    var desc = data.description || (type === 'create_file' ? 'Creating' : type === 'write_file' ? 'Writing' : 'Editing');
+    var actionColor = type === 'edit_file' ? '#fbbf24' : type === 'create_file' ? '#a78bfa' : '#4ade80';
+
+    var existing = _taFindItem(itemsEl, 'edit', fname);
+    if (existing) {
+        if (status === 'complete') {
+            var st = existing.querySelector('.ta-item-status');
+            if (st) st.innerHTML = '<span class="ta-ok">OK</span>';
+            var lbl = existing.querySelector('.ta-muted');
+            if (lbl) lbl.style.opacity = '0.4';
+        }
+        return;
+    }
+
+    _taStats.edits++;
+    _taFileCount++;
+
+    var item = document.createElement('div');
+    item.className = 'ta-item';
+    item.dataset.taType = 'edit';
+    item.dataset.taKey = fname;
+    item.innerHTML =
+        '<div class="ta-item-header">' +
+            '<span class="ta-item-icon">' + _taExtBadge(ext) + '</span>' +
+            '<span class="ta-item-label">' +
+                '<span class="ta-highlight">' + escapeHtml(fname) + '</span>' +
+                '<span class="ta-muted" style="color:' + actionColor + ';">  ' + escapeHtml(desc) + '</span>' +
+            '</span>' +
+            '<span class="ta-item-status">' +
+                (status === 'complete' ? '<span class="ta-ok">OK</span>' : '<span class="ta-spinner" style="border-top-color:' + actionColor + ';"></span>') +
+            '</span>' +
+        '</div>';
+    itemsEl.appendChild(item);
+}
+
+// ── Render: Search / Grep ────────────────────────────────
+function _taRenderSearch(itemsEl, data, status) {
+    var pattern = data.pattern || '';
+    var matchCount = data.match_count || 0;
+    var matches = data.matches || [];
+    var include = data.include || '';
+
+    // Check for existing search item with same pattern
+    var existing = _taFindItem(itemsEl, 'search', pattern);
+    if (existing && status === 'complete') {
+        // Update with results
+        var st = existing.querySelector('.ta-item-status');
+        if (st) st.innerHTML = '<span class="ta-ok">' + matchCount + ' result' + (matchCount !== 1 ? 's' : '') + '</span>';
+        // Populate details
+        if (matches.length > 0) {
+            existing.classList.add('expanded');
+            var details = existing.querySelector('.ta-item-details');
+            if (details) {
+                details.innerHTML = '';
+                for (var i = 0; i < matches.length; i++) {
+                    var m = matches[i];
+                    var row = document.createElement('div');
+                    row.className = 'ta-match-row';
+                    row.innerHTML =
+                        '<span class="ta-match-file">' + escapeHtml(m.file || '') + '</span>' +
+                        '<span class="ta-match-lines">' + (m.line ? m.line + '-' + m.line : '') + '</span>' +
+                        '<span class="ta-match-path">' + escapeHtml(m.path || '') + '</span>';
+                    // Click to open file
+                    (function(path, line) {
+                        row.onclick = function() {
+                            if (path && window.bridge) {
+                                if (line > 0 && window.bridge.on_open_file_at_line) {
+                                    bridge.on_open_file_at_line(path, line);
+                                } else {
+                                    openFileInEditor(path);
+                                }
+                            }
+                        };
+                    })(m.path, m.line);
+                    details.appendChild(row);
+                }
+            }
+        }
+        return;
+    }
+
+    if (existing) return; // already rendering this search
+
+    _taStats.searches++;
+
+    var item = document.createElement('div');
+    item.className = 'ta-item';
+    item.dataset.taType = 'search';
+    item.dataset.taKey = pattern;
+
+    var displayPattern = pattern.length > 50 ? pattern.substring(0, 47) + '...' : pattern;
+    var includeText = include ? '  ' + include : '';
+
+    item.innerHTML =
+        '<div class="ta-item-header">' +
+            '<svg class="ta-item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
+            '<span class="ta-item-icon" style="color:#60a5fa;">&#128269;</span>' +
+            '<span class="ta-item-label">' +
+                'Grepped code  <span class="ta-highlight">' + escapeHtml(displayPattern) + '</span>' +
+                '<span class="ta-muted">' + escapeHtml(includeText) + '</span>' +
+            '</span>' +
+            '<span class="ta-item-status">' +
+                (status === 'complete'
+                    ? '<span class="ta-ok">' + matchCount + ' result' + (matchCount !== 1 ? 's' : '') + '</span>'
+                    : '<span class="ta-spinner"></span>') +
+            '</span>' +
+        '</div>' +
+        '<div class="ta-item-details"></div>';
+
+    // Toggle expand/collapse on header click
+    item.querySelector('.ta-item-header').onclick = function(e) {
+        e.stopPropagation();
+        item.classList.toggle('expanded');
+    };
+
+    itemsEl.appendChild(item);
+}
+
+// ── Render: List Directory ───────────────────────────────
+function _taRenderListDir(itemsEl, data, status) {
+    var path = data.path || '.';
+    var count = data.count || 0;
+
+    var existing = _taFindItem(itemsEl, 'listdir', path);
+    if (existing) {
+        if (status === 'complete') {
+            var st = existing.querySelector('.ta-item-status');
+            if (st) st.innerHTML = '<span class="ta-ok">' + count + ' files</span>';
+        }
+        return;
+    }
+
+    _taFileCount++;
+
+    var item = document.createElement('div');
+    item.className = 'ta-item';
+    item.dataset.taType = 'listdir';
+    item.dataset.taKey = path;
+    item.innerHTML =
+        '<div class="ta-item-header">' +
+            '<span class="ta-item-icon" style="color:#f59e0b;">&#128193;</span>' +
+            '<span class="ta-item-label">' +
+                'Explored  <span class="ta-highlight">' + escapeHtml(path) + '</span>' +
+            '</span>' +
+            '<span class="ta-item-status">' +
+                (status === 'complete'
+                    ? '<span class="ta-ok">' + count + ' files</span>'
+                    : '<span class="ta-spinner" style="border-top-color:#f59e0b;"></span>') +
+            '</span>' +
+        '</div>';
+    itemsEl.appendChild(item);
+}
+
+// ── Render: Generic / Fallback ───────────────────────────
+function _taRenderGeneric(itemsEl, data, status, type) {
+    var label = type.replace(/_/g, ' ');
+    var raw = data.raw || JSON.stringify(data).substring(0, 80);
+
+    var item = document.createElement('div');
+    item.className = 'ta-item';
+    item.dataset.taType = type;
+    item.dataset.taKey = label;
+    item.innerHTML =
+        '<div class="ta-item-header">' +
+            '<span class="ta-item-icon">&#9881;</span>' +
+            '<span class="ta-item-label">' +
+                '<span class="ta-highlight">' + escapeHtml(label) + '</span>' +
+                '<span class="ta-muted">  ' + escapeHtml(raw.substring(0, 60)) + '</span>' +
+            '</span>' +
+            '<span class="ta-item-status">' +
+                (status === 'complete' ? '<span class="ta-ok">OK</span>' :
+                 status === 'error' ? '<span class="ta-err">ERR</span>' :
+                 '<span class="ta-spinner"></span>') +
+            '</span>' +
+        '</div>';
+    itemsEl.appendChild(item);
+}
+
+// ── Handle Terminal Commands ─────────────────────────────
+function _taHandleTerminal(container, data, status) {
+    if (!currentAssistantMessage) {
+        currentAssistantMessage = document.createElement('div');
+        currentAssistantMessage.className = 'message-bubble assistant';
+        var ce = document.createElement('div');
+        ce.className = 'message-content';
+        currentAssistantMessage.appendChild(ce);
+        currentContent = '';
+        container.appendChild(currentAssistantMessage);
+        var es = document.getElementById('empty-state');
+        if (es) es.remove();
+    }
+    var cardsEl = currentAssistantMessage.querySelector('.fec-cards-container');
+    if (!cardsEl) {
+        cardsEl = document.createElement('div');
+        cardsEl.className = 'fec-cards-container';
+        currentAssistantMessage.appendChild(cardsEl);
+    }
+    if (status === 'running') {
+        var cardId = 'term-cmd-' + Date.now();
+        currentAssistantMessage.dataset.lastTermCardId = cardId;
+        var cmdStr = data.command || '';
+        var card = buildTerminalCard(cmdStr, '', 'running', null, cardId);
+        cardsEl.appendChild(card);
+    } else {
+        var lastId = currentAssistantMessage.dataset.lastTermCardId;
+        if (lastId) {
+            var termSt = status === 'error' ? 'error' : 'success';
+            var termOut = data.output || '';
+            updateTerminalCard(lastId, termSt, 0, termOut);
+        }
+    }
+    smartScroll(container);
+}
+
+// ── Helpers ──────────────────────────────────────────────
+function _taFindItem(itemsEl, type, key) {
+    if (!key) return null;
+    var items = itemsEl.querySelectorAll('.ta-item');
+    for (var i = 0; i < items.length; i++) {
+        if (items[i].dataset.taType === type && items[i].dataset.taKey === key) {
+            return items[i];
+        }
+    }
+    return null;
+}
+
+function _taExtBadge(ext) {
+    if (!ext) return '<span style="font-size:9px;padding:1px 4px;border-radius:3px;background:rgba(107,114,128,0.2);color:#9ca3af;font-weight:700;text-transform:uppercase;font-family:var(--font-mono);">FILE</span>';
+    var colors = {
+        'py': '#3b82f6', 'js': '#eab308', 'ts': '#3b82f6', 'tsx': '#3b82f6', 'jsx': '#eab308',
+        'html': '#ef4444', 'css': '#8b5cf6', 'json': '#f59e0b', 'md': '#6b7280',
+        'yaml': '#ec4899', 'yml': '#ec4899', 'toml': '#f97316', 'xml': '#ef4444',
+        'sh': '#22c55e', 'bat': '#22c55e', 'ps1': '#3b82f6', 'sql': '#06b6d4',
+        'rs': '#f97316', 'go': '#06b6d4', 'java': '#ef4444', 'c': '#6b7280', 'cpp': '#6b7280',
+    };
+    var clr = colors[ext] || '#6b7280';
+    return '<span style="font-size:9px;padding:1px 4px;border-radius:3px;background:' + clr + '22;color:' + clr + ';font-weight:700;text-transform:uppercase;font-family:var(--font-mono);">' + ext.toUpperCase() + '</span>';
 }
 
 // Professional Tool Execution Summary Display
@@ -4030,10 +4023,21 @@ function clearActivitySection() {
         currentActivitySection.remove();
         currentActivitySection = null;
     }
+    if (_taCurrentGroup) {
+        _taCurrentGroup.remove();
+        _taCurrentGroup = null;
+    }
 }
 
 // Collapse (not remove) the activity section on completion — shows only summary header
 function collapseActivitySection() {
+    // Collapse the new ta-group if present
+    if (_taCurrentGroup) {
+        _taCurrentGroup.classList.add('collapsed');
+        _taMarkGroupComplete();
+        _taCurrentGroup = null;
+    }
+
     if (!currentActivitySection) return;
 
     var section = currentActivitySection;
@@ -8388,7 +8392,9 @@ function onDiffAccept(cardId, filePath) {
     if (_changedFiles[filePath] && _changedFiles[filePath].status === 'pending') {
         acceptChangedFile(filePath, null);
     } else if (!_changedFiles[filePath]) {
-        if (window.bridge && window.bridge.on_accept_file_edit) window.bridge.on_accept_file_edit(filePath);
+        // Normalize path to forward slashes (consistent with acceptChangedFile)
+        var safePath = filePath.replace(/\\/g, '/');
+        if (window.bridge && window.bridge.on_accept_file_edit) window.bridge.on_accept_file_edit(safePath);
     }
 }
 
@@ -8406,7 +8412,9 @@ function onDiffReject(cardId, filePath) {
     if (_changedFiles[filePath] && _changedFiles[filePath].status === 'pending') {
         rejectChangedFile(filePath, null);
     } else if (!_changedFiles[filePath]) {
-        if (window.bridge && window.bridge.on_reject_file_edit) window.bridge.on_reject_file_edit(filePath);
+        // Normalize path to forward slashes (consistent with rejectChangedFile)
+        var safePath = filePath.replace(/\\/g, '/');
+        if (window.bridge && window.bridge.on_reject_file_edit) window.bridge.on_reject_file_edit(safePath);
     }
 }
 

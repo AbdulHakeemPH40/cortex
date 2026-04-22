@@ -1,0 +1,43 @@
+[23:15:43] INFO ai_chat: Parsed 1 chats for JS
+[23:15:43] INFO ai_chat: Calling JavaScript: trySetProjectInfoWithChats(...)
+[JS INFO] [CHAT] trySetProjectInfoWithChats called (attempt 1 ): Cortex C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
+[JS INFO] [CHAT] Calling setProjectInfoWithChats now
+[JS INFO] [CHAT] setProjectInfoWithChats called: Cortex C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
+[JS INFO] [CHAT] Received chat data from Python: 1 items
+[JS INFO] [CHAT] ? currentProjectPath SET to: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
+[JS INFO] [CHAT] Parsed 1 chat metadata from Python data
+[JS INFO] [CHAT] Sidebar rendered with 1 chats (metadata only)
+[JS INFO] [CHAT] loadChat called with ID: 1776779692823
+[JS INFO] [CHAT] Found chat: hi Messages: 0 Message count: 56
+[JS INFO] [CHAT] canLazyLoad: true needsLazyLoad: true msgCount: 0 message_count: 56
+[JS INFO] [CHAT] Lazy loading messages for chat: 1776779692823
+[JS INFO] [CHAT] Requesting lazy load from bridge for: 1776779692823
+[23:15:43] INFO ai_chat: âœ“ Restored 56 messages for chat 1776779692823
+[JS INFO] [CHAT] bridge.load_full_chat CALLED for ID: 1776779692823
+[23:15:43] INFO ai_chat: [AI_CHAT] JS function not ready, scheduling single retry...
+[JS INFO] [CHAT] >>> chatFullLoadHandler START for id: 1776779692823 messages: 56
+[JS INFO] [CHAT] Batch rendered 56 of 56 messages
+[JS INFO] [CHAT] <<< chatFullLoadHandler END
+[JS INFO] [CHAT] Auto-scrolled to bottom after loading 56 messages
+[JS INFO] [CHAT] Skipping duplicate setProjectInfoWithChats for: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
+[JS ERROR] Uncaught TypeError: Cannot read properties of null (reading 'style')
+[JS ERROR] Uncaught TypeError: Cannot read properties of null (reading 'style')
+[JS ERROR] Uncaught TypeError: Cannot read properties of null (reading 'style')
+[JS ERROR] Uncaught TypeError: Cannot read properties of null (reading 'style')
+[JS ERROR] Uncaught TypeError: Cannot read properties of null (reading 'style')
+[JS ERROR] Uncaught TypeError: Cannot read properties of null (reading 'style')
+[JS ERROR] Uncaught TypeError: Cannot read properties of null (reading 'style')
+[JS ERROR] Uncaught TypeError: Cannot read properties of null (reading 'style')
+[JS ERROR] Uncaught TypeError: Cannot read properties of null (reading 'style')
+[JS ERROR] Uncaught TypeError: Cannot read properties of null (reading 'style')
+[JS ERROR] Uncaught TypeError: Cannot read properties of null (reading 'style')
+[JS ERROR] Uncaught TypeError: Cannot read properties of null (reading 'style')
+[JS ERROR] Uncaught TypeError: Cannot read properties of null (reading 'style')
+[JS ERROR] Uncaught TypeError: Cannot read properties of null (reading 'style')
+[23:16:09] INFO main_window: [GIT] Updating git summary (background)...
+[23:16:10] ERROR lsp_manager: LSP html init error: {'code': -32603, 'message': 'Request timeout'}
+[23:16:10] INFO lsp_manager: LSP server html: initializing -> error
+[23:16:10] WARNING lsp_manager: Request 1 (initialize) timed out
+[23:16:11] ERROR lsp_manager: LSP css init error: {'code': -32603, 'message': 'Request timeout'}
+[23:16:11] INFO lsp_manager: LSP server css: initializing -> error
+[23:16:11] WARNING lsp_manager: Request 1 (initialize) timed out

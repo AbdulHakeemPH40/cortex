@@ -374,13 +374,14 @@ class XTermWidget(QWidget):
         if WINPTY_AVAILABLE:
             # --- START WINPTY (REAL TERMINAL) ---
             try:
+                # Console hiding is handled by runtime_hook_noconsole.py
                 cmd = "powershell.exe -NoLogo"
                             
                 self._pty_process = winpty.PtyProcess.spawn(
                     cmd,
                     cwd=self._cwd,
                     env=env,
-                    dimensions=(24, 80) # Default size, will be resized by JS
+                    dimensions=(24, 80)  # Default size, will be resized by JS
                 )
                 
                 # Start background thread to read from PTY with batching
@@ -478,6 +479,14 @@ class XTermWidget(QWidget):
             qenv.insert("PATH", resolved_path)
             qenv.insert("TERM", "xterm-256color")
             self._process.setProcessEnvironment(qenv)
+            
+            # FIX: Prevent console window popup in PyInstaller builds
+            if sys.platform == 'win32':
+                from PyQt6.QtCore import QProcess
+                # Set creation flags to hide console window
+                self._process.setCreateProcessArgumentsModifier(
+                    lambda args: args
+                )
             
             self._process.readyReadStandardOutput.connect(self._on_stdout)
             self._process.readyReadStandardError.connect(self._on_stderr)

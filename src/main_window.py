@@ -70,9 +70,14 @@ class _GitStatusWorker(QThread):
     def _get_file_diff_stats(self, file_path: str):
         total_add, total_del = 0, 0
         try:
+            # FIX: Prevent console window popup
+            kwargs = dict(cwd=self._repo_path, capture_output=True, text=True, timeout=5)
+            if sys.platform == 'win32':
+                kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+            
             r = _subprocess.run(
                 ["git", "diff", "--numstat", file_path],
-                cwd=self._repo_path, capture_output=True, text=True, timeout=5
+                **kwargs
             )
             if r.returncode == 0 and r.stdout.strip():
                 a, d = self._parse_numstat(r.stdout)
@@ -80,9 +85,14 @@ class _GitStatusWorker(QThread):
         except Exception:
             pass
         try:
+            # FIX: Prevent console window popup
+            kwargs = dict(cwd=self._repo_path, capture_output=True, text=True, timeout=5)
+            if sys.platform == 'win32':
+                kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+            
             r = _subprocess.run(
                 ["git", "diff", "--cached", "--numstat", file_path],
-                cwd=self._repo_path, capture_output=True, text=True, timeout=5
+                **kwargs
             )
             if r.returncode == 0 and r.stdout.strip():
                 a, d = self._parse_numstat(r.stdout)
@@ -96,9 +106,14 @@ class _GitStatusWorker(QThread):
         data = {}
         # 1) branch name
         try:
+            # FIX: Prevent console window popup
+            kwargs = dict(cwd=self._repo_path, capture_output=True, text=True, timeout=5)
+            if sys.platform == 'win32':
+                kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+            
             r = _subprocess.run(
                 ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                cwd=self._repo_path, capture_output=True, text=True, timeout=5
+                **kwargs
             )
             data['branch'] = r.stdout.strip() if r.returncode == 0 else None
         except Exception:
@@ -120,8 +135,14 @@ class _GitStatusWorker(QThread):
             data['gh'] = self._gh_cached
         else:
             try:
+                # FIX: Prevent console window popup
+                kwargs = dict(capture_output=True, text=True, timeout=5)
+                if sys.platform == 'win32':
+                    kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+                
                 r = _subprocess.run(
-                    ["gh", "--version"], capture_output=True, text=True, timeout=5
+                    ["gh", "--version"],
+                    **kwargs
                 )
                 if r.returncode == 0:
                     data['gh'] = r.stdout.strip().split('\n')[0]
@@ -928,28 +949,38 @@ class CortexMainWindow(QMainWindow):
         dialog.setWindowTitle('Delete Chat')
         dialog.setFixedSize(280, 110)
         dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
-        dialog.setStyleSheet("""
-            QDialog {
-                background-color: #0a0a0a;
+        dialog.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        
+        # Outer layout (no margins) — dialog itself is transparent
+        outer_layout = QVBoxLayout(dialog)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+        
+        # Inner container with dark background, border, and rounded corners
+        container = QWidget()
+        container.setStyleSheet("""
+            QWidget {
+                background-color: #151515;
                 border: 1px solid #333;
                 border-radius: 5px;
             }
-            QWidget { background-color: transparent; }
         """)
+        outer_layout.addWidget(container)
         
-        dlg_layout = QVBoxLayout(dialog)
+        # Content layout inside the styled container
+        dlg_layout = QVBoxLayout(container)
         dlg_layout.setContentsMargins(20, 16, 20, 14)
         dlg_layout.setSpacing(16)
         
         # Message
         msg_lbl = _Label(f"Delete '{chat_title}'?")
-        msg_lbl.setStyleSheet('color: #d0d0d0; font-size: 13px; font-weight: 500;')
+        msg_lbl.setStyleSheet('color: #d0d0d0; font-size: 13px; font-weight: 500; background: transparent;')
         msg_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         dlg_layout.addWidget(msg_lbl)
         
         dlg_layout.addStretch()
         
-        # Buttons row - centered equally, no extra container widget
+        # Buttons row - centered equally
         btn_layout = _HBox()
         btn_layout.setContentsMargins(0, 0, 0, 0)
         btn_layout.setSpacing(12)
@@ -1536,10 +1567,13 @@ class CortexMainWindow(QMainWindow):
         projects_label.setStyleSheet(section_label_style)
         layout.addWidget(projects_label)
 
-        # Sample project (will be dynamic)
-        project_item = QLabel("  📁 black_box")
-        project_item.setStyleSheet(f"color: {text_color}; font-size: 13px; padding: 6px 12px;")
-        layout.addWidget(project_item)
+        # Current project name (dynamic)
+        from pathlib import Path as _Path
+        project_root = getattr(self._project_manager, 'root', None) if hasattr(self, '_project_manager') else None
+        display_name = _Path(project_root).name if project_root else "No project"
+        self._sidebar_project_item = QLabel(f"  📁 {display_name}")
+        self._sidebar_project_item.setStyleSheet(f"color: {text_color}; font-size: 13px; padding: 6px 12px;")
+        layout.addWidget(self._sidebar_project_item)
 
         # Chat List Section - Below Projects
         chats_header = QWidget()
@@ -2136,9 +2170,14 @@ class CortexMainWindow(QMainWindow):
 
         try:
             # Unstaged changes (working tree vs index)
+            # FIX: Prevent console window popup
+            kwargs = dict(cwd=cwd, capture_output=True, text=True, timeout=5)
+            if sys.platform == 'win32':
+                kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+            
             r = subprocess.run(
                 ["git", "diff", "--numstat", file_path],
-                cwd=cwd, capture_output=True, text=True, timeout=5
+                **kwargs
             )
             if r.returncode == 0 and r.stdout.strip():
                 a, d = _parse_numstat(r.stdout)
@@ -2149,9 +2188,14 @@ class CortexMainWindow(QMainWindow):
 
         try:
             # Staged changes (index vs HEAD)
+            # FIX: Prevent console window popup
+            kwargs = dict(cwd=cwd, capture_output=True, text=True, timeout=5)
+            if sys.platform == 'win32':
+                kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+            
             r = subprocess.run(
                 ["git", "diff", "--cached", "--numstat", file_path],
-                cwd=cwd, capture_output=True, text=True, timeout=5
+                **kwargs
             )
             if r.returncode == 0 and r.stdout.strip():
                 a, d = _parse_numstat(r.stdout)
@@ -2726,7 +2770,7 @@ class CortexMainWindow(QMainWindow):
         for lbl in [self._status_file, self._status_cursor, self._status_lang, self._status_ai]:
             sb.addWidget(lbl)
 
-        sb.addPermanentWidget(QLabel("  Cortex AI Agent v1.0.13  "))
+        sb.addPermanentWidget(QLabel("  Cortex AI Agent v1.0.15  "))
 
     def _update_status_cursor(self, line: int, col: int):
         self._status_cursor.setText(f"Ln {line}, Col {col}")
@@ -3943,10 +3987,14 @@ class CortexMainWindow(QMainWindow):
     def _on_accept_all_files(self):
         """Accept all pending AI edits — files already on disk, just clean up state."""
         log.info("[Accept All] User accepted all file edits")
-        # Refresh each tracked file in editor
+        # Deduplicate keys — _diff_data_store has both raw and normcase keys per file
+        seen = set()
         for file_path in list(getattr(self, '_diff_data_store', {}).keys()):
             try:
-                norm = os.path.normpath(file_path)
+                norm = os.path.normcase(os.path.normpath(file_path))
+                if norm in seen:
+                    continue
+                seen.add(norm)
                 if os.path.isfile(norm):
                     self._open_file(norm)
             except Exception:
@@ -3962,9 +4010,14 @@ class CortexMainWindow(QMainWindow):
         """Reject all pending AI edits — revert each file to its original content."""
         log.info("[Reject All] User rejected all file edits")
         reverted, failed = 0, 0
+        # Deduplicate keys — _diff_data_store has both raw and normcase keys per file
+        seen = set()
         for file_path in list(getattr(self, '_diff_data_store', {}).keys()):
             try:
-                norm = os.path.normpath(file_path)
+                norm = os.path.normcase(os.path.normpath(file_path))
+                if norm in seen:
+                    continue
+                seen.add(norm)
                 original = self._get_original_content(norm)
                 if original is not None and os.path.isfile(norm):
                     Path(norm).write_text(original, encoding='utf-8')
@@ -5770,6 +5823,12 @@ class CortexMainWindow(QMainWindow):
         self._ai_agent.clear_active_file()
         
         self._sidebar.set_project(folder_path)
+        
+        # Update sidebar project name display
+        if hasattr(self, '_sidebar_project_item'):
+            from pathlib import Path as _Path
+            self._sidebar_project_item.setText(f"  📁 {_Path(folder_path).name}")
+        
         # Update all current terminal tabs to the new project directory
         for i in range(self._terminal_tabs.count()):
             term = self._terminal_tabs.widget(i)
