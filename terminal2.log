@@ -1,43 +1,43 @@
-[23:15:43] INFO ai_chat: Parsed 1 chats for JS
-[23:15:43] INFO ai_chat: Calling JavaScript: trySetProjectInfoWithChats(...)
-[JS INFO] [CHAT] trySetProjectInfoWithChats called (attempt 1 ): Cortex C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[JS INFO] [CHAT] Calling setProjectInfoWithChats now
-[JS INFO] [CHAT] setProjectInfoWithChats called: Cortex C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[JS INFO] [CHAT] Received chat data from Python: 1 items
-[JS INFO] [CHAT] ? currentProjectPath SET to: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[JS INFO] [CHAT] Parsed 1 chat metadata from Python data
-[JS INFO] [CHAT] Sidebar rendered with 1 chats (metadata only)
-[JS INFO] [CHAT] loadChat called with ID: 1776779692823
-[JS INFO] [CHAT] Found chat: hi Messages: 0 Message count: 56
-[JS INFO] [CHAT] canLazyLoad: true needsLazyLoad: true msgCount: 0 message_count: 56
-[JS INFO] [CHAT] Lazy loading messages for chat: 1776779692823
-[JS INFO] [CHAT] Requesting lazy load from bridge for: 1776779692823
-[23:15:43] INFO ai_chat: âœ“ Restored 56 messages for chat 1776779692823
-[JS INFO] [CHAT] bridge.load_full_chat CALLED for ID: 1776779692823
-[23:15:43] INFO ai_chat: [AI_CHAT] JS function not ready, scheduling single retry...
-[JS INFO] [CHAT] >>> chatFullLoadHandler START for id: 1776779692823 messages: 56
-[JS INFO] [CHAT] Batch rendered 56 of 56 messages
-[JS INFO] [CHAT] <<< chatFullLoadHandler END
-[JS INFO] [CHAT] Auto-scrolled to bottom after loading 56 messages
-[JS INFO] [CHAT] Skipping duplicate setProjectInfoWithChats for: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[JS ERROR] Uncaught TypeError: Cannot read properties of null (reading 'style')
-[JS ERROR] Uncaught TypeError: Cannot read properties of null (reading 'style')
-[JS ERROR] Uncaught TypeError: Cannot read properties of null (reading 'style')
-[JS ERROR] Uncaught TypeError: Cannot read properties of null (reading 'style')
-[JS ERROR] Uncaught TypeError: Cannot read properties of null (reading 'style')
-[JS ERROR] Uncaught TypeError: Cannot read properties of null (reading 'style')
-[JS ERROR] Uncaught TypeError: Cannot read properties of null (reading 'style')
-[JS ERROR] Uncaught TypeError: Cannot read properties of null (reading 'style')
-[JS ERROR] Uncaught TypeError: Cannot read properties of null (reading 'style')
-[JS ERROR] Uncaught TypeError: Cannot read properties of null (reading 'style')
-[JS ERROR] Uncaught TypeError: Cannot read properties of null (reading 'style')
-[JS ERROR] Uncaught TypeError: Cannot read properties of null (reading 'style')
-[JS ERROR] Uncaught TypeError: Cannot read properties of null (reading 'style')
-[JS ERROR] Uncaught TypeError: Cannot read properties of null (reading 'style')
-[23:16:09] INFO main_window: [GIT] Updating git summary (background)...
-[23:16:10] ERROR lsp_manager: LSP html init error: {'code': -32603, 'message': 'Request timeout'}
-[23:16:10] INFO lsp_manager: LSP server html: initializing -> error
-[23:16:10] WARNING lsp_manager: Request 1 (initialize) timed out
-[23:16:11] ERROR lsp_manager: LSP css init error: {'code': -32603, 'message': 'Request timeout'}
-[23:16:11] INFO lsp_manager: LSP server css: initializing -> error
-[23:16:11] WARNING lsp_manager: Request 1 (initialize) timed out
+Based on the project structure and the context provided by the loaded memories, the following files are the most critical core logic filesin the Cortex IDEproject:
+
+1. src/main.py- Purpose: This is likely the main entry pointfor the application. It initializes the application, sets up the environment, and orchestrates the interaction between the UI, agents, and core logic.
+Why Critical: Without this file, the application cannot start or coordinate its components.
+2. src/main_window.py- Purpose: Handles the main UI windowlogic, including interactions between the user interface and the backend agents.
+Why Critical: This file is responsible for rendering the UI, managing user input, and triggering agent actions. It acts as the bridge between the frontend and backend.
+3. src/agent/QueryEngine.py- Purpose: Implements the core query enginefor the agent. This file is responsible for processing user queries, generating responses, and coordinating with tools and other agents.
+Why Critical: The query engine is the "brain" of the agent, handling all logic related to understanding and responding to user requests.
+4. src/agent/Tool.py and src/agent/tool_registry.py- Purpose:
+ - `Tool.py`: Defines the **base `Tool` class**and its methods, which are used by the agent to perform actions (e.g., reading files, executing commands).
+ - `tool_registry.py`: Manages the **registry of available tools**for the agent, including their initialization and usage.
+Why Critical: Tools are essential for the agent to interact with the system, perform tasks, and provide functionality. The registry ensures tools are properly loaded and accessible.
+5. src/agent/context.py- Purpose: Manages the contextfor the agent, including conversation history, memory, and project state.
+Why Critical: Context is vital for the agent to maintain continuity in conversations, remember user preferences, and make informed decisions.
+6. src/agent/coordinator/ (Directory)- Purpose: Contains logic for multi-agent coordination, including how agents communicate, delegate tasks, and collaborate.
+Why Critical: The coordinator ensures that multiple agents (e.g., Vision Agent, Query Agent) work together seamlessly, which is essential for complex tasks like OCR, object detection, and code analysis.
+7. src/agent/Task.py and src/agent/tasks.py- Purpose:
+ - `Task.py`: Defines the **`Task` class**, which represents individual tasks the agent can perform.
+ - `tasks.py`: Manages **task execution**, including scheduling, progress tracking, and completion.
+Why Critical: Tasks are the building blocks of the agent's workflow. These files ensure tasks are created, executed, and tracked efficiently.
+8. src/agent/agent_bridge.py- Purpose: Acts as a bridgebetween the agent and the UI, handling communication, signal emission, and event management.
+Why Critical: This file ensures smooth interaction between the agent's logic and the user interface, including handling user questions and agent responses.
+9. src/agent/state/ (Directory)- Purpose: Manages the stateof the agent, including project onboarding, session state, and memory persistence.
+Why Critical: State management is essential for maintaining the agent's behavior across sessions and ensuring consistency.
+10. src/agent/voice/ (Directory)- Purpose: Handles voice-related logic, including speech-to-text and text-to-speech capabilities.
+Why Critical: Voice interaction is a key feature for accessibility and user experience, especially in an IDE environment.
+Summary of Critical Files by Priority:
+Priority	File/Directory	Role
+1	src/main.py	Main entry point and application orchestrator.
+2	src/main_window.py	Main UI logic and user interaction handler.
+3	src/agent/QueryEngine.py	Core query processing and response generation.
+4	src/agent/Tool.py	Base tool definitions for agent actions.
+5	src/agent/tool_registry.py	Registry for managing and accessing tools.
+6	src/agent/context.py	Context and memory management for the agent.
+7	src/agent/coordinator/	Multi-agent coordination logic.
+8	src/agent/Task.py	Task definitions and management.
+9	src/agent/tasks.py	Task execution and progress tracking.
+10	src/agent/agent_bridge.py	Bridge for agent-UI communication.
+Recommendations:
+**Focus on main.py, main_window.py, and QueryEngine.py**for understanding the core workflow and agent logic.
+**Review Tool.py and tool_registry.py**to understand how the agent interacts with the system.
+Explore the coordinator/ directoryfor insights into multi-agent collaboration.
+**Check context.py and tasks.py**for context and task management logic.

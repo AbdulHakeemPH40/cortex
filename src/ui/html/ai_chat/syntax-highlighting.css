@@ -76,34 +76,72 @@ html body .markdown-body i {
     font-family: var(--font-sans) !important;
 }
 
-/* Markdown Main Heading (H1) - Dracula Purple */
+/* Markdown Main Heading (H1) - Pure White */
 html body .markdown-body h1,
 html body .md-h1 {
-    color: #bd93f9 !important;  /* Dracula purple - headings */
+    color: #ffffff !important;
+    font-size: 1.75em !important;
     font-weight: 700 !important;
     font-family: var(--font-sans) !important;
+    margin: 24px 0 12px 0 !important;
+    padding-bottom: 8px !important;
+    border-bottom: 2px solid var(--border-light) !important;
 }
 
-/* Markdown H2 - Dracula Cyan */
+/* Markdown H2 - Section Heading (Soft Blue) */
 html body .markdown-body h2,
 html body .md-h2 {
-    color: #8be9fd !important;  /* Dracula cyan - subheadings */
-    font-weight: 700 !important;
+    color: #a8c8ff !important;
+    font-size: 1.5em !important;
+    font-weight: 600 !important;
     font-family: var(--font-sans) !important;
+    margin: 20px 0 10px 0 !important;
+    padding-bottom: 6px !important;
+    border-bottom: 1px solid var(--border) !important;
 }
 
-/* Markdown H3-H6 - Dracula Green */
+/* Markdown H3 - Subsection (Soft Purple) */
 html body .markdown-body h3,
-html body .markdown-body h4,
-html body .markdown-body h5,
-html body .markdown-body h6,
-html body .md-h3,
-html body .md-h4,
-html body .md-h5,
-html body .md-h6 {
-    color: #50fa7b !important;  /* Dracula green - child headings */
-    font-weight: 700 !important;
+html body .md-h3 {
+    color: #c4b5fd !important;
+    font-size: 1.25em !important;
+    font-weight: 600 !important;
     font-family: var(--font-sans) !important;
+    margin: 18px 0 8px 0 !important;
+}
+
+/* Markdown H4 - Sub-subsection (Soft Cyan) */
+html body .markdown-body h4,
+html body .md-h4 {
+    color: #67e8f9 !important;
+    font-size: 1.1em !important;
+    font-weight: 600 !important;
+    font-family: var(--font-sans) !important;
+    margin: 16px 0 6px 0 !important;
+}
+
+/* Markdown H5 - Detail (Soft Green) */
+html body .markdown-body h5,
+html body .md-h5 {
+    color: #86efac !important;
+    font-size: 1em !important;
+    font-weight: 600 !important;
+    font-family: var(--font-sans) !important;
+    margin: 14px 0 6px 0 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.03em !important;
+}
+
+/* Markdown H6 - Minor Detail (Soft Amber) */
+html body .markdown-body h6,
+html body .md-h6 {
+    color: #fcd34d !important;
+    font-size: 0.9em !important;
+    font-weight: 600 !important;
+    font-family: var(--font-sans) !important;
+    margin: 12px 0 4px 0 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.04em !important;
 }
 
 /* Markdown Code in text - String color */
@@ -491,26 +529,37 @@ body.light-mode .markdown-body em {
     color: var(--text-main) !important;
 }
 
-/* Light mode headings */
+/* Light mode headings - distinct colors maintained */
 body.light-mode .markdown-body h1,
 body.light-mode .md-h1 {
-    color: #0047AB !important;
+    color: #1a1a1e !important;  /* Dark for light mode */
+    border-bottom-color: var(--border-light) !important;
 }
 
 body.light-mode .markdown-body h2,
 body.light-mode .md-h2 {
-    color: #2c3e50 !important;
+    color: #3b6cb5 !important;  /* Darker blue for light mode */
+    border-bottom-color: var(--border) !important;
 }
 
 body.light-mode .markdown-body h3,
+body.light-mode .md-h3 {
+    color: #7c3aed !important;  /* Darker purple for light mode */
+}
+
 body.light-mode .markdown-body h4,
+body.light-mode .md-h4 {
+    color: #0891b2 !important;  /* Darker cyan for light mode */
+}
+
 body.light-mode .markdown-body h5,
+body.light-mode .md-h5 {
+    color: #16a34a !important;  /* Darker green for light mode */
+}
+
 body.light-mode .markdown-body h6,
-body.light-mode .md-h3,
-body.light-mode .md-h4,
-body.light-mode .md-h5,
 body.light-mode .md-h6 {
-    color: #2c3e50 !important;
+    color: #d97706 !important;  /* Darker amber for light mode */
 }
 
 /* Light mode links */

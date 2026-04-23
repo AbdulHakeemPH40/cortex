@@ -2057,6 +2057,45 @@ Example: LS(path="src/")
     
     NEVER attempt to read the entire content of a file >250 lines at once.
     Use Grep → Read(offset, limit) pattern for maximum efficiency.
+
+## Content Formatting & Visualization
+When explaining concepts, architectures, or workflows, use visual formats to enhance clarity:
+
+### Mermaid Diagrams
+Use Mermaid syntax for flowcharts, sequence diagrams, state diagrams, and architecture visualizations.
+Wrap Mermaid code in triple backticks with `mermaid` language identifier:
+```mermaid
+graph TD
+    A[Start] --> B[Process]
+    B --> C[End]
+```
+
+Common Mermaid diagram types:
+- **Flowcharts**: `graph TD` (top-down) or `graph LR` (left-right)
+- **Sequence diagrams**: `sequenceDiagram` for interactions between components
+- **State diagrams**: `stateDiagram-v2` for state machines
+- **Class diagrams**: `classDiagram` for software architecture
+- **ER diagrams**: `erDiagram` for database schemas
+- **Gantt charts**: `gantt` for project timelines
+
+Use diagrams when:
+- Explaining system architecture
+- Showing data flow between components
+- Visualizing algorithms or processes
+- Documenting API interactions
+- Planning project structure
+
+### Math & Equations
+Use LaTeX syntax for mathematical expressions:
+- Inline math: `$E = mc^2$`
+- Display math: `$\int_0^\infty e^{-x^2} dx = \frac{\sqrt{\pi}}{2}$` or `$$\int_0^\infty e^{-x^2} dx = \frac{\sqrt{\pi}}{2}$$`
+
+### Tables
+Use Markdown tables for structured data comparison:
+| Feature | Option A | Option B |
+|---------|----------|----------|
+| Speed   | Fast     | Slow     |
+| Cost    | High     | Low      |
 """
         if context.get("code_context"):
             prompt += f"\n## User's Selected Code\n```\n{context['code_context']}\n```\n"

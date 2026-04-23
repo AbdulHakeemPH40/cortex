@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Table Rendering Test</title>
+    <script src="../../components/assets/marked.min.js"></script>
+    <style>
+        body { background: #1e1e1e; color: #fff; font-family: sans-serif; padding: 20px; }
+        .test-case { margin: 20px 0; padding: 15px; border: 1px solid #444; }
+        .input { background: #2d2d2d; padding: 10px; margin: 10px 0; white-space: pre-wrap; font-family: monospace; }
+        .output { background: #252525; padding: 10px; margin: 10px 0; }
+        table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+        th, td { border: 1px solid #555; padding: 8px; text-align: left; }
+        th { background: #333; }
+        .pass { border-color: #4caf50; }
+        .fail { border-color: #f44336; }
+    </style>
+</head>
+<body>
+    <h1>Table Rendering Test Cases</h1>
+    <div id="results"></div>
+
+<script>
+// Match app config (see initMarked in script.js)
+marked.setOptions({ breaks: true, gfm: true, pedantic: false, smartLists: true, smartypants: false });
+
+// Copy of normalizeTableBlock from script.js for testing
+function normalizeTableBlock(lines, startIdx, endIdx) {
+    var tableLines = lines.slice(startIdx, endIdx);
+    var result = [];
+    var hasSeparator = false;
+    var headerRow = null;
+    
+    // Step 1: Find header row (first line with |)
+    for (var i = 0; i < tableLines.length; i++) {
+        var line = tableLines[i].trim();
+        if (line.startsWith('|') && line.includes('|')) {
+            headerRow = line;
+            result.push(line);
+            break;
+        }
+    }
+    
+    if (!headerRow) return tableLines; // No valid header, return as-is
+    
+    // Step 2: Process remaining lines
+    var headerColCount = (headerRow.match(/\|/g) || []).length - 1;
+    var addedSeparator = false;
+    
+    for (var i = 1; i < tableLines.length; i++) {
+        var line = tableLines[i].trim();
+        
+        // Skip visual divider rows (---\t---)
+        if (/^\s*---+\s*(?:\t\s*---+\s*)*$/.test(line)) {
+            continue;
+        }
+        
+        // Skip empty lines (they're part of table block)
+        if (line === '') continue;
+        
+        // Check if this is a separator row
+        if (line.match(/^\|[\s\-|]+$/) || line.match(/^[\s\-|]+$/)) {
+            if (!hasSeparator && !addedSeparator) {
+                // Normalize separator row
+                var separator = '|' + Array(headerColCount + 1).join(' --- |');
+                result.push(separator);
+                hasSeparator = true;
+                addedSeparator = true;
+            }
+            continue;
+        }
+        
+        // If this is the first content row and no separator yet, add one
+        if (!hasSeparator && !addedSeparator && line.startsWith('|')) {
+            var separator = '|' + Array(headerColCount + 1).join(' --- |');
+            result.push(separator);
+            hasSeparator = true;
+            addedSeparator = true;
+        }
+        
+        // Normalize table row spacing: "| cell |" not "|cell|"
+        if (line.startsWith('|')) {
+            var cells = line.split('|').slice(1, -1); // Remove empty first/last
+            var normalized = '| ' + cells.map(function(c) { return c.trim(); }).join(' | ') + ' |';
+            result.push(normalized);
+        } else {
+            result.push(line);
+        }
+    }
+    
+    return result;
+}
+
+// Copy of normalizeMarkdownText from script.js for testing
+function normalizeMarkdownText(text) {
+    if (!text || typeof text !== 'string') return text || '';
+    
+    // Guard: skip complex processing for very large text
+    if (text.length > 200000) {
+        text = text.replace(/\r\n/g, '\n');
+        text = text.replace(new RegExp('\\n{4,}', 'g'), '\n\n\n');
+        return text;
+    }
+    
+    // Remove zero-width / invisible characters
+    text = text.replace(/[\u200B\u200C\u200D\u200E\u200F\uFEFF\u2060\u00AD]/g, '');
+    text = text.replace(/\r\n/g, '\n');
+    text = text.replace(/\*\*\s+([^*\s])/g, '**$1');
+
+    // Strip raw HTML tags
+    text = text.replace(/<\/? (?:h[1-6]|div|section|article|header|footer|nav|aside|main|figure|figcaption|details|summary)(?:\s[^>]*)?>\s*/gi, '\n');
+    text = text.replace(/\s+(?:id|class|style|data-[\w-]+)\s*=\s*"[^"]*"/gi, '');
+    text = text.replace(/\s+(?:id|class|style|data-[\w-]+)\s*=\s*'[^']*'/gi, '');
+
+    // Convert bullets
+    text = text.replace(/^\s*[\u2022\u25E6\u25AA\u2023\u25CF\u25CB]\s*/gm, '- ');
+
+    // Fix blockquotes
+    text = text.replace(/^\s*\u2192\s*>/gm, '> ');
+    text = text.replace(/^\s*\u2192\s+(?=[^\s>])/gm, '- ');
+    text = text.replace(/^>([^\s>])/gm, '> $1');
+    text = text.replace(/^([^\n>]+)>\s+([A-Z])/gm, '$1\n> $2');
+    text = text.replace(/^>\s{2,}/gm, '> ');
+
+    // Fix emoji rendering
+    text = text.replace(/([\u{1F300}-\u{1F9FF}])([A-Za-z0-9])/gu, '$1 $2');
+    text = text.replace(/([A-Za-z0-9])([\u{1F300}-\u{1F9FF}])/gu, '$1 $2');
+
+    // Fix bold text merged with following text (for B4)
+    text = text.replace(/(\*\*[^*]+\*\*)([A-Za-z])/g, '$1 $2');
+
+    // Fix headings (skip table rows with |)
+    text = text.replace(/^(?!.*\|)(#{1,6})([^#\s])/gm, '$1 $2');
+    text = text.replace(/^(?!.*\|)([^\s])(#{1,6})$/gm, '$1 $2');
+
+    // Fix numbered lists
+    text = text.replace(/^(\s*\d+)\)\s+/gm, '$1. ');
+
+    // ========== TABLE FIXES ==========
+    
+    // FIX 0: Split heading merged with table on same line (for T8, T9, T10)
+    // "###1. Performance| Python |Rust|" -> "###1. Performance\n| Python |Rust|"
+    text = text.replace(/^(#{1,6}[^#\n]+?)\s*(\|[^|]+\|)/gm, '$1\n$2');
+    
+    // FIX 1: Split text ending with : followed by table
+    text = text.replace(/([:.])\s+(\|[^|]+\|[^|]*\|)/g, '$1' + '' + '$2');
+    
+    // FIX 2: Fix || between header and separator
+    text = text.replace(/(\|[^\n|]+\|)\s*\|\s*(\|-{3,})/g, '$1\n$2');
+    
+    // FIX 3: Fix ||| patterns (triple pipes) - FOR T4
+    text = text.replace(/(\|[^|]+\|)\s*\|\|\|\s*([^|])/g, '$1\n| $2');
+    
+    // FIX 4: Fix || patterns between table cells
+    text = text.replace(/(\|[^|]+\|)\s*\|\|\s*(\|?[^|])/g, function(match, before, after) {
+        if (after.trim().match(/^[A-Za-z*\[]/)) {
+            return before + '\n| ' + after.replace(/^\|\s*/, '');
+        }
+        return match;
+    });
+    
+    // Original fixes
+    text = text.replace(/^([^|\n]+)\|\s*([A-Za-z])/gm, '$1\n| $2');
+    text = text.replace(/^(\|[^|]+\|)\s*(\|-{3,})/gm, '$1\n$2');
+    text = text.replace(/^(?!\|)([^|\n]+\|[^|\n]*)$/gm, '| $1');
+    text = text.replace(/^\|([^|\n]+[^|\n\s])$/gm, '|$1 |');
+    text = text.replace(/\|\s*([^|]+?)\s*\|/g, function(match, cell) {
+        return '| ' + cell.trim() + ' |';
+    });
+    
+    // Fix missing separator line
+    text = text.replace(/^(\|[^|]+\|)\n(\|[^|]+\|)$/gm, function(match, header, content) {
+        var colCount = (header.match(/\|/g) || []).length - 1;
+        var separator = '|' + Array(colCount + 1).join(' --- |');
+        return header + '\n' + separator + '\n' + content;
+    });
+    
+    // Normalize separator lines
+    text = text.replace(/^\|(?:\s*---*\s*\|)+\s*$/gm, function(match) {
+        var colCount = (match.match(/\|/g) || []).length - 1;
+        return '|' + Array(colCount + 1).join(' --- |');
+    });
+
+    // ========== NEW FIXES ==========
+    
+    // FIX 7: Split || between header and separator (for T4)
+    text = text.replace(/(\|[^\n|]+\|)\s*\|\s*(\|?-+[\s\|]*)/g, function(m, h, s) {
+        if (s.includes('-')) return h + '\n' + s;
+        return m;
+    });
+    
+    // FIX 7b: Split ||| triple pipes (for T4)
+    text = text.replace(/(\|[^\n|]+\|)\s*\|\|\|\s*/g, '$1\n| ');
+    
+    // FIX 8: Fix empty cells | | |
+    text = text.replace(/^\|\s*\|\s*\|/gm, '|  |  |');
+    
+    // FIX 9: Split rows merged with ||
+    text = text.replace(/(\|[^\n]+?)\s+\|\s+\|\s+([A-Za-z])/g, '$1 |\n| $2');
+    
+    // FIX 12: Convert tab-separated to pipes (for T6, T7, B2)
+    // Convert ALL tab-separated lines with 2+ columns (not just 3+)
+    var hasPipes = text.includes('|');
+    var tabLines = [];
+    var tabLineIndices = [];
+    var tempLines = text.split('\n');
+    for (var ti = 0; ti < tempLines.length; ti++) {
+        // Match lines with 2+ tabs (3+ columns) OR 1 tab (2 columns) but NOT --- rows
+        var isDashRow = /^\s*---+\s*(?:\t\s*---+\s*)*$/.test(tempLines[ti]);
+        if (tempLines[ti].includes('\t') && !tempLines[ti].includes('|') && !isDashRow) {
+            var tabCount = (tempLines[ti].match(/\t/g) || []).length;
+            if (tabCount >= 1) {  // Changed from >= 3 to >= 1
+                tabLines.push(tempLines[ti]);
+                tabLineIndices.push(ti);
+            }
+        }
+    }
+    // Convert if 2+ tab-lines exist
+    if (tabLines.length >= 2) {
+        for (var ti = 0; ti < tabLines.length; ti++) {
+            var idx = tabLineIndices[ti];
+            var parts = tabLines[ti].split('\t');
+            var cols = parts.map(c => c.trim());
+            tempLines[idx] = '| ' + cols.join(' | ') + ' |';
+        }
+        text = tempLines.join('\n');
+    }
+    
+    // FIX 12a: Remove tab-separated --- rows entirely (for T7)
+    // "---\t---" are visual dividers, not table content - REMOVE them
+    text = text.replace(/^\s*---+\s*(?:\t\s*---+\s*)*$/gm, '');
+    
+    // FIX 12c: Remove accidental tables from B4-style content
+    // If we have bold text followed by 1-2 pipe rows, remove the pipes
+    text = text.replace(/(\*\*[^*]+\*\*)\n\|[^\n|]+\|\n?$/gm, function(m, bold) {
+        // Check if next line is also a pipe row
+        return m; // Keep for now, let marked.js decide
+    });
+    
+    // FIX 12e: Add separator after tab-converted header (for T6)
+    // After FIX 12, we have 3 pipe rows - add separator after first
+    var lines = text.split('\n');
+    var pipeLines = [];
+    var result = [];
+    for (var i = 0; i < lines.length; i++) {
+        if (lines[i].trim().startsWith('|') && lines[i].includes('|') && !lines[i].includes('---')) {
+            pipeLines.push(lines[i]);
+            if (pipeLines.length === 1 && i + 1 < lines.length && lines[i+1].trim().startsWith('|') && !lines[i+1].includes('---')) {
+                // This is header, add separator
+                var colCount = (pipeLines[0].match(/\|/g) || []).length - 1;
+                var sep = '|' + Array(colCount + 1).join(' --- |');
+                result.push(pipeLines[0]);
+                result.push(sep);
+                pipeLines = [];
+            }
+        } else {
+            if (pipeLines.length > 0) {
+                result = result.concat(pipeLines);
+                pipeLines = [];
+            }
+            result.push(lines[i]);
+        }
+    }
+    if (pipeLines.length > 0) result = result.concat(pipeLines);
+    text = result.join('\n');
+    
+    // FIX 13: Remove trailing | --- (for B2)
+    text = text.replace(/(\|[^|]+\|)\s*-+\s*$/gm, '$1');
+    
+    // FIX 14: Add blank line before tables (CRITICAL for marked.js)
+    text = text.replace(/([^])(\|[^|]+\|[^|]*\|)/g, '$1$2');
+
+    // Normalize blank lines
+    text = text.replace(new RegExp('\\n{4,}', 'g'), '\n\n\n');
+
+    return text;
+}
+
+// Test cases from behavior.txt - REAL streaming data from AI
+const testCases = [
+    // ===== BEHAVIOR.TXT TEST CASES (Raw AI Streaming Data) =====
+    {
+        id: "B1",
+        name: "Broken: Missing newline between rows + empty cells",
+        input: "| Property | Description | |----------------| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |\n| width | The horizontal distance(left to right).\n\n| | | Example: The width of a rectangle or your screen. |\n| height | The vertical distance(top to bottom).\n\n| | | Example: The height of a rectangle or your screen. |",
+        expectTable: true
+    },
+    {
+        id: "B2",
+        name: "Broken: Text merged with table header (no newline)",
+        input: "Property\tDefault Value\tDescription\nwidth\tauto\tSets the horizontal sizeof an element (e.g., a `\n| | height | auto | Sets the vertical sizeof an element. | ---",
+        expectTable: true
+    },
+    {
+        id: "B3",
+        name: "Broken: Separator line at end instead of after header",
+        input: "| Property | Description |\n| ---------------- |-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------| | width | Number of pixels per row(horizontal). |\n| height | Number of pixels per column(vertical). | ---",
+        expectTable: true
+    },
+    {
+        id: "B4",
+        name: "Broken: Bold markers merged with text before table",
+        input: "**2. HTML/CSS (UI Layout)**In HTML/CSS, **width**and **height**are CSS properties that control an element's size:\nProperty\tDefault Value\tDescription\nwidth\tauto\tSets the horizontal sizeof an element",
+        expectTable: true  // Tab-separated content now converts to table (FIX 12)
+    },
+    {
+        id: "B5",
+        name: "Broken: Large multi-column table with line breaks in cells",
+        input: "| Framework | Type | Key Features | Learning Curve | Performance | Ecosystem | Best For | Popularity (2025) | |-----------------| --------------- |------------------------------------------------------------------------------| ---------------- |-------------| ----------- |-----------------------------------| ------------------- |\n| React | Library | - Virtual DOM\n- JSX\n- Hooks (state/ lifecycle)\n- Unidirectional data flow | Moderate | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | SPAs, dashboards, mobile (React Native) | #1 (Most Used) | | Angular| Full Framework | - Two-way data binding\n- TypeScript-first\n- Dependency injection\n- RxJS | Steep | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | Enterprise apps, large-scale apps | #2 |",
+        expectTable: true
+    },
+    {
+        id: "B6",
+        name: "Broken: Double pipes merging rows",
+        input: "| Project Type | Best Framework | |----------------------------| ------------------------- |\n| Single-Page App (SPA) | React / Vue / Svelte | | Enterprise App| Angular |\n| SEO-Friendly Website | Next.js / Nuxt.js | | Static Site| Astro / Next.js (SSG) |",
+        expectTable: true
+    },
+    {
+        id: "B7",
+        name: "Broken: Code block without proper backticks",
+        input: "Example: Styling a Div```html\n\n\n\n*3. Images (Pixels)**In images (e.g., PNG, JPG), **width**and **height**are metadata that describe the image's dimensions in pixels:",
+        expectTable: false  // This is testing code block detection
+    },
+    {
+        id: "B8",
+        name: "Broken: Heading merged with paragraph (no space)",
+        input: "**2. HTML/CSS (UI Layout)**In HTML/CSS, **width**and **height**are CSS properties",
+        expectTable: false  // No table, just testing text normalization
+    },
+    
+    // ===== ORIGINAL TEST CASES (Keeping for regression) =====
+    {
+        id: "T1",
+        name: "Perfect Table (baseline)",
+        input: "| Property | Default Value | Description |\n|----------|---------------|-------------|\n| width | auto | Sets the horizontal size of an element |",
+        expectTable: true
+    },
+    {
+        id: "T2",
+        name: "Broken: Bold merged with table",
+        input: "**In images (e.g., PNG, JPG), ** width **and** height **are metadata that describe the image's dimensions in pixels: | Property | Description |\n|------------|-------------------------------------------------------------|\n| width | Number of pixels per row(horizontal). |\n| height | Number of pixels per column(vertical). |",
+        expectTable: true
+    },
+    {
+        id: "T3",
+        name: "Broken: Heading merged with table",
+        input: "**In code, ** width **and** height **are often variables or attributes that describe an object's dimensions: | Property | Typical Use Case |\n|------------|------------------|\n| width | Horizontal size (e.g., of a window, table, or sprite). |\n| height | Vertical size (e.g., of a window, table, or sprite). |",
+        expectTable: true
+    },
+    {
+        id: "T4",
+        name: "Broken: Triple pipes in table rows",
+        input: "| Property | Description ||-------------|-------------------------------------------------------------|\n| width | The horizontal distance(left to right). ||| Example: The width of a rectangle or your screen. |\n| height | The vertical distance(top to bottom). ||| Example: The height of a rectangle or your screen. |",
+        expectTable: true
+    },
+    {
+        id: "T5",
+        name: "Clean 2-column table",
+        input: "| JavaScript | Python |\n|------------|--------|\n| Web dev | Data science |\n| Browser games | Desktop apps |",
+        expectTable: true
+    },
+    {
+        id: "T6",
+        name: "Tab-separated content (should convert to table)",
+        input: "Property\tDefault\tDescription\nwidth\tauto\tHorizontal size\nheight\tauto\tVertical size",
+        expectTable: true
+    },
+    {
+        id: "T7",
+        name: "Broken: Tab-separated --- rows inside table (displaying as ---- issue)",
+        input: "##Framework Choice Cheat Sheet\n\nProject Type\tBest Framework\nSingle-Page App (SPA)\tReact / Vue / Svelte\n---\t---\nSEO-Friendly Website\tNext.js / Nuxt.js\n---\t---\nPerformance-Critical\tSvelte / SolidJS\n---\t---\nMobile App\tReact Native (React)",
+        expectTable: true
+    },
+    {
+        id: "T8",
+        name: "Broken: Heading merged with tab table + --- dividers (behavior.txt line 3-11)",
+        input: "###1. Performance| Python |Rust|\n------------| ---------- |\n\nInterpreted(slower, ~10-100x slower than Rust)\tCompiled(blazing fast, near C/C++ speed)\nDynamic typing overhead\tZero-cost abstractions (no runtime overhead)\n---\t---\nGIL (Global Interpreter Lock) limits CPU parallelism\tFearless concurrency (no GIL, true multithreading)\n---\t---\nIdeal for scripting, prototyping, or high-level logic\tIdeal for systems programming, game engines, or performance-critical apps",
+        expectTable: true
+    },
+    {
+        id: "T9",
+        name: "Broken: Mixed tabs and pipes in same table (behavior.txt line 22-30)",
+        input: "4. Use Cases | Python| Rust |\n------------ |----------| | Web backends (Django, Flask) | Embedded systems, OS kernels |\n\nData science (NumPy, Pandas)\tGame engines (Bevy, ggez)\nMachine learning (PyTorch, TensorFlow)\tBlockchain (Solana, Polkadot)\n---\t---\nScripting/automation\tNetworking (Tokio, async-std)\n---\t---\nPrototyping\tHigh-frequency trading, databases",
+        expectTable: true
+    },
+    {
+        id: "T10",
+        name: "Broken: Multiple --- dividers in TL;DR table (behavior.txt line 71-82)",
+        input: "###TL;DR| Aspect |Python| Rust |\n--- | --- | --- |\n\nSpeed\tSlow (interpreted)\tBlazing fast (compiled)\nSafety\tGC-managed (runtime)\tMemory-safe (compile-time)\n---\t---\t---\nTyping\tDynamic\tStatic\n---\t---\t---\nLearning Curve\tEasy for beginners\tHard (ownership model)\n---\t---\t---\nUse Case\tScripting, ML, Web\tSystems, Game Engines, OS",
+        expectTable: true
+    }
+];
+
+function runTests() {
+    const results = document.getElementById('results');
+    
+    testCases.forEach((test, i) => {
+        const normalized = normalizeMarkdownText(test.input);
+        let html;
+        try {
+            html = marked.parse(normalized) || '';
+        } catch(e) {
+            html = 'Error: ' + e.message;
+        }
+        
+        const hasTable = html.includes('<table>');
+        const passed = hasTable === test.expectTable;
+        
+        // Debug: Show what the table parser sees
+        const hasSeparator = normalized.includes('---');
+        const hasPipes = normalized.includes('|');
+        const lineCount = normalized.split('\n').length;
+        
+        const div = document.createElement('div');
+        div.className = 'test-case ' + (passed ? 'pass' : 'fail');
+        div.innerHTML = `
+            <h3>${test.id}. ${test.name} ${passed ? '✓ PASS' : '✗ FAIL'}</h3>
+            <div><strong>Test ID:</strong> ${test.id}</div>
+            <div><strong>Status:</strong> ${passed ? 'PASSED' : 'FAILED'}</div>
+            <div><strong>Debug Info:</strong> Lines: ${lineCount} | Has pipes: ${hasPipes ? 'Yes' : 'No'} | Has separator (---): ${hasSeparator ? 'Yes' : 'No'}</div>
+            <div><strong>Input:</strong></div>
+            <div class="input">${test.input.replace(/</g, '&lt;').replace(/\n/g, '\\n')}</div>
+            <div><strong>Normalized (markdown ready):</strong></div>
+            <div class="input">${normalized.replace(/</g, '&lt;').replace(/\n/g, '\\n')}</div>
+            <div><strong>Rendered HTML:</strong></div>
+            <div class="output">${html}</div>
+        `;
+        results.appendChild(div);
+    });
+}
+
+runTests();
+</script>
+</body>
+</html>

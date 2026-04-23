@@ -300,23 +300,53 @@
       /* NOTE: All other styles moved to style.css and features.css */
     </style>
     
-    <!-- Optional: Math rendering (lazy loaded) -->
+    <!-- Math rendering (MathJax 3 — full TeX support) -->
     <script>
-        window.MathJax = { startup: { pageReady: () => Promise.resolve() } };
+        window.MathJax = {
+            startup: { pageReady: function() { return Promise.resolve(); } },
+            options: {
+                skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+                ignoreHtmlClass: 'no-mathjax|file-path'
+            },
+            tex: {
+                inlineMath: [['$', '$'], ['\\(', '\\)']],
+                displayMath: [['$$', '$$'], ['\\[', '\\]']],
+                processEscapes: true,
+                packages: { '[+]': ['ams', 'noerrors', 'noundefined'] },
+                tags: 'ams'
+            },
+            svg: { fontCache: 'global' },
+            chtml: { scale: 1.1, minScale: 0.6, matchFontHeight: true }
+        };
     </script>
     <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async defer></script>
     
-    <!-- Optional: Diagrams (lazy loaded) -->
+    <!-- Diagrams (Mermaid 11 — lazy loaded with Cortex brand theme) -->
     <script>
         window.mermaidLoaded = false;
         window.initMermaid = function() {
             if (window.mermaidLoaded) return Promise.resolve();
-            return new Promise((resolve) => {
+            return new Promise(function(resolve) {
                 var script = document.createElement('script');
                 script.src = 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js';
                 script.onload = function() {
                     if (window.mermaid) {
-                        mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+                        mermaid.initialize({
+                            startOnLoad: false,
+                            theme: 'dark',
+                            themeVariables: {
+                                primaryColor: '#D4622B',
+                                primaryTextColor: '#fff',
+                                primaryBorderColor: '#e8773d',
+                                lineColor: '#888',
+                                secondaryColor: '#1a1a2e',
+                                tertiaryColor: '#16213e',
+                                fontFamily: '"Inter", "Segoe UI", sans-serif',
+                                fontSize: '13px'
+                            },
+                            securityLevel: 'loose',
+                            flowchart: { curve: 'basis', padding: 10, htmlLabels: true }
+                        });
                         window.mermaidLoaded = true;
                     }
                     resolve();

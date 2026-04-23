@@ -1,43 +1,195 @@
 #!/usr/bin/env python3
 """
-Standalone script to index the Cortex AI Agent project.
+Project Indexer for Cortex IDE
+
+This script indexes the project structure, key files, and dependencies
+to provide a comprehensive overview of the project.
 """
-import sys
+
 import os
+import json
+from pathlib import Path
 
-# Add src to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+# --- Constants ---
+PROJECT_ROOT = Path(__file__).parent.absolute()
+OUTPUT_FILE = PROJECT_ROOT / "project_index.json"
+IGNORE_DIRS = {".git", ".pytest_cache", "__pycache__", "venv", "node_modules", "tmp"}
+IGNORE_FILES = {".env", "crash_output.log", "terminal2.log"}
 
-from src.core.codebase_index import get_codebase_index
-from src.utils.logger import get_logger
+# --- Helper Functions ---
+def is_ignored(path: Path) -> bool:
+    """Check if a path should be ignored."""
+    if path.name in IGNORE_FILES:
+        return True
+    for part in path.parts:
+        if part in IGNORE_DIRS:
+            return True
+    return False
 
-log = get_logger("index_project")
+def get_file_type(file_path: Path) -> str:
+    """Determine the type of a file based on its extension."""
+    ext = file_path.suffix.lower()
+    if ext == ".py":
+        return "python"
+    elif ext == ".js":
+        return "javascript"
+    elif ext == ".json":
+        return "json"
+    elif ext == ".md":
+        return "markdown"
+    elif ext == ".html":
+        return "html"
+    elif ext == ".css":
+        return "css"
+    elif ext == ".bat":
+        return "batch"
+    elif ext == ".iss":
+        return "inno"
+    elif ext == ".spec":
+        return "pyinstaller"
+    elif ext == ".log":
+        return "log"
+    else:
+        return "unknown"
 
-def main():
-    project_root = os.path.dirname(os.path.abspath(__file__))
-    log.info(f"Indexing project: {project_root}")
+def scan_directory(directory: Path) -> dict:
+    """Scan a directory and return its structure."""
+    structure = {
+        "name": directory.name,
+        "type": "directory",
+        "path": str(directory),
+        "children": []
+    }
     
-    # Create/get codebase index
-    index = get_codebase_index(project_root)
+    try:
+        for item in directory.iterdir():
+            if is_ignored(item):
+                continue
+            
+            if item.is_dir():
+                structure["children"].append(scan_directory(item))
+            else:
+                structure["children"].append({
+                    "name": item.name,
+                    "type": "file",
+                    "file_type": get_file_type(item),
+                    "path": str(item),
+                    "size": item.stat().st_size
+                })
+    except PermissionError:
+        structure["error"] = "Permission denied"
     
-    # Index the project (force rebuild)
-    count = index.index_project(force_rebuild=True)
-    
-    # Get stats
-    stats = index.get_project_stats()
-    
-    print(f"\n{'='*50}")
-    print(f"Indexing Complete!")
-    print(f"{'='*50}")
-    print(f"Files indexed: {stats['files_indexed']}")
-    print(f"Total symbols: {stats['total_symbols']}")
-    print(f"\nSymbols by type:")
-    for sym_type, count in stats['symbols_by_type'].items():
-        if count > 0:
-            print(f"  - {sym_type}: {count}")
-    print(f"{'='*50}")
-    
-    return 0
+    return structure
 
+def identify_key_files(structure: dict) -> list:
+    """Identify key files in the project structure."""
+    key_files = []
+    
+    def traverse(node):
+        if node.get("type") != "directory":
+            path = Path(node["path"])
+            if any(keyword in str(path) for keyword in ["main", "config", "setup", "install", "build", "test", "query", "tool", "agent"]):
+                key_files.append(node)
+        elif node["type"] == "directory":
+            for child in node["children"]:
+                traverse(child)
+    
+    traverse(structure)
+    return key_files
+
+def analyze_dependencies() -> dict:
+    """Analyze project dependencies from requirements and package.json."""
+    dependencies = {
+        "python": [],
+        "node": []
+    }
+    
+    # Python dependencies
+    req_files = ["requirements.txt", "requirements2.txt"]
+    for req_file in req_files:
+        req_path = PROJECT_ROOT / req_file
+        if req_path.exists():
+            with open(req_path, "r") as f:
+                dependencies["python"].extend(line.strip() for line in f if line.strip() and not line.startswith("#"))
+    
+    # Node dependencies
+    package_json = PROJECT_ROOT / "package.json"
+    if package_json.exists():
+        with open(package_json, "r") as f:
+            data = json.load(f)
+            deps = set()
+            deps.update(data.get("dependencies", {}).keys())
+            deps.update(data.get("devDependencies", {}).keys())
+            dependencies["node"].extend(sorted(deps))
+    
+    return dependencies
+
+def generate_index() -> dict:
+    """Generate a comprehensive project index."""
+    print(f"Scanning project at: {PROJECT_ROOT}")
+    
+    # Scan directory structure
+    structure = scan_directory(PROJECT_ROOT)
+    
+    # Identify key files
+    key_files = identify_key_files(structure)
+    
+    # Analyze dependencies
+    dependencies = analyze_dependencies()
+    
+    # Add metadata for key files
+    key_files_with_metadata = []
+    for file_info in key_files:
+        file_path = Path(file_info["path"])
+        metadata = {
+            "purpose": "Unknown",
+            "dependencies": []
+        }
+        
+        # Add purpose based on filename or path
+        if "main" in file_path.name.lower():
+            metadata["purpose"] = "Main entry point"
+        elif "query" in file_path.name.lower():
+            metadata["purpose"] = "Query engine logic"
+        elif "tool" in file_path.name.lower():
+            metadata["purpose"] = "Tool definitions"
+        elif "context" in file_path.name.lower():
+            metadata["purpose"] = "Context management"
+        elif "task" in file_path.name.lower():
+            metadata["purpose"] = "Task management"
+        
+        # Add dependencies (placeholder for now)
+        if file_path.suffix == ".py":
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+                imports = [line.split()[1] for line in content.splitlines() if line.startswith("import ") or line.startswith("from ")]
+                metadata["dependencies"] = list(set(imports))
+        
+        file_info["metadata"] = metadata
+        key_files_with_metadata.append(file_info)
+    
+    # Create index
+    index = {
+        "project_root": str(PROJECT_ROOT),
+        "structure": structure,
+        "key_files": key_files_with_metadata,
+        "dependencies": dependencies,
+        "stats": {
+            "total_files": sum(1 for _ in PROJECT_ROOT.rglob("*") if _.is_file() and not is_ignored(_)),
+            "total_dirs": sum(1 for _ in PROJECT_ROOT.rglob("*") if _.is_dir() and not is_ignored(_)),
+            "generated_at": str(Path(__file__).stat().st_mtime)
+        }
+    }
+    
+    return index
+
+def save_index(index: dict):
+    """Save the index to a JSON file."""
+    with open(OUTPUT_FILE, "w") as f:
+        json.dump(index, f, indent=2)
+    print(f"Project index saved to: {OUTPUT_FILE}")
+
+# --- Main ---
 if __name__ == "__main__":
-    sys.exit(main())
+    index = generate_index()
+    save_index(index)

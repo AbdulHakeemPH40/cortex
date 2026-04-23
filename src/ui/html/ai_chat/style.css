@@ -170,13 +170,14 @@ body {
     max-width: 100%;
 }/* Interaction Card Styles for AskUserQuestion */
 .interaction-card {
-    background: var(--bg-color-2, #1e1e2e);
-    border-radius: 10px;
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
     padding: 16px 18px;
     margin: 12px 0;
-    border: 1px solid var(--border-color, #3d3d5c);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
-    max-width: 92%;
+    border: 1px solid var(--border);
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
 }
 
 .interaction-header {
@@ -379,109 +380,10 @@ body {
    Clean, Minimal Dark Theme (Exact Replica)
    ================================================ */
 
-:root {
-    /* Background Colors - Multi-layered Metallic Palette */
-    --bg-main: #1E1E1E;              /* Dark Gunmetal - Main workspace */
-    --bg-sidebar: #121212;           /* Onyx - Sidebar/Header */
-    --bg-card: #1c1c1c;              /* Dark card - Component cards */
-    --bg-code: #000000;              /* Pure black - Terminal/code */
-    --bg-elevated: #2A2A2A;          /* Elevated metallic - User bubbles */
-    
-    /* Borders & Dividers */
-    --border: #2D2D2D;               /* Subtle separator */
-    --border-light: #3D3D3D;         /* Higher contrast for user bubbles */
-    --border-subtle: #222222;        /* Very subtle dividers */
-    
-    /* Text Colors */
-    --text-main: #CCCCCC;            /* Primary text */
-    --text-secondary: #8E8E8E;       /* Secondary/muted text */
-    --text-dim: #666666;             /* Dimmed text */
-    --text-white: #FFFFFF;           /* Pure white */
-    
-    /* Accent Colors */
-    --accent-primary: #3B82F6;       /* Vibrant Blue - Branding */
-    --accent-hover: #2563EB;         /* Darker blue on hover */
-    --green: #2EA043;                /* Success green */
-    --green-bright: #4ADE80;         /* Bright green */
-    --green-bg: rgba(46, 160, 67, 0.15);
-    --yellow: #EAB308;               /* Warning yellow */
-    --red: #F87171;                  /* Error red */
-    --red-bg: rgba(248, 113, 113, 0.15);
-    --purple: #A855F7;               /* Purple accent */
-    
-    /* Diff Colors */
-    --diff-add: #2EA043;
-    --diff-remove: #F85149;
-    
-    /* Status Colors */
-    --success: #2EA043;
-    --error: #F87171;
-    --warning: #EAB308;
-    
-    /* Spacing */
-    --space-xs: 4px;
-    --space-sm: 8px;
-    --space-md: 12px;
-    --space-lg: 16px;
-    --space-xl: 20px;
-    
-    /* Radius */
-    --radius-sm: 4px;
-    --radius-md: 8px;
-    --radius-lg: 12px;
-    
-    /* Shadows */
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-    --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.3);
-    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.4);
-}
-
 /* ================================================
    LIGHT MODE TOKENS
+   Consolidated - all light mode overrides defined at line 3967
    ================================================ */
-
-body.light-mode {
-    --bg-main: #ffffff;
-    --bg-sidebar: #f3f3f3;
-    --bg-card: #ffffff;
-    --bg-code: #f6f8fa;
-    --bg-elevated: #fafafa;
-    
-    --border: #e1e1e1;
-    --border-light: #d0d0d0;
-    --border-subtle: #e8e8e8;
-    
-    --text-main: #3b3b3b;
-    --text-secondary: #616161;
-    --text-dim: #8a8a8a;
-    --text-white: #000000;
-    
-    --accent-primary: #007acc;
-    --accent-hover: #005fa3;
-    --green: #28a745;
-    --green-bright: #20c997;
-    --green-bg: rgba(40, 167, 69, 0.1);
-    --yellow: #ffc107;
-    --red: #dc3545;
-    --red-bg: rgba(220, 53, 69, 0.1);
-    --purple: #6f42c1;
-    
-    --diff-add: #22863a;
-    --diff-remove: #d73a49;
-    
-    --success: #28a745;
-    --error: #dc3545;
-    --warning: #ffc107;
-    
-    --composer-bg: #ffffff;
-    --pill-bg: #e1e4e8;
-    --card-body-bg: #f6f8fa;
-    --shadow: rgba(0, 0, 0, 0.08);
-    
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.08);
-    --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.08);
-    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
-}
 
 /* ================================================
    BASE LAYOUT
@@ -941,6 +843,9 @@ button svg,
 .message-content {
     line-height: 1.6;
     font-size: 14px;
+    padding: 0 4px;
+    width: 100%;
+    box-sizing: border-box;
 }
 
 /* Copy buttons */
@@ -1513,8 +1418,8 @@ button svg,
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     padding: 8px 12px;
-    margin-bottom: 8px;
-    width: 100%;
+    margin: 0 16px 8px;
+    width: auto;
     box-sizing: border-box;
 }
 
@@ -1751,21 +1656,24 @@ button svg,
    ================================================ */
 
 /* Enhanced Code Block Wrapper - Dark Jet Metallic Border */
+/* Code Block Wrapper - Uniform Width & Alignment */
 .code-block-wrapper {
     display: flex;
     flex-direction: column;
-    background: linear-gradient(145deg, #1a1a1f, #141418);
-    border: 1px solid #4a4a57;
-    border-radius: 10px;
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
     margin: 12px 0;
     overflow: hidden;
+    width: 100%;
     max-width: 100%;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    box-sizing: border-box;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
 .code-block-wrapper:hover {
-    border-color: #6b6b7b;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    border-color: var(--border-light);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
 /* pre inside wrapper strips its own border/radius/margin (wrapper owns those) */
@@ -1773,10 +1681,12 @@ button svg,
     border: none;
     border-radius: 0;
     margin: 0;
+    padding: 0;
     background: transparent;
+    width: 100%;
 }
 
-/* Standalone pre (no wrapper) keeps original styling */
+/* Standalone pre (no wrapper) keeps uniform styling */
 pre[data-lang] {
     background: var(--bg-code);
     border: 1px solid var(--border);
@@ -1784,19 +1694,23 @@ pre[data-lang] {
     padding: 14px;
     margin: 12px 0;
     overflow-x: auto;
+    width: 100%;
     max-width: 100%;
+    box-sizing: border-box;
 }
 
-/* Enhanced Code Block Header - Much Darker */
+/* Enhanced Code Block Header - Unified Design */
 .code-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 10px 16px;
-    background: linear-gradient(90deg, #1a1a1f, #121216);
-    border-bottom: 1px solid #4a4a57;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
     user-select: none;
+    width: 100%;
+    box-sizing: border-box;
 }
 
 .code-lang {
@@ -2024,14 +1938,35 @@ code:not(pre code) {
 }
 
 /* ================================================
-   MARKDOWN CONTENT
+   MARKDOWN CONTENT - Chat Heading Rules
+   Planned: H3 = parent, H4 = child
+   Hide H1/H2 and omit H5/H6 completely
    ================================================ */
 
+/* Hide levels we don't use in chat */
 .message-content h1,
 .message-content h2,
+.message-content h5,
+.message-content h6 {
+    display: none;
+}
+
+/* H3 - Parent heading (reduced size) */
 .message-content h3 {
-    color: var(--text-white);
-    margin: 16px 0 8px 0;
+    color: #c4b5fd;
+    font-size: 1.1em;
+    font-weight: 650;
+    margin: 14px 0 8px 0;
+    line-height: 1.35;
+}
+
+/* H4 - Child heading (reduced size) */
+.message-content h4 {
+    color: #67e8f9;
+    font-size: 1.0em;
+    font-weight: 600;
+    margin: 10px 0 6px 0;
+    line-height: 1.35;
 }
 
 .message-content p {
@@ -2066,28 +2001,108 @@ code:not(pre code) {
     margin: 12px 0;
 }
 
-.message-content table {
+/* ================================================
+   ENHANCED TABLE DESIGN SYSTEM
+   Responsive, zebra-striped, indigo-themed
+   ================================================ */
+
+/* Force assistant bubble to expand for wide tables */
+.message-bubble.assistant:has(table) {
+    max-width: 100%;
+}
+
+.table-wrapper {
     width: 100%;
-    border-collapse: collapse;
-    margin: 12px 0;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 16px 0;
+    border-radius: 10px;
+    border: 1px solid rgba(99, 160, 246, 0.15);
+    scrollbar-width: thin;
+    scrollbar-color: rgba(99, 160, 246, 0.4) transparent;
+}
+
+.table-wrapper::-webkit-scrollbar { height: 4px; }
+.table-wrapper::-webkit-scrollbar-thumb {
+    background: rgba(99, 160, 246, 0.4);
+    border-radius: 10px;
+}
+
+.message-content table {
+    display: table;
+    width: 100%;
+    min-width: 500px;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 14px;
+    table-layout: auto;
+    margin: 0;
+    background: rgba(22, 22, 24, 0.6);
+    border: 1px solid rgba(99, 160, 246, 0.12);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+}
+
+.message-content th,
+.message-content td {
+    padding: 12px 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    border-right: 1px solid rgba(255, 255, 255, 0.04);
+    text-align: left;
+    vertical-align: top;
+    white-space: normal;
+    word-break: normal;
+    overflow-wrap: break-word;
+    line-height: 1.6;
+    min-width: 80px;
+    transition: background 0.2s ease;
 }
 
 .message-content th {
-    background: rgba(255, 255, 255, 0.03);
-    color: var(--text-main);
-    padding: 8px 12px;
-    text-align: left;
-    border-bottom: 1px solid var(--border);
-    font-weight: 600;
+    background: rgba(99, 160, 246, 0.12) !important;
+    color: var(--accent-primary);
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.8px;
+    border-bottom: 2px solid rgba(99, 160, 246, 0.2) !important;
 }
 
-.message-content td {
-    padding: 8px 12px;
-    border: 1px solid var(--border);
+.message-content th:first-child,
+.message-content td:first-child {
+    font-weight: 600;
     color: var(--text-main);
+    min-width: 100px;
 }
+
+.message-content td:nth-child(2) { min-width: 120px; }
+.message-content td:last-child { min-width: 160px; }
+
+/* Zebra striping */
+.message-content tbody tr:nth-child(even) {
+    background: rgba(255, 255, 255, 0.015);
+}
+
+.message-content tr:hover td {
+    background: rgba(99, 160, 246, 0.06);
+}
+
+/* Code inside table cells */
+.message-content td code {
+    padding: 3px 8px !important;
+    border-radius: 4px !important;
+    font-family: 'Geist Mono', 'JetBrains Mono', 'Fira Code', monospace !important;
+    border: 1px solid rgba(99, 160, 246, 0.15) !important;
+    display: inline-block;
+    margin: 1px 0;
+    font-size: 12px !important;
+    background: rgba(0, 0, 0, 0.3) !important;
+}
+
+/* Edge cleanup */
+.message-content tr:last-child td { border-bottom: none; }
+.message-content tr td:last-child { border-right: none; }
 
 .message-content hr {
     border: none;
@@ -3345,16 +3360,28 @@ body.loaded #loading-overlay {
     max-width: 100%;
 }
 
-/* Parent Card - Collapsed State (40-50px height) */
+/* ================================================
+   TOOL OPERATION CARDS - Unified Clean Design
+   Single card system for all AI tool operations
+   ================================================ */
+
+/* Parent Card - Base Styles */
 .tool-operation-card {
     display: flex;
     flex-direction: column;
-    background: linear-gradient(145deg, rgba(30, 30, 30, 0.9), rgba(20, 20, 20, 0.95));
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 10px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
     overflow: hidden;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    animation: cardSlideIn 0.3s ease-out;
+    transition: all 0.2s ease;
+    margin: 8px 16px;
+    max-width: 100%;
+    width: auto;
+}
+
+.tool-operation-card:hover {
+    border-color: var(--border-light);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
 /* Collapsed State - Header Only (40px height) */
@@ -3364,9 +3391,8 @@ body.loaded #loading-overlay {
 
 /* Expanded State - Full Content */
 .tool-operation-card.expanded {
-    max-height: 400px;
-    border-color: rgba(59, 130, 246, 0.3);
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    max-height: 500px;
+    border-color: var(--border-strong);
 }
 
 /* Card Header - Always Visible */
@@ -3413,33 +3439,33 @@ body.loaded #loading-overlay {
 
 /* Type-specific icon backgrounds */
 .tool-operation-card.create .tool-card-icon {
-    background: rgba(34, 197, 94, 0.15);
-    color: #22c55e;
+    background: var(--green-bg);
+    color: var(--green);
 }
 
 .tool-operation-card.edit .tool-card-icon {
-    background: rgba(59, 130, 246, 0.15);
-    color: #3b82f6;
+    background: var(--accent-dim);
+    color: var(--accent-primary);
 }
 
 .tool-operation-card.delete .tool-card-icon {
-    background: rgba(239, 68, 68, 0.15);
-    color: #ef4444;
+    background: var(--red-bg);
+    color: var(--red);
 }
 
 .tool-operation-card.read .tool-card-icon {
-    background: rgba(168, 85, 247, 0.15);
-    color: #a855f7;
+    background: var(--purple-bg);
+    color: var(--purple);
 }
 
 .tool-operation-card.terminal .tool-card-icon {
-    background: rgba(245, 158, 11, 0.15);
-    color: #f59e0b;
+    background: var(--yellow-bg);
+    color: var(--yellow);
 }
 
 .tool-operation-card.diff .tool-card-icon {
-    background: rgba(6, 182, 212, 0.15);
-    color: #06b6d4;
+    background: rgba(6, 182, 212, 0.12);
+    color: var(--cyan);
 }
 
 /* Card Title & File Info */
@@ -3480,24 +3506,24 @@ body.loaded #loading-overlay {
 }
 
 .tool-card-status.pending {
-    background: rgba(245, 158, 11, 0.15);
-    color: #f59e0b;
+    background: var(--yellow-bg);
+    color: var(--yellow);
 }
 
 .tool-card-status.running {
-    background: rgba(59, 130, 246, 0.15);
-    color: #3b82f6;
+    background: var(--accent-dim);
+    color: var(--accent-primary);
     animation: statusPulse 1.5s ease-in-out infinite;
 }
 
 .tool-card-status.completed {
-    background: rgba(34, 197, 94, 0.15);
-    color: #22c55e;
+    background: var(--green-bg);
+    color: var(--green);
 }
 
 .tool-card-status.failed {
-    background: rgba(239, 68, 68, 0.15);
-    color: #ef4444;
+    background: var(--red-bg);
+    color: var(--red);
 }
 
 /* Expandable Content Area */
@@ -3509,13 +3535,13 @@ body.loaded #loading-overlay {
 }
 
 .tool-operation-card.expanded .tool-card-content {
-    max-height: 355px;
-    border-top-color: rgba(255, 255, 255, 0.05);
+    max-height: 450px;
+    border-top-color: var(--border);
 }
 
 /* Scrollable Content Inside */
 .tool-card-scrollable {
-    max-height: 355px;
+    max-height: 450px;
     overflow-y: auto;
     padding: 12px 14px;
     font-family: var(--font-mono);
@@ -3526,10 +3552,10 @@ body.loaded #loading-overlay {
 
 /* Terminal-specific content styling */
 .tool-card-terminal {
-    background: rgba(0, 0, 0, 0.4);
-    border-radius: 6px;
-    color: #4ade80;
-    font-family: 'Cascadia Code', 'Consolas', 'Monaco', monospace;
+    background: var(--bg-code);
+    border-radius: var(--radius-md);
+    color: var(--green-bright);
+    font-family: var(--font-mono);
     white-space: pre-wrap;
     word-break: break-all;
 }
@@ -3537,10 +3563,11 @@ body.loaded #loading-overlay {
 /* Tool Operations Container (AI Edits Group) */
 .tool-operations-container {
     margin: 12px 0;
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 10px;
-    background: linear-gradient(145deg, rgba(30, 30, 30, 0.6), rgba(20, 20, 20, 0.8));
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-surface);
     overflow: hidden;
+    padding: 8px 0;
 }
 
 .tool-ops-header {
@@ -3759,9 +3786,8 @@ body.loaded #loading-overlay {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background: linear-gradient(180deg, var(--bg-card) 0%, rgba(30, 30, 46, 0.8) 100%);
+    background: var(--bg-card);
     flex-shrink: 0;
-    backdrop-filter: blur(8px);
 }
 
 .header-center {
@@ -4032,11 +4058,14 @@ body.light-mode {
     --bg-hover:     #e4e4e8;
     --bg-card:      #ffffff;
     --bg-code:      #1a1a1e;      /* Code blocks ALWAYS stay dark */
+    --bg-main:      #ffffff;      /* Main background */
+    --bg-sidebar:   #f3f3f3;      /* Sidebar background */
 
     /* Borders - dark on light */
     --border:         rgba(0, 0, 0, 0.07);
     --border-light:   rgba(0, 0, 0, 0.11);
     --border-strong:  rgba(0, 0, 0, 0.18);
+    --border-subtle:  rgba(0, 0, 0, 0.05);
 
     /* Text - dark on light */
     --text-main:      #1a1a1e;
@@ -4045,13 +4074,43 @@ body.light-mode {
     --text-dim:       #909098;
     --text-faint:     #c0c0c4;
     --text-muted:     #666666;
+    --text-white:     #000000;
+
+    /* Accent adjustments for light mode */
+    --accent-primary: #007acc;
+    --accent-hover:   #005fa3;
+
+    /* Semantic colors - adjusted for light mode */
+    --green:          #28a745;
+    --green-bright:   #20c997;
+    --green-bg:       rgba(40, 167, 69, 0.1);
+    --yellow:         #ffc107;
+    --red:            #dc3545;
+    --red-bg:         rgba(220, 53, 69, 0.1);
+    --purple:         #6f42c1;
+
+    /* Diff colors */
+    --diff-add:       #22863a;
+    --diff-remove:    #d73a49;
+
+    /* Legacy semantic aliases */
+    --success:        #28a745;
+    --error:          #dc3545;
+    --warning:        #ffc107;
+
+    /* Component-specific */
+    --composer-bg:    #ffffff;
+    --pill-bg:        #e1e4e8;
+    --card-body-bg:   #f6f8fa;
+
+    /* Shadows */
+    --shadow:         rgba(0, 0, 0, 0.08);
+    --shadow-sm:      0 1px 2px rgba(0, 0, 0, 0.08);
+    --shadow-md:      0 4px 6px rgba(0, 0, 0, 0.08);
+    --shadow-lg:      0 8px 24px rgba(0, 0, 0, 0.12);
 
     /* NOTE: These stay the same in light mode:
-       - --accent-primary, --accent-dim, --accent-border
-       - --green, --green-bright, --green-bg
-       - --red, --red-bg
-       - --yellow, --yellow-bg
-       - --purple, --purple-bg
+       - --accent-dim, --accent-border (unless overridden above)
        - --cyan
        - All --dracula-* syntax colors
     */
@@ -4410,4 +4469,202 @@ body.light-mode {
         box-shadow: 0 0 0 4px rgba(248, 113, 113, 0);
         border-color: rgba(248, 113, 113, 0.8);
     }
+}
+
+/* ================================================
+   SPECIALIZED CONTENT WRAPPERS
+   Email, WhatsApp, Social, Creative, Accounting,
+   Equation, Calculation, Math, Prompt-List
+   ================================================ */
+
+/* Shared base for all specialized wrappers */
+.code-block-container.email-wrapper,
+.code-block-container.whatsapp-wrapper,
+.code-block-container.social-wrapper,
+.code-block-container.creative-wrapper,
+.code-block-container.accounting-wrapper,
+.code-block-container.equation-wrapper,
+.code-block-container.calculation-wrapper,
+.code-block-container.math-wrapper {
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.code-block-container.email-wrapper .code-header { background: rgba(99, 160, 246, 0.15); border-bottom: 1px solid rgba(99, 160, 246, 0.1); }
+.code-block-container.whatsapp-wrapper .code-header { background: #075e54; border-bottom: 1px solid rgba(255,255,255,0.1); }
+.code-block-container.social-wrapper .code-header { background: #1da1f2; border-bottom: 1px solid rgba(255,255,255,0.1); }
+.code-block-container.creative-wrapper .code-header { background: rgba(168, 85, 247, 0.15); border-bottom: 1px solid rgba(168, 85, 247, 0.1); }
+.code-block-container.accounting-wrapper .code-header { background: rgba(34, 197, 94, 0.12); border-bottom: 1px solid rgba(34, 197, 94, 0.1); }
+.code-block-container.equation-wrapper .code-header { background: rgba(251, 191, 36, 0.12); border-bottom: 1px solid rgba(251, 191, 36, 0.1); }
+.code-block-container.calculation-wrapper .code-header { background: rgba(251, 191, 36, 0.12); border-bottom: 1px solid rgba(251, 191, 36, 0.1); }
+.code-block-container.math-wrapper .code-header { background: rgba(251, 191, 36, 0.12); border-bottom: 1px solid rgba(251, 191, 36, 0.1); }
+
+.code-block-container.whatsapp-wrapper .code-lang,
+.code-block-container.whatsapp-wrapper .copy-code-btn,
+.code-block-container.social-wrapper .code-lang,
+.code-block-container.social-wrapper .copy-code-btn { color: white; }
+
+.email-content-display,
+.whatsapp-display,
+.social-display,
+.creative-display,
+.accounting-display,
+.equation-display,
+.calculation-display,
+.math-display {
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.whatsapp-display { background: #e5ddd5 !important; color: #111 !important; font-family: Helvetica, Arial, sans-serif !important; }
+.creative-display { background: rgba(22, 22, 24, 0.8) !important; color: #e2e8f0 !important; font-family: 'Georgia', serif !important; line-height: 1.8 !important; font-size: 16px !important; }
+.accounting-display { background: var(--bg-code) !important; color: var(--text-main) !important; font-family: 'Geist Mono', 'Consolas', monospace !important; }
+.equation-display,
+.calculation-display,
+.math-display { background: var(--bg-code) !important; color: var(--text-main) !important; }
+
+.email-citations {
+    margin-top: 10px;
+    font-size: 0.9em;
+    opacity: 0.8;
+    padding-left: 5px;
+}
+.email-citations a { color: var(--accent-primary); }
+
+/* Prompt container */
+.prompt-container {
+    background: var(--bg-surface);
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    overflow: hidden;
+    margin: 16px 0;
+}
+.prompt-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 16px;
+    background: rgba(168, 85, 247, 0.12);
+    border-bottom: 1px solid rgba(168, 85, 247, 0.1);
+    font-size: 13px;
+    color: #c084fc;
+    font-weight: 600;
+}
+.prompt-display {
+    padding: 16px;
+    color: var(--text-main);
+}
+
+/* ================================================
+   MERMAID DIAGRAM STYLES
+   ================================================ */
+
+.mermaid-wrapper {
+    background: var(--bg-code);
+    border-radius: 10px;
+    margin: 16px 0;
+    overflow: hidden;
+    border: 1px solid rgba(212, 98, 43, 0.2);
+    box-shadow: 0 4px 20px rgba(212, 98, 43, 0.06);
+}
+
+.mermaid-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: linear-gradient(135deg, var(--bg-surface), rgba(26, 26, 46, 0.8));
+    padding: 10px 16px;
+    border-bottom: 1px solid rgba(212, 98, 43, 0.15);
+    font-size: 13px;
+    color: #D4622B;
+    font-weight: 600;
+}
+
+.mermaid-header i { margin-right: 6px; color: #e8773d; }
+
+.mermaid-actions {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.mermaid-action-btn {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: all 0.2s;
+}
+
+.mermaid-action-btn:hover {
+    background: rgba(212, 98, 43, 0.15);
+    color: #e8773d;
+    border-color: rgba(212, 98, 43, 0.3);
+}
+
+.mermaid-container {
+    padding: 16px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 80px;
+}
+
+.mermaid-container svg {
+    max-width: min(100%, 700px);
+    height: auto;
+    max-height: 460px;
+}
+
+.mermaid-loading {
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.mermaid-loading i { margin-right: 6px; }
+
+.mermaid-error {
+    color: #f87171;
+    font-size: 13px;
+    padding: 12px;
+}
+
+.mermaid-error-msg {
+    color: var(--text-secondary);
+    font-size: 12px;
+    margin-top: 4px;
+}
+
+/* ================================================
+   MATHJAX FORMULA STYLES
+   ================================================ */
+
+/* Display math: centered block equations */
+.message-content mjx-container[display="true"] {
+    display: block !important;
+    margin: 1.2em auto !important;
+    padding: 0.8em 0 !important;
+    overflow-x: auto;
+    max-width: 100%;
+}
+
+/* Inline math: baseline alignment */
+.message-content mjx-container:not([display="true"]) {
+    display: inline !important;
+    vertical-align: baseline;
+}
+
+/* Math display container for equation/calculation wrappers */
+.math-display[data-math-pending] {
+    min-height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }

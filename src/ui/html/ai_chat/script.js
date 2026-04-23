@@ -473,8 +473,16 @@ function initMarked() {
     marked.use({
         renderer: {
             code: function(code, lang, escaped) {
-                code = code || '';
+                // Support marked v4 object form: { text, lang }
+                if (code && typeof code === 'object') {
+                    lang = code.lang || lang;
+                    code = code.text || '';
+                }
+                code = String(code || '');
                 lang = (lang || 'text').toLowerCase();
+
+                // Strip accidental nested fences if a model echoed them inside a code block.
+                code = code.replace(/^```[a-z]*\s*\n?/i, '').replace(/\n?```\s*$/i, '');
 
                 // Specialized Tree Rendering
                 if (lang === 'tree' || (lang === 'plaintext' && (code.includes('\u251C\u2500\u2500') || code.includes('\u2514\u2500\u2500')))) {
@@ -507,11 +515,65 @@ function initMarked() {
             },
 
             table: function(header, body) {
-                return '<div class="table-wrapper"><table><thead>' + (header || '') + '</thead><tbody>' + (body || '') + '</tbody></table></div>';
+                header = header || '';
+                body = body || '';
+
+                // marked already returns HTML strings for header/body. Some models insert
+                // separator-like rows (---) into the content; strip those rows so they
+                // don't render as junk lines inside the table.
+                try {
+                    var tmp = document.createElement('div');
+                    tmp.innerHTML = '<table><thead>' + header + '</thead><tbody>' + body + '</tbody></table>';
+
+                    var rows = tmp.querySelectorAll('tbody tr');
+                    rows.forEach(function(tr) {
+                        var cells = Array.from(tr.children || []);
+                        var cellTexts = cells.map(function(td) {
+                            var t = (td.textContent || '');
+                            // Normalize whitespace/dashes for reliable detection.
+                            t = t.replace(/ /g, ' ').replace(/[–—−]/g, '-');
+                            return t.trim();
+                        });
+
+                        var nonEmpty = cellTexts.filter(function(t) { return !!t; });
+                        var joined = cellTexts.join(' ').replace(/\s+/g, ' ').trim();
+
+                        // Remove fully empty rows.
+                        if (!joined) {
+                            tr.remove();
+                            return;
+                        }
+
+                        // Remove separator rows like: | --- | --- | or mixed empties: | --- |   |
+                        // Treat empty cells as ignorable.
+                        if (nonEmpty.length > 0 && nonEmpty.every(function(t) { return /^[-:]{3,}$/.test(t); })) {
+                            tr.remove();
+                            return;
+                        }
+
+                        // Remove rows that are basically just long dashes (even if split across cells).
+                        var dashOnly = joined.replace(/\s+/g, '');
+                        if (/^[-:]{3,}$/.test(dashOnly)) {
+                            tr.remove();
+                            return;
+                        }
+                    });
+
+                    var tableEl = tmp.querySelector('table');
+                    var tableHtml = tableEl ? tableEl.outerHTML : ('<table><thead>' + header + '</thead><tbody>' + body + '</tbody></table>');
+                    return '<div class="table-wrapper">' + tableHtml + '</div>';
+                } catch (e) {
+                    return '<div class="table-wrapper"><table><thead>' + header + '</thead><tbody>' + body + '</tbody></table></div>';
+                }
             },
 
             heading: function(text, depth) {
                 text = text || '';
+
+                // Map heading levels to only use H3/H4 in the chat UI.
+                // H1/H2/H3 -> H3 (parent), H4 -> H4 (child), H5/H6 omitted.
+                var effectiveDepth = (depth <= 3) ? 3 : (depth === 4 ? 4 : 0);
+                if (!effectiveDepth) return '';
                 // Strip HTML tags for clean ID generation
                 var cleanText = text.replace(/<[^>]+>/g, '');
                 // Decode HTML entities for ID (e.g. &amp; -> &)
@@ -524,8 +586,8 @@ function initMarked() {
                     .replace(/\s+/g, '-')        // spaces to dashes
                     .replace(/^-+|-+$/g, '')     // trim leading/trailing dashes
                     .replace(/-{2,}/g, '-');      // collapse multiple dashes
-                if (!id) id = 'heading-' + depth; // fallback if empty
-                return '<h' + depth + ' id="' + escapeHtml(id) + '" class="md-heading md-h' + depth + '">' + text + '</h' + depth + '>';
+                if (!id) id = 'heading-' + effectiveDepth; // fallback if empty
+                return '<h' + effectiveDepth + ' id="' + escapeHtml(id) + '" class="md-heading md-h' + effectiveDepth + '">' + text + '</h' + effectiveDepth + '>';
             },
 
             listitem: function(text, task, checked) {
@@ -545,7 +607,7 @@ function initMarked() {
             },
 
             codespan: function(code) {
-                code = code || '';
+                code = String(code || '');
                 // Skip hljs for long inline code to prevent potential stack overflow
                 if (code.length > 500) {
                     return '<code class="inline-code">' + code + '</code>';
@@ -2232,14 +2294,10 @@ function _buildMessageBubble(text, sender) {
         var parsedHtml = '';
         try {
             var normalizedText = normalizeMarkdownText(text);
-            if (typeof marked !== 'undefined' && marked.parse) {
-                if (normalizedText.length > 200000) {
-                    parsedHtml = formatMarkdownFallback(normalizedText);
-                } else {
-                    parsedHtml = marked.parse(normalizedText) || '';
-                }
-            } else {
+            if (normalizedText.length > 200000) {
                 parsedHtml = formatMarkdownFallback(normalizedText);
+            } else {
+                parsedHtml = formatMessage(normalizedText, false);
             }
         } catch (e) {
             parsedHtml = formatMarkdownFallback(text);
@@ -2362,14 +2420,10 @@ function appendMessage(text, sender, shouldSave) {
         var parsedHtml = '';
         try {
             var normalizedText = normalizeMarkdownText(text);
-            if (typeof marked !== 'undefined' && marked.parse) {
-                if (normalizedText.length > 200000) {
-                    parsedHtml = formatMarkdownFallback(normalizedText);
-                } else {
-                    parsedHtml = marked.parse(normalizedText) || '';
-                }
-            } else {
+            if (normalizedText.length > 200000) {
                 parsedHtml = formatMarkdownFallback(normalizedText);
+            } else {
+                parsedHtml = formatMessage(normalizedText, false);
             }
         } catch (e) {
             console.warn('[MARKDOWN] Parse error in appendMessage (using fallback):', e.message);
@@ -2429,12 +2483,15 @@ function appendMessage(text, sender, shouldSave) {
     fragment.appendChild(bubble);
     container.appendChild(fragment);
     
-    // Defer scroll and MathJax to next frame
+    // Defer scroll and MathJax/Mermaid to next frame
     requestAnimationFrame(function() {
         smartScroll(container);
-        if (sender === 'assistant' && window.MathJax && window.MathJax.typeset) {
-            window.MathJax.typeset([bubble]);
-        }
+        // Enhanced MathJax typesetting
+        typesetMathJax(bubble);
+        // Mermaid diagram rendering
+        window.initMermaid && window.initMermaid().then(function() {
+            renderMermaidDiagrams(bubble);
+        });
     });
 
     if (shouldSave) {
@@ -4459,49 +4516,268 @@ function onChunk(chunk) {
  * Only removes invisible Unicode characters that break bold/italic parsing.
  * Does NOT modify spacing or markdown structure.
  */
+// --- Markdown text cleanup helpers -----------------------------------------
+// Some providers occasionally deliver content with literal \\n / \\t sequences.
+// If we detect that (and there are no real newlines), de-escape so markdown parsers work.
+function unescapeLikelyEscapes(text) {
+    if (!text || typeof text !== 'string') return text || '';
+
+    var hasLiteralEscapes = (text.indexOf('\\n') !== -1) || (text.indexOf('\\t') !== -1) || (text.indexOf('\\r') !== -1);
+    if (!hasLiteralEscapes) return text;
+
+    // If real newlines already exist, don't touch (avoids corrupting legitimate \\n inside code).
+    if (text.indexOf('\n') !== -1) return text;
+
+    return text
+        .replace(/\\r\\n/g, '\n')
+        .replace(/\\n/g, '\n')
+        .replace(/\\t/g, '\t')
+        .replace(/\\r/g, '\n');
+}
+
+// Tables sometimes arrive with header/separator/data rows concatenated on one line.
+// Split those cases into separate lines so marked can recognize GFM tables.
+function splitLikelyConcatenatedTableLines(text) {
+    if (!text || typeof text !== 'string' || text.indexOf('|') === -1) return text || '';
+
+    var lines = text.split('\n');
+    var out = [];
+
+    for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        var pipeCount = (line.match(/\|/g) || []).length;
+
+        // Only consider very table-ish lines.
+        if (pipeCount >= 4 && line.indexOf('---') !== -1) {
+            // Header + separator stuck together.
+            line = line.replace(/(\|[^\n]*\|)\s*(\|?\s*:?-{3,}[-:\s\|]*\|)/g, '$1\n$2');
+            // Separator + first row stuck together.
+            line = line.replace(/(\|?\s*:?-{3,}[-:\s\|]*\|)\s*(\|[^\n]*\|)/g, '$1\n$2');
+            // Generic "...| |..." row boundary.
+            line = line.replace(/\|\s*\|\s*(?=[^|]+\|)/g, '|\n| ');
+        }
+
+        // Expand any injected newlines.
+        if (line.indexOf('\n') !== -1) {
+            out = out.concat(line.split('\n'));
+        } else {
+            out.push(line);
+        }
+    }
+
+    return out.join('\n');
+}
+
+// Normalize a detected table block into valid GFM table markdown.
+function normalizeTableBlock(lines, startIdx, endIdx) {
+    var tableLines = lines.slice(startIdx, endIdx);
+    var result = [];
+    var hasSeparator = false;
+    var headerRow = null;
+
+    // Step 1: Find header row (first line with |)
+    for (var i = 0; i < tableLines.length; i++) {
+        var line = tableLines[i].trim();
+        if (line.indexOf('|') !== -1 && (line.match(/\|/g) || []).length >= 2) {
+            headerRow = line;
+            // Ensure leading/trailing pipes
+            if (!headerRow.startsWith('|')) headerRow = '| ' + headerRow;
+            if (!headerRow.endsWith('|')) headerRow = headerRow + ' |';
+            result.push(headerRow);
+            break;
+        }
+    }
+
+    if (!headerRow) return tableLines; // No valid header, return as-is
+
+    // Step 2: Process remaining lines
+    var headerColCount = (headerRow.match(/\|/g) || []).length - 1;
+    var addedSeparator = false;
+
+    for (var j = 1; j < tableLines.length; j++) {
+        var raw = tableLines[j];
+        var trimmed = (raw || '').trim();
+
+        // Skip visual divider rows (---\t---)
+        if (/^\s*---+\s*(?:\t\s*---+\s*)*$/.test(trimmed)) {
+            continue;
+        }
+
+        // Skip empty lines (they're part of table block)
+        if (trimmed === '') continue;
+
+        // Check if this is a separator row
+        if (/^\|[\s\-:|]+$/.test(trimmed) || /^[\s\-:|]+$/.test(trimmed)) {
+            if (!hasSeparator && !addedSeparator) {
+                var separator = '|' + Array(headerColCount + 1).join(' --- |');
+                result.push(separator);
+                hasSeparator = true;
+                addedSeparator = true;
+            }
+            continue;
+        }
+
+        // If this is the first content row and no separator yet, add one
+        if (!hasSeparator && !addedSeparator) {
+            var sep2 = '|' + Array(headerColCount + 1).join(' --- |');
+            result.push(sep2);
+            hasSeparator = true;
+            addedSeparator = true;
+        }
+
+        // Normalize table row spacing
+        var row = trimmed;
+        if (!row.startsWith('|')) row = '| ' + row;
+        if (!row.endsWith('|')) row = row + ' |';
+
+        var cells = row.split('|').slice(1, -1);
+        var normalized = '| ' + cells.map(function(c) { return (c || '').trim(); }).join(' | ') + ' |';
+        result.push(normalized);
+    }
+
+    return result;
+}
+
+/**
+ * Normalize markdown text for consistent rendering across all providers.
+ * Goal: preserve markdown structure while fixing common provider/streaming quirks.
+ */
 function normalizeMarkdownText(text) {
-    if (!text) return '';
+    if (text === undefined || text === null) return '';
+    text = String(text);
+
+    // If we got a JSON-escaped string (literal \\n), convert to real newlines.
+    text = unescapeLikelyEscapes(text);
+
+    // If the whole message is wrapped in quotes (common copy/paste), strip them so
+    // headings/code fences aren't treated as plain text.
+    if (text.length >= 2) {
+        var firstChar = text.charAt(0);
+        var lastChar = text.charAt(text.length - 1);
+        var isWrappedInAsciiQuotes = (firstChar === '"' && lastChar === '"');
+        var isWrappedInCurlyQuotes = (firstChar === '\u201C' && lastChar === '\u201D');
+        if ((isWrappedInAsciiQuotes || isWrappedInCurlyQuotes) && (text.indexOf('```') !== -1 || text.indexOf('#') !== -1 || text.indexOf('|') !== -1)) {
+            text = text.substring(1, text.length - 1);
+        }
+    }
+
     // Guard: skip complex processing for very large text to prevent stack overflow
     if (text.length > 200000) {
-        // Only do safe, non-recursive operations
         text = text.replace(/\r\n/g, '\n');
-        text = text.replace(new RegExp('\\n{4,}', 'g'), '\n\n\n');
+        text = text.replace(/\n{4,}/g, '\n\n\n');
         return text;
     }
-    // Remove zero-width / invisible characters that break markdown parsing
-    text = text.replace(/[\u200B\u200C\u200D\u200E\u200F\uFEFF\u2060\u00AD]/g, '');
-    // Normalize Windows line endings
-    text = text.replace(/\r\n/g, '\n');
-    // Fix OpenAI pattern: "** text**" (space after opening **) -> "**text**"
-    text = text.replace(/\*\*\s+([^*\s])/g, '**$1');
 
-    // --- Strip raw HTML tags the AI model sometimes echoes back ---
-    // Models sometimes return rendered HTML (from chat history or training data)
-    // e.g. "</h2><h3 id=...>" — must be stripped BEFORE markdown parsing
-    // Only strip block-level HTML tags that would break markdown rendering;
-    // preserve legitimate inline tags like <br>
+    // ========== STAGE 1: Safe sanitation ==========
+    text = text.replace(/[\u200B\u200C\u200D\u200E\u200F\uFEFF\u2060\u00AD]/g, '');
+    text = text.replace(/\r\n/g, '\n');
+
+    // Strip block-level HTML tags the model sometimes echoes back.
     text = text.replace(/<\/?(?:h[1-6]|div|section|article|header|footer|nav|aside|main|figure|figcaption|details|summary)(?:\s[^>]*)?>\s*/gi, '\n');
-    // Strip orphaned HTML attributes that leak when tags are partially stripped
     text = text.replace(/\s+(?:id|class|style|data-[\w-]+)\s*=\s*"[^"]*"/gi, '');
     text = text.replace(/\s+(?:id|class|style|data-[\w-]+)\s*=\s*'[^']*'/gi, '');
+    text = text.replace(/<[^>\n]*\n[^>]*>/g, '');
 
-    // --- Convert Unicode bullets to standard markdown bullets ---
-    // AI models often use • (U+2022), ◦ (U+25E6), ▪ (U+25AA), ‣ (U+2023)
+    // Convert unicode bullets/arrows.
     text = text.replace(/^\s*[\u2022\u25E6\u25AA\u2023\u25CF\u25CB]\s*/gm, '- ');
-
-    // --- Convert → > or →> patterns to just > (blockquote) ---
     text = text.replace(/^\s*\u2192\s*>/gm, '> ');
-    // Convert standalone → at line start to - (list item) if followed by text
     text = text.replace(/^\s*\u2192\s+(?=[^\s>])/gm, '- ');
 
-    // --- Fix numbered lists with special chars: "1) item" → "1. item" ---
-    text = text.replace(/^(\s*\d+)\)\s+/gm, '$1. ');
+// Ensure headings/code fences start on their own line when providers merge tokens like:
+    // "Example#### Heading```python"
+    text = text.replace(/([^\n])(?=#{1,6}\s)/g, '$1\n\n');
+    text = text.replace(/([^\n])(?=```)/g, '$1\n\n');
+    // Fix "####Heading" -> "#### Heading" (but don't touch table rows).
+    text = text.replace(/^(?!.*\|)(#{1,6})([^#\s])/gm, '$1 $2');
 
-    // --- Normalize multiple consecutive blank lines to max 2 ---
-    text = text.replace(new RegExp('\n{4,}', 'g'), '\n\n\n');
+    // ========== STAGE 2: Code fence protection ==========
+    var codeBlocks = [];
+    text = text.replace(/```([\w-]*)\n([\s\S]*?)\n?```/g, function(_, lang, code) {
+        var id = codeBlocks.length;
+        codeBlocks.push({ lang: lang || 'text', code: code || '' });
+        return '%%CODEBLOCK_' + id + '%%';
+    });
+
+    // Unescape markdown punctuation that some providers over-escape (e.g. \*\*bold\*\*).
+    // Safe because code fences are already protected as placeholders.
+    text = text.replace(/\\([*#_])/g, '$1');
+
+    // Fix merged bold + following text: "**Title**Next" -> "**Title** Next"
+    text = text.replace(/(\*\*[^*]+\*\*)(?=[A-Za-z0-9])/g, '$1 ');
+
+    // Unicode fallback for merged bold (safe for headings/help text).
+    text = text.replace(/(\*\*[^*]+\*\*)(?=[^\s\W])/g, '$1 ');
+
+    // Convert lines that start with bold-quoted suggestions into bullets.
+    text = text.replace(/^(\s*)(\*\*["\u201C])/gm, '$1- $2');
+
+    // Normalize arrow spacing.
+    text = text.replace(/(\S)\u2192/g, '$1 \u2192');
+    text = text.replace(/\u2192(\S)/g, '\u2192 $1');
+
+    // ========== STAGE 3: Minimal normalization ==========
+    text = text.replace(/\*\*\s+([^*\s])/g, '**$1');
+    text = text.replace(/^(\s*\d+)\)\s+/gm, '$1. ');
+    text = text.replace(/^>([^\s>])/gm, '> $1');
+    text = text.replace(/^>\s{2,}/gm, '> ');
+
+    // If table rows got concatenated onto one line, split them.
+    text = splitLikelyConcatenatedTableLines(text);
+
+    // ========== STAGE 3b: Block-based table normalization ==========
+    var allLines = text.split('\n');
+    var out = [];
+    var i = 0;
+
+    while (i < allLines.length) {
+        var line = allLines[i];
+        var pipeCount = (line.match(/\|/g) || []).length;
+
+        // Potential table block start.
+        if (pipeCount >= 2 && !line.includes('%%CODEBLOCK_')) {
+            var tableStart = i;
+
+            while (i < allLines.length) {
+                var cur = allLines[i];
+                var curPipeCount = (cur.match(/\|/g) || []).length;
+                var isTableRow = curPipeCount >= 2;
+                var isDividerRow = /^\s*---+\s*(?:\t\s*---+\s*)*$/.test(cur);
+                var isBlankInTable = (cur.trim() === '') && (i + 1 < allLines.length) && (
+                    ((allLines[i + 1].match(/\|/g) || []).length >= 2) || /^\s*---+\s*(?:\t\s*---+\s*)*$/.test(allLines[i + 1])
+                );
+
+                if (isTableRow || isDividerRow || isBlankInTable) {
+                    i++;
+                } else {
+                    break;
+                }
+            }
+
+            var normalized = normalizeTableBlock(allLines, tableStart, i);
+            out = out.concat(normalized);
+            continue;
+        }
+
+        out.push(line);
+        i++;
+    }
+
+    text = out.join('\n');
+
+    // ========== STAGE 4: Restore code fences ==========
+    for (var cb = 0; cb < codeBlocks.length; cb++) {
+        var block = codeBlocks[cb];
+        var placeholder = '%%CODEBLOCK_' + cb + '%%';
+        var codeFence = '```' + block.lang + '\n' + block.code + '\n```';
+        text = text.split(placeholder).join(codeFence);
+    }
+
+    // Limit blank lines.
+    text = text.replace(/\n{4,}/g, '\n\n\n');
 
     return text;
 }
+
 
 /**
  * Convert quoted suggestion patterns in rendered HTML to clickable action chips.
@@ -4567,18 +4843,13 @@ function updateStreamingUI() {
         // -- 1b. Normalize markdown for consistent bold/italic rendering ----
         cleanText = normalizeMarkdownText(cleanText);
 
-        // -- 2. Parse markdown --------------------------------------------
+        // -- 2. Parse markdown via formatMessage (full rendering pipeline) ---
         var html = '';
         try {
-            if (typeof marked !== 'undefined' && marked.parse) {
-                // Guard: skip marked.parse for excessively large content to prevent stack overflow
-                if (cleanText.length > 500000) {
-                    html = formatMarkdownFallback(cleanText);
-                } else {
-                    html = marked.parse(cleanText) || '';
-                }
-            } else {
+            if (cleanText.length > 500000) {
                 html = formatMarkdownFallback(cleanText);
+            } else {
+                html = formatMessage(cleanText, false);
             }
         } catch (parseError) {
             console.warn('[MARKDOWN] Parse error, using fallback:', parseError.message);
@@ -4592,10 +4863,6 @@ function updateStreamingUI() {
         html = highlightFileCreations(html);
         // Convert quoted suggestions to clickable chips
         html = convertSuggestionChips(html);
-        
-        // Append streaming cursor element
-        html += '<span class="streaming-cursor"></span>';
-        
         contentDiv.innerHTML = html;
 
         // -- 3. Syntax highlight (skip already-highlighted blocks) ----------
@@ -4649,8 +4916,13 @@ function updateStreamingUI() {
 
         // -- 4. Inject code block headers on new blocks -----------------
         contentDiv.querySelectorAll('pre code').forEach(function(block) {
+            // Skip blocks already inside .code-block-container (formatMessage rendered them)
+            if (block.closest('.code-block-container')) return;
             injectCodeBlockHeader(block, {});
         });
+
+        // -- 5. Real-time MathJax typesetting (throttled) ----------------
+        typesetMathJax(contentDiv);
 
     } catch (e) {
         console.error('Markdown parse error:', e);
@@ -4711,6 +4983,10 @@ function formatMarkdownFallback(text) {
         if (trimmed.match(/^#{1,6}\s/)) {
             if (inList) { result.push('</' + listType + '>'); inList = false; }
             var level = trimmed.match(/^(#+)/)[1].length;
+            // Clamp heading levels to match chat UI: H1/H2/H3 -> H3, H4 stays H4, omit H5/H6.
+            if (level <= 3) level = 3;
+            else if (level === 4) level = 4;
+            else { continue; }
             var content = trimmed.replace(/^#{1,6}\s*/, '');
             result.push('<h' + level + ' class="md-heading md-h' + level + '">' + processInlineMarkdown(content) + '</h' + level + '>');
             continue;
@@ -4947,10 +5223,6 @@ function onComplete() {
         
         if (contentDiv) {
             try {
-                // Remove streaming cursor before final touches
-                var cursorEl = contentDiv.querySelector('.streaming-cursor');
-                if (cursorEl) cursorEl.remove();
-                
                 // Batch all modifications into ONE innerHTML write
                 var finalHtml = contentDiv.innerHTML;
         
@@ -5009,6 +5281,14 @@ function onComplete() {
         if (window.MathJax && window.MathJax.typeset) {
             window.MathJax.typeset([currentAssistantMessage]);
         }
+
+        // -- Final MathJax typeset (supports typesetPromise) ---------------
+        typesetMathJax(currentAssistantMessage);
+
+        // -- Render Mermaid diagrams after stream ends ---------------------
+        window.initMermaid && window.initMermaid().then(function() {
+            renderMermaidDiagrams(currentAssistantMessage);
+        });
     } else {
         console.warn('[CHAT] onComplete: currentAssistantMessage is null!');
     }
@@ -5164,12 +5444,18 @@ function handleOptionsTag() {
         var data = currentContent.substring(startIndex + startTag.length, endIndex);
         var textAfter = currentContent.substring(endIndex + endTag.length);
         try {
-            var optBeforeHtml = (marked && marked.parse ? (marked.parse(textBefore) || '') : textBefore);
-            var optAfterHtml = (marked && marked.parse ? (marked.parse(textAfter) || '') : textAfter);
+            var optBeforeHtml = formatMessage(textBefore, false);
+            var optAfterHtml = formatMessage(textAfter, false);
             contentDiv.innerHTML = optBeforeHtml + renderOptionsBlock(data) + optAfterHtml;
         } catch(e) {
             contentDiv.innerHTML = textBefore + renderOptionsBlock(data) + textAfter;
         }
+        
+        // MathJax and Mermaid rendering
+        typesetMathJax(contentDiv);
+        window.initMermaid && window.initMermaid().then(function() {
+            renderMermaidDiagrams(contentDiv);
+        });
     }
 }
 
@@ -5212,17 +5498,23 @@ function handleExplorationTag() {
             explorationData = currentContent.substring(startIndex + startTag.length, endIndex);
             var textAfter = currentContent.substring(endIndex + endTag.length);
             try {
-                var beforeHtml = (marked && marked.parse ? (marked.parse(textBefore) || '') : textBefore);
-                var afterHtml = (marked && marked.parse ? (marked.parse(textAfter) || '') : textAfter);
+                var beforeHtml = formatMessage(textBefore, false);
+                var afterHtml = formatMessage(textAfter, false);
                 contentDiv.innerHTML = beforeHtml + renderExplorationBlock(explorationData) + afterHtml;
             } catch(e) { contentDiv.innerHTML = textBefore + renderExplorationBlock(explorationData) + textAfter; }
         } else {
             explorationData = currentContent.substring(startIndex + startTag.length);
             try {
-                var beforeHtml2 = (marked && marked.parse ? (marked.parse(textBefore) || '') : textBefore);
+                var beforeHtml2 = formatMessage(textBefore, false);
                 contentDiv.innerHTML = beforeHtml2 + renderExplorationBlock(explorationData, true);
             } catch(e) { contentDiv.innerHTML = textBefore + renderExplorationBlock(explorationData, true); }
         }
+        
+        // MathJax and Mermaid rendering
+        typesetMathJax(contentDiv);
+        window.initMermaid && window.initMermaid().then(function() {
+            renderMermaidDiagrams(contentDiv);
+        });
     }
 }
 
@@ -5238,8 +5530,7 @@ function handleFileEditedTag() {
         .replace(/<file_edited>[\s\S]*?<\/file_edited>/g, '')
         .trim();
     try {
-        var parsed = (typeof marked !== 'undefined' && marked.parse)
-            ? (marked.parse(cleanText) || cleanText) : cleanText;
+        var parsed = formatMessage(cleanText, false);
         contentDiv.innerHTML = parsed || cleanText;
     } catch(e) { contentDiv.innerHTML = cleanText; }
 
@@ -5247,6 +5538,12 @@ function handleFileEditedTag() {
     contentDiv.querySelectorAll('pre code').forEach(function(block) {
         if (window.hljs) hljs.highlightElement(block);
         injectCodeBlockHeader(block, {});
+    });
+
+    // MathJax and Mermaid rendering
+    typesetMathJax(contentDiv);
+    window.initMermaid && window.initMermaid().then(function() {
+        renderMermaidDiagrams(contentDiv);
     });
 
     // Append .fec cards below message content
@@ -5266,10 +5563,16 @@ function handleTaskSummaryTag() {
         var summaryData = currentContent.substring(startIndex + startTag.length, endIndex);
         var textAfter = currentContent.substring(endIndex + endTag.length);
         try {
-            var beforeHtml3 = (marked && marked.parse ? (marked.parse(textBefore) || '') : textBefore);
-            var afterHtml3 = (marked && marked.parse ? (marked.parse(textAfter) || '') : textAfter);
+            var beforeHtml3 = formatMessage(textBefore, false);
+            var afterHtml3 = formatMessage(textAfter, false);
             contentDiv.innerHTML = beforeHtml3 + renderTaskSummary(summaryData) + afterHtml3;
         } catch(e) { contentDiv.innerHTML = textBefore + renderTaskSummary(summaryData) + textAfter; }
+        
+        // MathJax and Mermaid rendering
+        typesetMathJax(contentDiv);
+        window.initMermaid && window.initMermaid().then(function() {
+            renderMermaidDiagrams(contentDiv);
+        });
     }
 }
 
@@ -5289,17 +5592,23 @@ function handleDiffTag() {
             diffData = currentContent.substring(startIndex + startTag.length, endIndex);
             var textAfter = currentContent.substring(endIndex + endTag.length);
             try {
-                var diffBeforeHtml = (marked && marked.parse ? (marked.parse(textBefore) || '') : textBefore);
-                var diffAfterHtml = (marked && marked.parse ? (marked.parse(textAfter) || '') : textAfter);
+                var diffBeforeHtml = formatMessage(textBefore, false);
+                var diffAfterHtml = formatMessage(textAfter, false);
                 contentDiv.innerHTML = diffBeforeHtml + renderDiffBlock(diffData) + diffAfterHtml;
             } catch(e) { contentDiv.innerHTML = textBefore + renderDiffBlock(diffData) + textAfter; }
         } else {
             diffData = currentContent.substring(startIndex + startTag.length);
             try {
-                var diffBeforeHtml2 = (marked && marked.parse ? (marked.parse(textBefore) || '') : textBefore);
+                var diffBeforeHtml2 = formatMessage(textBefore, false);
                 contentDiv.innerHTML = diffBeforeHtml2 + renderDiffBlock(diffData, true);
             } catch(e) { contentDiv.innerHTML = textBefore + renderDiffBlock(diffData, true); }
         }
+        
+        // MathJax and Mermaid rendering
+        typesetMathJax(contentDiv);
+        window.initMermaid && window.initMermaid().then(function() {
+            renderMermaidDiagrams(contentDiv);
+        });
     }
 }
 
@@ -5895,13 +6204,13 @@ document.addEventListener('DOMContentLoaded', function() {
             if (textarea) {
                 switch(val) {
                     case 'Agent':
-                        textarea.placeholder = 'Ask, plan, or build...';
+                        textarea.placeholder = 'Plan and build...';
                         break;
                     case 'Ask':
                         textarea.placeholder = 'Ask a question...';
                         break;
                     case 'Plan':
-                        textarea.placeholder = 'Describe your plan...';
+                        textarea.placeholder = 'Create a plan...';
                         break;
                     default:
                         textarea.placeholder = 'Type a message...';
@@ -7881,7 +8190,7 @@ function buildTerminalCard(command, output, status, exitCode, cardId) {
     var card = document.createElement('div');
     var id = cardId || ('term-' + Date.now());
     // Use NEW tool-operation-card design
-    var isExpanded = false; // Default COLLAPSED for terminal (40px header only)
+    var isExpanded = true; // Default expanded for terminal
     card.className = 'tool-operation-card terminal ' + (isExpanded ? 'expanded' : 'collapsed');
     card.id = id;
     card.dataset.command = command;
@@ -11359,6 +11668,683 @@ window.testAgentMode = function() {
 
 console.log('[AGENT] Agent Mode Grid system initialized with tool-based icons');
 console.log('[AGENT] Run window.testAgentMode() in console to test icons');
+
+
+// ================================================================
+// AI CONTENT RENDERING SYSTEM
+// Ported from chat.html — formatMessage, detectContentType,
+// protectMath, restoreMath, specialized renderers, etc.
+// ================================================================
+
+// --- Math token system for protect/restore ---
+var _mathContext = { tokens: {} };
+var _mathTokenCounter = 0;
+
+// --- Escape helper for code blocks ---
+function escapeHtmlForCode(text) {
+    if (!text) return '';
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+// --- Sanitize TeX for MathJax ---
+function sanitizeTeX(text) {
+    if (!text) return text;
+    var s = text;
+    // Brace multi-letter subscripts/superscripts
+    s = s.replace(/_(?!\{)([A-Za-z]{2,})/g, '_{$1}');
+    s = s.replace(/\^(?!\{)([A-Za-z]{2,})/g, '^{$1}');
+    // Normalize Unicode minus/dashes to ASCII
+    s = s.replace(/[\u2013\u2014\u2212]/g, '-');
+    // Replace smart quotes
+    s = s.replace(/[\u201C\u201D]/g, '"').replace(/[\u2018\u2019]/g, "'");
+    // Balance unclosed braces
+    s = balanceBraces(s);
+    return s;
+}
+
+function balanceBraces(latex) {
+    if (!latex) return latex;
+    var depth = 0;
+    for (var i = 0; i < latex.length; i++) {
+        if (latex[i] === '\\') { i++; continue; }
+        if (latex[i] === '{') depth++;
+        else if (latex[i] === '}') depth--;
+    }
+    if (depth > 0) {
+        latex += '\\cdots' + Array(depth + 1).join('}');
+    }
+    return latex;
+}
+
+function escapeCurrencyDollars(text) {
+    if (!text) return text;
+    // Escape bare $ that look like currency (digit after $ or $ before digit)
+    return text.replace(/(?<!\\)\$(?=\d)/g, '\\$').replace(/(?<=\d)\$(?!\d)/g, '\\$');
+}
+
+// --- Clean broken Windows paths from AI output ---
+function cleanBrokenWindowsPaths(text) {
+    if (!text) return text;
+
+    // Step 0: Hide fenced code blocks and inline code
+    var codeBlockStore = [];
+    var t = text.replace(/(```+[\s\S]*?```+)/g, function(match) {
+        var idx = codeBlockStore.length;
+        codeBlockStore.push(match);
+        return '%%PATHCODE_' + idx + '%%';
+    });
+    var inlineStore = [];
+    t = t.replace(/(`+[^`]+`+)/g, function(match) {
+        var idx = inlineStore.length;
+        inlineStore.push(match);
+        return '%%PATHINLINE_' + idx + '%%';
+    });
+
+    // Step 1: Fix "C : \" gaps
+    t = t.replace(/([A-Z])\s+:\s+\\/g, '$1:\\');
+    // Step 2: Fix fragmented paths
+    t = t.replace(/\\([A-Z])\s+([a-z]+)/g, '\\$1$2');
+    // Step 3: Fix fragmented filenames
+    t = t.replace(/([a-zA-Z]:\\[\w\s\\.]+)/g, function(match) {
+        return match.replace(/([A-Z])\s+([a-z]{2,})/g, '$1$2')
+            .replace(/([a-z])\s+([a-z]{3,})/g, '$1$2');
+    });
+    // Step 4: Wrap file paths in backticks
+    t = t.replace(/(?<!`)\b([a-zA-Z]:\\[\w\\.]+\.\w+)\b(?!`)/g, '`$1`');
+    // Step 5: Wrap directory paths
+    t = t.replace(/(?<!`)\b([a-zA-Z]:\\(?:[\w.-]+\\){1,}[\w.-]+)\b(?!`)/g, '`$1`');
+    // Step 5b: Wrap env var paths
+    t = t.replace(/(%[a-zA-Z]+%\\[\w.-]+)/g, '`$1`');
+    // Step 6: Wrap Unix paths (skip URLs)
+    t = t.replace(/(\/(?:[\w.-]+\/){1,}[\w.-]+)/g, function(match, path, offset, fullStr) {
+        var before = fullStr.substring(Math.max(0, offset - 200), offset);
+        if (/https?:\/\/\S*$/.test(before)) return match;
+        return '`' + path + '`';
+    });
+
+    // Restore inline code first
+    inlineStore.forEach(function(code, idx) {
+        t = t.replace('%%PATHINLINE_' + idx + '%%', code);
+    });
+    // Restore code blocks
+    codeBlockStore.forEach(function(code, idx) {
+        t = t.replace('%%PATHCODE_' + idx + '%%', code);
+    });
+
+    return t;
+}
+
+// --- Fix AI URL artifacts ---
+function cleanMarkdownUrls(text) {
+    if (!text) return text;
+    // [Title](`https://example.com`) → [Title](https://example.com)
+    text = text.replace(/\[`([^\]]+)`\]\(`([^)]+)`\)/g, '[$1]($2)');
+    // [`Title`](url) → [Title](url)
+    text = text.replace(/\[`([^\]]+)`\]\(([^)]+)\)/g, '[$1]($2)');
+    // [Title](`url`) → [Title](url)
+    text = text.replace(/\[([^\]]+)\]\(`([^)]+)`\)/g, '[$1]($2)');
+    return text;
+}
+
+function cleanRenderedUrls(html) {
+    if (!html) return html;
+    // Fix backtick artifacts in <a> href attributes
+    html = html.replace(/<a\s+href="`([^"]*)`"/g, '<a href="$1"');
+    html = html.replace(/<a\s+href="([^"]*)`"/g, '<a href="$1"');
+    html = html.replace(/<a\s+href="`([^"]*)"/g, '<a href="$1"');
+    return html;
+}
+
+// --- Fix LaTeX inside <code> tags (MathJax skips <code>) ---
+function fixLatexInCodeTags(html) {
+    if (!html) return html;
+    // If a <code> tag contains LaTeX commands, unwrap it so MathJax can process
+    return html.replace(/<code>([^<]*(?:\\[a-zA-Z]+[^<]*)+)<\/code>/g, function(match, content) {
+        // Only unwrap if it contains LaTeX commands
+        if (/\\[a-zA-Z]+\{/.test(content) || /\\[a-zA-Z]+_/.test(content) || /\\[a-zA-Z]+\^/.test(content)) {
+            return content;
+        }
+        return match;
+    });
+}
+
+// --- Protect math from marked.js ---
+function protectMath(text) {
+    _mathContext.tokens = {};
+    _mathTokenCounter = 0;
+
+    // FIX 0: Ensure $$ has whitespace separation
+    text = text.replace(/([^\s$])\$\$/g, function(_, g1) { return g1 + '\n\n$$'; });
+    text = text.replace(/\$\$([^\s$])/g, function(_, g1) { return '$$\n\n' + g1; });
+
+    // FIX 1: Close unclosed $$ blocks
+    var ddMatches = text.match(/\$\$/g);
+    var ddCount = ddMatches ? ddMatches.length : 0;
+    if (ddCount % 2 === 1) {
+        var lastDD = text.lastIndexOf('$$');
+        if (lastDD !== -1) {
+            var after = text.substring(lastDD + 2);
+            var nlPos = after.indexOf('\n\n');
+            if (nlPos === -1) nlPos = after.indexOf('\n');
+            if (nlPos !== -1) {
+                text = text.substring(0, lastDD + 2 + nlPos) + ' $$' + text.substring(lastDD + 2 + nlPos);
+            } else {
+                text = text + ' $$';
+            }
+        }
+    }
+
+    var processed = text;
+    var codePlaceholders = [];
+
+    var hideCode = function(str) {
+        var id = codePlaceholders.length;
+        codePlaceholders.push(str);
+        return '<!--PH_CODE_' + id + '-->';
+    };
+
+    // 1. Hide fenced code blocks
+    processed = processed.replace(/(```+[\s\S]*?```+)/g, function(match) { return hideCode(match); });
+    // 2. Hide inline code
+    processed = processed.replace(/(`+[^`]+`+)/g, function(match) { return hideCode(match); });
+
+    // 2.1: Protect bare Windows paths
+    processed = processed.replace(/([a-zA-Z]:\\(?:[\w.\-]+(?:\s[\w.\-]+)*\\)*[\w.\-]+(?:\.\w+)?)/g, function(match) {
+        return '`' + match + '`';
+    });
+
+    // 2.2: Re-hide newly backtick-wrapped paths
+    processed = processed.replace(/(`+[^`]+`+)/g, function(match) { return hideCode(match); });
+
+    // 3. Protect display math ($$...$$)
+    processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, function(match, content) {
+        var token = '<!--LPTOKEN:MATHDISP:' + _mathTokenCounter + '-->';
+        _mathContext.tokens[token] = { type: 'mathdisp', content: content };
+        _mathTokenCounter++;
+        return token;
+    });
+
+    // 4. Protect inline math ($...$)
+    processed = processed.replace(/(?<!\$)\$(?!\$)([^\$\n]+?)(?<!\$)\$(?!\$)/g, function(match, content) {
+        var token = '<!--LPTOKEN:MATHINLINE:' + _mathTokenCounter + '-->';
+        _mathContext.tokens[token] = { type: 'mathinline', content: content };
+        _mathTokenCounter++;
+        return token;
+    });
+
+    // 5. Detect LaTeX commands in prose
+    var latexPattern = /\\[a-zA-Z]+(?:\{(?:[^{}]|\{[^}]*\})*\}|\[[^\]]*\]|_\{[^}]*\}|\^\{[^}]*\})*[^\n]*?(?=\s+(?:is|are|was|were|be|been|being|have|has|had|do|does|did|can|could|will|would|should|may|might|must|shall|important|where|when|what|which|who|why|how|meters|seconds|minutes|hours|degrees|chapter|section|example|note|their|there|these|those|about|after|also|back|because|before|between|both|down|each|even|every|first|from|good|great|into|just|know|like|look|make|many|more|most|much|must|never|next|only|other|over|same|should|some|such|take|than|that|them|then|there|these|they|think|this|those|through|time|under|very|want|well|what|when|where|which|while|will|with|would|year|your|[a-z]{4,})(?![a-zA-Z])|\.|\n|$)/g;
+
+    processed = processed.replace(latexPattern, function(match) {
+        if (match.indexOf('<!--LPTOKEN:') !== -1) return match;
+        // Skip Windows dir names
+        if (/^\\(?:AppData|Local|Microsoft|Windows|Explorer|System32|System|SoftwareDistribution|Prefetch|Temp|Users|Desktop|Documents|Downloads|Program|ProgramData|ProgramFiles|Recycle)\b/i.test(match)) return match;
+        var trimmed = match.trimEnd();
+        var trailing = match.slice(trimmed.length);
+        return '$' + trimmed + '$' + trailing;
+    });
+
+    // 6. Restore code blocks
+    codePlaceholders.forEach(function(code, id) {
+        var placeholder = '<!--PH_CODE_' + id + '-->';
+        processed = processed.split(placeholder).join(code);
+    });
+
+    return processed;
+}
+
+// --- Restore math after marked.js ---
+function restoreMath(html) {
+    if (!html) return html;
+    var tokens = _mathContext.tokens;
+    for (var token in tokens) {
+        if (!tokens.hasOwnProperty(token)) continue;
+        var entry = tokens[token];
+        var replacement;
+        if (entry.type === 'mathdisp') {
+            replacement = '$$' + entry.content + '$$';
+        } else {
+            replacement = '$' + entry.content + '$';
+        }
+        // Use split/join to avoid $ special replacement issues
+        html = html.split(token).join(replacement);
+    }
+    return html;
+}
+
+// --- Detect content type for specialized rendering ---
+function detectContentType(text) {
+    if (!text) return 'default';
+    var t = text.trim();
+
+    // Email detection
+    if (/(?:^|\n)(?:Subject|To|From|Dear|Cc|Bcc)\s*:/i.test(t) && /(?:Regards|Sincerely|Best regards|Yours|Cordially)/i.test(t)) return 'email';
+    if (/(?:^|\n)Subject\s*:/i.test(t) && /(?:^|\n)(?:Dear|Hi|Hello|Hey)\s/i.test(t)) return 'email';
+
+    // WhatsApp detection
+    if (/^\*?[^\n]+\*\s*\n~{2,}/m.test(t) && /\*[^\*]+\*/.test(t)) return 'whatsapp';
+    if (/(?:^|\n)(?:MESSAGE|TEXT|WHATSAPP)\s*:/i.test(t)) return 'whatsapp';
+
+    // Social post detection
+    if (/(?:^|\s)#[\w]{2,}/.test(t) && /@[\w]{2,}/.test(t)) return 'social';
+    if (/(?:^|\n)(?:SOCIAL POST|TWEET|POST)\s*:/i.test(t)) return 'social';
+
+    // Creative writing detection
+    if (/(?:^|\n)(?:Once upon|Chapter|Story|Poem|Narrative|Prologue|Epilogue)\b/i.test(t)) return 'creative';
+    if (/(?:^|\n)(?:CREATIVE WRITING|STORY|POEM)\s*:/i.test(t)) return 'creative';
+
+    // Accounting/Finance detection
+    if (/(?:^|\n)(?:Balance Sheet|Income Statement|Cash Flow|Debit|Credit|Accounting|Finance|Budget)\s*:/i.test(t)) return 'accounting';
+    if (/(?:\$[\d,]+\.?\d*\s*(?:debit|credit|balance|expense|revenue))/i.test(t)) return 'accounting';
+
+    // Equation detection (pure math)
+    if (/^\s*(?:\\[a-zA-Z]+\{|\\sum|\\int|\\frac|\\sqrt|\\prod|\\lim|\\partial|\\nabla)/.test(t) && !/\n\n/.test(t)) return 'equation';
+    if (/^\s*\$\$[\s\S]+\$\$\s*$/.test(t)) return 'equation';
+
+    // Calculation detection (step-by-step)
+    if (/(?:^|\n)(?:Step\s+\d|Calculation|Solution|Working|Compute)\s*:/i.test(t) && /=\s*[\d.]/.test(t)) return 'calculation';
+
+    // Math result detection
+    if (/^\s*(?:The (?:result|answer|value) is|=)\s*[\d.]+\s*$/im.test(t)) return 'math';
+
+    // Prompt list detection
+    if (/(?:^|\n)(?:REFINED PROMPTS?|PROMPT SUGGESTIONS?|SUGGESTED PROMPTS?)\s*:/i.test(t)) return 'prompt-list';
+
+    return 'default';
+}
+
+// --- formatMessage: Core AI content rendering engine ---
+function formatMessage(text, isUser) {
+    if (!text) return '';
+    isUser = isUser || false;
+
+    // Clean corrupt Windows paths for AI messages
+    if (!isUser) {
+        text = cleanBrokenWindowsPaths(text);
+    }
+
+    var msgMarkdown = text;
+
+    // User messages: simple HTML escape + line breaks
+    if (isUser) {
+        msgMarkdown = escapeHtml(msgMarkdown);
+        return '<p>' + msgMarkdown.replace(/\n/g, '<br>') + '</p>';
+    }
+
+    // AI messages: detect content type
+    var contentType = detectContentType(msgMarkdown);
+
+    // --- Specialized renderers ---
+
+    if (contentType === 'email') {
+        var emailId = 'email-' + Date.now();
+        var emailBody = msgMarkdown;
+        var citations = '';
+        var citationMatch = msgMarkdown.match(/(?:\r?\n(?:[-*]|\d\.)\s*\[.*?\]\(http.*?\))+$/s);
+        if (citationMatch) {
+            citations = citationMatch[0];
+            emailBody = msgMarkdown.substring(0, citationMatch.index);
+        }
+        var cleanText = emailBody.replace(/\*\*(.*?)\*\*/g, '$1').replace(/__(.*?)__/g, '$1').replace(/^\s*#+\s*/gm, '');
+        var escaped = escapeHtml(cleanText);
+        var linkedContent = escaped.replace(/(https?:\/\/[^\s]+)/g, function(url) {
+            var cleanUrl = url.replace(/[).,;\]]+$/, '');
+            var suffix = url.substring(cleanUrl.length);
+            return '<a href="' + cleanUrl + '" target="_blank">' + cleanUrl + '</a>' + suffix;
+        }).replace(/\n/g, '<br>');
+
+        var html = '<div class="code-block-container email-wrapper">' +
+            '<div class="code-header"><span class="code-lang"><i class="fas fa-envelope"></i> EMAIL DRAFT</span>' +
+            '<button class="code-copy-btn" onclick="copyContent(\'' + emailId + '\', this)"><i class="fas fa-copy"></i> Copy</button></div>' +
+            '<div class="email-content-display" id="' + emailId + '" style="padding: 16px; background: var(--bg-code); color: var(--text-main); font-family: sans-serif; line-height: 1.6;">' +
+            linkedContent + '</div></div>';
+
+        if (citations) {
+            var citHtml = '';
+            try {
+                citHtml = formatMessage(citations, false);
+                citHtml = citHtml.replace(/<a href=/g, '<a target="_blank" href=');
+                citHtml = cleanRenderedUrls(citHtml);
+            } catch (e) { citHtml = '<pre>' + citations + '</pre>'; }
+            html += '<div class="email-citations"><div style="font-weight:bold; margin-bottom:5px; color:var(--text-secondary);">References:</div>' + citHtml + '</div>';
+        }
+        return html;
+    }
+
+    if (contentType === 'whatsapp') {
+        var waId = 'wa-' + Date.now();
+        var waEscaped = escapeHtml(msgMarkdown);
+        var waFormatted = waEscaped.replace(/\*([^\*]+)\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
+        return '<div class="code-block-container whatsapp-wrapper">' +
+            '<div class="code-header" style="background: #075e54;"><span class="code-lang" style="color:white;"><i class="fab fa-whatsapp"></i> WHATSAPP / MESSAGE</span>' +
+            '<button class="code-copy-btn" onclick="copyContent(\'' + waId + '\', this)" style="color:white;"><i class="fas fa-copy"></i> Copy</button></div>' +
+            '<div class="whatsapp-display" id="' + waId + '" style="padding: 16px; background: #e5ddd5; color: #111; font-family: Helvetica, Arial, sans-serif; line-height: 1.5; border-radius: 0 0 8px 8px;">' +
+            waFormatted + '</div></div>';
+    }
+
+    if (contentType === 'social') {
+        var socId = 'soc-' + Date.now();
+        var socHtml = '';
+        try {
+            socHtml = formatMessage(msgMarkdown, false);
+            socHtml = socHtml.replace(/<a href=/g, '<a target="_blank" href=');
+            socHtml = cleanRenderedUrls(socHtml);
+        } catch (e) { socHtml = escapeHtml(msgMarkdown).replace(/\n/g, '<br>'); }
+        return '<div class="code-block-container social-wrapper">' +
+            '<div class="code-header" style="background: #1da1f2;"><span class="code-lang" style="color:white;"><i class="fas fa-hashtag"></i> SOCIAL POST</span>' +
+            '<button class="code-copy-btn" onclick="copyContent(\'' + socId + '\', this)" style="color:white;"><i class="fas fa-copy"></i> Copy</button></div>' +
+            '<div class="social-display" id="' + socId + '" style="padding: 16px; background: var(--bg-code); color: var(--text-main); font-family: sans-serif; font-size: 15px;">' +
+            socHtml + '</div></div>';
+    }
+
+    if (contentType === 'creative') {
+        var cwId = 'cw-' + Date.now();
+        var cwHtml = '';
+        try {
+            cwHtml = formatMessage(msgMarkdown, false);
+        } catch (e) { cwHtml = escapeHtml(msgMarkdown).replace(/\n/g, '<br>'); }
+        return '<div class="code-block-container creative-wrapper">' +
+            '<div class="code-header"><span class="code-lang"><i class="fas fa-book-open"></i> CREATIVE WRITING</span>' +
+            '<button class="code-copy-btn" onclick="copyContent(\'' + cwId + '\', this)"><i class="fas fa-copy"></i> Copy</button></div>' +
+            '<div class="creative-display" id="' + cwId + '" style="padding: 24px; background: rgba(22,22,24,0.8); color: #e2e8f0; font-family: Georgia, serif; line-height: 1.8; font-size: 16px;">' +
+            cwHtml + '</div></div>';
+    }
+
+    if (contentType === 'accounting') {
+        var accId = 'acc-' + Date.now();
+        var safeText = escapeCurrencyDollars(msgMarkdown);
+        var accEscaped = escapeHtml(safeText);
+        return '<div class="code-block-container accounting-wrapper">' +
+            '<div class="code-header"><span class="code-lang"><i class="fas fa-file-invoice-dollar"></i> ACCOUNTING / FINANCE</span>' +
+            '<button class="code-copy-btn" onclick="copyContent(\'' + accId + '\', this)"><i class="fas fa-copy"></i> Copy</button></div>' +
+            '<div class="accounting-display" id="' + accId + '" style="padding: 16px; background: var(--bg-code); color: var(--text-main); font-family: Geist Mono, Consolas, monospace; line-height: 1.6;">' +
+            accEscaped.replace(/\n/g, '<br>') + '</div></div>';
+    }
+
+    if (contentType === 'equation') {
+        var eqId = 'eq-' + Date.now();
+        var eqSanitized = sanitizeTeX(msgMarkdown);
+        if (!/^\$\$|^\\[(\[]/.test(eqSanitized.trim())) { eqSanitized = '$$' + eqSanitized + '$$'; }
+        return '<div class="code-block-container equation-wrapper">' +
+            '<div class="code-header"><span class="code-lang"><i class="fas fa-square-root-alt"></i> EQUATION</span>' +
+            '<button class="code-copy-btn" onclick="copyContent(\'' + eqId + '\', this)"><i class="fas fa-copy"></i> Copy</button></div>' +
+            '<div class="equation-display" id="' + eqId + '" style="padding: 16px; background: var(--bg-code); color: var(--text-main);">' +
+            eqSanitized + '</div></div>';
+    }
+
+    if (contentType === 'calculation') {
+        var calcId = 'calc-' + Date.now();
+        var calcSanitized = sanitizeTeX(msgMarkdown);
+        if (!/^\$\$|^\\[(\[]/.test(calcSanitized.trim())) { calcSanitized = '$$' + calcSanitized + '$$'; }
+        return '<div class="code-block-container calculation-wrapper">' +
+            '<div class="code-header"><span class="code-lang"><i class="fas fa-calculator"></i> CALCULATION</span>' +
+            '<button class="code-copy-btn" onclick="copyContent(\'' + calcId + '\', this)"><i class="fas fa-copy"></i> Copy</button></div>' +
+            '<div class="calculation-display" id="' + calcId + '" style="padding: 16px; background: var(--bg-code); color: var(--text-main);">' +
+            calcSanitized + '</div></div>';
+    }
+
+    if (contentType === 'math') {
+        var mathId = 'math-' + Date.now();
+        var mathSanitized = sanitizeTeX(msgMarkdown);
+        if (!/^\$\$|^\\[(\[]/.test(mathSanitized.trim())) { mathSanitized = '$$' + mathSanitized + '$$'; }
+        return '<div class="code-block-container math-wrapper">' +
+            '<div class="code-header"><span class="code-lang"><i class="fas fa-calculator"></i> MATH RESULT</span>' +
+            '<button class="code-copy-btn" onclick="copyContent(\'' + mathId + '\', this)"><i class="fas fa-copy"></i> Copy</button></div>' +
+            '<div class="math-display" id="' + mathId + '" style="padding: 16px; background: var(--bg-code); color: var(--text-main);">' +
+            mathSanitized + '</div></div>';
+    }
+
+    if (contentType === 'prompt-list') {
+        var promptId = 'prompt-' + Date.now();
+        var promptHtml = '';
+        try {
+            promptHtml = formatMessage(msgMarkdown, false);
+            promptHtml = promptHtml.replace(/<a href=/g, '<a target="_blank" href=');
+            promptHtml = cleanRenderedUrls(promptHtml);
+        } catch (e) { promptHtml = msgMarkdown.replace(/\n/g, '<br>'); }
+        return '<div class="prompt-container"><div class="prompt-header">' +
+            '<span><i class="fas fa-magic"></i> Refined Prompts</span>' +
+            '<button class="code-copy-btn" onclick="copyContent(\'' + promptId + '\', this)"><i class="fas fa-copy"></i> Copy All</button></div>' +
+            '<div class="prompt-display" id="' + promptId + '">' + promptHtml + '</div></div>';
+    }
+
+    // --- Default route: full marked.js pipeline ---
+    // Step 0: Fix broken URLs
+    msgMarkdown = cleanMarkdownUrls(msgMarkdown);
+
+    // Step 1: Protect math
+    var protectedMarkdown = protectMath(msgMarkdown);
+
+    var htmlContent = '';
+    try {
+        if (typeof marked !== 'undefined') {
+            // Custom renderer with code/table handling
+            var renderer = new marked.Renderer();
+
+            renderer.code = function(code, language) {
+                var codeText, langRaw;
+                if (code && typeof code === 'object') {
+                    codeText = code.text ?? '';
+                    langRaw = code.lang ?? language;
+                } else {
+                    codeText = String(code ?? '');
+                    langRaw = language;
+                }
+                var lang = (langRaw || 'text').toLowerCase();
+
+                var cleanCode = codeText;
+                if (typeof cleanCode === 'string') {
+                    cleanCode = cleanCode.replace(/^```[a-z]*\s*\n?/i, '');
+                    cleanCode = cleanCode.replace(/\n?```\s*$/i, '');
+                }
+
+                // Mermaid diagram
+                if (lang === 'mermaid') {
+                    var mermaidId = 'mermaid-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
+                    var encodedCode = cleanCode.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+                    return '<div class="mermaid-wrapper"><div class="mermaid-header">' +
+                        '<span><i class="fas fa-project-diagram"></i> Architecture Diagram</span>' +
+                        '<div class="mermaid-actions">' +
+                        '<button class="mermaid-action-btn" onclick="copyMermaidCode(this)" data-mermaid-src="' + encodedCode + '"><i class="fas fa-copy"></i> Copy</button>' +
+                        '<button class="mermaid-action-btn" onclick="downloadMermaidSVG(this)"><i class="fas fa-download"></i> SVG</button>' +
+                        '</div></div>' +
+                        '<div class="mermaid-container" id="' + mermaidId + '" data-mermaid-pending="true" data-mermaid-code="' + encodedCode + '">' +
+                        '<div class="mermaid-loading"><i class="fas fa-spinner fa-spin"></i> Rendering diagram...</div>' +
+                        '</div></div>';
+                }
+
+                // Math/LaTeX code block
+                if (lang === 'math' || lang === 'latex' || lang === 'tex') {
+                    return '<div class="math-display" data-math-pending="true">$$' + cleanCode + '$$</div>';
+                }
+
+                // Regular code: highlight with hljs
+                var processedCode = '';
+                try {
+                    if (window.hljs) {
+                        var validLang = hljs.getLanguage(lang) ? lang : 'plaintext';
+                        processedCode = hljs.highlight(cleanCode, { language: validLang }).value;
+                    } else {
+                        processedCode = escapeHtmlForCode(cleanCode);
+                    }
+                } catch (e) {
+                    processedCode = escapeHtmlForCode(cleanCode);
+                }
+
+                return '<div class="code-block-container"><div class="code-header">' +
+                    '<span class="code-lang">' + lang.toUpperCase() + '</span>' +
+                    '<button class="code-copy-btn" onclick="copyCode(this)"><i class="fas fa-copy"></i> Copy</button>' +
+                    '</div><pre><code class="language-' + lang + ' hljs">' + processedCode + '</code></pre></div>';
+            };
+
+            // Custom table renderer with responsive wrapper
+            renderer.table = function(header, body) {
+                var tableHtml = '';
+                if (typeof header === 'string') {
+                    tableHtml = '<table><thead>' + header + '</thead><tbody>' + body + '</tbody></table>';
+                } else {
+                    try {
+                        tableHtml = marked.Renderer.prototype.table.call(this, header, body);
+                    } catch (e) {
+                        tableHtml = '<table><thead><tr><td>Error rendering table</td></tr></thead></table>';
+                    }
+                }
+
+                // Cleanup empty rows
+                try {
+                    var tempDiv = document.createElement('div');
+                    tempDiv.innerHTML = tableHtml;
+                    var rows = tempDiv.querySelectorAll('tr');
+                    var rowsRemoved = false;
+                    rows.forEach(function(row, index) {
+                        if (index === 0) return;
+                        var rowText = (row.textContent || '').trim();
+                        var hasData = /[a-zA-Z0-9\u00C0-\u017F]/.test(rowText);
+                        if (!hasData && rowText.length > 0) {
+                            row.remove();
+                            rowsRemoved = true;
+                        }
+                    });
+                    if (rowsRemoved) tableHtml = tempDiv.innerHTML;
+                } catch (err) { /* silent */ }
+
+                return '<div class="table-wrapper">' + tableHtml + '</div>';
+            };
+
+            marked.setOptions({
+                renderer: renderer,
+                breaks: true,
+                gfm: true,
+                headerIds: false,
+                mangle: false,
+                pedantic: false
+            });
+
+            htmlContent = (typeof marked.parse === 'function') ? marked.parse(protectedMarkdown) : marked(protectedMarkdown);
+
+            // Step 2: Restore math
+            htmlContent = restoreMath(htmlContent);
+
+            // Step 3: Fix LaTeX inside <code> tags
+            htmlContent = fixLatexInCodeTags(htmlContent);
+
+            // Step 4: Add target="_blank" to links
+            htmlContent = htmlContent.replace(/<a href=/g, '<a target="_blank" href=');
+
+            // Step 5: Fix rendered URL artifacts
+            htmlContent = cleanRenderedUrls(htmlContent);
+        } else {
+            htmlContent = '<p>' + msgMarkdown.replace(/\n/g, '<br>') + '</p>';
+        }
+    } catch (e) {
+        console.error('[formatMessage] Marked error:', e);
+        htmlContent = '<p>' + msgMarkdown.replace(/\n/g, '<br>') + '</p>';
+    }
+
+    return htmlContent;
+}
+
+// --- Copy content from specialized wrappers ---
+function copyContent(elementId, btn) {
+    var el = document.getElementById(elementId);
+    if (!el) return;
+    var text = el.innerText || el.textContent;
+    if (navigator.clipboard) {
+        navigator.clipboard.writeText(text).then(function() {
+            var originalContent = btn.innerHTML;
+            btn.classList.add('copied');
+            btn.innerHTML = '<i class="fas fa-check"></i> Copied!';
+            showToast('Content copied to clipboard');
+            setTimeout(function() {
+                btn.classList.remove('copied');
+                btn.innerHTML = originalContent;
+            }, 2000);
+        });
+    }
+}
+
+// --- Copy mermaid diagram source ---
+function copyMermaidCode(btn) {
+    var src = btn.getAttribute('data-mermaid-src');
+    if (!src) return;
+    var decoded = src.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+    if (navigator.clipboard) {
+        navigator.clipboard.writeText(decoded).then(function() {
+            var originalContent = btn.innerHTML;
+            btn.classList.add('copied');
+            btn.innerHTML = '<i class="fas fa-check"></i> Copied!';
+            showToast('Mermaid code copied');
+            setTimeout(function() {
+                btn.classList.remove('copied');
+                btn.innerHTML = originalContent;
+            }, 2000);
+        });
+    }
+}
+
+// --- Download mermaid diagram as SVG ---
+function downloadMermaidSVG(btn) {
+    var wrapper = btn.closest('.mermaid-wrapper');
+    if (!wrapper) return;
+    var svgEl = wrapper.querySelector('svg');
+    if (!svgEl) { showToast('Diagram not yet rendered'); return; }
+    var svgData = new XMLSerializer().serializeToString(svgEl);
+    var blob = new Blob([svgData], { type: 'image/svg+xml' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'diagram-' + Date.now() + '.svg';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('SVG downloaded');
+}
+
+// --- Render pending mermaid diagrams ---
+function renderMermaidDiagrams(parentEl) {
+    if (!window.mermaidLoaded && !window.mermaid) return;
+    var containers = parentEl.querySelectorAll('.mermaid-container[data-mermaid-pending]');
+    containers.forEach(function(container) {
+        var code = container.getAttribute('data-mermaid-code');
+        if (!code) return;
+        var decoded = code.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+        var diagramId = 'mermaid-render-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
+        try {
+            mermaid.render(diagramId, decoded).then(function(result) {
+                container.innerHTML = result.svg;
+                container.removeAttribute('data-mermaid-pending');
+                container.classList.add('mermaid-rendered');
+                var svgEl = container.querySelector('svg');
+                if (svgEl) {
+                    svgEl.style.maxWidth = 'min(100%, 700px)';
+                    svgEl.style.height = 'auto';
+                    svgEl.style.maxHeight = '460px';
+                }
+            }).catch(function(err) {
+                console.warn('[Mermaid] Render error:', err);
+                container.innerHTML = '<pre class="mermaid-error"><code>' + escapeHtmlForCode(decoded) + '</code></pre>' +
+                    '<div class="mermaid-error-msg">Diagram render failed</div>';
+                container.removeAttribute('data-mermaid-pending');
+            });
+        } catch (e) {
+            console.warn('[Mermaid] Render exception:', e);
+            container.removeAttribute('data-mermaid-pending');
+        }
+    });
+}
+
+// --- Typeset MathJax in a container ---
+function typesetMathJax(container) {
+    if (window.MathJax && window.MathJax.typesetPromise) {
+        window.MathJax.typesetPromise([container]).catch(function(e) { /* silent */ });
+    } else if (window.MathJax && window.MathJax.typeset) {
+        try { window.MathJax.typeset([container]); } catch(e) { /* silent */ }
+    }
+}
 
 
 
