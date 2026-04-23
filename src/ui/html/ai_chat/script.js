@@ -2489,9 +2489,24 @@ function appendMessage(text, sender, shouldSave) {
         // Enhanced MathJax typesetting
         typesetMathJax(bubble);
         // Mermaid diagram rendering
-        window.initMermaid && window.initMermaid().then(function() {
-            renderMermaidDiagrams(bubble);
-        });
+        if (window.initMermaid) {
+            window.initMermaid().then(function() {
+                renderMermaidDiagrams(bubble);
+            }).catch(function(err) {
+                console.warn('[Mermaid] Failed to load, showing fallback:', err.message);
+                // Show fallback for pending mermaid containers
+                var pendingContainers = bubble.querySelectorAll('.mermaid-container[data-mermaid-pending]');
+                pendingContainers.forEach(function(container) {
+                    var code = container.getAttribute('data-mermaid-code');
+                    if (code) {
+                        var decoded = code.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+                        container.innerHTML = '<pre class="mermaid-error"><code>' + escapeHtmlForCode(decoded) + '</code></pre>' +
+                            '<div class="mermaid-error-msg">⚠ Mermaid CDN unavailable - showing source code</div>';
+                        container.removeAttribute('data-mermaid-pending');
+                    }
+                });
+            });
+        }
     });
 
     if (shouldSave) {
@@ -5286,9 +5301,23 @@ function onComplete() {
         typesetMathJax(currentAssistantMessage);
 
         // -- Render Mermaid diagrams after stream ends ---------------------
-        window.initMermaid && window.initMermaid().then(function() {
-            renderMermaidDiagrams(currentAssistantMessage);
-        });
+        if (window.initMermaid) {
+            window.initMermaid().then(function() {
+                renderMermaidDiagrams(currentAssistantMessage);
+            }).catch(function(err) {
+                console.warn('[Mermaid] Failed to load after stream:', err.message);
+                var pendingContainers = currentAssistantMessage.querySelectorAll('.mermaid-container[data-mermaid-pending]');
+                pendingContainers.forEach(function(container) {
+                    var code = container.getAttribute('data-mermaid-code');
+                    if (code) {
+                        var decoded = code.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+                        container.innerHTML = '<pre class="mermaid-error"><code>' + escapeHtmlForCode(decoded) + '</code></pre>' +
+                            '<div class="mermaid-error-msg">⚠ Mermaid CDN unavailable - showing source code</div>';
+                        container.removeAttribute('data-mermaid-pending');
+                    }
+                });
+            });
+        }
     } else {
         console.warn('[CHAT] onComplete: currentAssistantMessage is null!');
     }
@@ -5453,9 +5482,23 @@ function handleOptionsTag() {
         
         // MathJax and Mermaid rendering
         typesetMathJax(contentDiv);
-        window.initMermaid && window.initMermaid().then(function() {
-            renderMermaidDiagrams(contentDiv);
-        });
+        if (window.initMermaid) {
+            window.initMermaid().then(function() {
+                renderMermaidDiagrams(contentDiv);
+            }).catch(function(err) {
+                console.warn('[Mermaid] Load failed:', err.message);
+                var pendingContainers = contentDiv.querySelectorAll('.mermaid-container[data-mermaid-pending]');
+                pendingContainers.forEach(function(container) {
+                    var code = container.getAttribute('data-mermaid-code');
+                    if (code) {
+                        var decoded = code.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+                        container.innerHTML = '<pre class="mermaid-error"><code>' + escapeHtmlForCode(decoded) + '</code></pre>' +
+                            '<div class="mermaid-error-msg">⚠ Mermaid CDN unavailable - showing source code</div>';
+                        container.removeAttribute('data-mermaid-pending');
+                    }
+                });
+            });
+        }
     }
 }
 
@@ -5512,9 +5555,23 @@ function handleExplorationTag() {
         
         // MathJax and Mermaid rendering
         typesetMathJax(contentDiv);
-        window.initMermaid && window.initMermaid().then(function() {
-            renderMermaidDiagrams(contentDiv);
-        });
+        if (window.initMermaid) {
+            window.initMermaid().then(function() {
+                renderMermaidDiagrams(contentDiv);
+            }).catch(function(err) {
+                console.warn('[Mermaid] Load failed:', err.message);
+                var pendingContainers = contentDiv.querySelectorAll('.mermaid-container[data-mermaid-pending]');
+                pendingContainers.forEach(function(container) {
+                    var code = container.getAttribute('data-mermaid-code');
+                    if (code) {
+                        var decoded = code.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+                        container.innerHTML = '<pre class="mermaid-error"><code>' + escapeHtmlForCode(decoded) + '</code></pre>' +
+                            '<div class="mermaid-error-msg">⚠ Mermaid CDN unavailable - showing source code</div>';
+                        container.removeAttribute('data-mermaid-pending');
+                    }
+                });
+            });
+        }
     }
 }
 
@@ -5542,9 +5599,23 @@ function handleFileEditedTag() {
 
     // MathJax and Mermaid rendering
     typesetMathJax(contentDiv);
-    window.initMermaid && window.initMermaid().then(function() {
-        renderMermaidDiagrams(contentDiv);
-    });
+    if (window.initMermaid) {
+        window.initMermaid().then(function() {
+            renderMermaidDiagrams(contentDiv);
+        }).catch(function(err) {
+            console.warn('[Mermaid] Load failed:', err.message);
+            var pendingContainers = contentDiv.querySelectorAll('.mermaid-container[data-mermaid-pending]');
+            pendingContainers.forEach(function(container) {
+                var code = container.getAttribute('data-mermaid-code');
+                if (code) {
+                    var decoded = code.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+                    container.innerHTML = '<pre class="mermaid-error"><code>' + escapeHtmlForCode(decoded) + '</code></pre>' +
+                        '<div class="mermaid-error-msg">⚠ Mermaid CDN unavailable - showing source code</div>';
+                    container.removeAttribute('data-mermaid-pending');
+                }
+            });
+        });
+    }
 
     // Append .fec cards below message content
     renderCustomTagsInto(currentAssistantMessage, currentContent);
@@ -5570,9 +5641,23 @@ function handleTaskSummaryTag() {
         
         // MathJax and Mermaid rendering
         typesetMathJax(contentDiv);
-        window.initMermaid && window.initMermaid().then(function() {
-            renderMermaidDiagrams(contentDiv);
-        });
+        if (window.initMermaid) {
+            window.initMermaid().then(function() {
+                renderMermaidDiagrams(contentDiv);
+            }).catch(function(err) {
+                console.warn('[Mermaid] Load failed:', err.message);
+                var pendingContainers = contentDiv.querySelectorAll('.mermaid-container[data-mermaid-pending]');
+                pendingContainers.forEach(function(container) {
+                    var code = container.getAttribute('data-mermaid-code');
+                    if (code) {
+                        var decoded = code.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+                        container.innerHTML = '<pre class="mermaid-error"><code>' + escapeHtmlForCode(decoded) + '</code></pre>' +
+                            '<div class="mermaid-error-msg">⚠ Mermaid CDN unavailable - showing source code</div>';
+                        container.removeAttribute('data-mermaid-pending');
+                    }
+                });
+            });
+        }
     }
 }
 
@@ -5606,9 +5691,23 @@ function handleDiffTag() {
         
         // MathJax and Mermaid rendering
         typesetMathJax(contentDiv);
-        window.initMermaid && window.initMermaid().then(function() {
-            renderMermaidDiagrams(contentDiv);
-        });
+        if (window.initMermaid) {
+            window.initMermaid().then(function() {
+                renderMermaidDiagrams(contentDiv);
+            }).catch(function(err) {
+                console.warn('[Mermaid] Load failed:', err.message);
+                var pendingContainers = contentDiv.querySelectorAll('.mermaid-container[data-mermaid-pending]');
+                pendingContainers.forEach(function(container) {
+                    var code = container.getAttribute('data-mermaid-code');
+                    if (code) {
+                        var decoded = code.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+                        container.innerHTML = '<pre class="mermaid-error"><code>' + escapeHtmlForCode(decoded) + '</code></pre>' +
+                            '<div class="mermaid-error-msg">⚠ Mermaid CDN unavailable - showing source code</div>';
+                        container.removeAttribute('data-mermaid-pending');
+                    }
+                });
+            });
+        }
     }
 }
 
@@ -12115,6 +12214,12 @@ function formatMessage(text, isUser) {
     // Step 0: Fix broken URLs
     msgMarkdown = cleanMarkdownUrls(msgMarkdown);
 
+    // Step 0.5: Fix malformed Mermaid code fences
+    // Pattern: heading text immediately followed by ```mermaid (no newline)
+    msgMarkdown = msgMarkdown.replace(/([^\n])```mermaid/g, '$1\n```mermaid');
+    // Pattern: ```mermaid without proper newline before it
+    msgMarkdown = msgMarkdown.replace(/([^\n])```\s*mermaid/g, '$1\n```mermaid');
+
     // Step 1: Protect math
     var protectedMarkdown = protectMath(msgMarkdown);
 
@@ -12149,7 +12254,6 @@ function formatMessage(text, isUser) {
                         '<span><i class="fas fa-project-diagram"></i> Architecture Diagram</span>' +
                         '<div class="mermaid-actions">' +
                         '<button class="mermaid-action-btn" onclick="copyMermaidCode(this)" data-mermaid-src="' + encodedCode + '"><i class="fas fa-copy"></i> Copy</button>' +
-                        '<button class="mermaid-action-btn" onclick="downloadMermaidSVG(this)"><i class="fas fa-download"></i> SVG</button>' +
                         '</div></div>' +
                         '<div class="mermaid-container" id="' + mermaidId + '" data-mermaid-pending="true" data-mermaid-code="' + encodedCode + '">' +
                         '<div class="mermaid-loading"><i class="fas fa-spinner fa-spin"></i> Rendering diagram...</div>' +

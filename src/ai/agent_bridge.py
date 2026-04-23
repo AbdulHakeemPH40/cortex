@@ -2088,7 +2088,7 @@ Use diagrams when:
 ### Math & Equations
 Use LaTeX syntax for mathematical expressions:
 - Inline math: `$E = mc^2$`
-- Display math: `$\int_0^\infty e^{-x^2} dx = \frac{\sqrt{\pi}}{2}$` or `$$\int_0^\infty e^{-x^2} dx = \frac{\sqrt{\pi}}{2}$$`
+- Display math example: integral from 0 to infinity of e^(-x^2) dx = sqrt(pi)/2
 
 ### Tables
 Use Markdown tables for structured data comparison:
