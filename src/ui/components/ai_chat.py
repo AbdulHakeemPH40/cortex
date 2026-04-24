@@ -979,6 +979,15 @@ class ChatBridge(QObject):
             log.error(f'âœ— Failed to save chats to SQLite: {e}')
             return f"ERROR: {str(e)}"
     
+    @pyqtSlot(str, str)
+    def show_notification(self, title: str, message: str):
+        """Show a native Windows notification."""
+        try:
+            from src.utils.notifications import show_toast_notification
+            show_toast_notification(title, message)
+        except Exception as e:
+            log.error(f"Failed to show notification: {e}")
+
     @pyqtSlot(str)
     def on_save_finished(self, status: str):
         """Called by JS when save process is completed (success or error)."""

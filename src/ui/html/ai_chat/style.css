@@ -683,7 +683,7 @@ body:not(.light-mode) {
 
 /* Performance: Reduce paint areas for message content */
 .message-content {
-    contain: layout style paint;
+    contain: layout style; /* Removed paint to prevent clipping */
 }
 
 /* Optimize scrolling container */
@@ -738,19 +738,20 @@ body:not(.light-mode) {
 }
 
 .user-text-wrap {
-    display: inline-block; /* Shrink to fit content */
-    width: auto !important; /* Force shrink-to-fit */
-    max-width: none; /* Remove any max-width constraint */
-    word-wrap: break-word; /* Forces long strings/code to wrap */
-    overflow-wrap: break-word; /* Modern browsers */
-    white-space: pre-wrap; /* Maintains code formatting while wrapping */
-    background: var(--bg-elevated); /* #2A2A2A - Elevated metallic */
+    display: inline-block;
+    width: auto !important;
+    max-width: none;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    white-space: pre-wrap;
+    background: var(--bg-elevated);
     color: var(--text-white);
-    padding: 8px 12px;
-    border-radius: 18px 18px 2px 18px; /* Asymmetrical rounding (2px bottom-right) */
-    border: 1px solid var(--border-light); /* Higher contrast border #3D3D3D */
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-    vertical-align: top; /* Align with avatar */
+    padding: 10px 16px; /* Increased padding */
+    border-radius: 18px 18px 2px 18px;
+    border: 1px solid var(--border-light);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+    vertical-align: top;
+    box-sizing: border-box;
 }
 
 .user-avatar {
@@ -775,13 +776,14 @@ body:not(.light-mode) {
 
 /* Assistant message content */
 .message-bubble.assistant .message-content {
-    background: var(--bg-card); /* Metallic Grey */
+    background: var(--bg-card);
     color: var(--text-main);
-    padding: 10px 14px;
-    border-radius: 18px 18px 18px 2px; /* Asymmetrical (2px bottom-left) */
+    padding: 12px 18px; /* Increased padding */
+    border-radius: 18px 18px 18px 2px;
     border: 1px solid var(--border);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
-    max-width: 75%;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+    max-width: 85%; /* Slightly wider for better content fitting */
+    box-sizing: border-box;
 }
 
 /* AI Thinking Animation - 3-dot bounce */
@@ -846,6 +848,8 @@ button svg,
     padding: 0 4px;
     width: 100%;
     box-sizing: border-box;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
 }
 
 /* Copy buttons */
@@ -1676,6 +1680,40 @@ button svg,
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
+/* Base container for markdown-rendered code blocks from formatMessage() */
+.code-block-container {
+    background: #000000;
+    border: 1px solid #343a46;
+    border-radius: 10px;
+    margin: 12px 0;
+    overflow: hidden;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.35);
+}
+
+.code-block-container .code-header {
+    background: rgba(59, 130, 246, 0.2);
+    border-bottom: 1px solid rgba(59, 130, 246, 0.18);
+}
+
+.code-block-container pre {
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    padding: 16px 18px;
+    background: #000000;
+    overflow-x: auto;
+    box-sizing: border-box;
+}
+
+.code-block-container pre code,
+.code-block-container pre code.hljs {
+    display: block;
+    background: transparent !important;
+}
+
 /* pre inside wrapper strips its own border/radius/margin (wrapper owns those) */
 .code-block-wrapper pre[data-lang] {
     border: none;
@@ -1705,7 +1743,7 @@ pre[data-lang] {
     align-items: center;
     justify-content: space-between;
     padding: 10px 16px;
-    background: var(--bg-surface);
+    /* background: var(--bg-surface); */
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
     user-select: none;
@@ -4564,23 +4602,23 @@ body.light-mode {
     border-radius: 10px;
     margin: 16px 0;
     overflow: hidden;
-    border: 1px solid rgba(212, 98, 43, 0.2);
-    box-shadow: 0 4px 20px rgba(212, 98, 43, 0.06);
+    border: 1px solid #2f3542;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.28);
 }
 
 .mermaid-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background: linear-gradient(135deg, var(--bg-surface), rgba(26, 26, 46, 0.8));
+    background: #131722;
     padding: 10px 16px;
-    border-bottom: 1px solid rgba(212, 98, 43, 0.15);
+    border-bottom: 1px solid #2f3542;
     font-size: 13px;
-    color: #D4622B;
+    color: #ffffff;
     font-weight: 600;
 }
 
-.mermaid-header i { margin-right: 6px; color: #e8773d; }
+.mermaid-header i { margin-right: 6px; color: #ffffff; }
 
 .mermaid-actions {
     display: flex;
@@ -4603,9 +4641,9 @@ body.light-mode {
 }
 
 .mermaid-action-btn:hover {
-    background: rgba(212, 98, 43, 0.15);
-    color: #e8773d;
-    border-color: rgba(212, 98, 43, 0.3);
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+    border-color: rgba(255, 255, 255, 0.3);
 }
 
 .mermaid-container {
@@ -4614,12 +4652,55 @@ body.light-mode {
     justify-content: center;
     align-items: center;
     min-height: 80px;
+    background: #0b1220;
+    overflow: auto; /* Allow both x and y scrolling for panning */
+    cursor: grab;
+    user-select: none;
+}
+
+.mermaid-container.panning {
+    cursor: grabbing;
 }
 
 .mermaid-container svg {
-    max-width: min(100%, 700px);
-    height: auto;
-    max-height: 460px;
+    max-width: none !important; /* Overridden by JS for panning */
+    height: auto !important;
+    max-height: none !important; /* Overridden by JS for panning */
+    text-rendering: optimizeLegibility;
+    shape-rendering: geometricPrecision;
+    image-rendering: -webkit-optimize-contrast;
+}
+
+.mermaid-rendered svg {
+    cursor: inherit;
+}
+
+.mermaid-container svg .edgePath .path,
+.mermaid-container svg .flowchart-link {
+    shape-rendering: crispEdges;
+}
+
+.mermaid-container svg text,
+.mermaid-container svg tspan {
+    fill: #ffffff !important;
+    -webkit-font-smoothing: antialiased;
+}
+
+.mermaid-container svg .edgePath .path,
+.mermaid-container svg .flowchart-link,
+.mermaid-container svg marker path,
+.mermaid-container svg .cluster rect,
+.mermaid-container svg rect,
+.mermaid-container svg polygon,
+.mermaid-container svg path {
+    stroke: #ffffff !important;
+}
+
+.mermaid-container svg .node rect,
+.mermaid-container svg .node polygon,
+.mermaid-container svg .node circle,
+.mermaid-container svg .cluster rect {
+    fill: #111827 !important;
 }
 
 .mermaid-loading {
@@ -4637,6 +4718,18 @@ body.light-mode {
     background: rgba(248, 113, 113, 0.05);
     border-radius: 4px;
     border-left: 3px solid #f87171;
+    margin: 0;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    white-space: pre;
+    text-indent: 0;
+    box-sizing: border-box;
+}
+
+.mermaid-error code {
+    display: block;
+    padding-left: 2px;
 }
 
 .mermaid-error-msg {
@@ -4650,6 +4743,71 @@ body.light-mode {
     display: flex;
     align-items: center;
     gap: 6px;
+}
+
+/* Mermaid popup viewer */
+.mermaid-popup-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(4, 8, 15, 0.86);
+    z-index: 12000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.mermaid-popup-overlay.visible {
+    display: flex;
+}
+
+.mermaid-popup-window {
+    width: min(1200px, 96vw);
+    height: min(860px, 92vh);
+    background: #0b1220;
+    border: 1px solid #2f3542;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    display: flex;
+    flex-direction: column;
+}
+
+.mermaid-popup-header {
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px 0 14px;
+    color: #ffffff;
+    border-bottom: 1px solid #2f3542;
+    background: #131722;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.mermaid-popup-close {
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 6px;
+    padding: 4px 10px;
+    cursor: pointer;
+}
+
+.mermaid-popup-close:hover {
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.mermaid-popup-frame {
+    width: 100%;
+    height: calc(100% - 44px);
+    border: 0;
+    background: #0b1220;
+}
+
+body.mermaid-popup-open {
+    overflow: hidden;
 }
 
 /* ================================================

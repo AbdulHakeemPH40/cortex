@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mermaid Viewer</title>
+  <style>
+    :root {
+      --bg: #0b1220;
+      --bg-panel: #131722;
+      --border: #2f3542;
+      --text: #ffffff;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Inter", "Segoe UI", sans-serif;
+      overflow: hidden;
+    }
+    .toolbar {
+      height: 46px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 10px;
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border);
+    }
+    .toolbar-title {
+      font-size: 13px;
+      font-weight: 600;
+      opacity: 0.95;
+    }
+    .toolbar-actions {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    .toolbar button {
+      border: 1px solid rgba(255,255,255,0.2);
+      background: rgba(255,255,255,0.04);
+      color: #fff;
+      border-radius: 6px;
+      padding: 5px 10px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .toolbar button:hover { background: rgba(255,255,255,0.12); }
+    .zoom-label {
+      min-width: 58px;
+      text-align: center;
+      font-size: 12px;
+      opacity: 0.9;
+    }
+    .stage {
+      position: relative;
+      width: 100%;
+      height: calc(100% - 46px);
+      overflow: hidden;
+      background: #0b1220;
+      touch-action: none;
+      cursor: grab;
+      user-select: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .stage.dragging { cursor: grabbing; }
+    .content {
+      position: absolute;
+      left: 0;
+      top: 0;
+      transform-origin: 0 0;
+      will-change: transform;
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+      cursor: grab;
+      user-select: none;
+      display: inline-block; /* Ensure it wraps SVG tightly */
+    }
+    .content svg,
+    .content svg * {
+      cursor: inherit !important;
+    }
+    .content svg {
+      text-rendering: optimizeLegibility;
+      shape-rendering: geometricPrecision;
+      image-rendering: -webkit-optimize-contrast;
+      max-width: none !important;
+      max-height: none !important;
+    }
+    .stage.dragging,
+    .stage.dragging .content,
+    .stage.dragging .content svg,
+    .stage.dragging .content svg * {
+      cursor: grabbing !important;
+    }
+    .loading, .error {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 13px;
+      opacity: 0.9;
+      text-align: center;
+      padding: 10px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: rgba(19, 23, 34, 0.9);
+    }
+    .error pre {
+      margin: 8px 0 0 0;
+      text-align: left;
+      white-space: pre-wrap;
+      max-width: min(900px, 90vw);
+      max-height: 56vh;
+      overflow: auto;
+      background: #0f172a;
+      border: 1px solid #2f3542;
+      border-radius: 8px;
+      padding: 12px;
+      color: #fff;
+    }
+    /* Improve path clarity */
+    svg .edgePath .path, svg .flowchart-link {
+      shape-rendering: crispEdges;
+    }
+    svg text, svg tspan { 
+      fill: #fff !important; 
+      -webkit-font-smoothing: antialiased;
+      text-shadow: 0 0 0.1px rgba(255,255,255,0.1); /* Subtle trick for thicker/clearer text */
+    }
+    svg .edgePath .path, svg .flowchart-link, svg marker path,
+    svg .cluster rect, svg rect, svg polygon, svg path {
+      stroke: #fff !important;
+    }
+    svg .node rect, svg .node polygon, svg .node circle, svg .cluster rect {
+      fill: #111827 !important;
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <div class="toolbar-title">Mermaid Full View</div>
+    <div class="toolbar-actions">
+      <button id="zoomOutBtn" type="button">-</button>
+      <span id="zoomLabel" class="zoom-label">100%</span>
+      <button id="zoomInBtn" type="button">+</button>
+      <button id="resetBtn" type="button">Reset</button>
+      <button id="fitBtn" type="button">Fit</button>
+      <button id="closeBtn" type="button">Close</button>
+    </div>
+  </div>
+  <div id="stage" class="stage">
+    <div id="loading" class="loading">Waiting for diagram...</div>
+    <div id="content" class="content"></div>
+  </div>
+
+  <script>
+    (function() {
+      var stage = document.getElementById('stage');
+      var content = document.getElementById('content');
+      var loading = document.getElementById('loading');
+      var zoomLabel = document.getElementById('zoomLabel');
+      var minScale = 0.05;
+      var maxScale = 25;
+      var minAutoFitScale = 1.0;
+      var scale = 1;
+      var tx = 0;
+      var ty = 0;
+      var drag = null;
+      var touchStart = null;
+      var contentSize = { width: 800, height: 600, x: 0, y: 0 };
+      var lastRenderedCode = '';
+
+      function applyTransform() {
+        var rtx = Math.round(tx);
+        var rty = Math.round(ty);
+        var s = Math.round(scale * 1000) / 1000;
+        content.style.transform = 'translate3d(' + rtx + 'px,' + rty + 'px,0) scale(' + s + ')';
+        zoomLabel.textContent = Math.round(scale * 100) + '%';
+      }
+
+      function updateContentSize() {
+        var svg = content.querySelector('svg');
+        if (!svg) return;
+        var bb = svg.getBBox ? svg.getBBox() : null;
+        var vb = svg.viewBox && svg.viewBox.baseVal ? svg.viewBox.baseVal : null;
+        var x = (bb && isFinite(bb.x)) ? bb.x : ((vb && isFinite(vb.x)) ? vb.x : 0);
+        var y = (bb && isFinite(bb.y)) ? bb.y : ((vb && isFinite(vb.y)) ? vb.y : 0);
+        var w = (bb && bb.width) || (vb && vb.width) || svg.clientWidth || 800;
+        var h = (bb && bb.height) || (vb && vb.height) || svg.clientHeight || 600;
+        contentSize.width = Math.max(1, w);
+        contentSize.height = Math.max(1, h);
+        contentSize.x = x;
+        contentSize.y = y;
+      }
+
+      function centerContent() {
+        var sw = stage.clientWidth;
+        var sh = stage.clientHeight;
+        tx = (sw - contentSize.width * scale) / 2 - (contentSize.x * scale);
+        ty = (sh - contentSize.height * scale) / 2 - (contentSize.y * scale);
+      }
+
+      function setScale(next, cx, cy) {
+        var old = scale;
+        scale = Math.max(minScale, Math.min(maxScale, next));
+        if (cx != null && cy != null) {
+          var ratio = scale / old;
+          tx = cx - (cx - tx) * ratio;
+          ty = cy - (cy - ty) * ratio;
+        }
+        applyTransform();
+      }
+
+      function resetView() {
+        scale = 1;
+        updateContentSize();
+        centerContent();
+        applyTransform();
+      }
+
+      function initialFit() {
+        updateContentSize();
+        var w = contentSize.width;
+        var h = contentSize.height;
+        var sw = Math.max(200, stage.clientWidth - 40);
+        var sh = Math.max(200, stage.clientHeight - 40);
+        
+        // Calculate fit scale
+        var fit = Math.min(sw / w, sh / h);
+        
+        // On smaller screens or very large diagrams, fit might be tiny.
+        // We ensure a minimum readable scale for the INITIAL load,
+        // but center it so the user can see SOMETHING and then pan/zoom.
+        scale = Math.max(minScale, Math.min(maxScale, fit));
+        
+        // If the diagram is wider than the screen at scale=1, center it
+        tx = (stage.clientWidth - w * scale) / 2 - (contentSize.x * scale);
+        ty = (stage.clientHeight - h * scale) / 2 - (contentSize.y * scale);
+        
+        applyTransform();
+      }
+
+      function fitToView() {
+        updateContentSize();
+        var w = contentSize.width;
+        var h = contentSize.height;
+        var sw = Math.max(200, stage.clientWidth - 40);
+        var sh = Math.max(200, stage.clientHeight - 40);
+        var fit = Math.min(sw / w, sh / h);
+        scale = Math.max(minScale, Math.min(maxScale, fit));
+        centerContent();
+        applyTransform();
+      }
+
+      function showError(message, code) {
+        var escaped = (code || '').replace(/[&<>]/g, function(ch) {
+          return ({'&':'&amp;','<':'&lt;','>':'&gt;'})[ch];
+        });
+        content.innerHTML = '<div class="error">' + message + (code ? '<pre>' + escaped + '</pre>' : '') + '</div>';
+      }
+
+      function normalizeMermaidCode(code) {
+        var normalized = code || '';
+        // 1. Convert unicode arrows to Mermaid syntax so copied/raw text still renders.
+        normalized = normalized.replace(/[ \t]*(?:\u27F6|\u27F7|\u2192|\u21D2|\u2794|\u279C)[ \t]*/g, ' --> ');
+        normalized = normalized.replace(/[ \t]*—>[ \t]*/g, ' --> ');
+        
+        // 2. Windows paths inside labels often break Mermaid parsing due backslashes.
+        normalized = normalized.replace(/\\/g, '/');
+        
+        // 3. Normalize smart quotes
+        normalized = normalized.replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"');
+        
+        // 4. Fix common keyword capitalization issues (Mermaid is case-sensitive for top-level keywords)
+        var trimmed = normalized.trim().toLowerCase();
+        if (trimmed.startsWith('graph ')) {
+            normalized = normalized.replace(/^graph/i, 'graph');
+        } else if (trimmed.startsWith('sequencediagram')) {
+            normalized = normalized.replace(/^sequencediagram/i, 'sequenceDiagram');
+        } else if (trimmed.startsWith('classdiagram')) {
+            normalized = normalized.replace(/^classdiagram/i, 'classDiagram');
+        } else if (trimmed.startsWith('erdiagram')) {
+            normalized = normalized.replace(/^erdiagram/i, 'erDiagram');
+        } else if (trimmed.startsWith('flowchart ')) {
+            normalized = normalized.replace(/^flowchart/i, 'flowchart');
+        } else if (trimmed.startsWith('gantt')) {
+            normalized = normalized.replace(/^gantt/i, 'gantt');
+        } else if (trimmed.startsWith('pie')) {
+            normalized = normalized.replace(/^pie/i, 'pie');
+        } else if (trimmed.startsWith('stateDiagram')) {
+            normalized = normalized.replace(/^statediagram/i, 'stateDiagram');
+        }
+
+        // 5. Remove any leading/trailing empty lines that might have been captured
+        normalized = normalized.trim();
+        
+        // 6. Ensure 'graph TD' or similar has a space if missing
+        normalized = normalized.replace(/^(graph|flowchart)(TD|LR|BT|RL)/i, '$1 $2');
+
+        function quoteLabel(label) {
+          var clean = (label || '').trim();
+          if (!clean || /^".*"$/.test(clean)) return clean;
+          return '"' + clean.replace(/"/g, '&quot;') + '"';
+        }
+
+        function normalizeFlowchartLine(line) {
+          if (!line) return line;
+
+          line = line.replace(/(^|[\s;])([A-Za-z0-9_]+)\[([^\[\]\n]+)\]/g, function(match, prefix, id, label) {
+            var trimmedLabel = (label || '').trim();
+            if (!trimmedLabel || /^".*"$/.test(trimmedLabel)) return match;
+            return prefix + id + '[' + quoteLabel(trimmedLabel) + ']';
+          });
+
+          if (/^\s*subgraph\s+/i.test(line) && line.indexOf('[') === -1 && line.indexOf('"') === -1) {
+            line = line.replace(/^(\s*subgraph\s+)(.+)$/i, function(match, prefix, title) {
+              var trimmedTitle = (title || '').trim();
+              if (!trimmedTitle || /^[A-Za-z0-9_-]+$/.test(trimmedTitle)) return match;
+              return prefix + quoteLabel(trimmedTitle);
+            });
+          }
+
+          return line;
+        }
+
+        if (/^\s*(graph|flowchart)\b/i.test(normalized)) {
+          normalized = normalized
+            .split(/\r?\n/)
+            .map(normalizeFlowchartLine)
+            .join('\n');
+        }
+
+        return normalized;
+      }
+
+      function ensureMermaidReady() {
+        if (window.mermaid) return Promise.resolve();
+        var sources = [
+          './vendor/mermaid.min.js',
+          'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js',
+          'https://unpkg.com/mermaid@11/dist/mermaid.min.js',
+          'https://cdnjs.cloudflare.com/ajax/libs/mermaid/11.4.1/mermaid.min.js'
+        ];
+        var idx = 0;
+        return new Promise(function(resolve, reject) {
+          function tryNext(lastErr) {
+            if (idx >= sources.length) {
+              reject(lastErr || new Error('All Mermaid sources failed'));
+              return;
+            }
+            var src = sources[idx++];
+            var script = document.createElement('script');
+            script.src = src;
+            script.async = true;
+            var timeout = setTimeout(function() {
+              script.remove();
+              tryNext(new Error('Timeout loading ' + src));
+            }, 8000);
+            script.onload = function() {
+              clearTimeout(timeout);
+              if (window.mermaid) resolve();
+              else tryNext(new Error('Loaded but mermaid missing: ' + src));
+            };
+            script.onerror = function() {
+              clearTimeout(timeout);
+              script.remove();
+              tryNext(new Error('Failed loading ' + src));
+            };
+            document.head.appendChild(script);
+          }
+          tryNext();
+        });
+      }
+
+      function renderDiagram(code) {
+        if (!code) return;
+        code = normalizeMermaidCode(code);
+        lastRenderedCode = code;
+        loading.style.display = 'block';
+        content.innerHTML = '';
+
+        ensureMermaidReady().then(function() {
+          try {
+            mermaid.initialize({
+              startOnLoad: false,
+              theme: 'dark',
+              securityLevel: 'loose',
+              fontFamily: '"Inter", "Segoe UI", sans-serif',
+              flowchart: {
+                curve: 'basis',
+                padding: 18,
+                nodeSpacing: 60,
+                rankSpacing: 70,
+                useMaxWidth: false,
+                htmlLabels: false
+              },
+              themeVariables: {
+                primaryColor: '#111827',
+                primaryTextColor: '#ffffff',
+                primaryBorderColor: '#ffffff',
+                lineColor: '#ffffff',
+                secondaryColor: '#0f172a',
+                tertiaryColor: '#111827',
+                textColor: '#ffffff',
+                mainBkg: '#0b1220',
+                nodeBorder: '#ffffff',
+                fontSize: '20px'
+              }
+            });
+            var id = 'mermaid-popup-' + Date.now();
+            mermaid.render(id, code).then(function(result) {
+              loading.style.display = 'none';
+              
+              // Keep explicit SVG dimensions for reliable rendering in Qt WebEngine.
+              content.innerHTML = result.svg;
+              var svg = content.querySelector('svg');
+              if (svg) {
+                var vb = svg.viewBox && svg.viewBox.baseVal ? svg.viewBox.baseVal : null;
+                if (!svg.getAttribute('width') && vb && vb.width) {
+                  svg.setAttribute('width', String(vb.width));
+                }
+                if (!svg.getAttribute('height') && vb && vb.height) {
+                  svg.setAttribute('height', String(vb.height));
+                }
+                svg.style.display = 'block';
+                svg.style.overflow = 'visible';
+                svg.style.maxWidth = 'none';
+                svg.style.maxHeight = 'none';
+                svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+              }
+              
+              updateContentSize();
+              initialFit();
+              requestAnimationFrame(function() {
+                updateContentSize();
+                fitToView();
+              });
+            }).catch(function(err) {
+              loading.style.display = 'none';
+              showError('Diagram render failed', code);
+              console.warn('[Mermaid Popup] Render error:', err);
+            });
+          } catch (e) {
+            loading.style.display = 'none';
+            showError('Mermaid initialization failed', code);
+            console.warn('[Mermaid Popup] Init error:', e);
+          }
+        }).catch(function(err) {
+          loading.style.display = 'none';
+          showError('Mermaid library unavailable', code);
+          console.warn('[Mermaid Popup] Load error:', err);
+        });
+      }
+
+      document.getElementById('zoomInBtn').addEventListener('click', function() { setScale(scale * 1.25, stage.clientWidth / 2, stage.clientHeight / 2); });
+      document.getElementById('zoomOutBtn').addEventListener('click', function() { setScale(scale / 1.25, stage.clientWidth / 2, stage.clientHeight / 2); });
+      document.getElementById('resetBtn').addEventListener('click', resetView);
+      document.getElementById('fitBtn').addEventListener('click', fitToView);
+      document.getElementById('closeBtn').addEventListener('click', function() {
+        if (window.parent) window.parent.postMessage({ type: 'closeMermaidPopup' }, '*');
+      });
+
+      stage.addEventListener('wheel', function(e) {
+        e.preventDefault();
+        var rect = stage.getBoundingClientRect();
+        var cx = e.clientX - rect.left;
+        var cy = e.clientY - rect.top;
+        var factor = e.deltaY < 0 ? 1.1 : 0.9;
+        setScale(scale * factor, cx, cy);
+      }, { passive: false });
+      stage.addEventListener('dblclick', function(e) {
+        var rect = stage.getBoundingClientRect();
+        var cx = e.clientX - rect.left;
+        var cy = e.clientY - rect.top;
+        setScale(scale * 1.5, cx, cy);
+      });
+      stage.addEventListener('contextmenu', function(e) { e.preventDefault(); });
+
+      stage.addEventListener('pointerdown', function(e) {
+        if (e.button !== 0) return;
+        drag = { x: e.clientX, y: e.clientY, tx: tx, ty: ty };
+        stage.classList.add('dragging');
+        if (stage.setPointerCapture && e.pointerId != null) {
+          try { stage.setPointerCapture(e.pointerId); } catch (_) {}
+        }
+      });
+      window.addEventListener('pointermove', function(e) {
+        if (!drag) return;
+        tx = drag.tx + (e.clientX - drag.x);
+        ty = drag.ty + (e.clientY - drag.y);
+        applyTransform();
+      });
+      window.addEventListener('pointerup', function() {
+        drag = null;
+        stage.classList.remove('dragging');
+      });
+
+      stage.addEventListener('touchstart', function(e) {
+        if (e.touches.length === 2) {
+          var dx = e.touches[0].clientX - e.touches[1].clientX;
+          var dy = e.touches[0].clientY - e.touches[1].clientY;
+          touchStart = { dist: Math.hypot(dx, dy), scale: scale };
+        } else if (e.touches.length === 1) {
+          touchStart = {
+            pan: true,
+            x: e.touches[0].clientX,
+            y: e.touches[0].clientY,
+            tx: tx,
+            ty: ty
+          };
+        }
+      }, { passive: true });
+      stage.addEventListener('touchmove', function(e) {
+        if (!touchStart) return;
+        if (touchStart.pan && e.touches.length === 1) {
+          e.preventDefault();
+          tx = touchStart.tx + (e.touches[0].clientX - touchStart.x);
+          ty = touchStart.ty + (e.touches[0].clientY - touchStart.y);
+          applyTransform();
+          return;
+        }
+        if (e.touches.length === 2) {
+          e.preventDefault();
+          var dx = e.touches[0].clientX - e.touches[1].clientX;
+          var dy = e.touches[0].clientY - e.touches[1].clientY;
+          var dist = Math.hypot(dx, dy);
+          var next = touchStart.scale * (dist / touchStart.dist);
+          var rect = stage.getBoundingClientRect();
+          var cx = ((e.touches[0].clientX + e.touches[1].clientX) / 2) - rect.left - rect.width / 2;
+          var cy = ((e.touches[0].clientY + e.touches[1].clientY) / 2) - rect.top - rect.height / 2;
+          setScale(next, cx, cy);
+        }
+      }, { passive: false });
+      stage.addEventListener('touchend', function(e) {
+        if (!e.touches || e.touches.length < 2) touchStart = null;
+      });
+
+      window.addEventListener('message', function(event) {
+        var data = event && event.data ? event.data : null;
+        if (!data) return;
+        if (data.type === 'renderMermaid') {
+          renderDiagram(data.code || '');
+        }
+      });
+
+      if (window.parent) {
+        window.parent.postMessage({ type: 'mermaidPopupReady' }, '*');
+      }
+
+      window.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && window.parent) {
+          window.parent.postMessage({ type: 'closeMermaidPopup' }, '*');
+        } else if ((e.key === '+' || e.key === '=') && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          setScale(scale * 1.15, 0, 0);
+        } else if (e.key === '-' && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          setScale(scale / 1.15, 0, 0);
+        } else if (e.key === '0' && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          fitToView();
+        }
+      });
+
+      window.addEventListener('resize', function() {
+        if (content.querySelector('svg')) {
+          fitToView();
+        }
+      });
+
+      // Render a tiny fallback if user opens mermaid.html directly.
+      renderDiagram('graph TD; A[Ready] --> B[Send Diagram From Chat];');
+    })();
+  </script>
+</body>
+</html>

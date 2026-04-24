@@ -525,7 +525,44 @@ function initMarked() {
                     var tmp = document.createElement('div');
                     tmp.innerHTML = '<table><thead>' + header + '</thead><tbody>' + body + '</tbody></table>';
 
-                    var rows = tmp.querySelectorAll('tbody tr');
+                    var rows = Array.from(tmp.querySelectorAll('tbody tr'));
+                    var headerRow = tmp.querySelector('thead tr');
+                    var headerCells = headerRow ? Array.from(headerRow.children) : [];
+
+                    // Check if last column is consistently empty
+                    var totalCols = headerCells.length;
+                    if (totalCols > 1) {
+                        var lastColEmpty = true;
+                        
+                        // Check header last cell
+                        if (headerCells[totalCols - 1] && headerCells[totalCols - 1].textContent.trim()) {
+                            // If header has content, maybe don't hide? 
+                            // Actually user says "heading have but no content then vlank have diplaying"
+                            // So if header exists but content below is empty, it should stay?
+                            // Wait, "heading have but no content" -> Heading is there, content is blank.
+                            // I'll check the body cells.
+                        }
+
+                        rows.forEach(function(tr) {
+                            var cells = Array.from(tr.children);
+                            if (cells.length >= totalCols) {
+                                var lastCell = cells[totalCols - 1];
+                                if (lastCell && lastCell.textContent.trim()) {
+                                    lastColEmpty = false;
+                                }
+                            }
+                        });
+
+                        if (lastColEmpty) {
+                            // Remove last column from header and all rows
+                            if (headerRow && headerCells[totalCols - 1]) headerCells[totalCols - 1].remove();
+                            rows.forEach(function(tr) {
+                                var cells = Array.from(tr.children);
+                                if (cells.length >= totalCols && cells[totalCols - 1]) cells[totalCols - 1].remove();
+                            });
+                        }
+                    }
+
                     rows.forEach(function(tr) {
                         var cells = Array.from(tr.children || []);
                         var cellTexts = cells.map(function(td) {
@@ -2488,25 +2525,8 @@ function appendMessage(text, sender, shouldSave) {
         smartScroll(container);
         // Enhanced MathJax typesetting
         typesetMathJax(bubble);
-        // Mermaid diagram rendering
-        if (window.initMermaid) {
-            window.initMermaid().then(function() {
-                renderMermaidDiagrams(bubble);
-            }).catch(function(err) {
-                console.warn('[Mermaid] Failed to load, showing fallback:', err.message);
-                // Show fallback for pending mermaid containers
-                var pendingContainers = bubble.querySelectorAll('.mermaid-container[data-mermaid-pending]');
-                pendingContainers.forEach(function(container) {
-                    var code = container.getAttribute('data-mermaid-code');
-                    if (code) {
-                        var decoded = code.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
-                        container.innerHTML = '<pre class="mermaid-error"><code>' + escapeHtmlForCode(decoded) + '</code></pre>' +
-                            '<div class="mermaid-error-msg">⚠ Mermaid CDN unavailable - showing source code</div>';
-                        container.removeAttribute('data-mermaid-pending');
-                    }
-                });
-            });
-        }
+        // Mermaid diagram rendering (self-handled load/fallback)
+        renderMermaidDiagrams(bubble);
     });
 
     if (shouldSave) {
@@ -4939,6 +4959,12 @@ function updateStreamingUI() {
         // -- 5. Real-time MathJax typesetting (throttled) ----------------
         typesetMathJax(contentDiv);
 
+        // -- 6. Real-time Mermaid diagram rendering (incremental) --------
+        // Only trigger if we have pending diagrams to avoid redundant work
+        if (contentDiv.querySelector('.mermaid-container[data-mermaid-pending]')) {
+            renderMermaidDiagrams(contentDiv);
+        }
+
     } catch (e) {
         console.error('Markdown parse error:', e);
         contentDiv.innerHTML = formatMarkdownFallback(currentContent);
@@ -5301,23 +5327,7 @@ function onComplete() {
         typesetMathJax(currentAssistantMessage);
 
         // -- Render Mermaid diagrams after stream ends ---------------------
-        if (window.initMermaid) {
-            window.initMermaid().then(function() {
-                renderMermaidDiagrams(currentAssistantMessage);
-            }).catch(function(err) {
-                console.warn('[Mermaid] Failed to load after stream:', err.message);
-                var pendingContainers = currentAssistantMessage.querySelectorAll('.mermaid-container[data-mermaid-pending]');
-                pendingContainers.forEach(function(container) {
-                    var code = container.getAttribute('data-mermaid-code');
-                    if (code) {
-                        var decoded = code.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
-                        container.innerHTML = '<pre class="mermaid-error"><code>' + escapeHtmlForCode(decoded) + '</code></pre>' +
-                            '<div class="mermaid-error-msg">⚠ Mermaid CDN unavailable - showing source code</div>';
-                        container.removeAttribute('data-mermaid-pending');
-                    }
-                });
-            });
-        }
+        renderMermaidDiagrams(currentAssistantMessage);
     } else {
         console.warn('[CHAT] onComplete: currentAssistantMessage is null!');
     }
@@ -5482,23 +5492,7 @@ function handleOptionsTag() {
         
         // MathJax and Mermaid rendering
         typesetMathJax(contentDiv);
-        if (window.initMermaid) {
-            window.initMermaid().then(function() {
-                renderMermaidDiagrams(contentDiv);
-            }).catch(function(err) {
-                console.warn('[Mermaid] Load failed:', err.message);
-                var pendingContainers = contentDiv.querySelectorAll('.mermaid-container[data-mermaid-pending]');
-                pendingContainers.forEach(function(container) {
-                    var code = container.getAttribute('data-mermaid-code');
-                    if (code) {
-                        var decoded = code.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
-                        container.innerHTML = '<pre class="mermaid-error"><code>' + escapeHtmlForCode(decoded) + '</code></pre>' +
-                            '<div class="mermaid-error-msg">⚠ Mermaid CDN unavailable - showing source code</div>';
-                        container.removeAttribute('data-mermaid-pending');
-                    }
-                });
-            });
-        }
+        renderMermaidDiagrams(contentDiv);
     }
 }
 
@@ -5555,23 +5549,7 @@ function handleExplorationTag() {
         
         // MathJax and Mermaid rendering
         typesetMathJax(contentDiv);
-        if (window.initMermaid) {
-            window.initMermaid().then(function() {
-                renderMermaidDiagrams(contentDiv);
-            }).catch(function(err) {
-                console.warn('[Mermaid] Load failed:', err.message);
-                var pendingContainers = contentDiv.querySelectorAll('.mermaid-container[data-mermaid-pending]');
-                pendingContainers.forEach(function(container) {
-                    var code = container.getAttribute('data-mermaid-code');
-                    if (code) {
-                        var decoded = code.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
-                        container.innerHTML = '<pre class="mermaid-error"><code>' + escapeHtmlForCode(decoded) + '</code></pre>' +
-                            '<div class="mermaid-error-msg">⚠ Mermaid CDN unavailable - showing source code</div>';
-                        container.removeAttribute('data-mermaid-pending');
-                    }
-                });
-            });
-        }
+        renderMermaidDiagrams(contentDiv);
     }
 }
 
@@ -5599,23 +5577,7 @@ function handleFileEditedTag() {
 
     // MathJax and Mermaid rendering
     typesetMathJax(contentDiv);
-    if (window.initMermaid) {
-        window.initMermaid().then(function() {
-            renderMermaidDiagrams(contentDiv);
-        }).catch(function(err) {
-            console.warn('[Mermaid] Load failed:', err.message);
-            var pendingContainers = contentDiv.querySelectorAll('.mermaid-container[data-mermaid-pending]');
-            pendingContainers.forEach(function(container) {
-                var code = container.getAttribute('data-mermaid-code');
-                if (code) {
-                    var decoded = code.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
-                    container.innerHTML = '<pre class="mermaid-error"><code>' + escapeHtmlForCode(decoded) + '</code></pre>' +
-                        '<div class="mermaid-error-msg">⚠ Mermaid CDN unavailable - showing source code</div>';
-                    container.removeAttribute('data-mermaid-pending');
-                }
-            });
-        });
-    }
+    renderMermaidDiagrams(contentDiv);
 
     // Append .fec cards below message content
     renderCustomTagsInto(currentAssistantMessage, currentContent);
@@ -5641,23 +5603,7 @@ function handleTaskSummaryTag() {
         
         // MathJax and Mermaid rendering
         typesetMathJax(contentDiv);
-        if (window.initMermaid) {
-            window.initMermaid().then(function() {
-                renderMermaidDiagrams(contentDiv);
-            }).catch(function(err) {
-                console.warn('[Mermaid] Load failed:', err.message);
-                var pendingContainers = contentDiv.querySelectorAll('.mermaid-container[data-mermaid-pending]');
-                pendingContainers.forEach(function(container) {
-                    var code = container.getAttribute('data-mermaid-code');
-                    if (code) {
-                        var decoded = code.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
-                        container.innerHTML = '<pre class="mermaid-error"><code>' + escapeHtmlForCode(decoded) + '</code></pre>' +
-                            '<div class="mermaid-error-msg">⚠ Mermaid CDN unavailable - showing source code</div>';
-                        container.removeAttribute('data-mermaid-pending');
-                    }
-                });
-            });
-        }
+        renderMermaidDiagrams(contentDiv);
     }
 }
 
@@ -5691,23 +5637,7 @@ function handleDiffTag() {
         
         // MathJax and Mermaid rendering
         typesetMathJax(contentDiv);
-        if (window.initMermaid) {
-            window.initMermaid().then(function() {
-                renderMermaidDiagrams(contentDiv);
-            }).catch(function(err) {
-                console.warn('[Mermaid] Load failed:', err.message);
-                var pendingContainers = contentDiv.querySelectorAll('.mermaid-container[data-mermaid-pending]');
-                pendingContainers.forEach(function(container) {
-                    var code = container.getAttribute('data-mermaid-code');
-                    if (code) {
-                        var decoded = code.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
-                        container.innerHTML = '<pre class="mermaid-error"><code>' + escapeHtmlForCode(decoded) + '</code></pre>' +
-                            '<div class="mermaid-error-msg">⚠ Mermaid CDN unavailable - showing source code</div>';
-                        container.removeAttribute('data-mermaid-pending');
-                    }
-                });
-            });
-        }
+        renderMermaidDiagrams(contentDiv);
     }
 }
 
@@ -6762,6 +6692,7 @@ document.addEventListener('DOMContentLoaded', function() {
         
         setTimeout(function() { toast.remove(); }, 2000);
     }
+    window.showToast = showToast;
     
     // Add fadeInOut animation
     var style = document.createElement('style');
@@ -6830,80 +6761,100 @@ document.addEventListener('DOMContentLoaded', function() {
         var emptyState = document.getElementById('empty-state');
         if (emptyState) emptyState.remove();
         
-        var fragment = document.createDocumentFragment();
-        var rendered = 0;
+        var messages = chat.messages;
+        var batchSize = 10;
+        var currentIndex = 0;
         
-        for (var index = 0; index < chat.messages.length; index++) {
-            var msg = chat.messages[index];
-            var msgText = msg.content || msg.text;
-            var msgSender = msg.role || msg.sender;
+        function renderBatch() {
+            var fragment = document.createDocumentFragment();
+            var limit = Math.min(currentIndex + batchSize, messages.length);
+            var renderedInBatch = 0;
             
-            if (!msgText || msgText === 'undefined' || msgText.trim() === '') continue;
-            
-            // Restore chip metadata so chips render instead of raw code
-            if (msgSender === 'user' && msgText) {
-                var storedChipMeta = msg.chipMeta;
-                if (!storedChipMeta || !storedChipMeta.length) {
-                    storedChipMeta = (typeof _parseChipMetaFromText === 'function') ? _parseChipMetaFromText(msgText) : [];
+            for (; currentIndex < limit; currentIndex++) {
+                var msg = messages[currentIndex];
+                var msgText = msg.content || msg.text;
+                var msgSender = msg.role || msg.sender;
+                
+                if (!msgText || msgText === 'undefined' || msgText.trim() === '') continue;
+                
+                // Restore chip metadata
+                if (msgSender === 'user' && msgText) {
+                    var storedChipMeta = msg.chipMeta;
+                    if (!storedChipMeta || !storedChipMeta.length) {
+                        storedChipMeta = (typeof _parseChipMetaFromText === 'function') ? _parseChipMetaFromText(msgText) : [];
+                    }
+                    if (storedChipMeta && storedChipMeta.length > 0) {
+                        window._pendingChipMeta = storedChipMeta;
+                    }
                 }
-                if (storedChipMeta && storedChipMeta.length > 0) {
-                    window._pendingChipMeta = storedChipMeta;
+                
+                var bubble = _buildMessageBubble(msgText, msgSender || 'user');
+                if (bubble) {
+                    fragment.appendChild(bubble);
+                    renderedInBatch++;
                 }
             }
             
-            // Build bubble directly without appending to container
-            var bubble = _buildMessageBubble(msgText, msgSender || 'user');
-            if (bubble) {
-                fragment.appendChild(bubble);
-                rendered++;
-            }
-        }
-        
-        // Single DOM insert for all messages
-        container.appendChild(fragment);
-        console.log('[CHAT] Batch rendered', rendered, 'of', chat.messages.length, 'messages');
-        
-        // Defer syntax highlighting for all code blocks at once
-        if (window.hljs) {
-            requestAnimationFrame(function() {
-                var codeBlocks = container.querySelectorAll('pre code:not([data-highlighted])');
-                for (var k = 0; k < codeBlocks.length; k++) {
-                    var block = codeBlocks[k];
-                    var pre = block.parentElement;
-                    var dataLang = pre ? pre.getAttribute('data-lang') : '';
-                    var classMatch = block.className.match(/language-(\w+)/);
-                    var classLang = classMatch ? classMatch[1] : '';
-                    var lang = dataLang || classLang || 'plaintext';
-                    var normalizedLang = window.getNormalizedLanguage ? window.getNormalizedLanguage(lang) : lang;
-                    var code = block.textContent || '';
-                    try {
-                        var highlighted;
-                        if (window.highlightCodeWithEmbedded) {
-                            highlighted = window.highlightCodeWithEmbedded(code, lang);
-                        } else if (hljs.getLanguage(normalizedLang)) {
-                            highlighted = hljs.highlight(code, { language: normalizedLang }).value;
-                        } else {
-                            highlighted = hljs.highlightAuto(code).value;
+            container.appendChild(fragment);
+            
+            if (currentIndex < messages.length) {
+                // Schedule next batch
+                requestAnimationFrame(renderBatch);
+            } else {
+                // All messages rendered
+                console.log('[CHAT] Finished rendering all', messages.length, 'messages');
+                
+                // Final post-processing
+                if (window.hljs) {
+                    requestAnimationFrame(function() {
+                        var codeBlocks = container.querySelectorAll('pre code:not([data-highlighted])');
+                        for (var k = 0; k < codeBlocks.length; k++) {
+                            var block = codeBlocks[k];
+                            var pre = block.parentElement;
+                            var dataLang = pre ? pre.getAttribute('data-lang') : '';
+                            var classMatch = block.className.match(/language-(\w+)/);
+                            var classLang = classMatch ? classMatch[1] : '';
+                            var lang = dataLang || classLang || 'plaintext';
+                            var normalizedLang = window.getNormalizedLanguage ? window.getNormalizedLanguage(lang) : lang;
+                            var code = block.textContent || '';
+                            try {
+                                var highlighted;
+                                if (window.highlightCodeWithEmbedded) {
+                                    highlighted = window.highlightCodeWithEmbedded(code, lang);
+                                } else if (hljs.getLanguage(normalizedLang)) {
+                                    highlighted = hljs.highlight(code, { language: normalizedLang }).value;
+                                } else {
+                                    highlighted = hljs.highlightAuto(code).value;
+                                }
+                                if (highlighted && highlighted !== code) block.innerHTML = highlighted;
+                            } catch (e) {}
+                            block.dataset.highlighted = '1';
                         }
-                        if (highlighted && highlighted !== code) block.innerHTML = highlighted;
-                    } catch (e) {}
-                    block.dataset.highlighted = '1';
+                    });
                 }
-            });
+
+                requestAnimationFrame(function() {
+                    console.log('[CHAT] Triggering post-process renderers (MathJax/Mermaid) for container:', container.id);
+                    typesetMathJax(container);
+                    renderMermaidDiagrams(container);
+                });
+                
+                renderHistoryList();
+                
+                // Auto-scroll to bottom once at the end
+                requestAnimationFrame(function() {
+                    var c = document.getElementById('chat-output') || document.getElementById('chatMessages');
+                    if (c) {
+                        c.scrollTop = c.scrollHeight;
+                    }
+                });
+                
+                console.log('[CHAT] <<< chatFullLoadHandler END');
+            }
         }
         
-        renderHistoryList();
-        
-        // Auto-scroll to bottom
-        requestAnimationFrame(function() {
-            var c = document.getElementById('chat-output') || document.getElementById('chatMessages');
-            if (c) {
-                c.scrollTop = c.scrollHeight;
-                console.log('[CHAT] Auto-scrolled to bottom after loading', chat.messages.length, 'messages');
-            }
-        });
-        
-        console.log('[CHAT] <<< chatFullLoadHandler END');
+        // Start first batch
+        renderBatch();
     };
     
     // --- Project Directory Awareness ---
@@ -7614,6 +7565,11 @@ function injectCodeBlockHeader(codeEl, options) {
     if (!pre || pre.tagName !== 'PRE') return;
     // Skip if already wrapped (idempotent)
     if (pre.closest('.code-block-wrapper')) return;
+    // Skip code blocks already rendered with container/header by formatMessage
+    if (pre.closest('.code-block-container')) return;
+    // Skip if header already exists directly above this pre
+    if (pre.previousElementSibling && pre.previousElementSibling.classList &&
+        pre.previousElementSibling.classList.contains('code-header')) return;
 
     // Get language from data attribute or class
     var lang = pre.dataset.lang || '';
@@ -12055,6 +12011,85 @@ function detectContentType(text) {
     return 'default';
 }
 
+// Repair malformed markdown code examples from model output.
+// Conservative by design: only wraps clearly code-like runs.
+function autoFixBrokenCodeFences(text) {
+    if (!text || typeof text !== 'string') return text || '';
+
+    var fixed = text;
+    var trimmed = fixed.trim();
+
+    // Auto-wrap plain Mermaid payloads if model forgot fences.
+    if (!/```mermaid/i.test(fixed) &&
+        /^(?:graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|journey|gantt|pie|mindmap|timeline)\b/i.test(trimmed)) {
+        fixed = '```mermaid\n' + trimmed + '\n```';
+    }
+
+    // ```javascript async fn() -> ```javascript\nasync fn()
+    fixed = fixed.replace(/```([a-zA-Z0-9_#+-]+)\s+(?=\S)/g, '```$1\n');
+
+    // **Heading**```python -> **Heading**\n```python
+    fixed = fixed.replace(/(\*\*[^*\n]+\*\*)(\s*```)/g, '$1\n$2');
+
+    // If fences are odd, close at end to avoid full-message spill.
+    var fenceCount = (fixed.match(/```/g) || []).length;
+    if (fenceCount % 2 === 1) {
+        fixed += '\n```';
+    }
+
+    // Wrap obvious unfenced code runs.
+    var lines = fixed.split('\n');
+    var out = [];
+    var inFence = false;
+    var i = 0;
+    var codeLike = /^(?:\s*)(?:def\s+\w+|class\s+\w+|import\s+\w+|from\s+\w+\s+import|async\s+function\b|function\b|const\b|let\b|var\b|if\s*\(|for\s*\(|while\s*\(|return\b|#include\b|public\s+class\b|fn\s+\w+|<\?php\b|echo\b|printf\s*\(|std::|int\s+main\s*\(|\}\s*$|\{\s*$|[A-Za-z_]\w*\s*=)/;
+    var separatorLike = /^\s*(?:---+|#{1,6}\s|\d+\.\s+\*\*.+\*\*|$)/;
+
+    while (i < lines.length) {
+        var line = lines[i];
+
+        if (line.indexOf('```') !== -1) {
+            inFence = !inFence;
+            out.push(line);
+            i++;
+            continue;
+        }
+
+        if (!inFence && codeLike.test(line || '')) {
+            var j = i;
+            var run = [];
+            while (j < lines.length) {
+                var l = lines[j];
+                if (l.indexOf('```') !== -1) break;
+                if (separatorLike.test(l) && run.length > 0) break;
+                if (codeLike.test(l) || /^\s*$/.test(l)) {
+                    run.push(l);
+                    j++;
+                    continue;
+                }
+                break;
+            }
+
+            var nonEmptyCodeLikeCount = run.filter(function(r) {
+                return r.trim() !== '' && codeLike.test(r);
+            }).length;
+
+            if (nonEmptyCodeLikeCount >= 3) {
+                out.push('```text');
+                Array.prototype.push.apply(out, run);
+                out.push('```');
+                i = j;
+                continue;
+            }
+        }
+
+        out.push(line);
+        i++;
+    }
+
+    return out.join('\n');
+}
+
 // --- formatMessage: Core AI content rendering engine ---
 function formatMessage(text, isUser) {
     if (!text) return '';
@@ -12065,7 +12100,7 @@ function formatMessage(text, isUser) {
         text = cleanBrokenWindowsPaths(text);
     }
 
-    var msgMarkdown = text;
+    var msgMarkdown = autoFixBrokenCodeFences(text);
 
     // User messages: simple HTML escape + line breaks
     if (isUser) {
@@ -12253,6 +12288,7 @@ function formatMessage(text, isUser) {
                     return '<div class="mermaid-wrapper"><div class="mermaid-header">' +
                         '<span><i class="fas fa-project-diagram"></i> Architecture Diagram</span>' +
                         '<div class="mermaid-actions">' +
+                        '<button class="mermaid-action-btn" onclick="openMermaidPopup(this)" data-mermaid-src="' + encodedCode + '"><i class="fas fa-expand"></i> Expand</button>' +
                         '<button class="mermaid-action-btn" onclick="copyMermaidCode(this)" data-mermaid-src="' + encodedCode + '"><i class="fas fa-copy"></i> Copy</button>' +
                         '</div></div>' +
                         '<div class="mermaid-container" id="' + mermaidId + '" data-mermaid-pending="true" data-mermaid-code="' + encodedCode + '">' +
@@ -12312,22 +12348,51 @@ function formatMessage(text, isUser) {
                             rowsRemoved = true;
                         }
                     });
-                    if (rowsRemoved) tableHtml = tempDiv.innerHTML;
+                    // Remove blank trailing column if every row's last cell is empty.
+                    // (Conservative: only if more than 2 columns exist and it's strictly empty)
+                    var allRows = tempDiv.querySelectorAll('tr');
+                    if (allRows.length > 0) {
+                        var hasBlankTrailingColumn = true;
+                        var colCount = 0;
+                        allRows.forEach(function(r) {
+                            var cells = r.querySelectorAll('th,td');
+                            if (!cells.length) return;
+                            colCount = Math.max(colCount, cells.length);
+                            var last = cells[cells.length - 1];
+                            var txt = (last.textContent || '').replace(/\u00a0/g, ' ').trim();
+                            if (txt !== '') hasBlankTrailingColumn = false;
+                        });
+                        
+                        // Only remove if it's clearly an artifact (e.g. trailing pipe in markdown)
+                        // and we have enough columns left.
+                        if (hasBlankTrailingColumn && colCount > 2) {
+                            allRows.forEach(function(r) {
+                                var cells = r.querySelectorAll('th,td');
+                                if (cells.length > 1) {
+                                    cells[cells.length - 1].remove();
+                                }
+                            });
+                        }
+                    }
+                    tableHtml = tempDiv.innerHTML;
                 } catch (err) { /* silent */ }
 
                 return '<div class="table-wrapper">' + tableHtml + '</div>';
             };
 
+        // Configure marked options once if not already done
+        if (typeof marked !== 'undefined' && !window._markedConfigured) {
             marked.setOptions({
-                renderer: renderer,
                 breaks: true,
                 gfm: true,
                 headerIds: false,
                 mangle: false,
                 pedantic: false
             });
+            window._markedConfigured = true;
+        }
 
-            htmlContent = (typeof marked.parse === 'function') ? marked.parse(protectedMarkdown) : marked(protectedMarkdown);
+        htmlContent = (typeof marked.parse === 'function') ? marked.parse(protectedMarkdown, { renderer: renderer }) : marked(protectedMarkdown, { renderer: renderer });
 
             // Step 2: Restore math
             htmlContent = restoreMath(htmlContent);
@@ -12389,6 +12454,136 @@ function copyMermaidCode(btn) {
     }
 }
 
+function decodeMermaidSource(src) {
+    return (src || '')
+        .replace(/&amp;/g, '&')
+        .replace(/&quot;/g, '"')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>');
+}
+
+function ensureMermaidPopupElements() {
+    var overlay = document.getElementById('mermaid-popup-overlay');
+    if (overlay) return overlay;
+
+    overlay = document.createElement('div');
+    overlay.id = 'mermaid-popup-overlay';
+    overlay.className = 'mermaid-popup-overlay';
+    overlay.setAttribute('aria-hidden', 'true');
+    overlay.innerHTML =
+        '<div class="mermaid-popup-window" role="dialog" aria-label="Mermaid diagram preview">' +
+            '<div class="mermaid-popup-header">' +
+                '<span><i class="fas fa-project-diagram"></i> Mermaid Viewer</span>' +
+                '<button class="mermaid-popup-close" onclick="closeMermaidPopup()" aria-label="Close Mermaid viewer">' +
+                    '<i class="fas fa-times"></i>' +
+                '</button>' +
+            '</div>' +
+            '<iframe id="mermaid-popup-frame" class="mermaid-popup-frame" src="mermaid.html" title="Mermaid diagram viewer"></iframe>' +
+        '</div>';
+
+    overlay.addEventListener('click', function(e) {
+        if (e.target === overlay) closeMermaidPopup();
+    });
+
+    document.body.appendChild(overlay);
+
+    if (!window.__mermaidPopupEscBound) {
+        window.__mermaidPopupEscBound = true;
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') closeMermaidPopup();
+        });
+        window.addEventListener('message', function(event) {
+            if (!event || !event.data) return;
+            if (event.data.type === 'closeMermaidPopup') {
+                closeMermaidPopup();
+                return;
+            }
+            if (event.data.type === 'mermaidPopupReady') {
+                var frame = document.getElementById('mermaid-popup-frame');
+                if (!frame) return;
+                frame.dataset.ready = '1';
+                var pending = frame.dataset.pendingMermaidCode || '';
+                if (!pending || !frame.contentWindow) return;
+                try {
+                    frame.contentWindow.postMessage({
+                        type: 'renderMermaid',
+                        code: decodeURIComponent(pending)
+                    }, '*');
+                } catch (err) {
+                    console.warn('[Mermaid Popup] Failed to deliver queued Mermaid source:', err);
+                }
+            }
+        });
+    }
+
+    return overlay;
+}
+
+function openMermaidPopup(btn) {
+    var src = btn && btn.getAttribute ? btn.getAttribute('data-mermaid-src') : '';
+    if (!src) {
+        if (typeof window.showToast === 'function') {
+            window.showToast('No Mermaid source found');
+        } else {
+            console.warn('[Mermaid Popup] No Mermaid source found');
+        }
+        return;
+    }
+
+    var decoded = decodeMermaidSource(src);
+    var overlay = ensureMermaidPopupElements();
+    var frame = document.getElementById('mermaid-popup-frame');
+    if (!frame) return;
+
+    frame.dataset.pendingMermaidCode = encodeURIComponent(decoded);
+
+    overlay.classList.add('visible');
+    overlay.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('mermaid-popup-open');
+
+    function postDiagram() {
+        try {
+            if (!frame.contentWindow) return false;
+            frame.contentWindow.postMessage({
+                type: 'renderMermaid',
+                code: decoded
+            }, '*');
+            return true;
+        } catch (err) {
+            console.warn('[Mermaid Popup] postMessage failed:', err);
+            return false;
+        }
+    }
+
+    if (frame.dataset.ready === '1') {
+        postDiagram();
+        return;
+    }
+
+    var onLoad = function() {
+        frame.removeEventListener('load', onLoad);
+        frame.dataset.ready = '1';
+        postDiagram();
+    };
+    frame.addEventListener('load', onLoad);
+
+    // If the iframe is already loaded but its ready ping was missed,
+    // try a delayed post as a fallback.
+    setTimeout(function() {
+        if (overlay.classList.contains('visible') && frame.dataset.ready === '1') {
+            postDiagram();
+        }
+    }, 150);
+}
+
+function closeMermaidPopup() {
+    var overlay = document.getElementById('mermaid-popup-overlay');
+    if (!overlay) return;
+    overlay.classList.remove('visible');
+    overlay.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('mermaid-popup-open');
+}
+
 // --- Download mermaid diagram as SVG ---
 function downloadMermaidSVG(btn) {
     var wrapper = btn.closest('.mermaid-wrapper');
@@ -12410,35 +12605,329 @@ function downloadMermaidSVG(btn) {
 
 // --- Render pending mermaid diagrams ---
 function renderMermaidDiagrams(parentEl) {
-    if (!window.mermaidLoaded && !window.mermaid) return;
+    if (!parentEl) {
+        console.warn('[Mermaid] renderMermaidDiagrams called without parentEl');
+        return;
+    }
+    
     var containers = parentEl.querySelectorAll('.mermaid-container[data-mermaid-pending]');
-    containers.forEach(function(container) {
-        var code = container.getAttribute('data-mermaid-code');
-        if (!code) return;
-        var decoded = code.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
-        var diagramId = 'mermaid-render-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
-        try {
-            mermaid.render(diagramId, decoded).then(function(result) {
-                container.innerHTML = result.svg;
-                container.removeAttribute('data-mermaid-pending');
-                container.classList.add('mermaid-rendered');
-                var svgEl = container.querySelector('svg');
-                if (svgEl) {
-                    svgEl.style.maxWidth = 'min(100%, 700px)';
-                    svgEl.style.height = 'auto';
-                    svgEl.style.maxHeight = '460px';
-                }
-            }).catch(function(err) {
-                console.warn('[Mermaid] Render error:', err);
-                container.innerHTML = '<pre class="mermaid-error"><code>' + escapeHtmlForCode(decoded) + '</code></pre>' +
-                    '<div class="mermaid-error-msg">Diagram render failed</div>';
-                container.removeAttribute('data-mermaid-pending');
-            });
-        } catch (e) {
-            console.warn('[Mermaid] Render exception:', e);
-            container.removeAttribute('data-mermaid-pending');
+    console.log('[Mermaid] renderMermaidDiagrams check for parent:', parentEl.id || 'anonymous', 'Found containers:', containers.length);
+    
+    if (!containers || containers.length === 0) return;
+
+    function decodeCode(code) {
+        return (code || '')
+            .replace(/&amp;/g, '&')
+            .replace(/&quot;/g, '"')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>');
+    }
+
+    function normalizeMermaidCode(code) {
+        var normalized = code || '';
+        // 1. Convert unicode arrows to Mermaid syntax so copied/raw text still renders.
+        normalized = normalized.replace(/[ \t]*(?:\u27F6|\u27F7|\u2192|\u21D2|\u2794|\u279C)[ \t]*/g, ' --> ');
+        normalized = normalized.replace(/[ \t]*—>[ \t]*/g, ' --> ');
+        
+        // 2. Windows paths inside labels often break Mermaid parsing due backslashes.
+        normalized = normalized.replace(/\\/g, '/');
+        
+        // 3. Normalize smart quotes
+        normalized = normalized.replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"');
+        
+        // 4. Fix common keyword capitalization issues (Mermaid is case-sensitive for top-level keywords)
+        var trimmed = normalized.trim().toLowerCase();
+        if (trimmed.startsWith('graph ')) {
+            normalized = normalized.replace(/^graph/i, 'graph');
+        } else if (trimmed.startsWith('sequencediagram')) {
+            normalized = normalized.replace(/^sequencediagram/i, 'sequenceDiagram');
+        } else if (trimmed.startsWith('classdiagram')) {
+            normalized = normalized.replace(/^classdiagram/i, 'classDiagram');
+        } else if (trimmed.startsWith('erdiagram')) {
+            normalized = normalized.replace(/^erdiagram/i, 'erDiagram');
+        } else if (trimmed.startsWith('flowchart ')) {
+            normalized = normalized.replace(/^flowchart/i, 'flowchart');
+        } else if (trimmed.startsWith('gantt')) {
+            normalized = normalized.replace(/^gantt/i, 'gantt');
+        } else if (trimmed.startsWith('pie')) {
+            normalized = normalized.replace(/^pie/i, 'pie');
+        } else if (trimmed.startsWith('stateDiagram')) {
+            normalized = normalized.replace(/^statediagram/i, 'stateDiagram');
         }
+
+        // 5. Remove any leading/trailing empty lines that might have been captured
+        normalized = normalized.trim();
+        
+        // 6. Ensure 'graph TD' or similar has a space if missing
+        normalized = normalized.replace(/^(graph|flowchart)(TD|LR|BT|RL)/i, '$1 $2');
+
+        function quoteLabel(label) {
+            var clean = (label || '').trim();
+            if (!clean || /^".*"$/.test(clean)) return clean;
+            return '"' + clean.replace(/"/g, '&quot;') + '"';
+        }
+
+        function normalizeFlowchartLine(line) {
+            if (!line) return line;
+
+            // Mermaid flowchart labels with parentheses and punctuation often fail
+            // when the LLM emits `A[Seed (Pit)]` instead of `A["Seed (Pit)"]`.
+            line = line.replace(/(^|[\s;])([A-Za-z0-9_]+)\[([^\[\]\n]+)\]/g, function(match, prefix, id, label) {
+                var trimmedLabel = (label || '').trim();
+                if (!trimmedLabel || /^".*"$/.test(trimmedLabel)) return match;
+                return prefix + id + '[' + quoteLabel(trimmedLabel) + ']';
+            });
+
+            if (/^\s*subgraph\s+/i.test(line) && line.indexOf('[') === -1 && line.indexOf('"') === -1) {
+                line = line.replace(/^(\s*subgraph\s+)(.+)$/i, function(match, prefix, title) {
+                    var trimmedTitle = (title || '').trim();
+                    if (!trimmedTitle || /^[A-Za-z0-9_-]+$/.test(trimmedTitle)) return match;
+                    return prefix + quoteLabel(trimmedTitle);
+                });
+            }
+
+            return line;
+        }
+
+        if (/^\s*(graph|flowchart)\b/i.test(normalized)) {
+            normalized = normalized
+                .split(/\r?\n/)
+                .map(normalizeFlowchartLine)
+                .join('\n');
+        }
+
+        return normalized;
+    }
+
+    function renderFallback(container, decoded, message) {
+        container.innerHTML = '<pre class="mermaid-error"><code>' + escapeHtmlForCode(decoded) + '</code></pre>' +
+            '<div class="mermaid-error-msg">' + escapeHtml(message || 'Diagram render failed') + '</div>';
+        container.removeAttribute('data-mermaid-pending');
+        container.dataset.mermaidFailed = 'true';
+    }
+
+    function ensureMermaidReady() {
+        if (window.mermaid && window.mermaidLoaded) return Promise.resolve();
+        
+        console.log('[Mermaid] Runtime not ready, checking for init function...');
+        
+        return new Promise(function(resolve, reject) {
+            var attempts = 0;
+            var maxAttempts = 20; // 4 seconds total (20 * 200ms)
+            
+            function checkInit() {
+                if (typeof window.initMermaid === 'function') {
+                    console.log('[Mermaid] initMermaid found, calling...');
+                    Promise.race([
+                        window.initMermaid(),
+                        new Promise(function(_, r) {
+                            setTimeout(function() { r(new Error('Mermaid load timeout (30s)')); }, 30000);
+                        })
+                    ]).then(resolve).catch(reject);
+                } else if (attempts < maxAttempts) {
+                    attempts++;
+                    console.log('[Mermaid] initMermaid not found, retry', attempts);
+                    setTimeout(checkInit, 250);
+                } else {
+                    reject(new Error('Mermaid init function unavailable after 5s'));
+                }
+            }
+            
+            checkInit();
+        });
+    }
+
+    ensureMermaidReady().then(function() {
+        var index = 0;
+        function renderNext() {
+            if (index >= containers.length) return;
+            var container = containers[index++];
+            
+            // Prevent multiple simultaneous renders for the same container
+            if (container.dataset.mermaidRendering === 'true') {
+                renderNext();
+                return;
+            }
+            
+            var code = container.getAttribute('data-mermaid-code');
+            if (!code) {
+                container.removeAttribute('data-mermaid-pending');
+                renderNext();
+                return;
+            }
+            
+            container.dataset.mermaidRendering = 'true';
+            var decoded = normalizeMermaidCode(decodeCode(code));
+            
+            // Unique ID with high resolution and entropy
+            var diagramId = 'mermaid-' + Date.now() + '-' + Math.floor(Math.random() * 1000000);
+            
+            console.log('[Mermaid] Rendering diagram (' + index + '/' + containers.length + '):', diagramId);
+            
+            try {
+                mermaid.render(diagramId, decoded).then(function(result) {
+                    container.innerHTML = result.svg;
+                    container.removeAttribute('data-mermaid-pending');
+                    container.removeAttribute('data-mermaid-rendering');
+                    container.classList.add('mermaid-rendered');
+                    
+                    var svgEl = container.querySelector('svg');
+                    if (svgEl) {
+                        // Let CSS handle basic SVG styling, JS handles specific panning overrides
+                        svgEl.style.cursor = 'inherit';
+                        
+                        // Add panning functionality
+                        initMermaidPanning(container, svgEl);
+                        
+                        // -- Background notification support --
+                        // If the diagram finishes rendering while the chat is hidden, notify the user.
+                        if (document.visibilityState === 'hidden' && window.bridge && bridge.show_notification) {
+                            var diagramType = 'Diagram';
+                            var code = container.getAttribute('data-mermaid-code') || '';
+                            if (code.toLowerCase().includes('graph')) diagramType = 'Flowchart';
+                            else if (code.toLowerCase().includes('sequencediagram')) diagramType = 'Sequence Diagram';
+                            else if (code.toLowerCase().includes('classdiagram')) diagramType = 'Class Diagram';
+                            else if (code.toLowerCase().includes('erdiagram')) diagramType = 'ER Diagram';
+                            
+                            bridge.show_notification('Cortex AI', diagramType + ' rendering complete!');
+                        }
+                    }
+                    
+                    // Small delay between renders to keep UI responsive
+                    setTimeout(renderNext, 50);
+                }).catch(function(err) {
+                    console.warn('[Mermaid] Render error for ' + diagramId + ':', err);
+                    container.removeAttribute('data-mermaid-rendering');
+                    renderFallback(container, decoded, 'Diagram render failed: ' + (err.message || 'Syntax error'));
+                    renderNext();
+                });
+            } catch (e) {
+                console.warn('[Mermaid] Render exception for ' + diagramId + ':', e);
+                container.removeAttribute('data-mermaid-rendering');
+                renderFallback(container, decoded, 'Diagram render exception');
+                renderNext();
+            }
+        }
+        
+        renderNext();
+    }).catch(function(err) {
+        console.error('[Mermaid] Critical failure:', err);
+        containers.forEach(function(container) {
+            var code = container.getAttribute('data-mermaid-code');
+            var decoded = decodeCode(code);
+            renderFallback(container, decoded, 'Mermaid failed to load: ' + (err.message || 'Unknown error'));
+        });
     });
+}
+
+/**
+ * Implements smooth hand-pan (grab/drag) for Mermaid diagrams
+ */
+function initMermaidPanning(container, svg) {
+    if (!container || !svg) return;
+    
+    var isDown = false;
+    var startX, startY;
+    var scrollLeft, scrollTop;
+    var velX = 0, velY = 0;
+    var lastX, lastY;
+    var rafId = null;
+
+    function updateScroll() {
+        if (!isDown) {
+            // Momentum scroll
+            if (Math.abs(velX) > 0.1 || Math.abs(velY) > 0.1) {
+                container.scrollLeft += velX;
+                container.scrollTop += velY;
+                velX *= 0.92; // Friction
+                velY *= 0.92;
+                rafId = requestAnimationFrame(updateScroll);
+            } else {
+                rafId = null;
+            }
+            return;
+        }
+        rafId = requestAnimationFrame(updateScroll);
+    }
+
+    container.addEventListener('mousedown', function(e) {
+        if (e.button !== 0) return; // Only left click
+        isDown = true;
+        container.classList.add('panning');
+        startX = e.pageX - container.offsetLeft;
+        startY = e.pageY - container.offsetTop;
+        scrollLeft = container.scrollLeft;
+        scrollTop = container.scrollTop;
+        lastX = e.pageX;
+        lastY = e.pageY;
+        velX = 0;
+        velY = 0;
+        if (rafId) cancelAnimationFrame(rafId);
+        rafId = requestAnimationFrame(updateScroll);
+        e.preventDefault();
+    });
+
+    function stopPanning() {
+        if (!isDown) return;
+        isDown = false;
+        container.classList.remove('panning');
+    }
+
+    window.addEventListener('mouseup', stopPanning);
+    container.addEventListener('mouseleave', stopPanning);
+
+    container.addEventListener('mousemove', function(e) {
+        if (!isDown) return;
+        e.preventDefault();
+        var x = e.pageX - container.offsetLeft;
+        var y = e.pageY - container.offsetTop;
+        var walkX = (x - startX);
+        var walkY = (y - startY);
+        
+        container.scrollLeft = scrollLeft - walkX;
+        container.scrollTop = scrollTop - walkY;
+        
+        // Calculate velocity for momentum
+        velX = lastX - e.pageX;
+        velY = lastY - e.pageY;
+        lastX = e.pageX;
+        lastY = e.pageY;
+    });
+    
+    // Add touch support
+    container.addEventListener('touchstart', function(e) {
+        isDown = true;
+        var touch = e.touches[0];
+        startX = touch.pageX - container.offsetLeft;
+        startY = touch.pageY - container.offsetTop;
+        scrollLeft = container.scrollLeft;
+        scrollTop = container.scrollTop;
+        lastX = touch.pageX;
+        lastY = touch.pageY;
+        velX = 0;
+        velY = 0;
+        if (rafId) cancelAnimationFrame(rafId);
+        rafId = requestAnimationFrame(updateScroll);
+    }, { passive: true });
+
+    container.addEventListener('touchend', stopPanning);
+
+    container.addEventListener('touchmove', function(e) {
+        if (!isDown) return;
+        var touch = e.touches[0];
+        var x = touch.pageX - container.offsetLeft;
+        var y = touch.pageY - container.offsetTop;
+        var walkX = (x - startX);
+        var walkY = (y - startY);
+        
+        container.scrollLeft = scrollLeft - walkX;
+        container.scrollTop = scrollTop - walkY;
+        
+        velX = lastX - touch.pageX;
+        velY = lastY - touch.pageY;
+        lastX = touch.pageX;
+        lastY = touch.pageY;
+    }, { passive: false });
 }
 
 // --- Typeset MathJax in a container ---
@@ -12449,6 +12938,14 @@ function typesetMathJax(container) {
         try { window.MathJax.typeset([container]); } catch(e) { /* silent */ }
     }
 }
+
+// Best-effort persistence flush when app window closes/reloads.
+window.addEventListener('beforeunload', function() {
+    try { flushScheduledSaveChats(); } catch (e) {}
+});
+window.addEventListener('pagehide', function() {
+    try { flushScheduledSaveChats(); } catch (e) {}
+});
 
 
 

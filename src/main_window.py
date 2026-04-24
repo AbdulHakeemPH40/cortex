@@ -73,10 +73,10 @@ class _GitStatusWorker(QThread):
             # FIX: Prevent console window popup
             kwargs = dict(cwd=self._repo_path, capture_output=True, text=True, timeout=5)
             if sys.platform == 'win32':
-                kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+                kwargs['creationflags'] = _subprocess.CREATE_NO_WINDOW
             
             r = _subprocess.run(
-                ["git", "diff", "--numstat", file_path],
+                ["git", "diff", "--numstat", "--", file_path],
                 **kwargs
             )
             if r.returncode == 0 and r.stdout.strip():
@@ -88,10 +88,10 @@ class _GitStatusWorker(QThread):
             # FIX: Prevent console window popup
             kwargs = dict(cwd=self._repo_path, capture_output=True, text=True, timeout=5)
             if sys.platform == 'win32':
-                kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+                kwargs['creationflags'] = _subprocess.CREATE_NO_WINDOW
             
             r = _subprocess.run(
-                ["git", "diff", "--cached", "--numstat", file_path],
+                ["git", "diff", "--cached", "--numstat", "--", file_path],
                 **kwargs
             )
             if r.returncode == 0 and r.stdout.strip():
@@ -109,7 +109,7 @@ class _GitStatusWorker(QThread):
             # FIX: Prevent console window popup
             kwargs = dict(cwd=self._repo_path, capture_output=True, text=True, timeout=5)
             if sys.platform == 'win32':
-                kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+                kwargs['creationflags'] = _subprocess.CREATE_NO_WINDOW
             
             r = _subprocess.run(
                 ["git", "rev-parse", "--abbrev-ref", "HEAD"],
@@ -138,7 +138,7 @@ class _GitStatusWorker(QThread):
                 # FIX: Prevent console window popup
                 kwargs = dict(capture_output=True, text=True, timeout=5)
                 if sys.platform == 'win32':
-                    kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+                    kwargs['creationflags'] = _subprocess.CREATE_NO_WINDOW
                 
                 r = _subprocess.run(
                     ["gh", "--version"],
@@ -182,7 +182,7 @@ class CodeAnalyzer:
     def build_debug_prompt(self, code: str, error: str, language: str) -> str:
         return f"Help me debug this {language} code. Error: {error}\n\n```{language}\n{code}\n```\n\nWhat's causing this error and how do I fix it?"
 # from src.ai.file_edit_tracker import FileEditTracker
-from src.core.git_manager import GitManager
+from src.core.git_manager import GitManager, GitStatus
 from src.ui.components.sidebar import SidebarWidget
 # CommandPalette removed - not implemented in AI-first mode
 # from src.ui.components.command_palette import CommandPalette
@@ -1988,6 +1988,16 @@ class CortexMainWindow(QMainWindow):
             self._set_no_git_status()
             return
 
+        project_path = getattr(self, '_current_project_path', None)
+        if not project_path and getattr(self._project_manager, 'root', None):
+            project_path = str(self._project_manager.root)
+        if project_path:
+            current_repo = os.path.normcase(os.path.normpath(self._git_manager._repo_path or ""))
+            expected_repo = os.path.normcase(os.path.normpath(project_path))
+            if (not self._git_manager.is_repo()) or current_repo != expected_repo:
+                repo_ok = self._git_manager.set_repository(project_path)
+                log.info(f"[GIT] Refreshed repository path for panel: {project_path} (ok={repo_ok})")
+
         if not self._git_manager.is_repo():
             log.info("[GIT] No repository set")
             self._set_no_git_status()
@@ -2114,9 +2124,6 @@ class CortexMainWindow(QMainWindow):
 
     def _create_file_diff_item_from_stats(self, git_file, additions: int, deletions: int) -> QWidget:
         """Create a file diff item widget from pre-computed stats."""
-        if additions == 0 and deletions == 0:
-            return None
-
         file_item = QWidget()
         file_item.setFixedHeight(28)
         file_layout = QHBoxLayout(file_item)
@@ -2127,9 +2134,37 @@ class CortexMainWindow(QMainWindow):
         filename = Path(git_file.path).name
         file_name = QLabel(filename)
         file_name.setStyleSheet("color: #cccccc; font-size: 13px;")
+        file_name.setToolTip(git_file.path)
         file_layout.addWidget(file_name)
 
         file_layout.addStretch()
+
+        status_text = None
+        status_color = "#888888"
+        if git_file.status == GitStatus.UNTRACKED:
+            status_text = "new"
+            status_color = "#4ec94e"
+        elif git_file.status == GitStatus.DELETED:
+            status_text = "deleted"
+            status_color = "#e05252"
+        elif git_file.status == GitStatus.RENAMED:
+            status_text = "renamed"
+            status_color = "#6cb2ff"
+        elif git_file.status == GitStatus.ADDED:
+            status_text = "added"
+            status_color = "#4ec94e"
+        elif git_file.staged:
+            status_text = "staged"
+            status_color = "#e6a817"
+        elif git_file.status == GitStatus.MODIFIED:
+            status_text = "modified"
+
+        if status_text:
+            status_label = QLabel(status_text)
+            status_label.setStyleSheet(
+                f"color: {status_color}; font-size: 11px; font-weight: 500; padding: 1px 6px;"
+            )
+            file_layout.addWidget(status_label)
 
         if additions > 0:
             additions_label = QLabel(f"+{additions}")
@@ -2176,7 +2211,7 @@ class CortexMainWindow(QMainWindow):
                 kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
             
             r = subprocess.run(
-                ["git", "diff", "--numstat", file_path],
+                ["git", "diff", "--numstat", "--", file_path],
                 **kwargs
             )
             if r.returncode == 0 and r.stdout.strip():
@@ -2194,7 +2229,7 @@ class CortexMainWindow(QMainWindow):
                 kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
             
             r = subprocess.run(
-                ["git", "diff", "--cached", "--numstat", file_path],
+                ["git", "diff", "--cached", "--numstat", "--", file_path],
                 **kwargs
             )
             if r.returncode == 0 and r.stdout.strip():
@@ -5807,6 +5842,9 @@ class CortexMainWindow(QMainWindow):
         # Set project root FIRST (this loads project-specific context)
         self._ai_agent.set_project_root(folder_path)
         self._current_project_path = folder_path  # Track current project
+        if hasattr(self, '_git_manager'):
+            repo_ok = self._git_manager.set_repository(folder_path)
+            log.info(f"[GIT] Repository set on project-opened: {folder_path} (ok={repo_ok})")
         
         # Update LSP manager workspace root so completions/diagnostics work
         try:

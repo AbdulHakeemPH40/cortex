@@ -98,8 +98,8 @@
     .hljs-emphasis{font-style:italic}
     .hljs-strong{font-weight:bold}
     /* Code block container styling */
-    .code-block-container pre code.hljs{color:#f8f8f2;background:#282a36}
-    pre[data-lang]{background:#282a36}
+    .code-block-container pre code.hljs{color:#f8f8f2;background:#000000}
+    pre[data-lang]{background:#000000}
     </style>
     
     <!-- highlight.js configuration -->
@@ -325,31 +325,60 @@
     <script>
         window.mermaidLoaded = false;
         window.mermaidLoadAttempted = false;
+        window.mermaidLoadingPromise = null;
+        window.mermaidLoadedSrc = '';
         window.initMermaid = function() {
             if (window.mermaidLoaded) return Promise.resolve();
-            if (window.mermaidLoadAttempted) {
-                // Already tried but failed, don't retry
-                return Promise.reject(new Error('Mermaid CDN failed to load'));
+            if (window.mermaidLoadingPromise) {
+                return window.mermaidLoadingPromise;
             }
             window.mermaidLoadAttempted = true;
-            return new Promise(function(resolve, reject) {
-                console.log('[Mermaid] Attempting to load from CDN...');
-                var script = document.createElement('script');
-                script.src = 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js';
-                script.onload = function() {
-                    console.log('[Mermaid] CDN loaded successfully');
-                    if (window.mermaid) {
+            window.mermaidLoadingPromise = new Promise(function(resolve, reject) {
+                var sources = [
+                    './vendor/mermaid.min.js',
+                    'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js',
+                    'https://unpkg.com/mermaid@11/dist/mermaid.min.js',
+                    'https://cdnjs.cloudflare.com/ajax/libs/mermaid/11.4.1/mermaid.min.js'
+                ];
+                var idx = 0;
+
+                function tryNext(lastErr) {
+                    if (idx >= sources.length) {
+                        window.mermaidLoadingPromise = null;
+                        reject(lastErr || new Error('All Mermaid sources failed'));
+                        return;
+                    }
+                    var src = sources[idx++];
+                    console.log('[Mermaid] Trying source:', src);
+                    var script = document.createElement('script');
+                    script.src = src;
+                    script.async = true;
+
+                    var timeoutId = setTimeout(function() {
+                        script.remove();
+                        tryNext(new Error('Timeout loading ' + src));
+                    }, 8000);
+
+                    script.onload = function() {
+                        clearTimeout(timeoutId);
+                        if (!window.mermaid) {
+                            tryNext(new Error('Loaded but mermaid unavailable: ' + src));
+                            return;
+                        }
                         try {
                             mermaid.initialize({
                                 startOnLoad: false,
                                 theme: 'dark',
                                 themeVariables: {
-                                    primaryColor: '#D4622B',
-                                    primaryTextColor: '#fff',
-                                    primaryBorderColor: '#e8773d',
-                                    lineColor: '#888',
-                                    secondaryColor: '#1a1a2e',
-                                    tertiaryColor: '#16213e',
+                                    primaryColor: '#111827',
+                                    primaryTextColor: '#ffffff',
+                                    primaryBorderColor: '#ffffff',
+                                    lineColor: '#ffffff',
+                                    secondaryColor: '#0f172a',
+                                    tertiaryColor: '#111827',
+                                    textColor: '#ffffff',
+                                    mainBkg: '#0b1220',
+                                    nodeBorder: '#ffffff',
                                     fontFamily: '"Inter", "Segoe UI", sans-serif',
                                     fontSize: '13px'
                                 },
@@ -357,23 +386,27 @@
                                 flowchart: { curve: 'basis', padding: 10, htmlLabels: true }
                             });
                             window.mermaidLoaded = true;
-                            console.log('[Mermaid] Initialized successfully');
+                            window.mermaidLoadedSrc = src;
+                            window.mermaidLoadingPromise = null;
+                            console.log('[Mermaid] Initialized from:', src);
                             resolve();
                         } catch (e) {
-                            console.error('[Mermaid] Initialization error:', e);
-                            reject(e);
+                            tryNext(e);
                         }
-                    } else {
-                        console.error('[Mermaid] Script loaded but window.mermaid not found');
-                        reject(new Error('Mermaid library not available'));
-                    }
-                };
-                script.onerror = function() {
-                    console.error('[Mermaid] CDN failed to load! Check network connection or CDN availability.');
-                    reject(new Error('Mermaid CDN load failed'));
-                };
-                document.head.appendChild(script);
+                    };
+
+                    script.onerror = function() {
+                        clearTimeout(timeoutId);
+                        script.remove();
+                        tryNext(new Error('Failed loading ' + src));
+                    };
+
+                    document.head.appendChild(script);
+                }
+
+                tryNext();
             });
+            return window.mermaidLoadingPromise;
         };
     </script>
     

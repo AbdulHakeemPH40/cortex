@@ -126,35 +126,37 @@ class GitManager(QObject):
         files = []
         
         success, stdout, stderr = self._run_git([
-            "status", "--porcelain", "-u"
+            "status", "--porcelain=v1", "-z", "-u"
         ])
         
         if not success:
             log.error(f"Git status failed: {stderr}")
             return files
-            
-        for line in stdout.strip().split('\n'):
-            if not line:
+
+        entries = stdout.split('\0')
+        i = 0
+        while i < len(entries):
+            entry = entries[i]
+            i += 1
+            if not entry or len(entry) < 3:
                 continue
-                
-            # Parse status line
-            # Format: XY filename or XY filename -> new_filename
-            x = line[0]  # Staged status
-            y = line[1]  # Unstaged status
-            path_part = line[3:]
-            
-            # Handle renamed files
+
+            x = entry[0]  # Staged status
+            y = entry[1]  # Unstaged status
+            path_part = entry[3:]
             old_path = None
-            if " -> " in path_part:
-                parts = path_part.split(" -> ")
-                old_path = parts[0]
-                path_part = parts[1]
-                
-            # Determine status
-            status_code = x if x != ' ' else y
+
+            # In -z porcelain output, renames/copies are emitted as:
+            # "XY old_path\0new_path\0"
+            if (x in ('R', 'C') or y in ('R', 'C')) and i < len(entries) and entries[i]:
+                old_path = path_part
+                path_part = entries[i]
+                i += 1
+
+            status_code = x if x not in (' ', '?') else y
             status = self._parse_status(status_code)
-            staged = x != ' ' and x != '?'
-            
+            staged = x not in (' ', '?')
+
             files.append(GitFile(
                 path=path_part,
                 status=status,
