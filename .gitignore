@@ -7,7 +7,7 @@ env/
 ENV/
 
 Logs
- *.log
+*.log
 test_out.txt
 
 # Test files
@@ -25,8 +25,8 @@ nul
 .mypy_cache/
 
 # Documentation (optional)
-# Docs/
-# *.md
+Docs/
+*.md
 
 # Python cache
 __pycache__/
