@@ -4,12 +4,16 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Mermaid Viewer</title>
+  <!-- Font Awesome is loaded in parent window -->
+  <!-- Font Awesome is loaded in parent window -->
   <style>
     :root {
       --bg: #0b1220;
       --bg-panel: #131722;
       --border: #2f3542;
       --text: #ffffff;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
     }
     * { box-sizing: border-box; }
     html, body {
@@ -26,35 +30,72 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 0 10px;
+      padding: 0 16px;
       background: var(--bg-panel);
       border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
     }
     .toolbar-title {
-      font-size: 13px;
+      font-size: 14px;
       font-weight: 600;
       opacity: 0.95;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .toolbar-title i {
+      color: var(--accent);
     }
     .toolbar-actions {
       display: flex;
-      gap: 6px;
+      gap: 8px;
       align-items: center;
     }
     .toolbar button {
-      border: 1px solid rgba(255,255,255,0.2);
-      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.15);
+      background: rgba(255,255,255,0.08);
       color: #fff;
       border-radius: 6px;
-      padding: 5px 10px;
+      padding: 6px 12px;
       cursor: pointer;
       font-size: 12px;
+      font-weight: 500;
+      transition: all 0.15s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      min-width: 40px;
     }
-    .toolbar button:hover { background: rgba(255,255,255,0.12); }
+    
+    .toolbar button i {
+      font-size: 12px;
+      width: 12px;
+      height: 12px;
+      display: inline-block;
+      line-height: 1;
+    }
+    
+    /* Ensure Font Awesome icons are visible */
+    .fa {
+      font-family: 'Font Awesome 6 Free' !important;
+      font-weight: 900 !important;
+    }
+    .toolbar button:hover {
+      background: rgba(255,255,255,0.15);
+      border-color: rgba(255,255,255,0.25);
+      transform: translateY(-1px);
+    }
+    .toolbar button:active {
+      transform: translateY(0);
+    }
     .zoom-label {
       min-width: 58px;
       text-align: center;
       font-size: 12px;
       opacity: 0.9;
+      font-weight: 500;
     }
     .stage {
       position: relative;
@@ -145,14 +186,14 @@
 </head>
 <body>
   <div class="toolbar">
-    <div class="toolbar-title">Mermaid Full View</div>
+    <div class="toolbar-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M20 14.66V20h-5.34l2.33-2.33-2.66-2.67 1.33-1.33 2.67 2.66L20 14.66zm-14.66-4.66H4v5.34l2.33-2.33 2.67 2.66 1.33-1.33-2.66-2.67L10 10H5.34zm10.66-4v2.67l-2-2V6h-4V4h6zm-8 2.67L6.67 4H10v2.67h2V4h3.33l-2 2H12zm4 7.33l2 2V14h2.67l-2-2H16zm-7.33-4l-2-2H8v-.67l-2-2V10h4v2h-.67z"/></svg> Mermaid Diagram Viewer</div>
     <div class="toolbar-actions">
-      <button id="zoomOutBtn" type="button">-</button>
+      <button id="zoomOutBtn" type="button" title="Zoom Out"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13H5v-2h14v2z"/></svg></button>
       <span id="zoomLabel" class="zoom-label">100%</span>
-      <button id="zoomInBtn" type="button">+</button>
-      <button id="resetBtn" type="button">Reset</button>
-      <button id="fitBtn" type="button">Fit</button>
-      <button id="closeBtn" type="button">Close</button>
+      <button id="zoomInBtn" type="button" title="Zoom In"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg></button>
+      <button id="resetBtn" type="button" title="Reset View"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg></button>
+      <button id="fitBtn" type="button" title="Fit to Screen"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg></button>
+      <button id="closeBtn" type="button" title="Close Viewer"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
     </div>
   </div>
   <div id="stage" class="stage">

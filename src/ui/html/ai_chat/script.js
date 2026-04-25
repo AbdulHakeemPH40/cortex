@@ -529,40 +529,6 @@ function initMarked() {
                     var headerRow = tmp.querySelector('thead tr');
                     var headerCells = headerRow ? Array.from(headerRow.children) : [];
 
-                    // Check if last column is consistently empty
-                    var totalCols = headerCells.length;
-                    if (totalCols > 1) {
-                        var lastColEmpty = true;
-                        
-                        // Check header last cell
-                        if (headerCells[totalCols - 1] && headerCells[totalCols - 1].textContent.trim()) {
-                            // If header has content, maybe don't hide? 
-                            // Actually user says "heading have but no content then vlank have diplaying"
-                            // So if header exists but content below is empty, it should stay?
-                            // Wait, "heading have but no content" -> Heading is there, content is blank.
-                            // I'll check the body cells.
-                        }
-
-                        rows.forEach(function(tr) {
-                            var cells = Array.from(tr.children);
-                            if (cells.length >= totalCols) {
-                                var lastCell = cells[totalCols - 1];
-                                if (lastCell && lastCell.textContent.trim()) {
-                                    lastColEmpty = false;
-                                }
-                            }
-                        });
-
-                        if (lastColEmpty) {
-                            // Remove last column from header and all rows
-                            if (headerRow && headerCells[totalCols - 1]) headerCells[totalCols - 1].remove();
-                            rows.forEach(function(tr) {
-                                var cells = Array.from(tr.children);
-                                if (cells.length >= totalCols && cells[totalCols - 1]) cells[totalCols - 1].remove();
-                            });
-                        }
-                    }
-
                     rows.forEach(function(tr) {
                         var cells = Array.from(tr.children || []);
                         var cellTexts = cells.map(function(td) {
@@ -597,6 +563,7 @@ function initMarked() {
                     });
 
                     var tableEl = tmp.querySelector('table');
+                    normalizeRenderedTableDom(tableEl);
                     var tableHtml = tableEl ? tableEl.outerHTML : ('<table><thead>' + header + '</thead><tbody>' + body + '</tbody></table>');
                     return '<div class="table-wrapper">' + tableHtml + '</div>';
                 } catch (e) {
@@ -4603,6 +4570,179 @@ function splitLikelyConcatenatedTableLines(text) {
     return out.join('\n');
 }
 
+function parseTableCells(line) {
+    var s = String(line || '').trim();
+    if (!s) return [];
+    if (s.charAt(0) === '|') s = s.slice(1);
+    if (s.charAt(s.length - 1) === '|') s = s.slice(0, -1);
+
+    var cells = [];
+    var current = '';
+    var escaped = false;
+    for (var i = 0; i < s.length; i++) {
+        var ch = s.charAt(i);
+        if (escaped) {
+            current += ch;
+            escaped = false;
+            continue;
+        }
+        if (ch === '\\') {
+            escaped = true;
+            current += ch;
+            continue;
+        }
+        if (ch === '|') {
+            cells.push(current.trim());
+            current = '';
+            continue;
+        }
+        current += ch;
+    }
+    cells.push(current.trim());
+
+    return cells.map(function(c) {
+        return c.replace(/\\\|/g, '|').trim();
+    });
+}
+
+function parseTabDelimitedCells(line) {
+    var parts = String(line || '').split('\t').map(function(p) { return (p || '').trim(); });
+    while (parts.length > 0 && parts[parts.length - 1] === '') parts.pop();
+    return parts;
+}
+
+function convertTabDelimitedSectionsToMarkdown(text) {
+    if (!text || text.indexOf('\t') === -1) return text || '';
+
+    var lines = String(text).split('\n');
+    var out = [];
+    var i = 0;
+
+    while (i < lines.length) {
+        var line = lines[i];
+        var trimmed = (line || '').trim();
+
+        if (line.indexOf('\t') !== -1 && /^\s*#\s+/.test(trimmed)) {
+            var headerCells = parseTabDelimitedCells(line);
+            if (headerCells.length >= 2) {
+                var sectionTitle = headerCells[0].replace(/^\s*#\s*/, '').trim();
+                var tableHeaders = headerCells.slice(1);
+                var rows = [];
+                var j = i + 1;
+
+                while (j < lines.length) {
+                    var rowLine = lines[j];
+                    var rowTrim = (rowLine || '').trim();
+
+                    // Next tab-delimited section header starts a new table block.
+                    if (rowLine.indexOf('\t') !== -1 && /^\s*#\s+/.test(rowTrim)) {
+                        break;
+                    }
+
+                    if (rowTrim === '|') {
+                        j++;
+                        break;
+                    }
+                    if (rowTrim === '') {
+                        if (rows.length === 0) {
+                            j++;
+                            continue;
+                        }
+                        break;
+                    }
+                    if (rowLine.indexOf('\t') === -1) break;
+
+                    var rowCells = parseTabDelimitedCells(rowLine);
+                    if (rowCells.length > 0) rows.push(rowCells);
+                    j++;
+                }
+
+                if (rows.length > 0) {
+                    out.push('### ' + sectionTitle);
+                    out.push('| ' + tableHeaders.join(' | ') + ' |');
+                    out.push('| ' + tableHeaders.map(function() { return '---'; }).join(' | ') + ' |');
+                    rows.forEach(function(r) {
+                        var cells = r.slice(0, tableHeaders.length);
+                        while (cells.length < tableHeaders.length) cells.push('');
+                        out.push('| ' + cells.join(' | ') + ' |');
+                    });
+                    out.push('');
+                    i = j;
+                    continue;
+                }
+            }
+        }
+
+        if (trimmed === '|') {
+            i++;
+            continue;
+        }
+
+        out.push(line);
+        i++;
+    }
+
+    return out.join('\n');
+}
+
+function normalizeRenderedTableDom(tableEl) {
+    if (!tableEl) return;
+    var headerRow = tableEl.querySelector('thead tr');
+    var bodyRows = Array.from(tableEl.querySelectorAll('tbody tr'));
+    if (!headerRow || bodyRows.length === 0) return;
+
+    var headerCells = Array.from(headerRow.querySelectorAll('th,td'));
+    var headerCount = headerCells.length;
+    if (headerCount < 2) return;
+
+    var sectionTitlePattern = /^\s*#\s*\d*\.?\s+/;
+    var firstHeaderText = ((headerCells[0] && headerCells[0].textContent) || '').trim();
+
+    var bodyCellCounts = bodyRows.map(function(r) {
+        return r.querySelectorAll('td,th').length;
+    }).filter(function(n) { return n > 0; });
+    if (!bodyCellCounts.length) return;
+
+    var shortRows = bodyCellCounts.filter(function(n) { return n === headerCount - 1; }).length;
+    var mostlyEmptyLastCol = false;
+    if (headerCount >= 2) {
+        var emptyLast = 0;
+        bodyRows.forEach(function(r) {
+            var cells = Array.from(r.querySelectorAll('td,th'));
+            if (!cells.length) return;
+            var last = cells[Math.min(cells.length - 1, headerCount - 1)];
+            var txt = ((last && last.textContent) || '').replace(/\u00a0/g, ' ').trim();
+            if (!txt) emptyLast++;
+        });
+        mostlyEmptyLastCol = emptyLast >= Math.ceil(bodyRows.length * 0.6);
+    }
+
+    // If first header cell is a section label like "# 10. ...", treat it as
+    // a section title (not a real column) when most body rows are one column shorter.
+    if (sectionTitlePattern.test(firstHeaderText) && (
+        shortRows >= Math.ceil(bodyCellCounts.length * 0.6) ||
+        mostlyEmptyLastCol
+    )) {
+        if (headerCells[0]) headerCells[0].remove();
+        headerCells = Array.from(headerRow.querySelectorAll('th,td'));
+        headerCount = headerCells.length;
+    }
+
+    bodyRows.forEach(function(row) {
+        var cells = Array.from(row.querySelectorAll('td,th'));
+        while (cells.length < headerCount) {
+            var td = document.createElement('td');
+            td.textContent = '';
+            row.appendChild(td);
+            cells.push(td);
+        }
+        while (cells.length > headerCount) {
+            var extra = cells.pop();
+            if (extra) extra.remove();
+        }
+    });
+}
+
 // Normalize a detected table block into valid GFM table markdown.
 function normalizeTableBlock(lines, startIdx, endIdx) {
     var tableLines = lines.slice(startIdx, endIdx);
@@ -4626,7 +4766,8 @@ function normalizeTableBlock(lines, startIdx, endIdx) {
     if (!headerRow) return tableLines; // No valid header, return as-is
 
     // Step 2: Process remaining lines
-    var headerColCount = (headerRow.match(/\|/g) || []).length - 1;
+    var headerCells = parseTableCells(headerRow);
+    var headerColCount = headerCells.length;
     var addedSeparator = false;
 
     for (var j = 1; j < tableLines.length; j++) {
@@ -4660,12 +4801,15 @@ function normalizeTableBlock(lines, startIdx, endIdx) {
             addedSeparator = true;
         }
 
-        // Normalize table row spacing
-        var row = trimmed;
-        if (!row.startsWith('|')) row = '| ' + row;
-        if (!row.endsWith('|')) row = row + ' |';
+        var cells = parseTableCells(trimmed);
+        if (cells.length === 0) continue;
 
-        var cells = row.split('|').slice(1, -1);
+        if (cells.length < headerColCount) {
+            while (cells.length < headerColCount) cells.push('');
+        } else if (cells.length > headerColCount) {
+            cells = cells.slice(0, headerColCount);
+        }
+
         var normalized = '| ' + cells.map(function(c) { return (c || '').trim(); }).join(' | ') + ' |';
         result.push(normalized);
     }
@@ -4706,6 +4850,10 @@ function normalizeMarkdownText(text) {
     // ========== STAGE 1: Safe sanitation ==========
     text = text.replace(/[\u200B\u200C\u200D\u200E\u200F\uFEFF\u2060\u00AD]/g, '');
     text = text.replace(/\r\n/g, '\n');
+
+    // Convert provider outputs that use tab-delimited pseudo-tables into
+    // proper markdown tables before markdown parsing/normalization.
+    text = convertTabDelimitedSectionsToMarkdown(text);
 
     // Strip block-level HTML tags the model sometimes echoes back.
     text = text.replace(/<\/?(?:h[1-6]|div|section|article|header|footer|nav|aside|main|figure|figcaption|details|summary)(?:\s[^>]*)?>\s*/gi, '\n');
@@ -12337,6 +12485,8 @@ function formatMessage(text, isUser) {
                 try {
                     var tempDiv = document.createElement('div');
                     tempDiv.innerHTML = tableHtml;
+                    var tableNode = tempDiv.querySelector('table');
+                    normalizeRenderedTableDom(tableNode);
                     var rows = tempDiv.querySelectorAll('tr');
                     var rowsRemoved = false;
                     rows.forEach(function(row, index) {
@@ -12348,32 +12498,6 @@ function formatMessage(text, isUser) {
                             rowsRemoved = true;
                         }
                     });
-                    // Remove blank trailing column if every row's last cell is empty.
-                    // (Conservative: only if more than 2 columns exist and it's strictly empty)
-                    var allRows = tempDiv.querySelectorAll('tr');
-                    if (allRows.length > 0) {
-                        var hasBlankTrailingColumn = true;
-                        var colCount = 0;
-                        allRows.forEach(function(r) {
-                            var cells = r.querySelectorAll('th,td');
-                            if (!cells.length) return;
-                            colCount = Math.max(colCount, cells.length);
-                            var last = cells[cells.length - 1];
-                            var txt = (last.textContent || '').replace(/\u00a0/g, ' ').trim();
-                            if (txt !== '') hasBlankTrailingColumn = false;
-                        });
-                        
-                        // Only remove if it's clearly an artifact (e.g. trailing pipe in markdown)
-                        // and we have enough columns left.
-                        if (hasBlankTrailingColumn && colCount > 2) {
-                            allRows.forEach(function(r) {
-                                var cells = r.querySelectorAll('th,td');
-                                if (cells.length > 1) {
-                                    cells[cells.length - 1].remove();
-                                }
-                            });
-                        }
-                    }
                     tableHtml = tempDiv.innerHTML;
                 } catch (err) { /* silent */ }
 
@@ -12937,6 +13061,27 @@ function typesetMathJax(container) {
     } else if (window.MathJax && window.MathJax.typeset) {
         try { window.MathJax.typeset([container]); } catch(e) { /* silent */ }
     }
+}
+
+// --- Copy code block content ---
+function copyCode(btn) {
+    const container = btn.closest('.code-block-container');
+    const codeEl = container.querySelector('code');
+    const text = codeEl.innerText || codeEl.textContent;
+
+    navigator.clipboard.writeText(text).then(() => {
+        const originalContent = btn.innerHTML;
+        btn.classList.add('copied');
+        btn.innerHTML = '<i class="fas fa-check"></i> Copied!';
+        showToast('Code copied to clipboard');
+        setTimeout(() => {
+            btn.classList.remove('copied');
+            btn.innerHTML = originalContent;
+        }, 2000);
+    }).catch(err => {
+        console.error('Failed to copy code:', err);
+        showToast('Failed to copy code');
+    });
 }
 
 // Best-effort persistence flush when app window closes/reloads.
