@@ -37,7 +37,7 @@ except ImportError:
 
 
 # ============================================================
-# UTILITY FUNCTIONS - Stubs until dependencies are converted
+# UTILITY FUNCTIONS - Enhanced implementations
 # ============================================================
 
 def log_event(name: str, payload: Optional[Dict[str, Any]] = None) -> None:
@@ -58,7 +58,7 @@ def is_env_truthy(var_name: str) -> bool:
 
 def expand_path(p: str) -> str:
     """Expand ~ and resolve to absolute path."""
-    return str(Path(p).expanduser().resolve())
+    return os.path.abspath(os.path.expanduser(p))
 
 def get_cwd() -> str:
     """Get current working directory."""
@@ -68,13 +68,86 @@ def is_enoent(exc: Exception) -> bool:
     """Check if exception is FileNotFoundError."""
     return isinstance(exc, FileNotFoundError)
 
-def check_write_permission_for_tool(tool_name: str, input_: Any, ctx: Any) -> bool:
-    """Check write permission for tool."""
-    return True  # Stub - replace with real implementation
+def check_write_permission_for_tool(
+    tool,  # Tool class reference
+    input_: Dict[str, Any],
+    tool_permission_context: Any,
+) -> Any:
+    """
+    Check write permission for tool using permission system.
 
-def matching_rule_for_input(path: str, ctx: Any, action: str, rule_type: str) -> Optional[Any]:
-    """Find matching permission rule."""
-    return None  # Stub - replace with real implementation
+    Args:
+        tool: The tool class (FileWriteTool, etc.)
+        input_: Tool input dictionary
+        tool_permission_context: Permission context from app state
+
+    Returns:
+        PermissionDecision with behavior 'allow', 'deny', or 'ask'
+    """
+    from ..utils.permissions.filesystem_security import check_write_permission
+    from ..utils.permissions.PermissionResult import PermissionDecision
+
+    file_path = input_.get("file_path", "") if isinstance(input_, dict) else ""
+    if not file_path:
+        return PermissionDecision(
+            behavior="ask",
+            message=f"Tool requested permissions to write, but no file path provided."
+        )
+
+    # Get working directories from permission context
+    working_directories = getattr(tool_permission_context, "working_directories", None)
+    mode = getattr(tool_permission_context, "mode", "default")
+
+    return check_write_permission(
+        path=file_path,
+        working_directories=working_directories,
+        mode=mode,
+    )
+
+def matching_rule_for_input(
+    path: str,
+    tool_permission_context: Any,
+    tool_type: str,  # 'edit' | 'read'
+    behavior: str,   # 'allow' | 'deny' | 'ask'
+) -> Optional[Any]:
+    """
+    Find matching permission rule for the given path and behavior.
+
+    Uses gitignore-style pattern matching against permission rules.
+    """
+    if not tool_permission_context:
+        return None
+
+    import re
+
+    absolute_path = expand_path(path)
+
+    # Get patterns from permission context
+    rules = getattr(tool_permission_context, "rules", [])
+
+    # Try to find a matching rule
+    for rule in rules if rules else []:
+        rule_behavior = getattr(rule, "ruleBehavior", None) or getattr(rule, "behavior", None)
+        if rule_behavior != behavior:
+            continue
+
+        rule_tool = getattr(rule, "toolName", None) or getattr(rule, "tool", None)
+        rule_pattern = getattr(rule, "ruleContent", None) or getattr(rule, "pattern", None)
+
+        if rule_tool and rule_tool != tool_type:
+            continue
+
+        if rule_pattern:
+            # Convert gitignore pattern to regex
+            pattern = rule_pattern.replace("**", ".*").replace("*", "[^/]*")
+            if pattern.endswith("/**"):
+                pattern = pattern[:-3] + "(/.*)?"
+            pattern = f"^{pattern}$"
+
+            if re.fullmatch(pattern, absolute_path):
+                return rule
+
+    return None
 
 def get_file_modification_time(path: str) -> float:
     """Get file modification timestamp."""
@@ -105,24 +178,85 @@ def get_fs_implementation() -> AsyncFS:
     return AsyncFS()
 
 def get_lsp_server_manager() -> Optional[Any]:
-    """Get LSP server manager."""
-    return None  # Stub - replace with real implementation
+    """Get LSP server manager for language server notifications."""
+    try:
+        from ..services.lsp.manager import get_lsp_server_manager as _get_manager
+        return _get_manager()
+    except ImportError:
+        return None
 
 def clear_delivered_diagnostics_for_file(uri: str) -> None:
-    """Clear diagnostics for file."""
-    pass  # Stub - replace with real implementation
+    """Clear diagnostics for file so new ones will be shown."""
+    try:
+        from ..services.lsp.LSPDiagnosticRegistry import clearDeliveredDiagnosticsForFile
+        clearDeliveredDiagnosticsForFile(uri)
+    except ImportError:
+        pass
 
 def notify_vscode_file_updated(path: str, old: Optional[str], new: str) -> None:
-    """Notify VSCode about file update."""
-    pass  # Stub - replace with real implementation
+    """Notify VSCode about file update for diff view."""
+    try:
+        from ..services.mcp.vscodeSdkMcp import notifyVscodeFileUpdated
+        notifyVscodeFileUpdated(path, old, new)
+    except ImportError:
+        pass
 
 def count_lines_changed(patch: List[Hunk], content: Optional[str] = None) -> None:
-    """Count lines changed in patch."""
-    pass  # Stub - replace with real implementation
+    """Count lines changed in patch for analytics."""
+    additions = 0
+    deletions = 0
+    for hunk in patch if patch else []:
+        for line in hunk.get('lines', []):
+            if line.get('type') == 'add':
+                additions += 1
+            elif line.get('type') == 'delete':
+                deletions += 1
+    log_event('tengu_write_lines_changed', {
+        'additions': additions,
+        'deletions': deletions,
+    })
 
 def fetch_single_file_git_diff(path: str) -> Optional[GitDiff]:
-    """Fetch git diff for single file."""
-    return None  # Stub - replace with real implementation
+    """Fetch git diff for single file for remote session display."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ['git', 'diff', '--', path],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if result.returncode == 0:
+            return {'diff': result.stdout}
+    except Exception:
+        pass
+    return None
+
+# Secret detection patterns for team memory protection
+_SECRET_PATTERNS = [
+    (r'api[_-]?key\s*[=:]\s*["\']?[\w\-]{20,}', 'API key detected'),
+    (r'secret[_-]?key\s*[=:]\s*["\']?[\w\-]{20,}', 'Secret key detected'),
+    (r'password\s*[=:]\s*["\']?[^\s"\']{8,}', 'Password detected'),
+    (r'Bearer\s+[\w\-]+\.[\w\-]+\.[\w\-]+', 'JWT token detected'),
+    (r'ghp_[a-zA-Z0-9]{36}', 'GitHub personal access token detected'),
+    (r'gho_[a-zA-Z0-9]{36}', 'GitHub OAuth token detected'),
+]
+
+def check_team_mem_secrets(path: str, new_content: str) -> Optional[str]:
+    """
+    Check for team memory secrets in new content.
+    Returns error message if secret detected, None otherwise.
+    """
+    # Only check team memory paths
+    if '.team' not in path.lower() and 'team_memory' not in path.lower():
+        return None
+
+    for pattern, description in _SECRET_PATTERNS:
+        import re
+        if re.search(pattern, new_content, re.IGNORECASE):
+            return f"Team memory write blocked: {description}. Please remove secrets before writing to team memory files."
+
+    return None
 
 def get_patch_for_display(
     file_path: str,

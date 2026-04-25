@@ -2996,7 +2996,27 @@ var thinkingInterval = null;
 var currentActivitySection = null; // used by thinking indicator system
 var _taCurrentGroup = null;   // current .ta-group element
 var _taFileCount = 0;
-var _taStats = { reads: 0, edits: 0, searches: 0, commands: 0 };
+var _taStats = { reads: 0, edits: 0, searches: 0, thoughts: 0, commands: 0 };
+
+function _taHasItems(groupEl) {
+    if (!groupEl) return false;
+    var itemsEl = groupEl.querySelector('.ta-group-items');
+    return !!(itemsEl && itemsEl.children && itemsEl.children.length > 0);
+}
+
+function _taEnsureGroup(container, forceNew) {
+    if (forceNew && _taCurrentGroup && _taHasItems(_taCurrentGroup)) {
+        _taCurrentGroup.classList.add('collapsed');
+        _taMarkGroupComplete();
+        _taCurrentGroup = null;
+    }
+    if (!_taCurrentGroup || !document.body.contains(_taCurrentGroup)) {
+        _taCurrentGroup = _taCreateGroup(container);
+        _taFileCount = 0;
+        _taStats = { reads: 0, edits: 0, searches: 0, thoughts: 0, commands: 0 };
+    }
+    return _taCurrentGroup;
+}
 
 function showToolActivity(type, info, status) {
     // Handle both calling conventions:
@@ -3037,6 +3057,9 @@ function showToolActivity(type, info, status) {
         else if (type === 'list_directory') activityText = 'Exploring: ' + (data.path || '');
         else if (type === 'edit_file')   activityText = 'Editing: ' + (data.file_path || '');
         else if (type === 'run_command') activityText = 'Running: ' + (data.command || '').substring(0, 60);
+        else if (type === 'team_create') activityText = 'Creating team: ' + (data.team_name || '');
+        else if (type === 'team_delete') activityText = 'Deleting team: ' + (data.team_name || '');
+        else if (type.startsWith('task_')) activityText = 'Managing task: ' + (data.subject || data.task_id || '');
         else activityText = type + '...';
         statusEl.textContent = activityText;
     }
@@ -3048,17 +3071,15 @@ function showToolActivity(type, info, status) {
     }
 
     // -- Ensure activity group exists --
-    if (!_taCurrentGroup || !document.body.contains(_taCurrentGroup)) {
-        _taCurrentGroup = _taCreateGroup(container);
-        _taFileCount = 0;
-        _taStats = { reads: 0, edits: 0, searches: 0, commands: 0 };
-    }
+    _taEnsureGroup(container, false);
 
     var itemsEl = _taCurrentGroup.querySelector('.ta-group-items');
     if (!itemsEl) return;
 
     // -- Route to item renderer --
-    if (type === 'read_file') {
+    if (type === 'thinking' || type === 'think') {
+        _taRenderThought(itemsEl, status, data.text || data.message || '');
+    } else if (type === 'read_file') {
         _taRenderRead(itemsEl, data, status);
     } else if (type === 'edit_file' || type === 'write_file' || type === 'create_file') {
         _taRenderEdit(itemsEl, data, status, type);
@@ -3066,6 +3087,10 @@ function showToolActivity(type, info, status) {
         _taRenderSearch(itemsEl, data, status);
     } else if (type === 'list_directory') {
         _taRenderListDir(itemsEl, data, status);
+    } else if (type === 'team_create' || type === 'team_delete') {
+        _taRenderTeam(itemsEl, data, status, type);
+    } else if (type.startsWith('task_')) {
+        _taRenderTask(itemsEl, data, status, type);
     } else {
         // Generic fallback
         _taRenderGeneric(itemsEl, data, status, type);
@@ -3109,6 +3134,7 @@ function _taUpdateGroupHeader() {
         if (_taStats.reads > 0) parts.push(_taStats.reads + ' read');
         if (_taStats.edits > 0) parts.push(_taStats.edits + ' edit' + (_taStats.edits > 1 ? 's' : ''));
         if (_taStats.searches > 0) parts.push(_taStats.searches + ' search' + (_taStats.searches > 1 ? 'es' : ''));
+        if (_taStats.thoughts > 0) parts.push(_taStats.thoughts + ' thought' + (_taStats.thoughts > 1 ? 's' : ''));
         statsEl.textContent = parts.length ? parts.join(', ') : '';
     }
 }
@@ -3123,24 +3149,107 @@ function _taMarkGroupComplete() {
     }
 }
 
+// ── Render: Thought ───────────────────────────────────────
+function _taRenderThought(itemsEl, status, text) {
+    var running = itemsEl.querySelector('.ta-item[data-ta-type="thought"][data-ta-state="running"]');
+    if (running) {
+        if (status !== 'running') {
+            running.dataset.taState = 'complete';
+            var st = running.querySelector('.ta-item-status');
+            if (st) st.innerHTML = '<span class="ta-ok">OK</span>';
+            var muted = running.querySelector('.ta-muted');
+            if (muted) muted.textContent = ' Working complete';
+        }
+        return;
+    }
+    if (status !== 'running') return;
+
+    _taStats.thoughts++;
+    var label = (text && String(text).trim()) ? String(text).trim() : 'Thinking';
+    var item = document.createElement('div');
+    item.className = 'ta-item';
+    item.dataset.taType = 'thought';
+    item.dataset.taKey = 'thought-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
+    item.dataset.taState = 'running';
+    item.innerHTML =
+        '<div class="ta-item-header">' +
+            '<span class="ta-item-icon" style="color:#a78bfa;">&#129504;</span>' +
+            '<span class="ta-item-label">' +
+                '<span class="ta-highlight">Thought</span>' +
+                '<span class="ta-muted"> ' + escapeHtml(label) + '</span>' +
+            '</span>' +
+            '<span class="ta-item-status"><span class="ta-spinner"></span></span>' +
+        '</div>';
+    itemsEl.appendChild(item);
+}
+
 // ── Render: Read File ────────────────────────────────────
 function _taRenderRead(itemsEl, data, status) {
     var fp = data.file_path || '';
     var fname = fp.split('/').pop().split('\\').pop() || 'file';
     var ext = fname.includes('.') ? fname.split('.').pop().toLowerCase() : '';
-    var offset = data.offset || 1;
-    var limit = data.limit;
-    var lineRange = '';
-    if (limit) lineRange = ' (' + offset + ' - ' + (parseInt(offset) + parseInt(limit) - 1) + ')';
+    var requestedOffset = parseInt(data.requested_offset, 10);
+    if (isNaN(requestedOffset) || requestedOffset < 1) requestedOffset = 1;
+    var requestedLimit = parseInt(data.requested_limit, 10);
+    if (isNaN(requestedLimit) || requestedLimit < 1) requestedLimit = 0;
 
-    // Check for existing item with same filename
-    var existing = _taFindItem(itemsEl, 'read', fname);
+    var actualStart = parseInt(data.actual_start_line, 10);
+    var offset = !isNaN(actualStart) && actualStart > 0 ? actualStart : parseInt(data.offset, 10);
+    if (isNaN(offset) || offset < 1) offset = requestedOffset;
+    var limit = parseInt(data.limit, 10);
+    var linesRead = parseInt(data.lines_read, 10);
+    if (isNaN(linesRead) || linesRead < 1) {
+        linesRead = (!isNaN(limit) && limit > 0) ? limit : 0;
+    }
+    var hasChunk = linesRead > 0;
+    var explicitEnd = parseInt(data.actual_end_line, 10);
+    var actualEnd = (!isNaN(explicitEnd) && explicitEnd >= offset)
+        ? explicitEnd
+        : (offset + linesRead - 1);
+    var lineRange = hasChunk ? (offset + '-' + actualEnd) : 'full';
+    var readKey = (fp || fname) + '|' + lineRange;
+    var requestedRange = requestedLimit > 0
+        ? (requestedOffset + '-' + (requestedOffset + requestedLimit - 1))
+        : '';
+
+    // Track each read chunk independently: file + line range
+    var existing = _taFindItem(itemsEl, 'read', readKey);
     if (existing) {
         if (status === 'complete') {
             var st = existing.querySelector('.ta-item-status');
             if (st) st.innerHTML = '<span class="ta-ok">OK</span>';
+        } else if (status === 'error') {
+            var stErr = existing.querySelector('.ta-item-status');
+            if (stErr) stErr.innerHTML = '<span class="ta-err">ERR</span>';
+            if (data.error) {
+                var errEl = existing.querySelector('.ta-read-error');
+                if (!errEl) {
+                    errEl = document.createElement('div');
+                    errEl.className = 'ta-read-error ta-muted';
+                    existing.appendChild(errEl);
+                }
+                errEl.textContent = '  ' + String(data.error).replace(/^Error:\s*/i, '');
+            }
         }
         return;
+    }
+
+    // For complete status, update any running "full" placeholder for this exact chunk
+    // without destroying entries for other chunks of the same file.
+    if (status === 'complete') {
+        var fallback = itemsEl.querySelector('.ta-item.ta-read[data-ta-file="' + CSS.escape(fp || fname) + '"][data-ta-key*="full"]');
+        if (fallback) {
+            fallback.dataset.taKey = readKey;
+            var muted = fallback.querySelector('.ta-muted');
+            var fallbackMutedText = ' (' + lineRange + ')';
+            if (data.remaining_range) {
+                fallbackMutedText += ' [' + data.remaining_lines + ' lines remain: ' + data.remaining_range + ']';
+            }
+            if (muted) muted.textContent = fallbackMutedText;
+            var st2 = fallback.querySelector('.ta-item-status');
+            if (st2) st2.innerHTML = '<span class="ta-ok">OK</span>';
+            return;
+        }
     }
 
     _taStats.reads++;
@@ -3149,18 +3258,34 @@ function _taRenderRead(itemsEl, data, status) {
     var item = document.createElement('div');
     item.className = 'ta-item ta-read';
     item.dataset.taType = 'read';
-    item.dataset.taKey = fname;
+    item.dataset.taKey = readKey;
+    item.dataset.taFile = fp || fname;
+    var mutedText = ' (read ' + lineRange + ')';
+    if (requestedRange && requestedRange !== lineRange) {
+        mutedText += ' [requested ' + requestedRange + ']';
+    }
+    if (data.total_lines) {
+        mutedText += ' [total ' + data.total_lines + ']';
+    }
+    if (data.remaining_range && status === 'complete') {
+        mutedText += ' [' + data.remaining_lines + ' lines remain: ' + data.remaining_range + ']';
+    }
     item.innerHTML =
         '<div class="ta-item-header">' +
             '<span class="ta-item-icon">' + _taExtBadge(ext) + '</span>' +
             '<span class="ta-item-label">' +
                 '<span class="ta-highlight">' + escapeHtml(fname) + '</span>' +
-                '<span class="ta-muted"> ' + escapeHtml(lineRange) + '  Reading</span>' +
+                '<span class="ta-muted">' + escapeHtml(mutedText) + '</span>' +
             '</span>' +
             '<span class="ta-item-status">' +
-                (status === 'complete' ? '<span class="ta-ok">OK</span>' : '<span class="ta-spinner"></span>') +
+                (status === 'complete'
+                    ? '<span class="ta-ok">OK</span>'
+                    : (status === 'error' ? '<span class="ta-err">ERR</span>' : '<span class="ta-spinner"></span>')) +
             '</span>' +
         '</div>';
+    if (status === 'error' && data.error) {
+        item.innerHTML += '<div class="ta-read-error ta-muted">  ' + escapeHtml(String(data.error).replace(/^Error:\s*/i, '')) + '</div>';
+    }
     itemsEl.appendChild(item);
 }
 
@@ -3209,10 +3334,13 @@ function _taRenderSearch(itemsEl, data, status) {
     var pattern = data.pattern || '';
     var matchCount = data.match_count || 0;
     var matches = data.matches || [];
-    var include = data.include || '';
+    var include = data.include || data.glob || '';
+    var searchType = (data.search_type || 'grep').toLowerCase();
+    var searchLabel = searchType === 'grep' ? 'Grep' : 'Search';
+    var searchKey = searchType + '|' + pattern + '|' + include;
 
     // Check for existing search item with same pattern
-    var existing = _taFindItem(itemsEl, 'search', pattern);
+    var existing = _taFindItem(itemsEl, 'search', searchKey);
     if (existing && status === 'complete') {
         // Update with results
         var st = existing.querySelector('.ta-item-status');
@@ -3257,7 +3385,7 @@ function _taRenderSearch(itemsEl, data, status) {
     var item = document.createElement('div');
     item.className = 'ta-item';
     item.dataset.taType = 'search';
-    item.dataset.taKey = pattern;
+    item.dataset.taKey = searchKey;
 
     var displayPattern = pattern.length > 50 ? pattern.substring(0, 47) + '...' : pattern;
     var includeText = include ? '  ' + include : '';
@@ -3267,7 +3395,7 @@ function _taRenderSearch(itemsEl, data, status) {
             '<svg class="ta-item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
             '<span class="ta-item-icon" style="color:#60a5fa;">&#128269;</span>' +
             '<span class="ta-item-label">' +
-                'Grepped code  <span class="ta-highlight">' + escapeHtml(displayPattern) + '</span>' +
+                searchLabel + '  <span class="ta-highlight">' + escapeHtml(displayPattern) + '</span>' +
                 '<span class="ta-muted">' + escapeHtml(includeText) + '</span>' +
             '</span>' +
             '<span class="ta-item-status">' +
@@ -3291,8 +3419,12 @@ function _taRenderSearch(itemsEl, data, status) {
 function _taRenderListDir(itemsEl, data, status) {
     var path = data.path || '.';
     var count = data.count || 0;
+    var pattern = data.pattern || '';
+    var searchType = (data.search_type || '').toLowerCase();
+    var isGlob = searchType === 'glob' || !!pattern;
+    var key = isGlob ? (path + '|' + pattern) : path;
 
-    var existing = _taFindItem(itemsEl, 'listdir', path);
+    var existing = _taFindItem(itemsEl, 'listdir', key);
     if (existing) {
         if (status === 'complete') {
             var st = existing.querySelector('.ta-item-status');
@@ -3306,17 +3438,88 @@ function _taRenderListDir(itemsEl, data, status) {
     var item = document.createElement('div');
     item.className = 'ta-item';
     item.dataset.taType = 'listdir';
-    item.dataset.taKey = path;
+    item.dataset.taKey = key;
+    var title = isGlob ? 'Globbed  <span class="ta-highlight">' + escapeHtml(pattern || path) + '</span>' :
+                         'Explored  <span class="ta-highlight">' + escapeHtml(path) + '</span>';
     item.innerHTML =
         '<div class="ta-item-header">' +
             '<span class="ta-item-icon" style="color:#f59e0b;">&#128193;</span>' +
             '<span class="ta-item-label">' +
-                'Explored  <span class="ta-highlight">' + escapeHtml(path) + '</span>' +
+                title +
             '</span>' +
             '<span class="ta-item-status">' +
                 (status === 'complete'
                     ? '<span class="ta-ok">' + count + ' files</span>'
                     : '<span class="ta-spinner" style="border-top-color:#f59e0b;"></span>') +
+            '</span>' +
+        '</div>';
+    itemsEl.appendChild(item);
+}
+
+// ── Render: Team Create/Delete ───────────────────────────
+function _taRenderTeam(itemsEl, data, status, type) {
+    var teamName = data.team_name || data.name || 'team';
+    var message = data.message || '';
+    var teamId = data.team_id || '';
+    var isCreate = type === 'team_create';
+    var label = isCreate ? 'Create Team' : 'Delete Team';
+    var icon = isCreate ? '&#128101;' : '&#128465;';
+    var mutedText = teamName;
+    if (teamId) mutedText += ' (' + teamId + ')';
+    if (message) mutedText += ' — ' + message.substring(0, 60);
+
+    var item = document.createElement('div');
+    item.className = 'ta-item';
+    item.dataset.taType = type;
+    item.dataset.taKey = teamName;
+    item.innerHTML =
+        '<div class="ta-item-header">' +
+            '<span class="ta-item-icon">' + icon + '</span>' +
+            '<span class="ta-item-label">' +
+                '<span class="ta-highlight">' + escapeHtml(label) + '</span>' +
+                '<span class="ta-muted"> (' + escapeHtml(mutedText) + ')</span>' +
+            '</span>' +
+            '<span class="ta-item-status">' +
+                (status === 'complete' ? '<span class="ta-ok">OK</span>' :
+                 status === 'error' ? '<span class="ta-err">ERR</span>' :
+                 '<span class="ta-spinner"></span>') +
+            '</span>' +
+        '</div>';
+    itemsEl.appendChild(item);
+}
+
+// ── Render: Task Operations ──────────────────────────────
+function _taRenderTask(itemsEl, data, status, type) {
+    var taskId = data.task_id || '';
+    var subject = data.subject || '';
+    var message = data.message || '';
+    var opMap = {
+        'task_create': 'Create Task',
+        'task_update': 'Update Task',
+        'task_list': 'List Tasks',
+        'task_get': 'Get Task',
+        'task_stop': 'Stop Task'
+    };
+    var label = opMap[type] || type.replace(/_/g, ' ');
+    var icon = '&#9749;';
+    var mutedText = subject || taskId;
+    if (message) mutedText += ' — ' + message.substring(0, 60);
+
+    var item = document.createElement('div');
+    item.className = 'ta-item';
+    item.dataset.taType = type;
+    item.dataset.taKey = taskId || label;
+    item.innerHTML =
+        '<div class="ta-item-header">' +
+            '<span class="ta-item-icon">' + icon + '</span>' +
+            '<span class="ta-item-label">' +
+                '<span class="ta-highlight">' + escapeHtml(label) + '</span>' +
+                '<span class="ta-muted"> (' + escapeHtml(mutedText) + ')</span>' +
+            '</span>' +
+            '<span class="ta-item-status">' +
+                (status === 'complete' ? '<span class="ta-ok">OK</span>' :
+                 status === 'error' ? '<span class="ta-err">ERR</span>' :
+                 '<span class="ta-spinner"></span>') +
             '</span>' +
         '</div>';
     itemsEl.appendChild(item);
@@ -3980,67 +4183,14 @@ function showThinking() {
         if (emptyState) emptyState.remove();
     }
 
-    // Create activity section INSIDE the message bubble, BEFORE message-content
-    if (!currentActivitySection || !currentAssistantMessage.contains(currentActivitySection)) {
-        currentActivitySection = document.createElement('div');
-        currentActivitySection.className = 'activity-section';
-        fileCount = 0;
-
-        var header = document.createElement('div');
-        header.className = 'activity-header';
-        header.innerHTML =
-            '<svg class="activity-spinner" viewBox="0 0 24 24" width="14" height="14"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2" opacity="0.15"/><path d="M12 2 A 10 10 0 1 1 2 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>' +
-            '<span class="activity-title"><span class="activity-text-shimmer">Working</span></span>' +
-            '<svg class="activity-toggle" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>';
-        header.onclick = function() {
-            currentActivitySection.classList.toggle('collapsed');
-            var t = header.querySelector('.activity-toggle');
-            if (t) t.style.transform = currentActivitySection.classList.contains('collapsed') ? 'rotate(-90deg)' : 'rotate(0deg)';
-        };
-
-        var list = document.createElement('div');
-        list.className = 'activity-list';
-
-        currentActivitySection.appendChild(header);
-        currentActivitySection.appendChild(list);
-
-        // Insert BEFORE message-content so activity appears above text
-        var msgContent = currentAssistantMessage.querySelector('.message-content');
-        currentAssistantMessage.insertBefore(currentActivitySection, msgContent);
+    // Route thinking into the same Explore dropdown used for tool activity.
+    var group = _taEnsureGroup(container, true);
+    var itemsEl = group ? group.querySelector('.ta-group-items') : null;
+    if (itemsEl) {
+        _taRenderThought(itemsEl, 'running', 'Thinking');
+        _taUpdateGroupHeader();
+        smartScroll(container);
     }
-
-    var list = currentActivitySection.querySelector('.activity-list');
-    if (!list) return;
-
-    // -- FREEZE any previous thinking item ---------------------------------
-    // Convert ALL existing thinking-indicator elements to static state
-    var prevThinking = document.getElementById('thinking-indicator');
-    if (prevThinking) {
-        prevThinking.removeAttribute('id');          // de-register old id
-        prevThinking.className = 'activity-item';    // removes 'thinking' class ? stops blink
-        var dotsEl = prevThinking.querySelector('.thinking-dots');
-        if (dotsEl) dotsEl.textContent = '.';       // replace '...' with static bullet
-    }
-
-    // -- Add new ACTIVE thinking item at the bottom of the list ------------
-    var thinkingItem = document.createElement('div');
-    thinkingItem.className = 'activity-item thinking';
-    thinkingItem.id = 'thinking-indicator';
-    thinkingItem.setAttribute('data-type', 'think');
-    thinkingItem.innerHTML = '<span class="activity-op">Think</span><span class="thinking-dots">...</span> <span class="activity-text">Thinking</span>';
-    list.appendChild(thinkingItem);
-
-    // Update thinking duration every second
-    if (thinkingInterval) clearInterval(thinkingInterval);
-    thinkingInterval = setInterval(function() {
-        var elapsed = Math.floor((Date.now() - activityStartTime) / 1000);
-        var item = document.getElementById('thinking-indicator');
-        if (item) {
-            item.querySelector('.activity-text').textContent = 'Thinking - ' + elapsed + 's';
-        }
-    }, 1000);
-
-    smartScroll(container);
 }
 
 function hideThinking() {
@@ -4067,6 +4217,14 @@ function hideThinking() {
         if (opEl) {
             opEl.style.animation = 'none';   // stop badgePulse
             opEl.style.opacity = '0.4';
+        }
+    }
+
+    if (_taCurrentGroup) {
+        var itemsEl = _taCurrentGroup.querySelector('.ta-group-items');
+        if (itemsEl) {
+            _taRenderThought(itemsEl, 'complete', '');
+            _taUpdateGroupHeader();
         }
     }
     
@@ -12447,9 +12605,10 @@ function formatMessage(text, isUser) {
                 if (lang === 'mermaid') {
                     var mermaidId = 'mermaid-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
                     var encodedCode = cleanCode.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-                    return '<div class="mermaid-wrapper"><div class="mermaid-header">' +
+                    return '<div class="mermaid-wrapper collapsed"><div class="mermaid-header">' +
                         '<span><i class="fas fa-project-diagram"></i> Architecture Diagram</span>' +
                         '<div class="mermaid-actions">' +
+                        '<button class="mermaid-action-btn mermaid-toggle-btn" onclick="toggleMermaidCard(this)" aria-label="Expand diagram" title="Expand">></button>' +
                         '<button class="mermaid-action-btn" onclick="openMermaidPopup(this)" data-mermaid-src="' + encodedCode + '"><i class="fas fa-expand"></i> Expand</button>' +
                         '<button class="mermaid-action-btn" onclick="copyMermaidCode(this)" data-mermaid-src="' + encodedCode + '"><i class="fas fa-copy"></i> Copy</button>' +
                         '</div></div>' +
@@ -12590,6 +12749,17 @@ function copyMermaidCode(btn) {
             }, 2000);
         });
     }
+}
+
+function toggleMermaidCard(btn) {
+    if (!btn) return;
+    var wrapper = btn.closest('.mermaid-wrapper');
+    if (!wrapper) return;
+
+    var isCollapsed = wrapper.classList.toggle('collapsed');
+    btn.textContent = isCollapsed ? '>' : '^';
+    btn.setAttribute('aria-label', isCollapsed ? 'Expand diagram' : 'Collapse diagram');
+    btn.setAttribute('title', isCollapsed ? 'Expand' : 'Collapse');
 }
 
 function decodeMermaidSource(src) {

@@ -1,239 +1,164 @@
 venv) PS C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex> python src\main.py 
 [MAIN] Loaded .env from: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\.env
-[13:54:28] INFO agent_bridge: [BRIDGE] Real agent bootstrap/state loaded
-[13:54:28] INFO agent_bridge: [BRIDGE] Real FileReadTool loaded
-[13:54:28] INFO agent_bridge: [BRIDGE] Real FileEditTool loaded
-[13:54:28] INFO agent_bridge: [BRIDGE] Real FileWriteTool loaded
-[13:54:28] INFO agent_bridge: [BRIDGE] Real GlobTool loaded
-[13:54:28] INFO agent_bridge: [BRIDGE] Real GrepTool loaded
-[13:54:28] INFO agent_bridge: [BRIDGE] Real AbortController loaded from utils.abortController
+[16:49:32] INFO agent_bridge: [BRIDGE] Real agent bootstrap/state loaded
+[16:49:32] INFO agent_bridge: [BRIDGE] Real FileReadTool loaded
+[16:49:32] INFO agent_bridge: [BRIDGE] Real FileEditTool loaded
+[16:49:32] INFO agent_bridge: [BRIDGE] Real FileWriteTool loaded
+[16:49:32] INFO agent_bridge: [BRIDGE] Real GlobTool loaded
+[16:49:32] INFO agent_bridge: [BRIDGE] Real GrepTool loaded
+[16:49:32] INFO agent_bridge: [BRIDGE] Real AbortController loaded from utils.abortController
 C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\venv\Lib\site-packages\requests\__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (7.4.3)/charset_normalizer (3.4.6) doesn't match a supported version!
   warnings.warn(
-[13:54:29] WARNING main_window: Syntax highlighting module not available
-[13:54:29] INFO main: Starting Cortex AI Agent IDE...
-[13:54:29] INFO main_window: MainWindow: __init__ START
-[13:54:29] INFO main_window: MainWindow: Initializing managers...
-[13:54:29] INFO main_window: [GIT] GitManager initialized
-[13:54:29] INFO agent_bridge: [BRIDGE] Initialising Cortex Agent Bridge
-[13:54:29] INFO agent_bridge: [BRIDGE] Agent state: cwd=C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex, session=default
-[13:54:29] INFO agent_bridge: [CTX] Model limits: mistral-large-latest -> file_cap=73,140 chars
-[13:54:29] INFO agent_bridge: [BRIDGE] FileReadTool instance created
-[13:54:29] INFO streaming: StreamingEventEmitter initialized
-[13:54:29] INFO agent_bridge: [BRIDGE] Streaming emitter connected
-[13:54:29] INFO agent_bridge: [BRIDGE] Agent bridge ready
-[13:54:29] INFO provider_registry: MistralProvider registered
-[13:54:29] WARNING siliconflow_provider: SiliconFlow API key not configured
-[13:54:29] INFO provider_registry: SiliconFlowProvider registered
-[13:54:29] INFO agent_bridge: [BRIDGE] Provider registry pre-warmed
-[13:54:29] INFO agent_bridge: [BRIDGE] file_edit_notification signal initialized     
-[13:54:29] INFO main_window: [AGENT] Agent bridge initialized - full integration active
-[13:54:29] INFO main_window: MainWindow: Building UI...
+[16:49:33] WARNING main_window: Syntax highlighting module not available
+[16:49:33] INFO main: Starting Cortex AI Agent IDE...
+[16:49:33] INFO main_window: MainWindow: __init__ START
+[16:49:33] INFO main_window: MainWindow: Initializing managers...
+[16:49:33] INFO main_window: [GIT] GitManager initialized
+[16:49:33] INFO agent_bridge: [BRIDGE] Initialising Cortex Agent Bridge
+[16:49:33] INFO agent_bridge: [BRIDGE] Agent state: cwd=C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex, session=default
+[16:49:33] INFO agent_bridge: [CTX] Model limits: mistral-large-latest -> file_cap=73,140 chars
+[16:49:33] INFO agent_bridge: [BRIDGE] FileReadTool instance created
+[16:49:33] INFO streaming: StreamingEventEmitter initialized
+[16:49:33] INFO agent_bridge: [BRIDGE] Streaming emitter connected
+[16:49:33] INFO agent_bridge: [BRIDGE] Agent bridge ready
+[16:49:33] INFO provider_registry: MistralProvider registered
+[16:49:33] WARNING siliconflow_provider: SiliconFlow API key not configured
+[16:49:33] INFO provider_registry: SiliconFlowProvider registered
+[16:49:33] INFO agent_bridge: [BRIDGE] Provider registry pre-warmed
+[16:49:33] INFO agent_bridge: [BRIDGE] file_edit_notification signal initialized     
+[16:49:33] INFO main_window: [AGENT] Agent bridge initialized - full integration active
+[16:49:33] INFO main_window: MainWindow: Building UI...
 [WEBVIEW] Setting persistent storage path: C:\Users\Hakeem1\.cortex\webengine_storage
 [WEBVIEW] HTTP cache cleared
 [WEBVIEW] HTTP cache set to disk
 [WEBVIEW] Persistent storage path set: C:\Users\Hakeem1\.cortex\webengine_storage    
-[13:54:30] INFO main_window: [ChatList] Connected chat_list_updated_with_data signal to _refresh_sidebar_chat_list
-[13:54:30] INFO main_window: MainWindow: Building Menu...
-[13:54:30] INFO main_window: MainWindow: Building Status Bar...
-[13:54:30] INFO main_window: MainWindow: Connecting signals...
-[13:54:30] INFO main_window: [Diff-Debug] Connecting show_diff_requested to _on_show_diff. Signal exists: True
-[13:54:30] INFO main_window: [CortexDiffBridge] Accept/Reject signals wired
-[13:54:30] INFO main_window: Permission system initialized and connected to main window
-[13:54:30] INFO main_window: MainWindow: Applying initial theme...
-[13:54:31] INFO main_window: MainWindow: Restoring session...
-[13:54:31] INFO main_window: Restoring last session project...
-[13:54:31] INFO project_manager: Opened project: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[13:54:31] INFO main_window: Project opened: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[13:54:31] INFO main_window: 🆕 First project load - skipping cleanup
-[13:54:31] INFO agent_bridge: [BRIDGE] project root → C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[13:54:31] INFO main_window: [GIT] Repository set on project-opened: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex (ok=True)
-[13:54:31] INFO lsp_manager: LSP project root updated: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[13:54:31] INFO sidebar: 📁 Setting project root: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[13:54:31] INFO sidebar:    ✓ Model root index: 0, 0
-[13:54:31] INFO sidebar:    ✓ Model root path: C:/Users/Hakeem1/OneDrive/Desktop/Cortex_Ai_Agent/Cortex
-[13:54:31] INFO sidebar:    ✓ Tree root set successfully
-[13:54:31] WARNING database: FTS5 not available, code search disabled: table code_fts has no column named file_path
-[13:54:31] INFO database: Database indexes created (optimized for C:\Users\Hakeem1\.cortex\cortex.db)
-[13:54:31] INFO database: Cortex database initialized at C:\Users\Hakeem1\.cortex\cortex.db
-[13:54:31] INFO ai_chat: ðŸ“¥ Found 0 conversations for project C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[13:54:31] WARNING ai_chat: No chats found in database for project C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[13:54:31] INFO ai_chat: Chat page not loaded yet; deferring project info
-[13:54:31] INFO main_window: [FILE TREE] Restoring project root: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[13:54:31] INFO main_window: [GIT] Repository restored to: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[13:54:31] INFO main_window: Restoring 0 files...
-[13:54:31] INFO main_window: MainWindow: Initialization complete.
-[13:54:31] INFO main_window: [ICON] Successfully loaded icon: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\assets\logo\taskbar_rounded.png
-[13:54:32] INFO main: Application ready. Entering event loop...
-[13:54:32] INFO main: Calling app.exec()...
-[13:54:32] INFO main: Window is visible: True
-[13:54:32] INFO main: Window is active: True
-[13:54:32] INFO main: Window geometry: PyQt6.QtCore.QRect(100, 100, 1130, 785)       
+[16:49:34] INFO main_window: [ChatList] Connected chat_list_updated_with_data signal to _refresh_sidebar_chat_list
+[16:49:35] INFO main_window: MainWindow: Building Menu...
+[16:49:35] INFO main_window: MainWindow: Building Status Bar...
+[16:49:35] INFO main_window: MainWindow: Connecting signals...
+[16:49:35] INFO main_window: [Diff-Debug] Connecting show_diff_requested to _on_show_diff. Signal exists: True
+[16:49:35] INFO main_window: [CortexDiffBridge] Accept/Reject signals wired
+[16:49:35] INFO main_window: Permission system initialized and connected to main window
+[16:49:35] INFO main_window: MainWindow: Applying initial theme...
+[16:49:35] INFO main_window: MainWindow: Restoring session...
+[16:49:35] INFO main_window: Restoring last session project...
+[16:49:35] INFO project_manager: Opened project: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
+[16:49:35] INFO main_window: Project opened: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
+[16:49:35] INFO main_window: 🆕 First project load - skipping cleanup
+[16:49:35] INFO agent_bridge: [BRIDGE] project root → C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
+[16:49:35] INFO main_window: [GIT] Repository set on project-opened: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex (ok=True)
+[16:49:35] INFO lsp_manager: LSP project root updated: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
+[16:49:35] INFO sidebar: 📁 Setting project root: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
+[16:49:35] INFO sidebar:    ✓ Model root index: 0, 0
+[16:49:35] INFO sidebar:    ✓ Model root path: C:/Users/Hakeem1/OneDrive/Desktop/Cortex_Ai_Agent/Cortex
+[16:49:35] INFO sidebar:    ✓ Tree root set successfully
+[16:49:36] WARNING database: FTS5 not available, code search disabled: table code_fts has no column named file_path
+[16:49:36] INFO database: Database indexes created (optimized for C:\Users\Hakeem1\.cortex\cortex.db)
+[16:49:36] INFO database: Cortex database initialized at C:\Users\Hakeem1\.cortex\cortex.db
+[16:49:36] INFO ai_chat: ðŸ“¥ Found 1 conversations for project C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
+[16:49:36] INFO ai_chat: âœ… Loaded 1 chat(s) for project C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex (166 chars)
+[16:49:36] INFO main_window: [ChatList] Initial population with 1 chats
+[16:49:36] INFO main_window: [ChatList] _refresh_sidebar_chat_list called
+[16:49:36] INFO main_window: [ChatList] Parsed 1 chats from JS data
+[16:49:36] INFO main_window: [ChatList] Sidebar refreshed with 1 chats
+[16:49:36] INFO ai_chat: Chat page not loaded yet; deferring project info
+[16:49:36] INFO main_window: [FILE TREE] Restoring project root: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
+[16:49:36] INFO main_window: [GIT] Repository restored to: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
+[16:49:36] INFO main_window: Restoring 3 files...
+[16:49:36] INFO main_window: Opening file: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\project_structure_analysis.md
+[16:49:36] INFO main_window: [Snapshot] Stored initial snapshot: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\project_structure_analysis.md (7451 chars)      
+[16:49:36] INFO main_window: Content read (7451 chars). Detecting language...        
+[16:49:36] INFO main_window: Language detected: markdown. Opening index in tabs...   
+[Editor] Applied dark theme: bg=#181818, fg=#d6d6dd
+[Editor] Palette Base: #181818
+[Editor] Palette Text: #d6d6dd
+[Editor] Using font: Cascadia Code
+[Editor] Applied dark theme: bg=#181818, fg=#d6d6dd
+[Editor] Palette Base: #181818
+[Editor] Palette Text: #d6d6dd
+[Editor] Using font: Cascadia Code
+[Editor] set_content: 7451 chars, triggering highlighting
+[Editor] Applied dark theme: bg=#181818, fg=#d6d6dd
+[Editor] Palette Base: #181818
+[Editor] Palette Text: #d6d6dd
+[Editor] Using font: Cascadia Code
+[16:49:36] INFO main_window: File opened successfully: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\project_structure_analysis.md
+[16:49:36] INFO main_window: Opening file: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\project_index.json
+[16:49:36] INFO file_manager: Auto-enabled lazy loading for large file: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\project_index.json
+[16:49:36] INFO file_manager: Mmap loaded: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\project_index.json[1-101] (2.51MB) in 14.4ms
+[16:49:36] INFO main_window: [Snapshot] Stored initial snapshot: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\project_index.json (3747 chars)
+[16:49:36] INFO main_window: Content read (3747 chars). Detecting language...        
+[16:49:36] INFO main_window: Language detected: json. Opening index in tabs...       
+[Editor] Applied dark theme: bg=#181818, fg=#d6d6dd
+[Editor] Palette Base: #181818
+[Editor] Palette Text: #d6d6dd
+[Editor] Using font: Cascadia Code
+[Editor] Applied dark theme: bg=#181818, fg=#d6d6dd
+[Editor] Palette Base: #181818
+[Editor] Palette Text: #d6d6dd
+[Editor] Using font: Cascadia Code
+[16:49:36] INFO lsp_manager: LSP server json: disconnected -> connecting
+[16:49:36] INFO lsp_manager: Starting LSP server 'json': C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\bin\node\node.exe C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\node_modules\vscode-langservers-extracted\bin/vscode-json-language-server --stdio
+[16:49:36] INFO project_context: Project context built in 330ms for C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
+[16:49:36] INFO lsp_manager: LSP server json: connecting -> initializing
+[16:49:36] INFO lsp_manager: LSP initialize rootUri=file:///C:/Users/Hakeem1/OneDrive/Desktop/Cortex_Ai_Agent/Cortex
+[Editor] set_content: 3747 chars, triggering highlighting
+[Editor] Applied dark theme: bg=#181818, fg=#d6d6dd
+[Editor] Palette Base: #181818
+[Editor] Palette Text: #d6d6dd
+[Editor] Using font: Cascadia Code
+[16:49:36] INFO main_window: File opened successfully: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\project_index.json
+[16:49:36] INFO main_window: Opening file: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\project_index_updated.json
+[16:49:36] INFO main_window: [Snapshot] Stored initial snapshot: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\project_index_updated.json (3944 chars)
+[16:49:36] INFO main_window: Content read (3944 chars). Detecting language...        
+[16:49:36] INFO main_window: Language detected: json. Opening index in tabs...       
+[Editor] Applied dark theme: bg=#181818, fg=#d6d6dd
+[Editor] Palette Base: #181818
+[Editor] Palette Text: #d6d6dd
+[Editor] Using font: Cascadia Code
+[Editor] Applied dark theme: bg=#181818, fg=#d6d6dd
+[Editor] Palette Base: #181818
+[Editor] Palette Text: #d6d6dd
+[Editor] Using font: Cascadia Code
+[Editor] set_content: 3944 chars, triggering highlighting
+[Editor] Applied dark theme: bg=#181818, fg=#d6d6dd
+[Editor] Palette Base: #181818
+[Editor] Palette Text: #d6d6dd
+[Editor] Using font: Cascadia Code
+[16:49:36] INFO main_window: File opened successfully: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\project_index_updated.json
+[16:49:36] INFO main_window: MainWindow: Initialization complete.
+[16:49:36] INFO main_window: [ICON] Successfully loaded icon: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\assets\logo\taskbar_rounded.png
+[16:49:36] INFO main: Application ready. Entering event loop...
+[16:49:36] INFO main: Calling app.exec()...
+[16:49:36] INFO main: Window is visible: True
+[16:49:36] INFO main: Window is active: True
+[16:49:36] INFO main: Window geometry: PyQt6.QtCore.QRect(100, 100, 1130, 785)       
 [WEBVIEW] Loading page after cache clearing delay...
-[WEBVIEW] URL set: file:///C:/Users/Hakeem1/OneDrive/Desktop/Cortex_Ai_Agent/Cortex/src/ui/html/ai_chat/aichat.html?v=1777110872&nocache=1
-[13:54:32] INFO main_window: [GIT] Updating git summary (background)...
-[13:54:32] INFO main_window: [FILE TREE] Setting project root: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[13:54:32] INFO main_window: [FILE TREE] Model root index: 0, 0
-[13:54:32] INFO main_window: [FILE TREE] Model root path: C:/Users/Hakeem1/OneDrive/Desktop/Cortex_Ai_Agent/Cortex
-[13:54:32] INFO main_window: [FILE TREE] Tree root set successfully
-[13:54:32] INFO project_context: Project context built in 537ms for C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[13:54:32] INFO project_context: Project context cached for: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
+[WEBVIEW] URL set: file:///C:/Users/Hakeem1/OneDrive/Desktop/Cortex_Ai_Agent/Cortex/src/ui/html/ai_chat/aichat.html?v=1777121376&nocache=1
+[16:49:36] INFO main_window: [GIT] Updating git summary (background)...
+[16:49:36] INFO main_window: [FILE TREE] Setting project root: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
+[16:49:36] INFO main_window: [FILE TREE] Model root index: 0, 0
+[16:49:36] INFO main_window: [FILE TREE] Model root path: C:/Users/Hakeem1/OneDrive/Desktop/Cortex_Ai_Agent/Cortex
+[16:49:36] INFO main_window: [FILE TREE] Tree root set successfully
+[16:49:36] INFO project_context: Project context cached for: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
+[SyntaxChecker] Checked C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\project_structure_analysis.md (unknown): Found 0 errors.
+[SyntaxChecker] Checked C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\project_index.json (json): Found 1 errors.
+[SyntaxChecker] Checked C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\project_index_updated.json (json): Found 1 errors.
+[16:49:37] INFO lsp_manager: LSP server json: initializing -> ready
+[16:49:37] INFO lsp_manager: LSP json: flushing 6 deferred notifications
+[16:49:37] INFO lsp_manager: LSP server json is ready.
+[LSP DIAGNOSTICS] file:///C:/Users/Hakeem1/OneDrive/Desktop/Cortex_Ai_Agent/Cortex/virtual_file.json: 0 errors
+[LSP DIAGNOSTICS] file:///C:/Users/Hakeem1/OneDrive/Desktop/Cortex_Ai_Agent/Cortex/project_index.json: 2 errors
+  - Property expected
+  - Property expected
+[LSP DIAGNOSTICS] file:///C:/Users/Hakeem1/OneDrive/Desktop/Cortex_Ai_Agent/Cortex/project_index_updated.json: 1 errors
+  - Property expected
 [JS INFO] [CHAT] ? window.trySetProjectInfo defined at page load
 [JS INFO] [CHAT] Bridge initialized successfully
 [JS ERROR] Uncaught TypeError: Cannot read properties of undefined (reading 'connect')
-[13:54:33] INFO ai_chat: set_project_info called: name=Cortex, path=C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex, chats_json length=2
-[13:54:33] INFO ai_chat: Parsed 0 chats for JS
-[13:54:33] INFO ai_chat: Calling JavaScript: trySetProjectInfoWithChats(...)
-[JS INFO] [CHAT] trySetProjectInfoWithChats called (attempt 1 ): Cortex C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[JS INFO] [CHAT] Calling setProjectInfoWithChats now
-[JS INFO] [CHAT] setProjectInfoWithChats called: Cortex C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[JS INFO] [CHAT] Received chat data from Python: 0 items
-[JS INFO] [CHAT] ? currentProjectPath SET to: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[JS INFO] [CHAT] No saved chats found in Python metadata or localStorage
-[JS INFO] [CHAT] Storage key for path "C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex" (normalized: "c:/users/hakeem1/onedrive/desktop/cortex_ai_agent/cortex") = cortex_chats_40582b0a
-[13:54:33] INFO ai_chat: JS Save finished signal received from bridge: OK
-[JS INFO] [CHAT] New chat created and sidebar notified
-[13:54:33] INFO ai_chat: [AI_CHAT] JS function not ready, scheduling single retry... 
-[JS INFO] [CHAT] getChatList called, returning 1 chats: [{"id":"1777110873714","title":"New Conversation","timestamp":1777110873723,"messageCount":0}]
-[13:54:33] INFO ai_chat: [ChatList] JS notified chat list updated with data
-[13:54:33] INFO main_window: [ChatList] _refresh_sidebar_chat_list called
-[13:54:33] INFO main_window: [ChatList] Parsed 1 chats from JS data
-[13:54:33] INFO main_window: [ChatList] Sidebar refreshed with 1 chats
-[13:54:33] INFO ai_chat: [ChatList] chat_list_updated_with_data signal emitted       
-[JS INFO] [CHAT] Skipping duplicate setProjectInfoWithChats for: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[13:54:35] INFO ai_chat: [AIChat] Routing text-only message through performance mode: auto
-[13:54:35] INFO ai_chat: [AIChat] Text routing: provider=mistral, model=mistral-small-latest, mode=auto
-[13:54:35] INFO ai_chat: [AIChat] Auto mode text: auto-selected mistral-medium-latest
-[13:54:35] INFO ai_chat: [AIChat] Single agent text: provider=mistral, model=mistral-medium-latest, max_tokens=4096
-[13:54:35] INFO ai_chat: [AIChat] Token multiplier: 1.0x (max_tokens: 4096)
-[13:54:35] INFO ai_chat: [AIChat] Emitting model_changed signal: mistral-medium-latest (provider: mistral)
-[13:54:35] INFO ai_chat: [AIChat] Sending message with model: mistral-medium-latest, token_multiplier: 1.0x
-[13:54:35] INFO main_window: [MainWindow] DEBUG: model_id='mistral-medium-latest'    
-[13:54:35] INFO main_window: [MainWindow] Model changed to: mistral-medium-latest (provider: mistral)
-[13:54:35] INFO agent_bridge: [BRIDGE] process_message task_id=sel5n04pa: what is difrent between , js , python , rust , go...
-[13:54:35] INFO agent_bridge: [CTX] Model limits: mistral-medium-latest -> file_cap=73,140 chars
-[13:54:35] INFO agent_bridge: [BRIDGE] Updated tool context for model: mistral-medium-latest
-[13:54:35] INFO agent_bridge: [BRIDGE] mistral-medium-latest: ctx=128K tokens, out=4,096 tokens, tool_cap=24K chars, hist_cap=19K chars, turns=30
-[13:54:35] INFO agent_bridge: [BRIDGE] provider=mistral model=mistral-medium-latest  
-[JS INFO] [CHAT] getChatList called, returning 1 chats: [{"id":"1777110873714","title":"what is difrent between , js , python , ...","timestamp":1777110873723,"messageCount":1}]
-[13:54:35] INFO ai_chat: [ChatList] JS notified chat list updated with data
-[13:54:35] INFO main_window: [ChatList] _refresh_sidebar_chat_list called
-[13:54:35] INFO main_window: [ChatList] Parsed 1 chats from JS data
-[13:54:35] INFO main_window: [ChatList] Sidebar refreshed with 1 chats
-[13:54:35] INFO ai_chat: [ChatList] chat_list_updated_with_data signal emitted       
-[JS INFO] [CHAT] getChatList called, returning 1 chats: [{"id":"1777110873714","title":"what is difrent between , js , python , ...","timestamp":1777110873723,"messageCount":1}]
-[13:54:35] INFO ai_chat: [ChatList] JS notified chat list updated with data
-[13:54:35] INFO main_window: [ChatList] _refresh_sidebar_chat_list called
-[13:54:35] INFO main_window: [ChatList] Parsed 1 chats from JS data
-[13:54:35] INFO main_window: [ChatList] Sidebar refreshed with 1 chats
-[13:54:35] INFO ai_chat: [ChatList] chat_list_updated_with_data signal emitted       
-[JS INFO] [CHAT] Storage key for path "C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex" (normalized: "c:/users/hakeem1/onedrive/desktop/cortex_ai_agent/cortex") = cortex_chats_40582b0a
-[13:54:35] INFO ai_chat: JS Save finished signal received from bridge: OK
-[13:54:37] INFO agent_bridge: [BRIDGE] Loaded 6 tools from tool_registry
-[13:54:37] INFO agent_bridge: [BRIDGE] Total tools after merge: 20
-[13:54:37] INFO agent_bridge: [BRIDGE] === Agentic turn 1/30 ===
-[13:54:37] INFO mistral_provider: [Mistral] Attempt 1/3 with model: mistral-medium-latest
-[13:54:37] INFO mistral_provider: [MISTRAL] Formatted 20 tools for API (from 20 input tools)
-[13:54:37] INFO mistral_provider: [MISTRAL] Sending 20 tools to API
-[13:54:51] INFO agent_bridge: [BRIDGE] No tool calls on turn 1 — done
-[JS INFO] [CHAT] onComplete: displayText length: 6108
-[JS INFO] [CHAT] onComplete: contentDiv.innerHTML length: 7369
-[JS INFO] [CHAT] Storage key for path "C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex" (normalized: "c:/users/hakeem1/onedrive/desktop/cortex_ai_agent/cortex") = cortex_chats_40582b0a
-[13:54:51] INFO ai_chat: JS Save finished signal received from bridge: OK
-[13:54:59] INFO main_window: Persisting AI chat history before close...
-[JS INFO] [CHAT] Storage key for path "C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex" (normalized: "c:/users/hakeem1/onedrive/desktop/cortex_ai_agent/cortex") = cortex_chats_40582b0a
-[13:54:59] INFO ai_chat: JS Save finished signal received from bridge: OK
-[13:54:59] INFO main_window: AI chat persistence finished with status: OK
-[13:54:59] INFO main_window: AI chat persistence confirmed.
-[13:54:59] INFO main: Application exited with code 0
-(venv) PS C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex> python src\main.py 
-[MAIN] Loaded .env from: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\.env
-[13:55:08] INFO agent_bridge: [BRIDGE] Real agent bootstrap/state loaded
-[13:55:08] INFO agent_bridge: [BRIDGE] Real FileReadTool loaded
-[13:55:08] INFO agent_bridge: [BRIDGE] Real FileEditTool loaded
-[13:55:08] INFO agent_bridge: [BRIDGE] Real FileWriteTool loaded
-[13:55:08] INFO agent_bridge: [BRIDGE] Real GlobTool loaded
-[13:55:08] INFO agent_bridge: [BRIDGE] Real GrepTool loaded
-[13:55:08] INFO agent_bridge: [BRIDGE] Real AbortController loaded from utils.abortController
-C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\venv\Lib\site-packages\requests\__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (7.4.3)/charset_normalizer (3.4.6) doesn't match a supported version!
-  warnings.warn(
-[13:55:09] WARNING main_window: Syntax highlighting module not available
-[13:55:09] INFO main: Starting Cortex AI Agent IDE...
-[13:55:09] INFO main_window: MainWindow: __init__ START
-[13:55:09] INFO main_window: MainWindow: Initializing managers...
-[13:55:09] INFO main_window: [GIT] GitManager initialized
-[13:55:09] INFO agent_bridge: [BRIDGE] Initialising Cortex Agent Bridge
-[13:55:09] INFO agent_bridge: [BRIDGE] Agent state: cwd=C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex, session=default
-[13:55:09] INFO agent_bridge: [CTX] Model limits: mistral-large-latest -> file_cap=73,140 chars
-[13:55:09] INFO agent_bridge: [BRIDGE] FileReadTool instance created
-[13:55:09] INFO streaming: StreamingEventEmitter initialized
-[13:55:09] INFO agent_bridge: [BRIDGE] Streaming emitter connected
-[13:55:09] INFO agent_bridge: [BRIDGE] Agent bridge ready
-[13:55:09] INFO provider_registry: MistralProvider registered
-[13:55:09] WARNING siliconflow_provider: SiliconFlow API key not configured
-[13:55:09] INFO provider_registry: SiliconFlowProvider registered
-[13:55:09] INFO agent_bridge: [BRIDGE] Provider registry pre-warmed
-[13:55:09] INFO agent_bridge: [BRIDGE] file_edit_notification signal initialized     
-[13:55:09] INFO main_window: [AGENT] Agent bridge initialized - full integration active
-[13:55:09] INFO main_window: MainWindow: Building UI...
-[WEBVIEW] Setting persistent storage path: C:\Users\Hakeem1\.cortex\webengine_storage
-[WEBVIEW] HTTP cache cleared
-[WEBVIEW] HTTP cache set to disk
-[WEBVIEW] Persistent storage path set: C:\Users\Hakeem1\.cortex\webengine_storage    
-[13:55:11] INFO main_window: [ChatList] Connected chat_list_updated_with_data signal to _refresh_sidebar_chat_list
-[13:55:11] INFO main_window: MainWindow: Building Menu...
-[13:55:11] INFO main_window: MainWindow: Building Status Bar...
-[13:55:11] INFO main_window: MainWindow: Connecting signals...
-[13:55:11] INFO main_window: [Diff-Debug] Connecting show_diff_requested to _on_show_diff. Signal exists: True
-[13:55:11] INFO main_window: [CortexDiffBridge] Accept/Reject signals wired
-[13:55:11] INFO main_window: Permission system initialized and connected to main window
-[13:55:11] INFO main_window: MainWindow: Applying initial theme...
-[13:55:11] INFO main_window: MainWindow: Restoring session...
-[13:55:11] INFO main_window: Restoring last session project...
-[13:55:11] INFO project_manager: Opened project: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[13:55:11] INFO main_window: Project opened: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[13:55:11] INFO main_window: 🆕 First project load - skipping cleanup
-[13:55:11] INFO agent_bridge: [BRIDGE] project root → C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[13:55:11] INFO main_window: [GIT] Repository set on project-opened: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex (ok=True)
-[13:55:11] INFO lsp_manager: LSP project root updated: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[13:55:11] INFO sidebar: 📁 Setting project root: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[13:55:11] INFO sidebar:    ✓ Model root index: 0, 0
-[13:55:11] INFO sidebar:    ✓ Model root path: C:/Users/Hakeem1/OneDrive/Desktop/Cortex_Ai_Agent/Cortex
-[13:55:11] INFO sidebar:    ✓ Tree root set successfully
-[13:55:12] WARNING database: FTS5 not available, code search disabled: table code_fts has no column named file_path
-[13:55:12] INFO database: Database indexes created (optimized for C:\Users\Hakeem1\.cortex\cortex.db)
-[13:55:12] INFO database: Cortex database initialized at C:\Users\Hakeem1\.cortex\cortex.db
-[13:55:12] INFO ai_chat: ðŸ“¥ Found 1 conversations for project C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[13:55:12] INFO ai_chat: âœ… Loaded 1 chat(s) for project C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex (163 chars)
-[13:55:12] INFO main_window: [ChatList] Initial population with 1 chats
-[13:55:12] INFO main_window: [ChatList] _refresh_sidebar_chat_list called
-[13:55:12] INFO main_window: [ChatList] Parsed 1 chats from JS data
-[13:55:12] INFO main_window: [ChatList] Sidebar refreshed with 1 chats
-[13:55:12] INFO ai_chat: Chat page not loaded yet; deferring project info
-[13:55:12] INFO main_window: [FILE TREE] Restoring project root: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[13:55:12] INFO main_window: [GIT] Repository restored to: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[13:55:12] INFO main_window: Restoring 0 files...
-[13:55:12] INFO main_window: MainWindow: Initialization complete.
-[13:55:12] INFO main_window: [ICON] Successfully loaded icon: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\assets\logo\taskbar_rounded.png
-[13:55:12] INFO main: Application ready. Entering event loop...
-[13:55:12] INFO main: Calling app.exec()...
-[13:55:12] INFO main: Window is visible: True
-[13:55:12] INFO main: Window is active: True
-[13:55:12] INFO main: Window geometry: PyQt6.QtCore.QRect(100, 100, 1130, 785)       
-[WEBVIEW] Loading page after cache clearing delay...
-[WEBVIEW] URL set: file:///C:/Users/Hakeem1/OneDrive/Desktop/Cortex_Ai_Agent/Cortex/src/ui/html/ai_chat/aichat.html?v=1777110912&nocache=1
-[13:55:12] INFO main_window: [GIT] Updating git summary (background)...
-[13:55:12] INFO main_window: [FILE TREE] Setting project root: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[13:55:12] INFO main_window: [FILE TREE] Model root index: 0, 0
-[13:55:12] INFO main_window: [FILE TREE] Model root path: C:/Users/Hakeem1/OneDrive/Desktop/Cortex_Ai_Agent/Cortex
-[13:55:12] INFO main_window: [FILE TREE] Tree root set successfully
-[13:55:12] INFO project_context: Project context built in 389ms for C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[13:55:12] INFO project_context: Project context cached for: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[JS INFO] [CHAT] ? window.trySetProjectInfo defined at page load
-[JS INFO] [CHAT] Bridge initialized successfully
-[JS ERROR] Uncaught TypeError: Cannot read properties of undefined (reading 'connect')
-[13:55:13] INFO ai_chat: set_project_info called: name=Cortex, path=C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex, chats_json length=163
-[13:55:13] INFO ai_chat: Parsed 1 chats for JS
-[13:55:13] INFO ai_chat: Calling JavaScript: trySetProjectInfoWithChats(...)
+[16:49:38] INFO ai_chat: set_project_info called: name=Cortex, path=C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex, chats_json length=166
+[16:49:38] INFO ai_chat: Parsed 1 chats for JS
+[16:49:38] INFO ai_chat: Calling JavaScript: trySetProjectInfoWithChats(...)
 [JS INFO] [CHAT] trySetProjectInfoWithChats called (attempt 1 ): Cortex C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
 [JS INFO] [CHAT] Calling setProjectInfoWithChats now
 [JS INFO] [CHAT] setProjectInfoWithChats called: Cortex C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
@@ -241,18 +166,79 @@ C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\venv\Lib\site-packages\
 [JS INFO] [CHAT] ? currentProjectPath SET to: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
 [JS INFO] [CHAT] Parsed 1 chat metadata from Python data
 [JS INFO] [CHAT] Sidebar rendered with 1 chats (metadata only)
-[JS INFO] [CHAT] loadChat called with ID: 1777110873714
-[JS INFO] [CHAT] Found chat: what is difrent between , js , python , ... Messages: 0 Message count: 2
+[JS INFO] [CHAT] loadChat called with ID: 1777121220674
+[JS INFO] [CHAT] Found chat: index this project ,C:\Users\Hakeem1\One... Messages: 0 Message count: 2
 [JS INFO] [CHAT] canLazyLoad: true needsLazyLoad: true msgCount: 0 message_count: 2  
-[JS INFO] [CHAT] Lazy loading messages for chat: 1777110873714
-[JS INFO] [CHAT] Requesting lazy load from bridge for: 1777110873714
-[13:55:13] INFO ai_chat: âœ“ Restored 2 messages for chat 1777110873714
-[JS INFO] [CHAT] bridge.load_full_chat CALLED for ID: 1777110873714
-[13:55:13] INFO ai_chat: [AI_CHAT] JS function not ready, scheduling single retry... 
-[JS INFO] [CHAT] >>> chatFullLoadHandler START for id: 1777110873714 messages: 2     
+[JS INFO] [CHAT] Lazy loading messages for chat: 1777121220674
+[JS INFO] [CHAT] Requesting lazy load from bridge for: 1777121220674
+[16:49:38] INFO ai_chat: âœ“ Restored 2 messages for chat 1777121220674
+[JS INFO] [CHAT] bridge.load_full_chat CALLED for ID: 1777121220674
+[16:49:38] INFO ai_chat: [AI_CHAT] JS function not ready, scheduling single retry... 
+[JS INFO] [CHAT] >>> chatFullLoadHandler START for id: 1777121220674 messages: 2     
 [JS INFO] [CHAT] Finished rendering all 2 messages
 [JS INFO] [CHAT] <<< chatFullLoadHandler END
 [JS INFO] [CHAT] Triggering post-process renderers (MathJax/Mermaid) for container: chatMessages
 [JS INFO] [CHAT] Skipping duplicate setProjectInfoWithChats for: C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex
-[13:55:41] INFO main_window: [GIT] Updating git summary (background)...
-[13:56:11] INFO main_window: [GIT] Updating git summary (background)...
+[16:49:56] INFO main_window: Chat deleted: index this project ,C:\Users\Hakeem1\One... (ID: 1777121220674)
+[16:49:56] INFO ai_chat: âœ“ Deleted conversation 1777121220674 from SQLite
+[JS INFO] [CHAT] Storage key for path "C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex" (normalized: "c:/users/hakeem1/onedrive/desktop/cortex_ai_agent/cortex") = cortex_chats_40582b0a
+[16:49:56] INFO ai_chat: JS Save finished signal received from bridge: EMPTY
+[JS INFO] [CHAT] Storage key for path "C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex" (normalized: "c:/users/hakeem1/onedrive/desktop/cortex_ai_agent/cortex") = cortex_chats_40582b0a
+[16:49:56] INFO ai_chat: JS Save finished signal received from bridge: OK
+[JS INFO] [CHAT] New chat created and sidebar notified
+[JS INFO] [CHAT] getChatList called, returning 1 chats: [{"id":"1777121396593","title":"New Conversation","timestamp":1777121396595,"messageCount":0}]
+[16:49:56] INFO ai_chat: [ChatList] JS notified chat list updated with data
+[16:49:56] INFO main_window: [ChatList] _refresh_sidebar_chat_list called
+[16:49:56] INFO main_window: [ChatList] Parsed 1 chats from JS data
+[16:49:56] INFO main_window: [ChatList] Sidebar refreshed with 1 chats
+[16:49:56] INFO ai_chat: [ChatList] chat_list_updated_with_data signal emitted       
+[16:49:59] INFO ai_chat: [AIChat] Routing text-only message through performance mode: auto
+[16:49:59] INFO ai_chat: [AIChat] Text routing: provider=mistral, model=mistral-small-latest, mode=auto
+[16:49:59] INFO ai_chat: [AIChat] Auto mode text: auto-selected mistral-medium-latest
+[16:49:59] INFO ai_chat: [AIChat] Single agent text: provider=mistral, model=mistral-medium-latest, max_tokens=4096
+[16:49:59] INFO ai_chat: [AIChat] Token multiplier: 1.0x (max_tokens: 4096)
+[16:49:59] INFO ai_chat: [AIChat] Emitting model_changed signal: mistral-medium-latest (provider: mistral)
+[16:49:59] INFO ai_chat: [AIChat] Sending message with model: mistral-medium-latest, token_multiplier: 1.0x
+[16:49:59] INFO main_window: [MainWindow] DEBUG: model_id='mistral-medium-latest'    
+[16:49:59] INFO main_window: [MainWindow] Model changed to: mistral-medium-latest (provider: mistral)
+[16:49:59] INFO agent_bridge: [BRIDGE] process_message task_id=su3505nk6: index this project ,C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src...
+[16:49:59] INFO agent_bridge: [CTX] Model limits: mistral-medium-latest -> file_cap=73,140 chars
+[16:49:59] INFO agent_bridge: [BRIDGE] Updated tool context for model: mistral-medium-latest
+[16:49:59] INFO agent_bridge: [BRIDGE] mistral-medium-latest: ctx=128K tokens, out=4,096 tokens, tool_cap=24K chars, hist_cap=19K chars, turns=30
+[16:49:59] INFO agent_bridge: [BRIDGE] provider=mistral model=mistral-medium-latest  
+[JS INFO] [CHAT] getChatList called, returning 1 chats: [{"id":"1777121396593","title":"index this project ,C:\\Users\\Hakeem1\\One...","timestamp":1777121396595,"messageCount":1}]
+[16:50:00] INFO ai_chat: [ChatList] JS notified chat list updated with data
+[16:50:00] INFO main_window: [ChatList] _refresh_sidebar_chat_list called
+[16:50:00] INFO main_window: [ChatList] Parsed 1 chats from JS data
+[16:50:00] INFO main_window: [ChatList] Sidebar refreshed with 1 chats
+[16:50:00] INFO ai_chat: [ChatList] chat_list_updated_with_data signal emitted       
+[JS INFO] [CHAT] getChatList called, returning 1 chats: [{"id":"1777121396593","title":"index this project ,C:\\Users\\Hakeem1\\One...","timestamp":1777121396595,"messageCount":1}]
+[16:50:00] INFO ai_chat: [ChatList] JS notified chat list updated with data
+[16:50:00] INFO main_window: [ChatList] _refresh_sidebar_chat_list called
+[16:50:00] INFO main_window: [ChatList] Parsed 1 chats from JS data
+[16:50:00] INFO main_window: [ChatList] Sidebar refreshed with 1 chats
+[16:50:00] INFO ai_chat: [ChatList] chat_list_updated_with_data signal emitted       
+[JS INFO] [CHAT] Storage key for path "C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex" (normalized: "c:/users/hakeem1/onedrive/desktop/cortex_ai_agent/cortex") = cortex_chats_40582b0a
+[16:50:00] INFO ai_chat: JS Save finished signal received from bridge: OK
+[16:50:01] INFO agent_bridge: [BRIDGE] Loaded 6 tools from tool_registry
+[16:50:01] INFO agent_bridge: [BRIDGE] Total tools after merge: 20
+[16:50:01] INFO agent_bridge: [BRIDGE] === Agentic turn 1/30 ===
+[16:50:01] INFO mistral_provider: [Mistral] Attempt 1/3 with model: mistral-medium-latest
+[16:50:01] INFO mistral_provider: [MISTRAL] Formatted 20 tools for API (from 20 input tools)
+[16:50:01] INFO mistral_provider: [MISTRAL] Sending 20 tools to API
+[16:50:05] INFO main_window: [GIT] Updating git summary (background)...
+[16:50:06] INFO agent_bridge: [BRIDGE] 5 tool call(s) on turn 1: Read, Read, Read, Read, Read
+[16:50:06] INFO agent_bridge: [BRIDGE] Running 5 tools in parallel: Read, Read, Read, Read, Read
+[16:50:06] INFO agent_bridge: [BRIDGE] Tool results sent — continuing to turn 2
+[16:50:06] INFO agent_bridge: [BRIDGE] === Agentic turn 2/30 ===
+[16:50:06] INFO mistral_provider: [Mistral] Attempt 1/3 with model: mistral-medium-latest
+[16:50:06] INFO mistral_provider: [MISTRAL] Formatted 20 tools for API (from 20 input tools)
+[16:50:06] INFO mistral_provider: [MISTRAL] Sending 20 tools to API
+[16:50:32] INFO agent_bridge: [BRIDGE] No tool calls on turn 2 — done
+[JS INFO] [CHAT] onComplete: displayText length: 6061
+[JS INFO] [CHAT] onComplete: contentDiv.innerHTML length: 7980
+[JS INFO] [CHAT] Storage key for path "C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex" (normalized: "c:/users/hakeem1/onedrive/desktop/cortex_ai_agent/cortex") = cortex_chats_40582b0a
+[16:50:32] INFO ai_chat: JS Save finished signal received from bridge: OK
+[16:50:35] INFO main_window: [GIT] Updating git summary (background)...
+[16:51:05] INFO main_window: [GIT] Updating git summary (background)...
+[16:51:35] INFO main_window: [GIT] Updating git summary (background)...

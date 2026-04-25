@@ -66,9 +66,34 @@ def plural(n: int, singular: str, plural: Optional[str] = None) -> str:
         return singular
     return plural or (singular + 's')
 
-def check_read_permission_for_tool(tool_name: str, input_: Any, ctx: Any) -> bool:
-    """Check read permission for tool."""
-    return True  # Stub - replace with real implementation
+def check_read_permission_for_tool(
+    tool,  # Tool class reference
+    input_: Dict[str, Any],
+    tool_permission_context: Any,
+) -> Any:
+    """
+    Check read permission for tool using permission system.
+
+    Args:
+        tool: The tool class (GrepTool, etc.)
+        input_: Tool input dictionary
+        tool_permission_context: Permission context from app state
+
+    Returns:
+        PermissionDecision with behavior 'allow', 'deny', or 'ask'
+    """
+    from ..utils.permissions.filesystem_security import check_read_permission
+    from ..utils.permissions.PermissionResult import PermissionDecision
+
+    path = input_.get("path", "") if isinstance(input_, dict) else ""
+    if not path:
+        path = os.getcwd()
+
+    return check_read_permission(
+        path=path,
+        working_directories=getattr(tool_permission_context, "working_directories", None),
+        mode=getattr(tool_permission_context, "mode", "default"),
+    )
 
 def match_wildcard_pattern(pattern: str, text: str) -> bool:
     """Match wildcard pattern against text."""
@@ -77,19 +102,56 @@ def match_wildcard_pattern(pattern: str, text: str) -> bool:
 
 def normalize_patterns_to_path(patterns: List[str], cwd: str) -> List[str]:
     """Normalize ignore patterns to path."""
-    return patterns  # Stub - replace with real implementation
+    normalized = []
+    for p in patterns:
+        if p.startswith('/'):
+            normalized.append(p[1:])
+        elif p.startswith('./'):
+            normalized.append(p[2:])
+        elif not p.startswith('**') and not p.startswith('*'):
+            normalized.append(f"**/{p}")
+        else:
+            normalized.append(p)
+    return normalized
 
 def get_file_read_ignore_patterns(ctx: Any) -> List[str]:
-    """Get file read ignore patterns."""
-    return []  # Stub - replace with real implementation
+    """Get file read ignore patterns from permission context."""
+    if not ctx:
+        return []
+
+    patterns = getattr(ctx, "ignore_patterns", None)
+    if patterns:
+        return patterns if isinstance(patterns, list) else []
+
+    return getattr(ctx, "file_read_ignore_patterns", [])
 
 async def get_glob_exclusions_for_plugin_cache(absolute_path: str) -> List[str]:
     """Get glob exclusions for plugin cache."""
-    return []  # Stub - replace with real implementation
+    import re
+    exclusions = []
+
+    plugin_cache_pattern = re.compile(r'[\\/]\.plugin[_-]cache[\\/]')
+    if plugin_cache_pattern.search(absolute_path):
+        orphaned_version_pattern = re.compile(r'[\\/]\d+\.[xy\d]+[\\/]')
+        if orphaned_version_pattern.search(absolute_path):
+            exclusions.append('**/.plugin_cache/**')
+
+    return exclusions
 
 def suggest_path_under_cwd(path: str) -> Optional[str]:
     """Suggest path under current working directory."""
-    return None  # Stub - replace with real implementation
+    cwd = get_cwd()
+    path_obj = Path(path)
+
+    if str(path_obj).startswith(cwd):
+        return None
+
+    if path_obj.name:
+        cwd_path = Path(cwd) / path_obj.name
+        if cwd_path.exists():
+            return str(cwd_path)
+
+    return None
 
 FILE_NOT_FOUND_CWD_NOTE = "Make sure the file path is correct."
 
@@ -568,24 +630,20 @@ class GrepTool:
         # --------------------------------------------------------------
         # Add ignore patterns
         # --------------------------------------------------------------
-        # Note: Would need actual implementations of these functions
-        # For now, skipping ignore patterns
-        # In real implementation:
-        # app_state = context.get_app_state()
-        # ignore_patterns = normalize_patterns_to_path(
-        #     get_file_read_ignore_patterns(app_state.tool_permission_context),
-        #     get_cwd()
-        # )
-        # for ignore_pattern in ignore_patterns:
-        #     rg_ignore = f"!{ignore_pattern}" if ignore_pattern.startswith('/') else f"!**/{ignore_pattern}"
-        #     args.extend(['--glob', rg_ignore])
-        
+        app_state = context.get_app_state()
+        ignore_patterns = normalize_patterns_to_path(
+            get_file_read_ignore_patterns(app_state.tool_permission_context),
+            get_cwd()
+        )
+        for ignore_pattern in ignore_patterns:
+            rg_ignore = f"!{ignore_pattern}" if ignore_pattern.startswith('/') else f"!**/{ignore_pattern}"
+            args.extend(['--glob', rg_ignore])
+
         # --------------------------------------------------------------
         # Exclude orphaned plugin version directories
         # --------------------------------------------------------------
-        # In real implementation:
-        # for exclusion in await get_glob_exclusions_for_plugin_cache(absolute_path):
-        #     args.extend(['--glob', exclusion])
+        for exclusion in await get_glob_exclusions_for_plugin_cache(absolute_path):
+            args.extend(['--glob', exclusion])
         
         # --------------------------------------------------------------
         # Execute ripgrep

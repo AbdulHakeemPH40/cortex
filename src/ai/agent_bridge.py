@@ -1,30 +1,3 @@
-﻿"""
-Cortex Agent Bridge
-===================
-Connects Cortex IDE UI (ai_chat.py / script.js) to the real agent core at
-src/agent/src/.
-
-Architecture:
-    Cortex UI (PyQt6)
-        └── ai_chat.py  ──signals──►  CortexAgentBridge (this file)
-                                           │
-                                    AgentWorker (QThread)
-                                           │
-                              _call_llm() → multi-turn agentic loop
-                                           │
-                              ┌────────────┴──────────────┐
-                              │                           │
-                    Cortex Providers              Real Agent Tools
-                 (DeepSeek / Mistral)         (Read/Write/Edit/Bash/
-                  src/ai/providers/            Glob/Grep/LS)
-                                           │
-                              bootstrap/state.py
-                              (project root, session)
-
-Tool name convention matches the real agent tool registry:
-    Read, Write, Edit, Bash, Glob, Grep, LS
-"""
-
 import asyncio
 import os
 import sys
@@ -58,6 +31,22 @@ from src.ai.session_task import (
 )
 
 log = get_logger("agent_bridge")
+
+DEFAULT_READ_CHUNK_LINES_ENV = "CORTEX_READ_DEFAULT_CHUNK_LINES"
+DEFAULT_READ_CHUNK_LINES_FALLBACK = 200
+
+
+def _get_default_read_chunk_lines() -> int:
+    """Return safe default chunk size for unbounded Read calls."""
+    raw = os.environ.get(DEFAULT_READ_CHUNK_LINES_ENV)
+    if raw:
+        try:
+            parsed = int(raw)
+            if parsed > 0:
+                return parsed
+        except (TypeError, ValueError):
+            pass
+    return DEFAULT_READ_CHUNK_LINES_FALLBACK
 
 
 # ============================================================
@@ -357,9 +346,26 @@ class _ContextBudgetTracker:
     """
     def __init__(self, model_limits: Optional['ModelLimits'] = None):
         self._model_limits = model_limits
+        self._hard_context_cap_tokens = self._get_hard_context_cap_tokens()
         self._files_in_context: Dict[str, int] = {}  # path -> estimated tokens
         self._total_estimated_tokens = 0
         self._warnings: List[str] = []
+
+    @staticmethod
+    def _get_hard_context_cap_tokens() -> int:
+        raw = os.environ.get("CORTEX_MAX_CONTEXT_TOKENS_PER_TURN", "200000")
+        try:
+            parsed = int(raw)
+            if parsed > 0:
+                return parsed
+        except Exception:
+            pass
+        return 200_000
+
+    def _effective_budget_tokens(self) -> int:
+        if self._model_limits:
+            return min(self._model_limits.context_budget, self._hard_context_cap_tokens)
+        return self._hard_context_cap_tokens
     
     def set_model_limits(self, limits: 'ModelLimits') -> None:
         self._model_limits = limits
@@ -376,9 +382,7 @@ class _ContextBudgetTracker:
             del self._files_in_context[path]
     
     def _check_budget(self) -> int:
-        if not self._model_limits:
-            return 50_000
-        budget = self._model_limits.context_budget
+        budget = self._effective_budget_tokens()
         used = self._total_estimated_tokens
         remaining = budget - used
         if remaining < budget * 0.2:
@@ -387,9 +391,8 @@ class _ContextBudgetTracker:
         return max(4_000, safe_remaining * 4)
     
     def get_remaining_budget_chars(self) -> int:
-        if not self._model_limits:
-            return 100_000
-        safe_remaining = int((self._model_limits.context_budget - self._total_estimated_tokens) * 0.8)
+        budget = self._effective_budget_tokens()
+        safe_remaining = int((budget - self._total_estimated_tokens) * 0.8)
         return max(4_000, safe_remaining * 4)
     
     def get_warnings(self) -> List[str]:
@@ -398,9 +401,8 @@ class _ContextBudgetTracker:
         return warnings
     
     def is_over_budget(self) -> bool:
-        if not self._model_limits:
-            return False
-        return self._total_estimated_tokens > self._model_limits.context_budget * 0.9
+        budget = self._effective_budget_tokens()
+        return self._total_estimated_tokens > budget * 0.9
 
 
 class CortexToolContext:
@@ -1566,6 +1568,13 @@ _TOOL_TO_ACTIVITY_NAME: Dict[str, str] = {
     "TodoWrite": "todo_write",
     "Grep":  "search",
     "LS":    "list_directory",
+    "TeamCreate": "team_create",
+    "TeamDelete": "team_delete",
+    "TaskCreate": "task_create",
+    "TaskUpdate": "task_update",
+    "TaskList":   "task_list",
+    "TaskGet":    "task_get",
+    "TaskStop":   "task_stop",
 }
 
 # Tools that trigger the "create_file" UI card (Write on a new file)
@@ -3106,6 +3115,9 @@ Use Markdown tables for structured data comparison:
                     filtered_batch = []
                     for call in batch:
                         t_name, t_id, t_args = call
+                        # Read should never stay blocked across loop retries.
+                        if t_name == "Read" and t_name in _disabled_tools:
+                            _disabled_tools.discard(t_name)
                         if t_name in _disabled_tools:
                             log.warning(f"[BRIDGE] Circuit breaker: {t_name} disabled after repeated failures")
                             _cb_msg = (f"Error: {t_name} is UNAVAILABLE (failed {_CIRCUIT_BREAKER_THRESHOLD} times). "
@@ -3115,7 +3127,7 @@ Use Markdown tables for structured data comparison:
                         else:
                             # Check repetitive call limit
                             _tool_total_calls[t_name] = _tool_total_calls.get(t_name, 0) + 1
-                            if _tool_total_calls[t_name] > _REPETITIVE_CALL_LIMIT:
+                            if t_name != "Read" and _tool_total_calls[t_name] > _REPETITIVE_CALL_LIMIT:
                                 # HARD STOP: disable tool immediately at limit
                                 _disabled_tools.add(t_name)
                                 log.warning(f"[BRIDGE] Repetitive call limit reached: {t_name} called {_tool_total_calls[t_name]} times (limit={_REPETITIVE_CALL_LIMIT}). Tool DISABLED.")
@@ -3164,7 +3176,7 @@ Use Markdown tables for structured data comparison:
                                         _tool_fail_counts[t_name] = 0
                                     else:
                                         _tool_fail_counts[t_name] = _tool_fail_counts.get(t_name, 0) + 1
-                                        if _tool_fail_counts[t_name] >= _CIRCUIT_BREAKER_THRESHOLD:
+                                        if t_name != "Read" and _tool_fail_counts[t_name] >= _CIRCUIT_BREAKER_THRESHOLD:
                                             _disabled_tools.add(t_name)
                                             log.warning(f"[BRIDGE] Circuit breaker TRIPPED for {t_name} after {_tool_fail_counts[t_name]} consecutive failures" )
                                 else:
@@ -3304,11 +3316,46 @@ Use Markdown tables for structured data comparison:
 
             if activity == "read_file":
                 info["file_path"] = fp
-                info["offset"] = args.get("offset", 1)
-                info["limit"] = args.get("limit", "")
+                requested_offset = args.get("offset", 1)
+                requested_limit = args.get("limit") or _get_default_read_chunk_lines()
+                info["offset"] = requested_offset
+                info["limit"] = requested_limit
+                info["requested_offset"] = requested_offset
+                info["requested_limit"] = requested_limit
                 if status == "complete" and result_str:
-                    # Count lines read from result
-                    info["lines_read"] = result_str.count('\n') + (1 if result_str else 0)
+                    try:
+                        parsed = json.loads(result_str)
+                    except Exception:
+                        parsed = None
+
+                    if isinstance(parsed, dict):
+                        start_line = parsed.get("start_line")
+                        num_lines = parsed.get("num_lines")
+                        total_lines = parsed.get("total_lines")
+
+                        if isinstance(start_line, int) and start_line >= 1:
+                            info["offset"] = start_line
+                            info["actual_start_line"] = start_line
+                        if isinstance(num_lines, int) and num_lines > 0:
+                            info["limit"] = num_lines
+                            info["lines_read"] = num_lines
+                            if isinstance(start_line, int) and start_line >= 1:
+                                info["actual_end_line"] = start_line + num_lines - 1
+                        if isinstance(total_lines, int) and total_lines >= 0:
+                            info["total_lines"] = total_lines
+                            if isinstance(start_line, int) and isinstance(num_lines, int):
+                                end_line = start_line + num_lines - 1
+                                if end_line < total_lines:
+                                    info["remaining_lines"] = total_lines - end_line
+                                    info["remaining_range"] = str(end_line + 1) + "-" + str(total_lines)
+
+                        if "lines_read" not in info and isinstance(parsed.get("content"), str):
+                            _content = parsed.get("content", "")
+                            info["lines_read"] = _content.count('\n') + (1 if _content else 0)
+                    else:
+                        info["lines_read"] = result_str.count('\n') + (1 if result_str else 0)
+                if status == "error" and result_str:
+                    info["error"] = result_str[:400]
 
             elif activity == "edit_file":
                 info["file_path"] = fp
@@ -3329,16 +3376,20 @@ Use Markdown tables for structured data comparison:
 
             elif activity == "search":
                 # Grep tool
+                info["search_type"] = (tool_name or "Grep").lower()
                 info["pattern"] = args.get("pattern", "")
                 info["path"] = fp or "."
-                info["include"] = args.get("include", "")
+                info["glob"] = args.get("glob", "")
+                info["include"] = args.get("glob", args.get("include", ""))
                 if status == "complete" and result_str:
                     matches = self._parse_grep_matches(result_str)
                     info["match_count"] = len(matches)
                     info["matches"] = matches[:15]  # limit for UI
 
             elif activity == "list_directory":
-                info["path"] = fp or args.get("pattern", "")
+                info["search_type"] = (tool_name or "LS").lower()
+                info["path"] = fp or args.get("path", ".")
+                info["pattern"] = args.get("pattern", "")
                 if status == "complete" and result_str:
                     # Count files from result
                     lines = [l for l in result_str.split('\n') if l.strip()]
@@ -3349,8 +3400,30 @@ Use Markdown tables for structured data comparison:
                 info["command"] = cmd[:200] if cmd else ""
                 info["timeout"] = args.get("timeout", "")
                 if status in ("complete", "error") and result_str:
-                    # Pass truncated output for terminal cards
                     info["output"] = result_str[:2000]
+
+            elif activity in ("team_create", "team_delete"):
+                info["team_name"] = args.get("name", "")
+                if status == "complete" and result_str:
+                    try:
+                        parsed = json.loads(result_str)
+                        if isinstance(parsed, dict):
+                            info["team_id"] = parsed.get("teamId", "")
+                            info["message"] = parsed.get("message", "")
+                    except Exception:
+                        pass
+
+            elif activity in ("task_create", "task_update", "task_list", "task_get", "task_stop"):
+                info["task_id"] = args.get("taskId", "")
+                info["subject"] = args.get("subject", "")
+                if status == "complete" and result_str:
+                    try:
+                        parsed = json.loads(result_str)
+                        if isinstance(parsed, dict):
+                            info["message"] = parsed.get("message", "")
+                            info["task_id"] = parsed.get("taskId", info["task_id"])
+                    except Exception:
+                        pass
 
             else:
                 # Fallback: pass raw args
@@ -3359,6 +3432,9 @@ Use Markdown tables for structured data comparison:
         except Exception as e:
             log.debug(f"[BRIDGE] _build_activity_info error: {e}")
             info = {"raw": json.dumps(args)[:400]}
+
+        if status == "error" and result_str and "error" not in info:
+            info["error"] = result_str[:400]
 
         return json.dumps(info)
 
@@ -3568,6 +3644,19 @@ Use Markdown tables for structured data comparison:
         path = args.get("file_path", "")
         if not os.path.isabs(path) and self._project_root:
             args = {**args, "file_path": os.path.join(self._project_root, path)}
+        if args.get("limit") in (None, "", 0):
+            args = {**args, "limit": _get_default_read_chunk_lines()}
+        if self._tool_ctx.is_context_over_budget():
+            _basename = os.path.basename(args.get("file_path", path))
+            _remaining = self._tool_ctx.get_remaining_budget_chars()
+            return ToolResult(
+                tool_id=tool_id, result=None, success=False,
+                error=(
+                    f"Context budget nearly exhausted. Remaining: ~{_remaining:,} chars. "
+                    f"Do NOT read full files. Use small chunks only, e.g. "
+                    f"Read(file_path='{_basename}', offset=1, limit=50)."
+                )
+            )
 
         # ── FILE READ DEDUP (ported from Claude Code's fileStateCache.ts) ───
         # If we already read this file with same offset/limit and it hasn't
@@ -3591,32 +3680,75 @@ Use Markdown tables for structured data comparison:
                     args, self._tool_ctx, _always_allow_tool, _STUB_PARENT_MESSAGE
                 )
                 data = raw.get("data")
+                start_line = None
+                num_lines = None
+                total_lines = None
+
                 # Extract text content for LLM from the FileReadOutput
                 if hasattr(data, "file") and hasattr(data.file, "content"):
                     content = data.file.content
+                    start_line = getattr(data.file, "start_line", None)
+                    num_lines = getattr(data.file, "num_lines", None)
+                    total_lines = getattr(data.file, "total_lines", None)
                 elif isinstance(data, dict) and "content" in data:
                     content = data["content"]
+                    start_line = data.get("start_line")
+                    num_lines = data.get("num_lines")
+                    total_lines = data.get("total_lines")
+                elif isinstance(data, dict) and isinstance(data.get("file"), dict):
+                    file_obj = data.get("file", {})
+                    content = file_obj.get("content", "")
+                    start_line = file_obj.get("start_line")
+                    num_lines = file_obj.get("num_lines")
+                    total_lines = file_obj.get("total_lines")
                 else:
                     content = str(data)
+                if start_line is None:
+                    start_line = args.get("offset", 1)
+                effective_limit = args.get("limit")
+                if effective_limit is None and isinstance(num_lines, int) and num_lines >= 0:
+                    effective_limit = num_lines
+                _remaining_chars = self._tool_ctx.get_remaining_budget_chars()
+                if len(content) > _remaining_chars:
+                    _basename = os.path.basename(args.get("file_path", "file"))
+                    return ToolResult(
+                        tool_id=tool_id, result=None, success=False,
+                        error=(
+                            f"Read output too large for current context budget "
+                            f"({len(content):,} chars > ~{_remaining_chars:,} remaining). "
+                            f"Read a smaller chunk: Read(file_path='{_basename}', offset={start_line}, limit=80)."
+                        )
+                    )
                 # Track file state
                 self._tool_ctx.mark_file_read(args["file_path"])
+                self._tool_ctx.track_file_read(args["file_path"], len(content))
+                warnings = self._tool_ctx.get_budget_warnings()
+                if warnings:
+                    log.warning(f"[CTX] Budget warnings: {warnings}")
                 # Sync into context.read_file_state so FileEditTool's staleness check passes
                 try:
                     _norm = os.path.abspath(args["file_path"])
                     self._tool_ctx.read_file_state[_norm] = {
                         "content": content,
                         "timestamp": os.path.getmtime(args["file_path"]),
-                        "offset": args.get("offset"),
-                        "limit": args.get("limit"),
+                        "offset": start_line,
+                        "limit": effective_limit,
                     }
                     # Populate LRU dedup cache
                     self._tool_ctx.file_cache_put(
                         _norm, content, os.path.getmtime(args["file_path"]),
-                        args.get("offset"), args.get("limit")
+                        start_line, effective_limit
                     )
                 except Exception:
                     pass
-                return ToolResult(tool_id=tool_id, result={"path": args["file_path"], "content": content})
+                result_payload = {
+                    "path": args["file_path"],
+                    "content": content,
+                    "start_line": start_line,
+                    "num_lines": num_lines if isinstance(num_lines, int) else (content.count('\n') + (1 if content else 0)),
+                    "total_lines": total_lines,
+                }
+                return ToolResult(tool_id=tool_id, result=result_payload)
             except Exception as exc:
                 _err_str = str(exc)
                 _err_lower = _err_str.lower()
@@ -3763,6 +3895,18 @@ Use Markdown tables for structured data comparison:
             offset = max(1, int(args.get("offset", 1))) - 1
             limit = int(args.get("limit", len(lines)))
             content = "".join(lines[offset: offset + limit])
+            read_lines = len(lines[offset: offset + limit])
+            _remaining_chars = self._tool_ctx.get_remaining_budget_chars()
+            if len(content) > _remaining_chars:
+                _basename = os.path.basename(fpath)
+                return ToolResult(
+                    tool_id=tool_id, result=None, success=False,
+                    error=(
+                        f"Read output too large for current context budget "
+                        f"({len(content):,} chars > ~{_remaining_chars:,} remaining). "
+                        f"Read a smaller chunk: Read(file_path='{_basename}', offset={offset + 1}, limit=80)."
+                    )
+                )
             
             # Track this read for budget purposes
             self._tool_ctx.mark_file_read(fpath)
@@ -3793,7 +3937,13 @@ Use Markdown tables for structured data comparison:
                 )
             except Exception:
                 pass
-            return ToolResult(tool_id=tool_id, result={"path": fpath, "content": content})
+            return ToolResult(tool_id=tool_id, result={
+                "path": fpath,
+                "content": content,
+                "start_line": offset + 1,
+                "num_lines": read_lines,
+                "total_lines": _total_lines,
+            })
         except Exception as e:
             return ToolResult(tool_id=tool_id, result=None, success=False, error=str(e))
 

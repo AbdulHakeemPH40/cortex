@@ -700,6 +700,42 @@ async def validate_content_tokens(
         raise MaxFileReadTokenExceededError(effective_count, effective_max_tokens)
 
 
+async def fit_content_within_token_limit(
+    content: str,
+    start_line: int,
+    ext: str,
+    max_tokens: int,
+) -> Dict[str, Any]:
+    """Find the largest prefix of lines that fits inside token limits."""
+    lines = content.split('\n')
+    if len(lines) <= 1:
+        raise MaxFileReadTokenExceededError(max_tokens + 1, max_tokens)
+
+    low = 1
+    high = len(lines)
+    best = 0
+    while low <= high:
+        mid = (low + high) // 2
+        candidate = '\n'.join(lines[:mid])
+        try:
+            await validate_content_tokens(candidate, ext, max_tokens)
+            best = mid
+            low = mid + 1
+        except MaxFileReadTokenExceededError:
+            high = mid - 1
+
+    if best <= 0:
+        raise ValueError(
+            f'Unable to fit even a single line within token limit at line {start_line}. '
+            'Use Grep or provide a narrower offset/limit.'
+        )
+
+    return {
+        'content': '\n'.join(lines[:best]),
+        'line_count': best,
+    }
+
+
 # ============================================================
 # FILE READING LIMITS
 # ============================================================
@@ -746,8 +782,32 @@ def check_read_permission_for_tool(
     input_data: Dict[str, Any],
     permission_context: Any,
 ) -> Dict[str, Any]:
-    """Check read permission for tool."""
-    # Would integrate with permissions/filesystem in full impl
+    """
+    Check read permission for tool using permission system.
+
+    Args:
+        tool: The tool class
+        input_data: Tool input dictionary
+        permission_context: Permission context from app state
+
+    Returns:
+        Dict with 'behavior' ('allow', 'deny', 'ask') and 'updated_input'
+    """
+    from ..utils.permissions.filesystem_security import check_read_permission
+    from ..utils.permissions.PermissionResult import PermissionDecision
+
+    file_path = input_data.get('file_path', '') if isinstance(input_data, dict) else ''
+    if not file_path:
+        return {'behavior': 'ask', 'updated_input': input_data}
+
+    decision = check_read_permission(
+        path=file_path,
+        working_directories=getattr(permission_context, 'working_directories', None),
+        mode=getattr(permission_context, 'mode', 'default'),
+    )
+
+    if isinstance(decision, PermissionDecision):
+        return {'behavior': decision.behavior, 'updated_input': input_data}
     return {'behavior': 'allow', 'updated_input': input_data}
 
 
@@ -757,8 +817,40 @@ def matching_rule_for_input(
     action: str,
     rule_type: str,
 ) -> Optional[Any]:
-    """Check if there's a matching deny/allow rule for input."""
-    # Would integrate with permissions in full implementation
+    """
+    Check if there's a matching deny/allow rule for input.
+
+    Uses gitignore-style pattern matching against permission rules.
+    """
+    if not permission_context:
+        return None
+
+    import re
+
+    expanded_path = expand_path(file_path)
+
+    rules = getattr(permission_context, 'rules', [])
+
+    for rule in rules if rules else []:
+        rule_behavior = getattr(rule, 'ruleBehavior', None) or getattr(rule, 'behavior', None)
+        if rule_behavior != rule_type:
+            continue
+
+        rule_tool = getattr(rule, 'toolName', None) or getattr(rule, 'tool', None)
+        if rule_tool and rule_tool != action:
+            continue
+
+        rule_pattern = getattr(rule, 'ruleContent', None) or getattr(rule, 'pattern', None)
+
+        if rule_pattern:
+            pattern = rule_pattern.replace('**', '.*').replace('*', '[^/]*')
+            if pattern.endswith('/**'):
+                pattern = pattern[:-3] + '(/.*)?'
+            pattern = f'^{pattern}$'
+
+            if re.fullmatch(pattern, expanded_path):
+                return rule
+
     return None
 
 
@@ -822,7 +914,44 @@ async def suggest_path_under_cwd(file_path: str) -> Optional[str]:
     return None
 
 
+def resolve_nested_same_name_file(file_path: str) -> Optional[str]:
+    """
+    Resolve shorthand module file paths like:
+      .../tools/FileEditTool.py -> .../tools/FileEditTool/FileEditTool.py
+    """
+    directory = os.path.dirname(file_path)
+    basename = os.path.basename(file_path)
+    stem, ext = os.path.splitext(basename)
+    if not stem or not ext:
+        return None
+
+    candidate = os.path.join(directory, stem, f'{stem}{ext}')
+    if os.path.isfile(candidate):
+        return candidate
+    return None
+
+
 FILE_NOT_FOUND_CWD_NOTE = "Current working directory:"
+
+DEFAULT_READ_CHUNK_LINES_ENV = 'CORTEX_READ_DEFAULT_CHUNK_LINES'
+
+
+def _get_default_chunk_line_limit() -> int:
+    """
+    Default line chunk for unpaginated text reads.
+    Uses prompt cap as hard upper bound, with optional env override.
+    """
+    from .prompt import MAX_LINES_TO_READ
+
+    raw = os.environ.get(DEFAULT_READ_CHUNK_LINES_ENV)
+    if raw:
+        try:
+            parsed = int(raw)
+            if parsed > 0:
+                return min(parsed, MAX_LINES_TO_READ)
+        except (TypeError, ValueError):
+            pass
+    return MAX_LINES_TO_READ
 
 
 async def read_file_in_range(
@@ -832,34 +961,52 @@ async def read_file_in_range(
     max_size: Optional[int],
     abort_signal: Optional[Any] = None,
 ) -> Dict[str, Any]:
-    """Read a file within a specific line range."""
+    """Read a file within a specific line range using a streaming pass."""
+    safe_offset = max(0, int(offset))
+    safe_limit = limit if (isinstance(limit, int) and limit > 0) else None
+    end_line = safe_offset + safe_limit if safe_limit is not None else None
+
+    selected_lines: List[str] = []
+    total_lines = 0
+    total_bytes = 0
+
+    def _check_abort() -> None:
+        if abort_signal is None:
+            return
+        throw_if_aborted = getattr(abort_signal, 'throw_if_aborted', None)
+        if callable(throw_if_aborted):
+            throw_if_aborted()
+
     with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
-        all_lines = f.readlines()
-    
-    total_lines = len(all_lines)
-    total_bytes = sum(len(line) for line in all_lines)
-    
-    # Get the requested range
-    if limit:
-        selected_lines = all_lines[offset:offset + limit]
-    else:
-        selected_lines = all_lines[offset:]
-    
+        for idx, line in enumerate(f):
+            _check_abort()
+
+            if idx == 0 and line.startswith('\ufeff'):
+                line = line.lstrip('\ufeff')
+
+            line_bytes = len(line.encode('utf-8'))
+            total_bytes += line_bytes
+            total_lines += 1
+
+            if max_size is not None and total_bytes > max_size:
+                raise ValueError(
+                    f'File content ({format_file_size(total_bytes)}) exceeds maximum '
+                    f'allowed size ({format_file_size(max_size)}). Use offset and limit parameters.'
+                )
+
+            if idx < safe_offset:
+                continue
+            if end_line is not None and idx >= end_line:
+                continue
+            selected_lines.append(line)
+
     content = ''.join(selected_lines)
     line_count = len(selected_lines)
-    read_bytes = len(content)
-    
-    # Get mtime
-    stat = os.stat(file_path)
-    mtime_ms = stat.st_mtime * 1000
-    
-    # Check max size
-    if max_size and len(content) > max_size:
-        raise ValueError(
-            f'File content ({format_file_size(len(content))}) exceeds maximum '
-            f'allowed size ({format_file_size(max_size)}). Use offset and limit parameters.'
-        )
-    
+    read_bytes = len(content.encode('utf-8'))
+
+    stat_result = os.stat(file_path)
+    mtime_ms = stat_result.st_mtime * 1000
+
     return {
         'content': content,
         'line_count': line_count,
@@ -1134,11 +1281,14 @@ class FileReadTool:
     
     async def check_permissions(self, input_data: Dict[str, Any], context: Any) -> Dict[str, Any]:
         """Check if the user should be asked for permission."""
-        # Would use context.getAppState() in full implementation
+        permission_context = None
+        if context and hasattr(context, 'get_app_state'):
+            app_state = context.get_app_state()
+            permission_context = getattr(app_state, 'tool_permission_context', None)
         return check_read_permission_for_tool(
             self,
             input_data,
-            None,  # permission_context
+            permission_context,
         )
     
     async def validate_input(
@@ -1178,10 +1328,27 @@ class FileReadTool:
         
         # Path expansion + deny rule check (no I/O)
         full_file_path = expand_path(file_path)
-        
-        # Would check deny rules from context.getAppState().toolPermissionContext
-        # For now, skip deny rule check
-        
+
+        # Check deny rules from permission context
+        permission_context = None
+        if context and hasattr(context, 'get_app_state'):
+            app_state = context.get_app_state()
+            permission_context = getattr(app_state, 'tool_permission_context', None)
+
+        if permission_context:
+            deny_rule = matching_rule_for_input(
+                full_file_path,
+                permission_context,
+                action='Read',
+                rule_type='deny',
+            )
+            if deny_rule:
+                return {
+                    'result': False,
+                    'message': f"Access to '{file_path}' is denied by permission rules.",
+                    'error_code': 10,
+                }
+
         # SECURITY: UNC path check (no I/O) — defer filesystem operations
         # until after user grants permission to prevent NTLM credential leaks
         is_unc_path = full_file_path.startswith('\\\\') or full_file_path.startswith('//')
@@ -1261,9 +1428,28 @@ class FileReadTool:
             Dict with 'data' containing FileReadOutput and optional 'new_messages'
         """
         file_path = input_data.get('file_path', '')
-        offset = input_data.get('offset', 1)
-        limit = input_data.get('limit')
+        raw_offset = input_data.get('offset', 1)
+        raw_limit = input_data.get('limit')
         pages = input_data.get('pages')
+
+        try:
+            offset = max(1, int(raw_offset))
+        except (TypeError, ValueError):
+            offset = 1
+
+        limit_provided = raw_limit is not None
+        limit = None
+        if raw_limit is not None:
+            try:
+                parsed_limit = int(raw_limit)
+                if parsed_limit <= 0:
+                    raise ValueError('limit must be > 0')
+                limit = parsed_limit
+            except (TypeError, ValueError):
+                raise ValueError('Invalid "limit" value. It must be a positive integer.')
+        else:
+            # Safe default: never perform unbounded text reads.
+            limit = _get_default_chunk_line_limit()
         
         # Get limits from context or use defaults
         defaults = _get_default_file_reading_limits()
@@ -1340,6 +1526,7 @@ class FileReadTool:
                 max_size_bytes=max_size_bytes,
                 max_tokens=max_tokens,
                 context=context,
+                limit_provided=limit_provided,
                 message_id=None,  # Would get from parent_message.message.id
             )
         except FileNotFoundError:
@@ -1358,10 +1545,34 @@ class FileReadTool:
                         max_size_bytes=max_size_bytes,
                         max_tokens=max_tokens,
                         context=context,
+                        limit_provided=limit_provided,
                         message_id=None,
                     )
                 except FileNotFoundError:
                     # Alt path also missing — fall through to friendly error
+                    pass
+
+            # Auto-resolve common shorthand for nested tool module files:
+            # .../tools/ToolName.py -> .../tools/ToolName/ToolName.py
+            nested_candidate = resolve_nested_same_name_file(full_file_path)
+            if nested_candidate:
+                try:
+                    nested_ext = os.path.splitext(nested_candidate)[1].lower().lstrip('.')
+                    return await self._call_inner(
+                        file_path=file_path,
+                        full_file_path=full_file_path,
+                        resolved_file_path=nested_candidate,
+                        ext=nested_ext,
+                        offset=offset,
+                        limit=limit,
+                        pages=pages,
+                        max_size_bytes=max_size_bytes,
+                        max_tokens=max_tokens,
+                        context=context,
+                        limit_provided=limit_provided,
+                        message_id=None,
+                    )
+                except FileNotFoundError:
                     pass
             
             similar_filename = find_similar_file(full_file_path)
@@ -1391,6 +1602,7 @@ class FileReadTool:
         max_size_bytes: int,
         max_tokens: int,
         context: Optional[Any],
+        limit_provided: bool,
         message_id: Optional[str],
     ) -> Dict[str, Any]:
         """Inner implementation of call, separated to allow ENOENT handling."""
@@ -1554,7 +1766,7 @@ class FileReadTool:
             resolved_file_path,
             line_offset,
             limit,
-            max_size_bytes if limit is None else None,
+            max_size_bytes if not limit_provided else None,
             None,  # abort_signal
         )
         
@@ -1562,28 +1774,45 @@ class FileReadTool:
         line_count = result['line_count']
         total_lines = result['total_lines']
         mtime_ms = result['mtime_ms']
-        
-        await validate_content_tokens(content, ext, max_tokens)
+
+        final_content = content
+        final_line_count = line_count
+        final_limit = limit
+        try:
+            await validate_content_tokens(final_content, ext, max_tokens)
+        except MaxFileReadTokenExceededError:
+            if limit is None:
+                fitted = await fit_content_within_token_limit(
+                    final_content,
+                    offset,
+                    ext,
+                    max_tokens,
+                )
+                final_content = fitted['content']
+                final_line_count = fitted['line_count']
+                final_limit = final_line_count
+            else:
+                raise
         
         self._read_file_state[full_file_path] = FileStateEntry(
-            content=content,
+            content=final_content,
             timestamp=mtime_ms,
             offset=offset,
-            limit=limit,
+            limit=final_limit,
         )
         
         if context and hasattr(context, 'nested_memory_attachment_triggers'):
             context.nested_memory_attachment_triggers.add(full_file_path)
         
         # Notify listeners
-        _notify_file_read_listeners(resolved_file_path, content)
+        _notify_file_read_listeners(resolved_file_path, final_content)
         
         data = FileReadOutput(
             type='text',
             file=TextFileResult(
                 file_path=file_path,
-                content=content,
-                num_lines=line_count,
+                content=final_content,
+                num_lines=final_line_count,
                 start_line=offset,
                 total_lines=total_lines,
             ),
@@ -1597,7 +1826,7 @@ class FileReadTool:
             operation='read',
             tool='FileReadTool',
             file_path=full_file_path,
-            content=content,
+            content=final_content,
         )
         
         # Analytics
@@ -1605,11 +1834,11 @@ class FileReadTool:
         analytics_ext = get_file_extension_for_analytics(full_file_path)
         log_event('tengu_session_file_read', {
             'total_lines': total_lines,
-            'read_lines': line_count,
+            'read_lines': final_line_count,
             'total_bytes': result['total_bytes'],
-            'read_bytes': result['read_bytes'],
+            'read_bytes': len(final_content.encode('utf-8')),
             'offset': offset,
-            **({'limit': limit} if limit is not None else {}),
+            **({'limit': limit} if limit is not None else ({'limit': final_line_count} if final_line_count < line_count else {})),
             **({'ext': analytics_ext} if analytics_ext else {}),
             **({'message_id': message_id} if message_id else {}),
             'is_session_memory': session_file_type == 'session_memory',

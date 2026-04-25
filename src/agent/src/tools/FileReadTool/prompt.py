@@ -13,8 +13,8 @@ FILE_UNCHANGED_STUB = (
     'in this conversation is still current - refer to that instead of re-reading.'
 )
 
-# Maximum lines to read
-MAX_LINES_TO_READ = 2000
+# Maximum lines to read per default chunk
+MAX_LINES_TO_READ = 200
 
 # Description
 DESCRIPTION = 'Read a file from the local filesystem.'
@@ -26,8 +26,8 @@ LINE_FORMAT_INSTRUCTION = (
 
 # Offset instructions
 OFFSET_INSTRUCTION_DEFAULT = (
-    "- You can optionally specify a line offset and limit (especially handy for long files), "
-    "but it's recommended to read the whole file by not providing these parameters"
+    '- If you do not provide limit, the tool reads only a safe default chunk. '
+    'For deeper inspection, read additional chunks with offset and limit.'
 )
 
 OFFSET_INSTRUCTION_TARGETED = (

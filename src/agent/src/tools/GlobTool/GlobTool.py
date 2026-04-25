@@ -74,9 +74,34 @@ def get_fs_implementation() -> AsyncFS:
     """Return async filesystem implementation."""
     return AsyncFS()
 
-def check_read_permission_for_tool(tool_name: str, input_: Any, ctx: Any) -> bool:
-    """Check read permission for tool."""
-    return True  # Stub - replace with real implementation
+def check_read_permission_for_tool(
+    tool,  # Tool class reference
+    input_: Dict[str, Any],
+    tool_permission_context: Any,
+) -> Any:
+    """
+    Check read permission for tool using permission system.
+
+    Args:
+        tool: The tool class (GlobTool, etc.)
+        input_: Tool input dictionary
+        tool_permission_context: Permission context from app state
+
+    Returns:
+        PermissionDecision with behavior 'allow', 'deny', or 'ask'
+    """
+    from ..utils.permissions.filesystem_security import check_read_permission
+    from ..utils.permissions.PermissionResult import PermissionDecision
+
+    path = input_.get("path", "") if isinstance(input_, dict) else ""
+    if not path:
+        path = os.getcwd()
+
+    return check_read_permission(
+        path=path,
+        working_directories=getattr(tool_permission_context, "working_directories", None),
+        mode=getattr(tool_permission_context, "mode", "default"),
+    )
 
 def match_wildcard_pattern(pattern: str, text: str) -> bool:
     """Match wildcard pattern against text."""
@@ -85,7 +110,18 @@ def match_wildcard_pattern(pattern: str, text: str) -> bool:
 
 def suggest_path_under_cwd(path: str) -> Optional[str]:
     """Suggest path under current working directory."""
-    return None  # Stub - replace with real implementation
+    cwd = get_cwd()
+    path_obj = Path(path)
+
+    if str(path_obj).startswith(cwd):
+        return None
+
+    if path_obj.name:
+        cwd_path = Path(cwd) / path_obj.name
+        if cwd_path.exists():
+            return str(cwd_path)
+
+    return None
 
 
 async def glob(
@@ -97,46 +133,80 @@ async def glob(
 ) -> Dict[str, Any]:
     """
     Execute glob search.
-    
+
     Args:
         pattern: Glob pattern to match
         search_dir: Directory to search in
-        options: Search options (limit, offset)
+        options: Search options (limit, offset, ignore_patterns)
         signal: Optional cancellation signal
         permission_context: Permission context
-        
+
     Returns:
         Dictionary with 'files' list and 'truncated' flag
     """
+    import fnmatch
+
     limit = options.get("limit", DEFAULT_GLOB_LIMIT)
     offset = options.get("offset", 0)
-    
+    ignore_patterns = options.get("ignore_patterns", [])
+
+    # Path traversal prevention - ensure search_dir is safe
+    search_dir = os.path.abspath(search_dir)
+
+    # SECURITY: Block UNC paths
+    if search_dir.startswith("\\\\") or search_dir.startswith("//"):
+        return {"files": [], "truncated": False, "error": "UNC paths not allowed"}
+
     try:
-        # Use pathlib for glob matching
         search_path = Path(search_dir)
-        
+
+        if not search_path.exists():
+            return {"files": [], "truncated": False, "error": f"Directory not found: {search_dir}"}
+
+        if not search_path.is_dir():
+            return {"files": [], "truncated": False, "error": f"Path is not a directory: {search_dir}"}
+
+        files = []
+
         # Convert glob pattern to pathlib format
-        # Replace ** with recursive glob
         if "**" in pattern:
-            # Recursive glob
             matcher = pattern.replace("**", "*")
-            files = []
             for f in search_path.rglob(matcher):
                 if f.is_file():
                     files.append(str(f))
         else:
-            # Non-recursive glob
-            files = [str(f) for f in search_path.glob(pattern) if f.is_file()]
-        
+            for f in search_path.glob(pattern):
+                if f.is_file():
+                    files.append(str(f))
+
+        # Apply ignore patterns (similar to .gitignore)
+        if ignore_patterns:
+            filtered = []
+            for f in files:
+                rel_path = os.path.relpath(f, search_dir)
+                ignored = False
+                for pat in ignore_patterns:
+                    if fnmatch.fnmatch(rel_path, pat) or fnmatch.fnmatch(os.path.basename(f), pat):
+                        ignored = True
+                        break
+                if not ignored:
+                    filtered.append(f)
+            files = filtered
+
+        # Sort for consistent ordering
+        files.sort()
+
         # Apply offset and limit
-        truncated = len(files) > limit
+        total_files = len(files)
+        truncated = total_files > limit
         limited_files = files[offset:offset + limit]
-        
+
         return {
             "files": limited_files,
             "truncated": truncated,
+            "total": total_files,
         }
-    
+
     except Exception as e:
         raise RuntimeError(f"Glob search failed: {str(e)}")
 

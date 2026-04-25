@@ -4682,6 +4682,13 @@ body.light-mode {
     transition: all 0.2s;
 }
 
+.mermaid-toggle-btn {
+    width: 30px;
+    justify-content: center;
+    font-weight: 700;
+    padding: 4px 0;
+}
+
 .mermaid-action-btn:hover {
     background: rgba(255, 255, 255, 0.12);
     color: #ffffff;
@@ -4698,6 +4705,10 @@ body.light-mode {
     overflow: auto; /* Allow both x and y scrolling for panning */
     cursor: grab;
     user-select: none;
+}
+
+.mermaid-wrapper.collapsed .mermaid-container {
+    display: none;
 }
 
 .mermaid-container.panning {

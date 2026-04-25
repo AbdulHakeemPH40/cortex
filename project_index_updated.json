@@ -1,0 +1,172 @@
+{,
+  "project_name": "Cortex IDE",
+  "project_root": "C:\\Users\\Hakeem1\\OneDrive\\Desktop\\Cortex_Ai_Agent\\Cortex",
+  "description": "An advanced IDE with AI-powered features, including a multi-agent system, Vision Agent for OCR and object detection, and file-based memory persistence.",
+  "structure": {
+    "directories": {
+      "root": [
+        ".cortex",
+        ".git",
+        ".pytest_cache",
+        ".qoder",
+        "Docs",
+        "__pycache__",
+        "bin",
+        "build",
+        "dist",
+        "installer_output",
+        "node_modules",
+        "plugins",
+        "referenc_image",
+        "src",
+        "tests",
+        "tmp",
+        "venv"
+      ],
+      "src": [
+        "agent",
+        "ai",
+        "assets",
+        "config",
+        "coordinator",
+        "core",
+        "plugin",
+        "services",
+        "tests",
+        "tools",
+        "ui",
+        "utils"
+      ],
+      "agent_src": [
+        "DelFiles",
+        "agent_types",
+        "api",
+        "assistant",
+        "bootstrap",
+        "bun",
+        "constants",
+        "coordinator",
+        "entrypoints",
+        "hooks",
+        "memdir",
+        "query",
+        "services",
+        "skills",
+        "state",
+        "tasks",
+        "tools",
+        "utils",
+        "voice"
+      ]
+    },
+    "key_files": {
+      "root": [
+        ".env",
+        ".env.example",
+        ".gitignore",
+        "behavior.txt",
+        "behavior2txt",
+        "build.ps1",
+        "build_installer.bat",
+        "cortex.spec",
+        "cortex_setup.iss",
+        "crash_output.log",
+        "install_lsp_servers.js",
+        "package-lock.json",
+        "package.json",
+        "project_index.json",
+        "project_structure_analysis.md",
+        "requirements.txt",
+        "requirements2.txt",
+        "terminal2.log"
+      ],
+      "src": [
+        "__init__.py",
+        "main.py",
+        "main_window.py"
+      ],
+      "agent_src": [
+        "QueryEngine.py",
+        "Task.py",
+        "Tool.py",
+        "categorize_by_fix_type.py",
+        "categorize_import_errors.py",
+        "cleanup_terminology.py",
+        "commands.py",
+        "context.py",
+        "cost-tracker.py",
+        "costHook.py",
+        "cost_tracker.py",
+        "history.py",
+        "projectOnboardingState.py",
+        "query.py",
+        "setup.py",
+        "tasks.py",
+        "tool_registry.py",
+        "validate_imports.py"
+      ]
+    }
+  },
+  "components": {
+    "multi_agent_system": {
+      "description": "A system that supports coordination between multiple agents for complex tasks.",
+      "files": [
+        "src/agent/src/coordinator/",
+        "src/agent/src/entrypoints/",
+        "src/agent/src/QueryEngine.py"
+      ]
+    },
+    "vision_agent": {
+      "description": "Dedicated agent for image analysis, including OCR and object detection.",
+      "files": []
+    },
+    "memory_system": {
+      "description": "File-based memory persistence for conversation context and project state.",
+      "files": [
+        "src/agent/src/memdir/",
+        "src/agent/src/context.py"
+      ]
+    },
+    "ui": {
+      "description": "User interface logic for the IDE.",
+      "files": [
+        "src/ui/",
+        "src/main_window.py"
+      ]
+    },
+    "tools": {
+      "description": "Tools used by the agent for various tasks.",
+      "files": [
+        "src/agent/src/tools/",
+        "src/agent/src/Tool.py",
+        "src/agent/src/tool_registry.py"
+      ]
+    }
+  },
+  "dependencies": {
+    "python": "requirements.txt",
+    "node": "package.json"
+  },
+  "documentation": {
+    "files": [
+      "Docs/app.md",
+      "Docs/bugs.md",
+      "Docs/ask_user_question_integration_plan.md"
+    ]
+  },
+  "build": {
+    "scripts": [
+      "build.ps1",
+      "build_installer.bat",
+      "cortex.spec",
+      "cortex_setup.iss"
+    ]
+  },
+  "logs": {
+    "files": [
+      "crash_output.log",
+      "terminal2.log"
+    ]
+  },
+  "last_updated": "2026-04-25"
+}

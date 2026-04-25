@@ -1,5 +1,7 @@
-{
+{,
+  "project_name": "Cortex IDE",
   "project_root": "C:\\Users\\Hakeem1\\OneDrive\\Desktop\\Cortex_Ai_Agent\\Cortex",
+  "description": "An advanced IDE with AI-powered features, including a multi-agent system, Vision Agent for OCR and object detection, and file-based memory persistence.",
   "structure": {
     "name": "Cortex",
     "type": "directory",
