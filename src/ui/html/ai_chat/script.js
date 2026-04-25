@@ -2312,7 +2312,7 @@ function _buildMessageBubble(text, sender) {
         );
         var content = document.createElement('div');
         content.className = 'message-content';
-        content.innerHTML = parsedHtml || text || '';
+        content.innerHTML = stripStrayPipeParagraphsFromHtml(parsedHtml || text || '');
         bubble.appendChild(content);
     }
     return bubble;
@@ -2443,7 +2443,7 @@ function appendMessage(text, sender, shouldSave) {
         // Create content div
         var content = document.createElement('div');
         content.className = 'message-content';
-        content.innerHTML = parsedHtml || text || '';
+        content.innerHTML = stripStrayPipeParagraphsFromHtml(parsedHtml || text || '');
         bubble.appendChild(content);
         
         // Defer syntax highlighting to next frame for better responsiveness
@@ -4855,6 +4855,10 @@ function normalizeMarkdownText(text) {
     // proper markdown tables before markdown parsing/normalization.
     text = convertTabDelimitedSectionsToMarkdown(text);
 
+    // Remove stray separator lines that can appear after history reload
+    // (e.g. "|", "| ,", ",|", with spaces/nbsp between paragraphs and a table).
+    text = text.replace(/^(?=.*\|)\s*[\|,\u00a0\s]+\s*$/gm, '');
+
     // Strip block-level HTML tags the model sometimes echoes back.
     text = text.replace(/<\/?(?:h[1-6]|div|section|article|header|footer|nav|aside|main|figure|figcaption|details|summary)(?:\s[^>]*)?>\s*/gi, '\n');
     text = text.replace(/\s+(?:id|class|style|data-[\w-]+)\s*=\s*"[^"]*"/gi, '');
@@ -4961,6 +4965,11 @@ function normalizeMarkdownText(text) {
     return text;
 }
 
+function stripStrayPipeParagraphsFromHtml(html) {
+    if (!html) return html;
+    return html.replace(/<p>\s*(?:\||,|&nbsp;|\s|<br\s*\/?>)+\s*<\/p>/gi, '');
+}
+
 
 /**
  * Convert quoted suggestion patterns in rendered HTML to clickable action chips.
@@ -5046,7 +5055,7 @@ function updateStreamingUI() {
         html = highlightFileCreations(html);
         // Convert quoted suggestions to clickable chips
         html = convertSuggestionChips(html);
-        contentDiv.innerHTML = html;
+        contentDiv.innerHTML = stripStrayPipeParagraphsFromHtml(html);
 
         // -- 3. Syntax highlight (skip already-highlighted blocks) ----------
         if (window.hljs) {
@@ -5115,7 +5124,7 @@ function updateStreamingUI() {
 
     } catch (e) {
         console.error('Markdown parse error:', e);
-        contentDiv.innerHTML = formatMarkdownFallback(currentContent);
+        contentDiv.innerHTML = stripStrayPipeParagraphsFromHtml(formatMarkdownFallback(currentContent));
     }
 
     smartScroll(container);
@@ -5148,6 +5157,11 @@ function formatMarkdownFallback(text) {
     for (var i = 0; i < lines.length; i++) {
         var line = lines[i];
         var trimmed = line.trim();
+
+        // Skip stray separator-only lines that should not render as text paragraphs.
+        if (/^(?=.*\|)\s*[\|,\u00a0\s]+\s*$/.test(trimmed)) {
+            continue;
+        }
         
         // Code block placeholder
         var cbMatch = trimmed.match(/^%%CODEBLOCK_(\d+)%%$/);
