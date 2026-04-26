@@ -3363,8 +3363,8 @@ Use Markdown tables for structured data comparison:
                 new_s = args.get("new_string", "")
                 if old_s and new_s:
                     info["description"] = "Editing"
-                elif not old_s:
-                    info["description"] = "Creating"
+                elif new_s:
+                    info["description"] = "Editing"
                 else:
                     info["description"] = "Deleting lines"
 
@@ -3981,14 +3981,18 @@ Use Markdown tables for structured data comparison:
             except OSError:
                 pass  # File stat failed — proceed with write
 
-        # Emit signal to show "Creating file..." card with animation
+        # Emit signal to show file operation card with animation
         card_id = None
+        ui_op_type = "create" if is_new else "edit"
         try:
             import uuid
             card_id = f"file-op-{uuid.uuid4().hex[:8]}"
-            self.file_creating_started.emit(full_path)
+            if is_new:
+                self.file_creating_started.emit(full_path)
+            else:
+                self.file_editing_started.emit(full_path)
         except Exception as e:
-            log.debug(f"[BRIDGE] Failed to emit file_creating_started: {e}")
+            log.debug(f"[BRIDGE] Failed to emit file operation started: {e}")
 
         if _REAL_FILE_WRITE_TOOL is not None:
             try:
@@ -4001,7 +4005,7 @@ Use Markdown tables for structured data comparison:
                 self.file_generated.emit(full_path, content)
                 # Emit completion signal for card animation
                 if card_id:
-                    self.file_operation_completed.emit(card_id, full_path, content, "create")
+                    self.file_operation_completed.emit(card_id, full_path, content, ui_op_type)
                 self._tool_ctx.mark_file_modified(full_path)
                 return ToolResult(tool_id=tool_id, result={
                     "path": full_path, "type": op_type, "written": True,
@@ -4019,7 +4023,7 @@ Use Markdown tables for structured data comparison:
             self.file_generated.emit(full_path, content)
             # Emit completion signal for card animation
             if card_id:
-                self.file_operation_completed.emit(card_id, full_path, content, "create")
+                self.file_operation_completed.emit(card_id, full_path, content, ui_op_type)
             self._tool_ctx.mark_file_modified(full_path)
             return ToolResult(tool_id=tool_id, result={
                 "path": full_path, "type": "create" if is_new else "update", "written": True,

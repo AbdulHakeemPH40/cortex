@@ -15,6 +15,8 @@
         <p class="subtext">Persistent project memory for the current workspace.</p>
       </div>
       <div class="topbar-actions">
+        <button id="statsBtn" class="ghost" title="Memory Statistics"><i class="fas fa-chart-bar"></i></button>
+        <button id="consolidateBtn" class="ghost" title="Consolidate & Deduplicate"><i class="fas fa-compress-arrows-alt"></i></button>
         <button id="refreshBtn" class="ghost">Refresh</button>
         <button id="clearBtn" class="danger">Clear All</button>
       </div>
@@ -43,7 +45,10 @@
           <div id="scopeSwitch" class="scope-switch" role="tablist" aria-label="Memory scope">
             <button type="button" class="scope-tab" data-scope="project" role="tab">Project</button>
             <button type="button" class="scope-tab" data-scope="global" role="tab">Global</button>
+            <button type="button" class="scope-tab" data-scope="shared" role="tab">Shared Memories</button>
           </div>
+          <button id="syncGlobalBtn" class="ghost" title="Sync Global Memories to Project"><i class="fas fa-sync-alt"></i> Sync</button>
+          <button id="promoteBtn" class="ghost" title="Promote to Global" style="display:none;"><i class="fas fa-arrow-up"></i> Promote</button>
           <span id="staleCountLabel" class="pill subtle"></span>
           <span id="projectRootLabel" class="pill"></span>
         </div>
@@ -53,8 +58,21 @@
         <label class="search-shell">
           <span class="search-label">Search</span>
           <input id="searchInput" type="text" placeholder="Find by title, keyword, path, or content">
+          <button id="semanticSearchBtn" class="semantic-search-btn" title="Semantic Search (AI-powered)" type="button">
+            <i class="fas fa-brain"></i>
+          </button>
         </label>
         <div id="typeFilters" class="type-filters"></div>
+      </section>
+
+      <section id="searchModeBar" class="search-mode-bar hidden">
+        <div class="search-mode-info">
+          <i class="fas fa-brain"></i>
+          <span id="searchModeText">Semantic search mode</span>
+        </div>
+        <button id="exitSearchBtn" class="ghost" type="button">
+          <i class="fas fa-times"></i> Exit Search
+        </button>
       </section>
 
       <section id="emptyState" class="empty-state hidden">
@@ -80,6 +98,24 @@
 
   <div id="toastHost" class="toast-host"></div>
   <div id="modalHost" class="modal-host hidden"></div>
+  
+  <!-- Consolidation Modal -->
+  <div id="consolidationModal" class="modal-host hidden">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h2><i class="fas fa-compress-arrows-alt"></i> Consolidation Report</h2>
+        <button id="closeConsolidationModal" class="modal-close"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="modal-body">
+        <div id="consolidationStats" class="consolidation-stats"></div>
+        <div id="consolidationClusters" class="consolidation-clusters"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="mergeAllBtn" class="primary-btn">Merge All Duplicates</button>
+        <button id="closeConsolidationModalBtn" class="secondary-btn">Close</button>
+      </div>
+    </div>
+  </div>
 
   <script src="../ai_chat/qwebchannel.js"></script>
   <script src="./memory_management.js"></script>

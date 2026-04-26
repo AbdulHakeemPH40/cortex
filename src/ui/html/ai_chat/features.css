@@ -68,8 +68,10 @@
     overflow: hidden;
     font-size: 13px;
     transition: all 0.2s ease;
-    max-width: 100%;
-    width: auto;
+    max-width: 600px;
+    width: calc(100% - 32px);
+    margin-left: auto;
+    margin-right: auto;
 }
 
 .card-container:hover {
@@ -79,13 +81,14 @@
 
 /* Card Header */
 .card-header {
-    padding: 10px 14px;
+    padding: 6px 14px;
     display: flex;
     align-items: center;
     cursor: pointer;
     user-select: none;
     background: rgba(255, 255, 255, 0.02);
     transition: background 0.15s ease;
+    min-height: 28px;
 }
 
 .card-header:hover {
@@ -380,10 +383,14 @@
     border-radius: var(--radius-md);
     margin-bottom: 6px;
     overflow: hidden;
+    max-width: 600px;
+    width: calc(100% - 32px);
+    margin-left: auto;
+    margin-right: auto;
 }
 
 .diff-group-header {
-    padding: 8px 14px;
+    padding: 5px 14px;
     background: rgba(255,255,255,0.03);
     border-bottom: 1px solid var(--border);
     display: flex;
@@ -392,6 +399,7 @@
     cursor: pointer;
     user-select: none;
     transition: background 0.15s ease;
+    min-height: 28px;
 }
 
 .diff-group-header:hover { background: rgba(255,255,255,0.06); }
@@ -498,10 +506,14 @@
     border-radius: var(--radius-md);
     margin-bottom: 6px;
     overflow: hidden;
+    max-width: 600px;
+    width: calc(100% - 32px);
+    margin-left: auto;
+    margin-right: auto;
 }
 
 .fileop-group-header {
-    padding: 8px 14px;
+    padding: 5px 14px;
     background: rgba(255,255,255,0.03);
     border-bottom: 1px solid var(--border);
     display: flex;
@@ -510,6 +522,7 @@
     cursor: pointer;
     user-select: none;
     transition: background 0.15s ease;
+    min-height: 28px;
 }
 .fileop-group-header:hover { background: rgba(255,255,255,0.06); }
 
@@ -889,6 +902,10 @@
     overflow: hidden;
     font-size: 13px;
     transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    max-width: 600px;
+    width: calc(100% - 32px);
+    margin-left: auto;
+    margin-right: auto;
 }
 
 .term-card:hover {
@@ -896,7 +913,7 @@
 }
 
 .term-header {
-    padding: 10px 14px;
+    padding: 5px 14px;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -905,6 +922,7 @@
     cursor: pointer;
     user-select: none;
     transition: background 0.15s ease;
+    min-height: 28px;
 }
 
 .term-chevron {
@@ -1046,8 +1064,10 @@
     overflow: hidden;
     font-size: 13px;
     animation: permIn 0.18s ease;
-    width: 100%;
-    max-width: 460px;
+    max-width: 600px;
+    width: calc(100% - 32px);
+    margin-left: auto;
+    margin-right: auto;
 }
 
 @keyframes permIn {
@@ -1060,9 +1080,10 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 10px 12px;
+    padding: 5px 14px;
     background: rgba(239, 68, 68, 0.06);
     border-bottom: 1px solid rgba(239, 68, 68, 0.15);
+    min-height: 28px;
 }
 
 .perm-icon {
@@ -1424,18 +1445,23 @@
     border-radius: 7px;
     overflow: hidden;
     background: #161618;
+    max-width: 600px;
+    width: calc(100% - 32px);
+    margin-left: auto;
+    margin-right: auto;
 }
 
 .fec-group-header {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 7px 12px;
+    padding: 5px 14px;
     cursor: pointer;
     user-select: none;
     font-size: 12px;
     color: var(--text-secondary, #888);
     transition: background 0.15s;
+    min-height: 28px;
 }
 
 .fec-group-header:hover {
@@ -2059,6 +2085,10 @@
     margin: 10px 0;
     overflow: hidden;
     transition: border-color 0.2s ease;
+    max-width: 600px;
+    width: calc(100% - 32px);
+    margin-left: auto;
+    margin-right: auto;
 }
 
 .ptree-card:hover {
@@ -2444,8 +2474,10 @@
     margin: 8px 0;
     overflow: hidden;
     font-size: 13px;
-    width: 100%;
-    max-width: 100%;
+    max-width: 600px;
+    width: calc(100% - 32px);
+    margin-left: auto;
+    margin-right: auto;
     box-sizing: border-box;
 }
 
@@ -2705,6 +2737,10 @@
     margin: 0 16px 10px;
     overflow: hidden;
     font-size: 13px;
+    max-width: 600px;
+    width: calc(100% - 32px);
+    margin-left: auto;
+    margin-right: auto;
 }
 
 /* Inline card inside chatMessages — remove side margins */
@@ -2716,12 +2752,13 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 14px;
+    padding: 5px 14px;
     cursor: pointer;
     user-select: none;
     background: rgba(255, 255, 255, 0.025);
     border-bottom: 1px solid transparent;
     transition: background 0.15s ease;
+    min-height: 28px;
 }
 
 .todo-header:hover {
@@ -2931,18 +2968,21 @@
     margin: 0 16px 10px;
     overflow: hidden;
     font-size: 13px;
+    max-width: 600px;
+    width: calc(100% - 32px);
 }
 
 .cfs-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 14px;
+    padding: 5px 14px;
     cursor: pointer;
     user-select: none;
     background: rgba(255, 255, 255, 0.025);
     border-bottom: 1px solid transparent;
     transition: background 0.15s ease;
+    min-height: 28px;
 }
 
 .cfs-header:hover {
@@ -3660,8 +3700,10 @@
     margin: 8px 0;
     overflow: hidden;
     font-size: 13px;
-    width: 100%;
-    max-width: 100%;
+    max-width: 600px;
+    width: calc(100% - 32px);
+    margin-left: auto;
+    margin-right: auto;
     box-sizing: border-box;
 }
 
@@ -3808,8 +3850,10 @@
     border-radius: var(--radius-md);
     margin: 8px 0;
     overflow: hidden;
-    width: 100%;
-    max-width: 100%;
+    max-width: 600px;
+    width: calc(100% - 32px);
+    margin-left: auto;
+    margin-right: auto;
     box-sizing: border-box;
 }
 
@@ -3817,9 +3861,10 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 12px 16px;
+    padding: 5px 14px;
     background: linear-gradient(90deg, var(--accent-dim), transparent);
     border-bottom: 1px solid var(--border);
+    min-height: 28px;
 }
 
 .inline-diff-title {
@@ -4567,8 +4612,10 @@
     margin: 8px 0;
     overflow: hidden;
     font-size: 13px;
-    width: 100%;
-    max-width: 100%;
+    max-width: 600px;
+    width: calc(100% - 32px);
+    margin-left: auto;
+    margin-right: auto;
     box-sizing: border-box;
 }
 
@@ -4715,8 +4762,10 @@
     border-radius: var(--radius-md);
     margin: 8px 0;
     overflow: hidden;
-    width: 100%;
-    max-width: 100%;
+    max-width: 600px;
+    width: calc(100% - 32px);
+    margin-left: auto;
+    margin-right: auto;
     box-sizing: border-box;
 }
 
@@ -4724,9 +4773,10 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 12px 16px;
+    padding: 5px 14px;
     background: linear-gradient(90deg, rgba(59, 130, 246, 0.1), transparent);
     border-bottom: 1px solid var(--border);
+    min-height: 28px;
 }
 
 .inline-diff-title {
@@ -5468,11 +5518,12 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 14px 18px;
+    padding: 5px 14px;
     background: var(--bg-surface);
     cursor: pointer;
     transition: background 0.2s;
     border-bottom: 1px solid var(--border);
+    min-height: 28px;
 }
 
 .summary-header:hover {
@@ -5637,9 +5688,11 @@
     animation: fadeIn 0.2s ease;
     position: relative;
     display: block;
-    width: 100%;
+    max-width: 600px;
+    width: calc(100% - 32px);
+    margin-left: auto;
+    margin-right: auto;
     box-sizing: border-box;
-    max-width: 100%;
     overflow: visible;
 }
 
@@ -5894,6 +5947,10 @@
     border-radius: var(--radius-lg);
     margin-bottom: 16px;
     overflow: hidden;
+    max-width: 600px;
+    width: calc(100% - 32px);
+    margin-left: auto;
+    margin-right: auto;
 }
 
 .details-label {
@@ -6236,8 +6293,10 @@
     border-radius: var(--radius-lg);
     margin: 12px 0;
     overflow: hidden;
-    width: 100%;
-    max-width: 100%;
+    max-width: 600px;
+    width: calc(100% - 32px);
+    margin-left: auto;
+    margin-right: auto;
     box-sizing: border-box;
 }
 
@@ -6245,9 +6304,10 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 10px 14px;
+    padding: 5px 14px;
     background: var(--bg-surface);
     border-bottom: 1px solid var(--border-light);
+    min-height: 28px;
 }
 
 .terminal-inline-icon {

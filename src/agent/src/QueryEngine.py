@@ -316,6 +316,12 @@ except ImportError:
         return prompt
 
 try:
+    from .utils.searchStrategy import get_search_strategy_instruction
+except ImportError:
+    def get_search_strategy_instruction() -> str:
+        return ""
+
+try:
     from .utils.system_theme import resolve_theme_setting
 except ImportError:
     def resolve_theme_setting(theme: str) -> str:
@@ -624,6 +630,7 @@ class QueryEngine:
         system_prompt = as_system_prompt([
             *([custom_prompt] if custom_prompt is not None else default_system_prompt),
             *([memory_mechanics_prompt] if memory_mechanics_prompt else []),
+            get_search_strategy_instruction(),  # 🔥 Enforce thorough search strategy
             *([append_system_prompt] if append_system_prompt else []),
         ])
         

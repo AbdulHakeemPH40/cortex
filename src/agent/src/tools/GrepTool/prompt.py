@@ -50,7 +50,24 @@ Usage:
 - Use {AGENT_TOOL_NAME} tool for open-ended searches requiring multiple rounds
 - Pattern syntax: Uses ripgrep (not grep) - literal braces need escaping (use `interface\\{{\\}}` to find `interface{{}}` in Go code)
 - Multiline matching: By default patterns match within single lines only. For cross-line patterns like `struct \\{{[\\s\\S]*?field`, use `multiline: true`
-- IMPORTANT: Do NOT call {GREP_TOOL_NAME} more than 2-3 times consecutively. After finding relevant files/lines, take ACTION (Write/Edit) instead of searching more.
+
+🔥 THOROUGH SEARCH STRATEGY (MANDATORY):
+- BEFORE taking any action, you MUST run MULTIPLE searches with different patterns
+- Run AT LEAST 3-6 different searches to find ALL relevant code
+- Search for: function definitions, class definitions, imports, usage, error handling, tests
+- Example: If looking for "authentication", search for: "auth", "login", "session", "token", "credential"
+- After finding files with GrepTool, READ them ALL with ReadFileTool (minimum 3-5 files)
+- NEVER search only once and act - that's LAZY and leads to mistakes!
+- Spend 5-10 minutes searching thoroughly to save 30+ minutes fixing mistakes later
+
+📋 SEARCH DEPTH REQUIREMENTS:
+- Simple fix: Run 2-3 searches, read 2-3 files minimum
+- Feature addition: Run 4-6 searches, read 4-6 files minimum
+- Bug investigation: Run 5-8 searches, read 5-8 files minimum
+- Architecture change: Run 8-12 searches, read 8-12 files minimum
+
+✅ GOOD PATTERN: Search → Find 15-30+ matches → Read 5-10 files → Understand → Act
+❌ BAD PATTERN: Search once → Find 3 matches → Read 1 file → Act (LAZY!)
 """
 
 

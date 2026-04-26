@@ -13,6 +13,7 @@ import json
 import os
 import re
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import List
 
@@ -25,6 +26,13 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 from src.utils.logger import get_logger
 
 log = get_logger("memory_manager")
+
+# Import cross-project memory manager
+try:
+    from src.agent.src.memdir.crossProjectMemory import get_cross_project_manager
+    HAS_CROSS_PROJECT = True
+except ImportError:
+    HAS_CROSS_PROJECT = False
 
 
 def _parse_frontmatter(content: str):
@@ -145,6 +153,20 @@ class MemoryManagerBridge(QObject):
 
         if self._active_scope not in ("project", "global"):
             self._active_scope = "project"
+        
+        # Initialize semantic search
+        self._semantic_searcher = None
+        self._init_semantic_search()
+    
+    def _init_semantic_search(self):
+        """Initialize semantic search for current project."""
+        try:
+            from src.agent.src.memdir.semanticSearch import get_semantic_searcher
+            self._semantic_searcher = get_semantic_searcher(self._project_memory_dir)
+            log.info("[MemoryManager] Semantic search initialized")
+        except Exception as e:
+            log.warning(f"[MemoryManager] Semantic search unavailable: {e}")
+            self._semantic_searcher = None
 
     def _get_scope_dir(self, scope: str) -> str:
         return self._global_memory_dir if scope == "global" else self._project_memory_dir
@@ -256,6 +278,333 @@ class MemoryManagerBridge(QObject):
         else:
             self.toast_requested.emit("success", f"Cleared {scope} memories")
         return self._emit_refresh()
+    
+    @pyqtSlot(str, result=str)
+    def semanticSearch(self, query: str):
+        """Perform semantic search on memories."""
+        query = (query or "").strip()
+        if not query:
+            return self._emit_refresh()
+        
+        if not self._semantic_searcher:
+            self.toast_requested.emit("error", "Semantic search not available")
+            return self._emit_refresh()
+        
+        try:
+            # Perform semantic search
+            results = self._semantic_searcher.search_memories(
+                query, 
+                self._project_memory_dir, 
+                top_k=20
+            )
+            
+            # Convert results to dict format for JSON
+            search_results = [
+                {
+                    "path": r.file_path,
+                    "filename": r.filename,
+                    "name": r.title,
+                    "description": r.description,
+                    "type": r.memory_type,
+                    "similarity_score": r.similarity_score,
+                    "content_preview": r.content_preview,
+                    "mtime": r.mtime,
+                    "age": _age_label(r.mtime),
+                    "stale": int((time.time() - r.mtime) / 86400) > 7,
+                    "keywords": [part.strip() for part in r.description.split(",") if part.strip()],
+                    "body": self._load_file_body(r.file_path),
+                }
+                for r in results
+            ]
+            
+            log.info(f"[MemoryManager] Semantic search found {len(search_results)} results for '{query[:50]}...'")
+            
+            # Update scope with search results
+            payload = {
+                "enabled": self._enabled,
+                "activeScope": self._active_scope,
+                "searchQuery": query,
+                "isSearchMode": True,
+                "scopes": {
+                    "project": {
+                        "name": f"Search: {query[:30]}...",
+                        "memoryDir": self._project_memory_dir,
+                        "rulesDir": self._project_rules_dir,
+                        "memories": search_results,
+                    },
+                    "global": {
+                        "name": "Global",
+                        "memoryDir": self._global_memory_dir,
+                        "rulesDir": self._global_rules_dir,
+                        "memories": [],
+                    },
+                },
+            }
+            
+            return json.dumps(payload)
+            
+        except Exception as e:
+            log.error(f"[MemoryManager] Semantic search failed: {e}", exc_info=True)
+            self.toast_requested.emit("error", f"Semantic search failed: {e}")
+            return self._emit_refresh()
+    
+    def _load_file_body(self, file_path: str) -> str:
+        """Load file body content."""
+        try:
+            with open(file_path, encoding="utf-8") as handle:
+                raw = handle.read()
+            _, body = _parse_frontmatter(raw)
+            return body[:500]  # Limit preview to 500 chars
+        except Exception:
+            return ""
+    
+    @pyqtSlot(result=str)
+    def exitSearchMode(self):
+        """Exit search mode and return to normal view."""
+        return self._emit_refresh()
+    
+    @pyqtSlot(str, result=str)
+    def getMemoryStats(self, scope: str):
+        """Get memory statistics for dashboard."""
+        scope = (scope or "").strip().lower()
+        if scope not in ("project", "global"):
+            scope = self._active_scope
+        memory_dir = self._get_scope_dir(scope)
+        
+        memories = _load_memories(memory_dir)
+        
+        # Calculate stats
+        type_counts = {}
+        total_size = 0
+        oldest_mtime = time.time()
+        newest_mtime = 0
+        
+        for mem in memories:
+            mem_type = mem.get("type", "unknown")
+            type_counts[mem_type] = type_counts.get(mem_type, 0) + 1
+            
+            try:
+                file_size = os.path.getsize(mem["path"])
+                total_size += file_size
+            except Exception:
+                pass
+            
+            mtime = mem.get("mtime", 0)
+            if mtime < oldest_mtime:
+                oldest_mtime = mtime
+            if mtime > newest_mtime:
+                newest_mtime = mtime
+        
+        stats = {
+            "total": len(memories),
+            "type_counts": type_counts,
+            "total_size_kb": round(total_size / 1024, 2),
+            "oldest_age": _age_label(oldest_mtime) if oldest_mtime < time.time() else "N/A",
+            "newest_age": _age_label(newest_mtime) if newest_mtime > 0 else "N/A",
+            "stale_count": sum(1 for m in memories if m.get("stale", False)),
+            "fresh_count": sum(1 for m in memories if not m.get("stale", False)),
+        }
+        
+        return json.dumps(stats)
+    
+    @pyqtSlot(str, bool, result=str)
+    def runConsolidation(self, scope: str, auto_merge: bool = False):
+        """Run memory consolidation and deduplication."""
+        scope = (scope or "").strip().lower()
+        if scope not in ("project", "global"):
+            scope = self._active_scope
+        memory_dir = self._get_scope_dir(scope)
+        
+        if not os.path.isdir(memory_dir):
+            self.toast_requested.emit("error", "Memory directory not found")
+            return json.dumps({"error": "Memory directory not found"})
+        
+        try:
+            log.info(f"[MemoryManager] Running consolidation on {memory_dir} (auto_merge={auto_merge})")
+            self.toast_requested.emit("info", "Starting memory consolidation...")
+            
+            from src.agent.src.memdir.memoryConsolidation import MemoryConsolidator
+            
+            consolidator = MemoryConsolidator(memory_dir)
+            report = consolidator.run_consolidation(auto_merge=auto_merge)
+            
+            # Convert report to JSON-serializable dict
+            report_dict = {
+                "total_memories_scanned": report.total_memories_scanned,
+                "duplicates_found": report.duplicates_found,
+                "memories_merged": report.memories_merged,
+                "memories_deleted": report.memories_deleted,
+                "space_saved_bytes": report.space_saved_bytes,
+                "space_saved_kb": round(report.space_saved_bytes / 1024, 2),
+                "timestamp": report.timestamp,
+                "clusters": [
+                    {
+                        "cluster_id": c.cluster_id,
+                        "memory_count": len(c.memories),
+                        "recommended_action": c.recommended_action,
+                        "memories": [
+                            {
+                                "filename": m.get("filename", ""),
+                                "title": m.get("title", ""),
+                                "file_path": m.get("file_path", ""),
+                            }
+                            for m in c.memories
+                        ],
+                    }
+                    for c in report.clusters
+                ],
+            }
+            
+            log.info(f"[MemoryManager] Consolidation complete: {report.duplicates_found} duplicates found, {report.memories_merged} merged")
+            
+            if report.duplicates_found > 0:
+                action_msg = f"Found {report.duplicates_found} duplicate groups"
+                if auto_merge:
+                    action_msg += f", merged {report.memories_merged} memories"
+                self.toast_requested.emit("success", action_msg)
+            else:
+                self.toast_requested.emit("success", "No duplicates found - memories are clean!")
+            
+            # Refresh memory list after consolidation
+            return json.dumps(report_dict)
+            
+        except Exception as e:
+            log.error(f"[MemoryManager] Consolidation failed: {e}", exc_info=True)
+            self.toast_requested.emit("error", f"Consolidation failed: {e}")
+            return json.dumps({"error": str(e)})
+    
+    @pyqtSlot(result=str)
+    def getGlobalMemories(self):
+        """Get all global (cross-project) memories."""
+        if not HAS_CROSS_PROJECT:
+            return json.dumps({"error": "Cross-project memory not available"})
+        
+        try:
+            manager = get_cross_project_manager()
+            memories = manager.load_global_memories()
+            
+            memories_list = [
+                {
+                    "filename": m.filename,
+                    "title": m.title,
+                    "description": m.description,
+                    "memory_type": m.memory_type,
+                    "mtime": m.mtime,
+                    "age": _age_label(m.mtime),
+                    "content_preview": m.content[:300],
+                }
+                for m in memories
+            ]
+            
+            return json.dumps({"memories": memories_list})
+            
+        except Exception as e:
+            log.error(f"[MemoryManager] Failed to load global memories: {e}")
+            return json.dumps({"error": str(e)})
+    
+    @pyqtSlot(str, str, str, result=str)
+    def saveGlobalMemory(self, filename: str, title: str, content: str):
+        """Save a memory to global (cross-project) scope."""
+        if not HAS_CROSS_PROJECT:
+            return json.dumps({"error": "Cross-project memory not available"})
+        
+        try:
+            manager = get_cross_project_manager()
+            
+            metadata = {
+                "title": title,
+                "type": "user_preference",
+                "created": datetime.now().isoformat(),
+            }
+            
+            file_path = manager.save_global_memory(filename, content, metadata)
+            
+            log.info(f"[MemoryManager] Saved global memory: {filename}")
+            self.toast_requested.emit("success", f"Saved global memory: {title}")
+            
+            return json.dumps({"success": True, "file_path": file_path})
+            
+        except Exception as e:
+            log.error(f"[MemoryManager] Failed to save global memory: {e}")
+            return json.dumps({"error": str(e)})
+    
+    @pyqtSlot(str, result=str)
+    def deleteGlobalMemory(self, filename: str):
+        """Delete a global memory."""
+        if not HAS_CROSS_PROJECT:
+            return json.dumps({"error": "Cross-project memory not available"})
+        
+        try:
+            manager = get_cross_project_manager()
+            success = manager.delete_global_memory(filename)
+            
+            if success:
+                self.toast_requested.emit("success", f"Deleted global memory: {filename}")
+                return json.dumps({"success": True})
+            else:
+                return json.dumps({"error": "Memory not found"})
+            
+        except Exception as e:
+            log.error(f"[MemoryManager] Failed to delete global memory: {e}")
+            return json.dumps({"error": str(e)})
+    
+    @pyqtSlot(str, bool, result=str)
+    def syncGlobalMemoriesToProject(self, project_root: str, auto_merge: bool = True):
+        """Sync global memories to a project."""
+        if not HAS_CROSS_PROJECT:
+            return json.dumps({"error": "Cross-project memory not available"})
+        
+        try:
+            manager = get_cross_project_manager()
+            report = manager.sync_memories_to_project(project_root, auto_merge)
+            
+            report_dict = {
+                "global_memories_loaded": report.global_memories_loaded,
+                "project_memories_loaded": report.project_memories_loaded,
+                "conflicts_resolved": report.conflicts_resolved,
+                "merged_memory_path": report.merged_memory_path,
+            }
+            
+            log.info(f"[MemoryManager] Synced global memories to project: {project_root}")
+            self.toast_requested.emit(
+                "success",
+                f"Synced {report.global_memories_loaded} global memories"
+            )
+            
+            return json.dumps(report_dict)
+            
+        except Exception as e:
+            log.error(f"[MemoryManager] Failed to sync global memories: {e}")
+            return json.dumps({"error": str(e)})
+    
+    @pyqtSlot(str, result=str)
+    def promoteToGlobal(self, memory_path: str):
+        """Promote a project memory to global scope."""
+        if not HAS_CROSS_PROJECT:
+            return json.dumps({"error": "Cross-project memory not available"})
+        
+        try:
+            manager = get_cross_project_manager()
+            
+            # Extract filename from path
+            filename = os.path.basename(memory_path)
+            project_root = self._project_memory_dir
+            
+            # Find project root from memory dir
+            if project_root.endswith("/memory") or project_root.endswith("\\memory"):
+                project_root = project_root.rsplit(os.sep + "memory", 1)[0]
+            
+            result = manager.share_project_memory(project_root, filename, promote_to_global=True)
+            
+            if result:
+                self.toast_requested.emit("success", f"Promoted {filename} to global memory")
+                return json.dumps({"success": True, "global_path": result})
+            else:
+                return json.dumps({"error": "Failed to promote memory"})
+            
+        except Exception as e:
+            log.error(f"[MemoryManager] Failed to promote memory: {e}")
+            return json.dumps({"error": str(e)})
 
 
 class MemoryManagerDialog(QDialog):

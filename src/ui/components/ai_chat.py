@@ -204,7 +204,7 @@ def _append_index_link(entrypoint: str, rel_path: str, title: str) -> None:
         pass
 
 
-def _maybe_schedule_chat_summary(project_root: str, conversation_id: str, title: str, messages: list) -> None:
+def _maybe_schedule_chat_summary(project_root: str, conversation_id: str, title: str, messages: list, ui_widget=None) -> None:
     try:
         from src.config.settings import get_settings
 
@@ -250,7 +250,34 @@ def _maybe_schedule_chat_summary(project_root: str, conversation_id: str, title:
 
         def _runner():
             try:
+                # Notify UI: Memory save started
+                if ui_widget:
+                    from PyQt6.QtCore import QMetaObject, Qt
+                    QMetaObject.invokeMethod(
+                        ui_widget,
+                        "show_memory_saving_animation",
+                        Qt.ConnectionType.QueuedConnection,
+                    )
+                
                 _write_chat_summary_memory(project_root, conversation_id, title, messages)
+                
+                # Notify UI: Memory save completed
+                if ui_widget:
+                    QMetaObject.invokeMethod(
+                        ui_widget,
+                        "show_memory_saved_confirmation",
+                        Qt.ConnectionType.QueuedConnection,
+                        "Session summary saved",
+                    )
+            except Exception as e:
+                log.error(f"[MEMORY] CRITICAL: Chat summary thread failed: {e}", exc_info=True)
+                # Notify UI: Memory save failed
+                if ui_widget:
+                    QMetaObject.invokeMethod(
+                        ui_widget,
+                        "hide_memory_saving_animation",
+                        Qt.ConnectionType.QueuedConnection,
+                    )
             finally:
                 with _CHAT_SUMMARY_LOCK:
                     _CHAT_SUMMARY_IN_FLIGHT.discard(conversation_id)
@@ -262,11 +289,19 @@ def _maybe_schedule_chat_summary(project_root: str, conversation_id: str, title:
         return
 
 
-def _write_chat_summary_memory(project_root: str, conversation_id: str, title: str, messages: list) -> None:
+def _write_chat_summary_memory(project_root: str, conversation_id: str, title: str, messages: list, retry_count: int = 0) -> None:
     """
-    Best-effort: summarize long chats into a stable, project-scoped memory file.
+    Summarize long chats into a stable, project-scoped memory file.
     Runs in a background thread to avoid blocking the UI.
+    
+    Enhanced with:
+    - Retry logic for transient failures (max 2 retries)
+    - Backup mechanism to prevent data loss
+    - Detailed error categorization
+    - Graceful degradation on provider failures
     """
+    max_retries = 2
+    
     try:
         from src.config.settings import get_settings
         from src.ai.providers import ChatMessage, ProviderType, get_provider_registry
@@ -280,7 +315,25 @@ def _write_chat_summary_memory(project_root: str, conversation_id: str, title: s
             "siliconflow": ProviderType.SILICONFLOW,
         }
         provider_type = provider_map.get(provider_name, ProviderType.MISTRAL)
-        provider = get_provider_registry().get_provider(provider_type)
+        
+        # Validate provider availability
+        try:
+            provider = get_provider_registry().get_provider(provider_type)
+            if not provider:
+                raise ValueError(f"Provider '{provider_name}' not available in registry")
+        except Exception as e:
+            log.error(f"[MEMORY] Provider initialization failed: {e}")
+            if retry_count < max_retries:
+                log.info(f"[MEMORY] Retrying in 5s (attempt {retry_count + 1}/{max_retries})")
+                import time as time_module
+                time_module.sleep(5)
+                _write_chat_summary_memory(project_root, conversation_id, title, messages, retry_count + 1)
+            return
+
+        # Validate messages
+        if not messages or len(messages) == 0:
+            log.warning("[MEMORY] No messages to summarize")
+            return
 
         trimmed = (messages or [])[-40:]
         transcript_lines = []
@@ -293,6 +346,10 @@ def _write_chat_summary_memory(project_root: str, conversation_id: str, title: s
                 content = content[:700] + "…"
             transcript_lines.append(f"{role.upper()}: {content}")
         transcript = "\n".join(transcript_lines)
+        
+        if not transcript:
+            log.warning("[MEMORY] No valid transcript content after filtering")
+            return
 
         system = (
             "You are converting a long coding chat into a persistent memory file for an IDE.\n"
@@ -312,21 +369,45 @@ def _write_chat_summary_memory(project_root: str, conversation_id: str, title: s
             f"{transcript}\n"
         )
 
-        resp = provider.chat(
-            messages=[
-                ChatMessage(role="system", content=system),
-                ChatMessage(role="user", content=user),
-            ],
-            model=model_id,
-            temperature=0.2,
-            max_tokens=900,
-            stream=False,
-        )
+        # Call LLM provider with timeout handling
+        try:
+            resp = provider.chat(
+                messages=[
+                    ChatMessage(role="system", content=system),
+                    ChatMessage(role="user", content=user),
+                ],
+                model=model_id,
+                temperature=0.2,
+                max_tokens=900,
+                stream=False,
+            )
+        except Exception as e:
+            error_msg = str(e).lower()
+            is_transient = any(keyword in error_msg for keyword in [
+                'timeout', 'connection', 'rate limit', '503', '502', '504', 'temporary'
+            ])
+            
+            if is_transient and retry_count < max_retries:
+                wait_time = 5 * (retry_count + 1)  # Exponential backoff: 5s, 10s
+                log.warning(f"[MEMORY] Transient LLM error ({e}), retrying in {wait_time}s (attempt {retry_count + 1}/{max_retries})")
+                import time as time_module
+                time_module.sleep(wait_time)
+                _write_chat_summary_memory(project_root, conversation_id, title, messages, retry_count + 1)
+                return
+            else:
+                log.error(f"[MEMORY] LLM chat failed after {retry_count + 1} attempts: {e}")
+                _save_fallback_summary(project_root, conversation_id, title, messages)
+                return
+        
         content = (resp.content or "").strip()
         if not content:
+            log.warning("[MEMORY] LLM returned empty content")
+            _save_fallback_summary(project_root, conversation_id, title, messages)
             return
 
+        # Validate and fix frontmatter
         if not content.startswith("---"):
+            log.warning("[MEMORY] LLM response missing frontmatter, adding fallback")
             now = datetime.utcnow().strftime("%Y-%m-%d")
             safe_title = (title or conversation_id[:8]).replace('"', "'")
             content = (
@@ -338,19 +419,125 @@ def _write_chat_summary_memory(project_root: str, conversation_id: str, title: s
                 + content
             )
 
+        # Save to memory directory with error handling
+        try:
+            memory_dir = _compute_project_memory_dir(project_root)
+            auto_dir = os.path.join(memory_dir, "auto", "chat_summaries")
+            os.makedirs(auto_dir, exist_ok=True)
+            out_path = os.path.join(auto_dir, f"{conversation_id}.md")
+            
+            # Create backup before overwriting
+            if os.path.exists(out_path):
+                backup_path = out_path + ".backup"
+                try:
+                    import shutil
+                    shutil.copy2(out_path, backup_path)
+                except Exception as backup_err:
+                    log.warning(f"[MEMORY] Failed to create backup: {backup_err}")
+            
+            Path(out_path).write_text(content, encoding="utf-8")
+            
+            # Verify write succeeded
+            if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+                raise IOError(f"File write verification failed: {out_path}")
+
+            entrypoint = _ensure_memory_index(memory_dir)
+            rel = os.path.relpath(out_path, memory_dir).replace("\\", "/")
+            label = f"Chat summary: {title or conversation_id[:8]}"
+            _append_index_link(entrypoint, rel, label)
+            log.info(f"[MEMORY] ✅ Auto-saved chat summary to {out_path} ({len(content)} chars)")
+            
+            # Clean up backup if successful
+            backup_path = out_path + ".backup"
+            if os.path.exists(backup_path):
+                try:
+                    os.remove(backup_path)
+                except Exception:
+                    pass
+                    
+        except IOError as e:
+            log.error(f"[MEMORY] File I/O error: {e}")
+            _save_emergency_backup(project_root, conversation_id, title, content)
+        except Exception as e:
+            log.error(f"[MEMORY] Unexpected error saving memory: {e}", exc_info=True)
+            _save_emergency_backup(project_root, conversation_id, title, content)
+            
+    except ImportError as e:
+        log.error(f"[MEMORY] Import error (missing dependency): {e}")
+    except Exception as e:
+        log.error(f"[MEMORY] CRITICAL: Unexpected error in chat summary: {e}", exc_info=True)
+        if retry_count < max_retries:
+            log.info(f"[MEMORY] Retrying after critical error (attempt {retry_count + 1}/{max_retries})")
+            import time as time_module
+            time_module.sleep(3)
+            _write_chat_summary_memory(project_root, conversation_id, title, messages, retry_count + 1)
+
+
+def _save_fallback_summary(project_root: str, conversation_id: str, title: str, messages: list) -> None:
+    """Save a basic fallback summary when LLM fails."""
+    try:
         memory_dir = _compute_project_memory_dir(project_root)
         auto_dir = os.path.join(memory_dir, "auto", "chat_summaries")
         os.makedirs(auto_dir, exist_ok=True)
         out_path = os.path.join(auto_dir, f"{conversation_id}.md")
-        Path(out_path).write_text(content, encoding="utf-8")
-
-        entrypoint = _ensure_memory_index(memory_dir)
-        rel = os.path.relpath(out_path, memory_dir).replace("\\", "/")
-        label = f"Chat summary: {title or conversation_id[:8]}"
-        _append_index_link(entrypoint, rel, label)
-        log.info(f"[MEMORY] Auto-saved chat summary to {out_path}")
+        
+        # Create simple summary from message metadata
+        msg_count = len(messages)
+        roles = {}
+        for msg in messages:
+            role = (msg.get("role") or msg.get("sender") or "unknown").lower()
+            roles[role] = roles.get(role, 0) + 1
+        
+        fallback_content = (
+            f"---\n"
+            f"name: \"Chat Summary: {title or conversation_id[:8]}\"\n"
+            f"description: \"chat,summary,fallback,{datetime.utcnow().strftime('%Y-%m-%d')}\"\n"
+            "type: \"project\"\n"
+            "---\n\n"
+            f"## Auto-Generated Summary (Fallback)\n\n"
+            f"**Note:** LLM summarization failed, saving metadata only.\n\n"
+            f"- **Conversation ID:** {conversation_id}\n"
+            f"- **Title:** {title or 'Untitled'}\n"
+            f"- **Total Messages:** {msg_count}\n"
+            f"- **Message Breakdown:** {', '.join(f'{k}: {v}' for k, v in roles.items())}\n"
+            f"- **Generated:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+            f"## Recent Topics\n\n"
+        )
+        
+        # Extract key topics from last 10 messages
+        recent_msgs = messages[-10:]
+        topics = []
+        for msg in recent_msgs:
+            content = (msg.get("content") or msg.get("text") or "").strip()
+            if len(content) > 50:
+                # Extract first sentence or 100 chars
+                first_sentence = content.split('.')[0][:100]
+                if first_sentence:
+                    topics.append(f"- {first_sentence}")
+        
+        fallback_content += "\n".join(topics[:5]) if topics else "- No extractable topics"
+        
+        Path(out_path).write_text(fallback_content, encoding="utf-8")
+        log.warning(f"[MEMORY] ⚠️ Saved fallback summary (LLM failed): {out_path}")
+        
     except Exception as e:
-        log.warning(f"[MEMORY] Auto chat summary failed: {e}")
+        log.error(f"[MEMORY] Failed to save fallback summary: {e}")
+
+
+def _save_emergency_backup(project_root: str, conversation_id: str, title: str, content: str) -> None:
+    """Emergency backup when normal save fails."""
+    try:
+        emergency_dir = os.path.join(os.path.expanduser("~"), ".cortex", "emergency_backups", "memory")
+        os.makedirs(emergency_dir, exist_ok=True)
+        
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        backup_path = os.path.join(emergency_dir, f"{conversation_id}_{timestamp}.md")
+        
+        Path(backup_path).write_text(content, encoding="utf-8")
+        log.critical(f"[MEMORY] 🚨 Emergency backup saved: {backup_path}")
+        
+    except Exception as e:
+        log.critical(f"[MEMORY] 💥 CRITICAL: Even emergency backup failed: {e}")
 
 
 class VisionWorker(QObject):
@@ -912,8 +1099,8 @@ class ChatBridge(QObject):
                     tools_used=msg.get('tools_used', [])
                 )
             
-            log.debug(f'âœ“ Saved single chat {conversation_id} to SQLite (storage_key: {storage_key})')
-            _maybe_schedule_chat_summary(project_path, conversation_id, title, messages)
+            log.debug(f'âœ" Saved single chat {conversation_id} to SQLite (storage_key: {storage_key})')
+            _maybe_schedule_chat_summary(project_path, conversation_id, title, messages, self)
             return "OK"
             
         except Exception as e:
@@ -970,9 +1157,9 @@ class ChatBridge(QObject):
                         files_accessed=msg.get('files_accessed', []),
                         tools_used=msg.get('tools_used', [])
                     )
-                _maybe_schedule_chat_summary(project_path, conversation_id, title, messages)
-            
-            log.debug(f'âœ“ Saved {len(chats)} chats to SQLite (storage_key: {storage_key})')
+                _maybe_schedule_chat_summary(project_path, conversation_id, title, messages, self)
+                        
+            log.debug(f'âœ" Saved {len(chats)} chats to SQLite (storage_key: {storage_key})')
             return "OK"
             
         except Exception as e:
@@ -1162,6 +1349,11 @@ class AIChatWidget(QWidget):
     # Todo management signal
     toggle_todo_requested = pyqtSignal(str, bool)  # task_id, completed
     
+    # Memory save status signals
+    memory_save_started = pyqtSignal(str)  # memory_name
+    memory_save_completed = pyqtSignal(str)  # memory_name
+    memory_save_failed = pyqtSignal(str)  # error_message
+    
     def show_question(self, info: dict):
         """Show a question card in the chat UI."""
         self._bridge.show_question(info)
@@ -1187,6 +1379,20 @@ class AIChatWidget(QWidget):
     def hide_agent_mode(self):
         """Hide the Agent Mode grid indicator in chat UI."""
         self._view.page().runJavaScript("if(window.hideAgentMode) window.hideAgentMode();")
+    
+    def show_memory_saving_animation(self, memory_name: str = "Session insights"):
+        """Show memory saving animation in chat UI."""
+        safe_name = json.dumps(memory_name)
+        self._view.page().runJavaScript(f"if(window.showMemorySavingAnimation) window.showMemorySavingAnimation({safe_name});")
+    
+    def show_memory_saved_confirmation(self, memory_name: str = "Session insights"):
+        """Show memory saved confirmation in chat UI."""
+        safe_name = json.dumps(memory_name)
+        self._view.page().runJavaScript(f"if(window.showMemorySavedConfirmation) window.showMemorySavedConfirmation({safe_name});")
+    
+    def hide_memory_saving_animation(self):
+        """Hide memory saving animation in chat UI."""
+        self._view.page().runJavaScript("if(window.hideMemorySavingAnimation) window.hideMemorySavingAnimation();")
 
     def set_active_agent_mode(self, mode: str):
         """Activate a specific agent mode in the grid.
@@ -2802,6 +3008,27 @@ class AIChatWidget(QWidget):
     def set_project_root(self, path: str):
         """Set the project root for file searching."""
         self._project_root = path
+        
+        # Sync global memories to this project (cross-project sharing)
+        self._sync_global_memories_to_project(path)
+    
+    def _sync_global_memories_to_project(self, project_root: str):
+        """Sync global memories to project in background thread."""
+        def _runner():
+            try:
+                from src.agent.src.memdir.crossProjectMemory import get_cross_project_manager
+                
+                manager = get_cross_project_manager()
+                report = manager.sync_memories_to_project(project_root, auto_merge=True)
+                
+                if report.global_memories_loaded > 0:
+                    log.info(f"[AI_CHAT] Synced {report.global_memories_loaded} global memories to project")
+            except Exception as e:
+                log.debug(f"[AI_CHAT] Cross-project memory sync failed (non-critical): {e}")
+        
+        # Run in background to avoid blocking UI
+        import threading
+        threading.Thread(target=_runner, daemon=True).start()
 
     def set_code_context_callback(self, callback):
         """Used by main_window to provide editor code context."""

@@ -1,0 +1,72 @@
+sequenceDiagram
+    actor User
+    participant ChatUI as Chat UI (aichat.html)
+    participant Backend as Cortex Backend
+    participant MermaidViewer as Mermaid Viewer (mermaid.html)
+    participant MermaidLib as Mermaid Library
+
+    User->>ChatUI: Sends message with Mermaid syntax<br/>(
+
+```mermaid<br/>graph TD;<br/>A-->B;<br/>
+
+```)
+    ChatUI->>Backend: Transmits message for processing
+    Backend->>Backend: Detects Mermaid syntax in message
+    Backend->>MermaidViewer: Opens mermaid.html in a new window/iframe<br/>(with Mermaid code as payload)
+    MermaidViewer->>MermaidLib: Initializes Mermaid library
+    MermaidLib->>MermaidViewer: Renders diagram in #stage container
+    MermaidViewer->>User: Displays rendered diagram<br/>(with zoom/pan toolbar)
+```text
+---
+
+#
+
+#
+
+# **Key Steps Explained**:
+1. **User Input**:
+   - The user sends a message containing Mermaid syntax (e.g., 
+
+`
+
+<!--PH_CODE_2-->) in the chat UI (`aichat.html`).
+
+2. **Backend Processing**:
+   - The backend receives the message and detects Mermaid syntax.
+   - It prepares the Mermaid code for rendering.
+
+3. **Mermaid Viewer Initialization**:
+   - The backend opens `mermaid.html` in a new window or iframe.
+   - The Mermaid code is passed to `mermaid.html` as a payload (e.g., via URL parameters or `postMessage`).
+
+4. **Diagram Rendering**:
+   - `mermaid.html` initializes the Mermaid library.
+   - The Mermaid library renders the diagram in the `#stage` container.
+
+5. **User Interaction**:
+   - The user sees the rendered diagram in `mermaid.html` and can interact with it using the toolbar (zoom, reset, fit to screen, etc.).
+
+---
+
+#
+
+#
+
+# **Assumptions**:
+- The Mermaid library is either:
+  - Loaded dynamically in `mermaid.html`.
+  - Included in the parent window (`aichat.html`) and accessed via `parent.Mermaid`.
+- The backend communicates with `mermaid.html` using `postMessage` or URL parameters to pass the Mermaid code.
+
+---
+
+#
+
+#
+
+# **Missing Pieces**:
+- The exact mechanism for passing the Mermaid code from the backend to `mermaid.html` is not clear from the fetched files.
+- The JavaScript logic in `mermaid.html` (e.g., `mermaid.js`) is not available, so the diagram assumes standard Mermaid library usage.
+
+---
+Would you like me to fetch the missing JavaScript file for `mermaid.html` to confirm the exact implementation?

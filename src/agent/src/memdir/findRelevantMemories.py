@@ -1,14 +1,23 @@
 """
 findRelevantMemories - Find memory files relevant to a query.
 
-Scans memory file headers and uses an LLM to select the most relevant
-memories for the current user query.
+Uses hybrid approach:
+1. Semantic search (embeddings) - Fast, accurate
+2. LLM selection (Sonnet) - Fallback for complex queries
+3. Keyword search - Last resort
 """
 
 import os
 from typing import List, Optional, Set, TypedDict
 
 # Defensive imports
+# Import semantic search
+try:
+    from .semanticSearch import get_semantic_searcher, MemorySearchResult
+    HAS_SEMANTIC_SEARCH = True
+except ImportError:
+    HAS_SEMANTIC_SEARCH = False
+
 try:
     from ..utils.debug import logForDebugging
 except ImportError:
@@ -78,18 +87,82 @@ async def findRelevantMemories(
     already_surfaced: Optional[Set[str]] = None,
 ) -> List[RelevantMemory]:
     """
-    Find memory files relevant to a query by scanning memory file headers
-    and asking Sonnet to select the most relevant ones.
+    Find memory files relevant to a query using hybrid approach.
+    
+    Priority:
+    1. Semantic search (embeddings) - Fast, accurate
+    2. LLM selection (Sonnet) - Fallback if semantic search unavailable
     
     Returns absolute file paths + mtime of the most relevant memories
     (up to 5). Excludes MEMORY.md (already loaded in system prompt).
-    mtime is threaded through so callers can surface freshness to the
-    main model without a second stat.
-    
-    `alreadySurfaced` filters paths shown in prior turns before the
-    Sonnet call, so the selector spends its 5-slot budget on fresh
-    candidates instead of re-picking files the caller will discard.
     """
+    if recent_tools is None:
+        recent_tools = []
+    
+    if already_surfaced is None:
+        already_surfaced = set()
+    
+    # Try semantic search first
+    if HAS_SEMANTIC_SEARCH:
+        try:
+            return await _find_memories_semantic(
+                query, memory_dir, already_surfaced
+            )
+        except Exception as e:
+            logForDebugging(
+                f'[memdir] Semantic search failed, falling back to LLM: {str(e)}',
+                {'level': 'warn'},
+            )
+    
+    # Fallback to LLM-based selection
+    return await _find_memories_llm(
+        query, memory_dir, signal, recent_tools, already_surfaced
+    )
+
+
+async def _find_memories_semantic(
+    query: str,
+    memory_dir: str,
+    already_surfaced: Set[str],
+) -> List[RelevantMemory]:
+    """Find memories using semantic search (embeddings)."""
+    try:
+        searcher = get_semantic_searcher(memory_dir)
+        results = searcher.search_memories(query, memory_dir, top_k=5)
+        
+        # Filter out already surfaced memories
+        filtered = [
+            r for r in results
+            if r.file_path not in already_surfaced
+        ]
+        
+        # Convert to RelevantMemory format
+        return [
+            {
+                'path': r.file_path,
+                'mtimeMs': r.mtime * 1000,  # Convert to milliseconds
+                'score': r.similarity_score,
+                'title': r.title,
+            }
+            for r in filtered[:5]
+        ]
+        
+    except Exception as e:
+        logForDebugging(
+            f'[memdir] Semantic search error: {str(e)}',
+            {'level': 'error'},
+        )
+        raise  # Re-raise to trigger fallback
+
+
+async def _find_memories_llm(
+    query: str,
+    memory_dir: str,
+    signal=None,
+    recent_tools: Optional[List[str]] = None,
+    already_surfaced: Optional[Set[str]] = None,
+) -> List[RelevantMemory]:
+    """Fallback: Find memories using LLM selection (original method)."""
     if recent_tools is None:
         recent_tools = []
     

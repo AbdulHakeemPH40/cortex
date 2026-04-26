@@ -3453,20 +3453,22 @@ body.loaded #loading-overlay {
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     overflow: hidden;
-    transition: all 0.2s ease;
-    margin: 8px 16px;
-    max-width: 100%;
-    width: auto;
+    transition: transform 0.15s ease, box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+    margin: 8px auto;
+    max-width: 600px;
+    width: calc(100% - 32px);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .tool-operation-card:hover {
     border-color: var(--border-light);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    transform: translateY(-1px);
 }
 
 /* Collapsed State - Header Only (40px height) */
 .tool-operation-card.collapsed {
-    max-height: 40px;
+    max-height: 44px;
 }
 
 /* Expanded State - Full Content */
@@ -3479,9 +3481,9 @@ body.loaded #loading-overlay {
 .tool-card-header {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 10px 14px;
-    min-height: 40px;
+    gap: 8px;
+    padding: 5px 14px;
+    min-height: 28px;
     cursor: pointer;
     user-select: none;
     position: relative;
@@ -3543,6 +3545,10 @@ body.loaded #loading-overlay {
     color: var(--yellow);
 }
 
+.tool-operation-card.terminal {
+    max-width: 600px;
+}
+
 .tool-operation-card.diff .tool-card-icon {
     background: rgba(6, 182, 212, 0.12);
     color: var(--cyan);
@@ -3563,6 +3569,7 @@ body.loaded #loading-overlay {
     color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.3px;
+    line-height: 1.1;
 }
 
 .tool-card-file {
@@ -3572,6 +3579,7 @@ body.loaded #loading-overlay {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    line-height: 1.1;
 }
 
 /* Status Badge */
@@ -3623,21 +3631,98 @@ body.loaded #loading-overlay {
 .tool-card-scrollable {
     max-height: 450px;
     overflow-y: auto;
-    padding: 12px 14px;
+    padding: 10px 14px;
     font-family: var(--font-mono);
     font-size: 12px;
     line-height: 1.5;
     color: var(--text-secondary);
 }
 
+.tool-card-scrollable.ta-read-error {
+    font-family: var(--font-ui);
+    color: var(--text-primary);
+}
+
+.tool-error {
+    border: 1px solid rgba(239, 68, 68, 0.22);
+    background: linear-gradient(180deg, rgba(239, 68, 68, 0.08), rgba(0, 0, 0, 0));
+    border-radius: 10px;
+    padding: 10px 12px;
+}
+
+.tool-error-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.tool-error-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #ef4444;
+    box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.12);
+    flex-shrink: 0;
+}
+
+.tool-error-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: #fecaca;
+    letter-spacing: 0.2px;
+}
+
+.tool-error-kv {
+    display: grid;
+    grid-template-columns: 58px 1fr;
+    gap: 10px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.5;
+    color: rgba(255, 255, 255, 0.86);
+    padding: 2px 0;
+}
+
+.tool-error-k {
+    color: rgba(255, 255, 255, 0.6);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    font-size: 10px;
+}
+
+.tool-error-v {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tool-error-msg {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.55;
+    color: rgba(255, 255, 255, 0.75);
+    word-break: break-word;
+}
+
 /* Terminal-specific content styling */
 .tool-card-terminal {
+    max-height: 70px;
+    overflow-y: auto; /* Enable vertical scrolling */
     background: var(--bg-code);
     border-radius: var(--radius-md);
     color: var(--green-bright);
     font-family: var(--font-mono);
     white-space: pre-wrap;
     word-break: break-all;
+}
+
+.tool-operation-card.terminal .tool-card-header {
+    min-height: 30px;
+    padding: 6px 14px;
 }
 
 /* Tool Operations Container (AI Edits Group) */

@@ -19,6 +19,31 @@ MAX_LINES_TO_READ = 200
 # Description
 DESCRIPTION = 'Read a file from the local filesystem.'
 
+# 🔥 THOROUGH READING STRATEGY
+THOROUGH_READING_GUIDE = """
+🔥 THOROUGH READING STRATEGY (MANDATORY):
+- After GrepTool finds relevant files, READ THEM ALL (minimum 3-5 files)
+- Don't just read 1 file and act - read MULTIPLE files to understand full context
+- Read related files: main logic + utilities + models + tests + configuration
+- Understanding the COMPLETE picture prevents mistakes and bugs
+
+📋 READING REQUIREMENTS:
+- Simple fix: Read 2-3 files minimum
+- Feature addition: Read 4-6 files minimum
+- Bug investigation: Read 5-8 files minimum
+- Architecture change: Read 8-12 files minimum
+
+✅ BEFORE making changes, ensure you have read:
+1. The file with the function/class you're modifying
+2. Related utility/helper files
+3. Model/schema files if applicable
+4. Test files (to understand expected behavior)
+5. Configuration files (to understand settings)
+
+❌ LAZY PATTERN: Read 1 file → Make change → Miss critical context
+✅ THOROUGH PATTERN: Read 5-10 files → Understand full context → Make informed change
+"""
+
 # Line format instruction
 LINE_FORMAT_INSTRUCTION = (
     '- Results are returned using cat -n format, with line numbers starting at 1'
