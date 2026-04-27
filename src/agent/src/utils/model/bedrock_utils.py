@@ -39,8 +39,8 @@ def isFoundationModel(modelId: str) -> bool:
         True if modelId starts with 'anthropic.'
 
     Example:
-        isFoundationModel('anthropic.claude-sonnet-4-v1:0') → True
-        isFoundationModel('us.anthropic.claude-sonnet-4-v1:0') → False
+        isFoundationModel('anthropic.cortex-sonnet-4-v1:0') → True
+        isFoundationModel('us.anthropic.cortex-sonnet-4-v1:0') → False
     """
     return modelId.startswith('anthropic.')
 
@@ -63,11 +63,11 @@ def extractModelIdFromArn(modelId: str) -> str:
         Model ID extracted from ARN, or original string if not an ARN
 
     Example:
-        extractModelIdFromArn('arn:aws:bedrock:us-east-1:123:inference-profile/us.anthropic.claude-sonnet-4-v1:0')
-        → 'us.anthropic.claude-sonnet-4-v1:0'
+        extractModelIdFromArn('arn:aws:bedrock:us-east-1:123:inference-profile/us.anthropic.cortex-sonnet-4-v1:0')
+        → 'us.anthropic.cortex-sonnet-4-v1:0'
 
-        extractModelIdFromArn('anthropic.claude-sonnet-4-v1:0')
-        → 'anthropic.claude-sonnet-4-v1:0'
+        extractModelIdFromArn('anthropic.cortex-sonnet-4-v1:0')
+        → 'anthropic.cortex-sonnet-4-v1:0'
     """
     if not modelId.startswith('arn:'):
         return modelId
@@ -94,13 +94,13 @@ def getBedrockRegionPrefix(modelId: str) -> Optional[BedrockRegionPrefix]:
         Region prefix string, or None if no prefix found
 
     Example:
-        getBedrockRegionPrefix('eu.anthropic.claude-sonnet-4-5-20250929-v1:0')
+        getBedrockRegionPrefix('eu.anthropic.cortex-sonnet-4-5-20250929-v1:0')
         → 'eu'
 
-        getBedrockRegionPrefix('arn:aws:bedrock:ap-northeast-2:123:inference-profile/global.anthropic.claude-opus-4-6-v1')
+        getBedrockRegionPrefix('arn:aws:bedrock:ap-northeast-2:123:inference-profile/global.anthropic.cortex-opus-4-6-v1')
         → 'global'
 
-        getBedrockRegionPrefix('anthropic.claude-3-5-sonnet-20241022-v2:0')
+        getBedrockRegionPrefix('anthropic.cortex-3-5-sonnet-20241022-v2:0')
         → None  (foundation model, no region prefix)
 
         getBedrockRegionPrefix('claude-sonnet-4-5-20250929')
@@ -135,11 +135,11 @@ def applyBedrockRegionPrefix(
         Model ID with region prefix applied
 
     Example:
-        applyBedrockRegionPrefix('us.anthropic.claude-sonnet-4-5-v1:0', 'eu')
-        → 'eu.anthropic.claude-sonnet-4-5-v1:0'
+        applyBedrockRegionPrefix('us.anthropic.cortex-sonnet-4-5-v1:0', 'eu')
+        → 'eu.anthropic.cortex-sonnet-4-5-v1:0'
 
-        applyBedrockRegionPrefix('anthropic.claude-sonnet-4-5-v1:0', 'eu')
-        → 'eu.anthropic.claude-sonnet-4-5-v1:0'
+        applyBedrockRegionPrefix('anthropic.cortex-sonnet-4-5-v1:0', 'eu')
+        → 'eu.anthropic.cortex-sonnet-4-5-v1:0'
 
         applyBedrockRegionPrefix('claude-sonnet-4-5-20250929', 'eu')
         → 'claude-sonnet-4-5-20250929'  (not a Bedrock model)
@@ -169,8 +169,8 @@ def findFirstMatch(profiles: list[str], substring: str) -> Optional[str]:
         First matching string, or None if no match found
 
     Example:
-        findFirstMatch(['eu.anthropic.claude-sonnet-4', 'us.anthropic.claude-opus-4'], 'opus')
-        → 'us.anthropic.claude-opus-4'
+        findFirstMatch(['eu.anthropic.cortex-sonnet-4', 'us.anthropic.cortex-opus-4'], 'opus')
+        → 'us.anthropic.cortex-opus-4'
     """
     for p in profiles:
         if substring in p:

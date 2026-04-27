@@ -139,7 +139,7 @@ def get_mcp_auth_cache_path() -> str:
     if os.name == 'nt':  # Windows
         config_home = os.path.join(os.environ.get('APPDATA', ''), 'claude')
     else:  # macOS/Linux
-        config_home = os.path.join(os.environ.get('HOME', ''), '.claude')
+        config_home = os.path.join(os.environ.get('HOME', ''), '.cortex')
     
     return os.path.join(config_home, 'mcp-needs-auth-cache.json')
 

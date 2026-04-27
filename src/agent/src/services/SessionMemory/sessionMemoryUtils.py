@@ -36,7 +36,7 @@ try:
 except ImportError:
     def get_session_memory_path():
         import os
-        return os.path.join(os.path.expanduser('~'), '.claude', 'session-memory.json')
+        return os.path.join(os.path.expanduser('~'), '.cortex', 'session-memory.json')
 
 try:
     from ...utils.sleep import sleep

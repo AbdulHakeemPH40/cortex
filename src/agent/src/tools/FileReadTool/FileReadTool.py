@@ -67,7 +67,7 @@ Whenever you read a file, you should consider whether it would be considered mal
 '''
 
 # Models where cyber risk mitigation should be skipped
-MITIGATION_EXEMPT_MODELS = frozenset({'claude-opus-4-6'})
+MITIGATION_EXEMPT_MODELS = frozenset({'cortex-opus-4-6'})
 
 # Tool names
 FILE_READ_TOOL_NAME = 'Read'
@@ -223,10 +223,10 @@ def get_cwd() -> str:
     return os.getcwd()
 
 
-def get_claude_config_home_dir() -> str:
-    """Get Claude config directory."""
+def get_cortex_config_home_dir() -> str:
+    """Get primary config directory."""
     home = os.path.expanduser('~')
-    return os.path.join(home, '.claude')
+    return os.path.join(home, '.cortex')
 
 
 def is_env_truthy(env_var: str) -> bool:
@@ -238,23 +238,23 @@ def is_env_truthy(env_var: str) -> bool:
 def detect_session_file_type(file_path: str) -> Optional[Literal['session_memory', 'session_transcript']]:
     """
     Detect if a file path is a session-related file for analytics logging.
-    Only matches files within the Claude config directory (e.g., ~/.claude).
+    Matches files within the config directory (e.g., ~/.cortex).
     Returns the type of session file or None if not a session file.
     """
-    config_dir = get_claude_config_home_dir()
-    
-    # Only match files within the Claude config directory
+    config_dir = get_cortex_config_home_dir()
+
+    # Only match files within known config directory
     if not file_path.startswith(config_dir):
         return None
     
     # Normalize path to use forward slashes for consistent matching
     normalized_path = file_path.replace('\\', '/')
     
-    # Session memory files: ~/.claude/session-memory/*.md
+    # Session memory files: ~/.cortex/session-memory/*.md
     if '/session-memory/' in normalized_path and normalized_path.endswith('.md'):
         return 'session_memory'
     
-    # Session JSONL transcript files: ~/.claude/projects/*/*.jsonl
+    # Session JSONL transcript files: ~/.cortex/projects/*/*.jsonl
     if '/projects/' in normalized_path and normalized_path.endswith('.jsonl'):
         return 'session_transcript'
     
@@ -445,7 +445,7 @@ def _get_memory_file_mtime(data: object) -> Optional[float]:
 def _is_auto_mem_file(file_path: str) -> bool:
     """Check if file is an auto-memory file."""
     # Simplified check - would integrate with memoryFileDetection in full impl
-    config_dir = get_claude_config_home_dir()
+    config_dir = get_cortex_config_home_dir()
     return file_path.startswith(config_dir) and file_path.endswith('.md')
 
 
@@ -793,8 +793,7 @@ def check_read_permission_for_tool(
     Returns:
         Dict with 'behavior' ('allow', 'deny', 'ask') and 'updated_input'
     """
-    from ..utils.permissions.filesystem_security import check_read_permission
-    from ..utils.permissions.PermissionResult import PermissionDecision
+    from utils.permissions.filesystem_security import check_read_permission
 
     file_path = input_data.get('file_path', '') if isinstance(input_data, dict) else ''
     if not file_path:
@@ -806,8 +805,8 @@ def check_read_permission_for_tool(
         mode=getattr(permission_context, 'mode', 'default'),
     )
 
-    if isinstance(decision, PermissionDecision):
-        return {'behavior': decision.behavior, 'updated_input': input_data}
+    if isinstance(decision, dict):
+        return {'behavior': decision.get('behavior', 'allow'), 'updated_input': input_data}
     return {'behavior': 'allow', 'updated_input': input_data}
 
 
@@ -1046,7 +1045,7 @@ def activate_conditional_skills_for_paths(paths: List[str], cwd: str) -> None:
 def get_main_loop_model() -> str:
     """Get the main loop model name."""
     # Would get from config in full implementation
-    return os.environ.get('CLAUDE_MODEL', 'claude-sonnet-4-5')
+    return os.environ.get('CORTEX_MODEL', 'cortex-sonnet-4-5')
 
 
 def get_canonical_name(model: str) -> str:
@@ -1499,7 +1498,7 @@ class FileReadTool:
         # Discover skills from this file's path (fire-and-forget, non-blocking)
         # Skip in simple mode - no skills available
         cwd = get_cwd()
-        if not is_env_truthy('CLAUDE_CODE_SIMPLE'):
+        if not is_env_truthy('CORTEX_CODE_SIMPLE'):
             try:
                 new_skill_dirs = await discover_skill_dirs_for_paths([full_file_path], cwd)
                 if new_skill_dirs and context:

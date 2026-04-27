@@ -335,7 +335,7 @@ def logEvent(event: str, data: Dict) -> None:
     pass
 
 try:
-    from api.claude import getMaxOutputTokensForModel, queryModelWithStreaming
+    from api.cortex import getMaxOutputTokensForModel, queryModelWithStreaming
 except ImportError:
     def getMaxOutputTokensForModel(model: str) -> int:
         return 20_000

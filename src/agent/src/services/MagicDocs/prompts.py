@@ -133,21 +133,21 @@ Use the Edit tool with file_path: {docPath}
 REMEMBER: Only update if there is substantial new information. The Magic Doc header (# MAGIC DOC: {docTitle}) must remain unchanged."""
 
 
-def get_claude_config_home_dir() -> str:
-    """Get the Claude config home directory (~/.claude)."""
-    # Use environment variable or default to ~/.claude
+def get_cortex_config_home_dir() -> str:
+    """Get the Cortex config home directory (~/.cortex)."""
+    # Use environment variable or default to ~/.cortex
     home_dir = os.path.expanduser('~')
-    return os.path.join(home_dir, '.claude')
+    return os.path.join(home_dir, '.cortex')
 
 
 async def load_magic_docs_prompt() -> str:
     """
     Load custom Magic Docs prompt from file if it exists.
-    Custom prompts can be placed at ~/.claude/magic-docs/prompt.md
+    Custom prompts can be placed at ~/.cortex/magic-docs/prompt.md
     Uses {variableName} syntax for variable substitution (e.g., {docContents}, {docPath}, {docTitle})
     """
     prompt_path = os.path.join(
-        get_claude_config_home_dir(),
+        get_cortex_config_home_dir(),
         'magic-docs',
         'prompt.md'
     )

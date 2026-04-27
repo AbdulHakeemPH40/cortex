@@ -3004,6 +3004,8 @@ class CortexMainWindow(QMainWindow):
         # Permission gate: agent → chat UI shows card; user response → agent continues
         self._ai_agent.permission_requested.connect(self._ai_chat._on_permission_request)
         self._ai_chat.permission_decided.connect(self._ai_agent.on_permission_respond)
+        # Auto-approval toggle in chat toolbar → backend permission behavior
+        self._ai_chat.always_allow_changed.connect(self._ai_agent.set_always_allowed)
         
         # Active signal connections
         self._ai_chat.generate_plan_requested.connect(self._on_generate_plan)

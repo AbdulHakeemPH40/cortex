@@ -106,7 +106,7 @@ except ImportError:
 
 
 try:
-    from ...tools.FileEditTool.completed.constants import FILE_EDIT_TOOL_NAME
+    from ...tools.FileEditTool.constants import FILE_EDIT_TOOL_NAME
 except ImportError:
     FILE_EDIT_TOOL_NAME = "Edit"
 

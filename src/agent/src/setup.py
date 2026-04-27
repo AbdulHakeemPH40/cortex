@@ -148,7 +148,7 @@ except ImportError:
         pass
 
 try:
-    from .utils.claudemd import clear_memory_file_caches
+    from .utils.cortexmd import clear_memory_file_caches
 except ImportError:
     def clear_memory_file_caches() -> None:
         pass
@@ -545,7 +545,7 @@ async def setup(
         clear_memory_file_caches()
         # Settings cache was populated in init() (via apply_safe_config_environment_variables)
         # and again at capture_hooks_config_snapshot() above, both from the original dir's
-        # .claude/settings.json. Re-read from the worktree and re-capture hooks.
+        # .cortex/settings.json. Re-read from the worktree and re-capture hooks.
         update_hooks_config_snapshot()
     
     # Background jobs - only critical registrations that must happen before first query

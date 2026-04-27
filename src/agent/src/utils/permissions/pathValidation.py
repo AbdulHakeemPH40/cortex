@@ -283,8 +283,8 @@ def is_path_allowed(
             }
     
     # 2. For write/create operations, check internal editable paths
-    # This MUST come before safety checks since .claude is a dangerous directory
-    # and internal editable paths live under ~/.claude/
+    # This MUST come before safety checks since .cortex is a dangerous directory
+    # and internal editable paths live under ~/.cortex/
     if operation_type != 'read':
         internal_edit_result = check_editable(resolved_path)
         if internal_edit_result.get('behavior') == 'allow':

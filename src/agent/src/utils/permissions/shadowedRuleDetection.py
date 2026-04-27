@@ -188,7 +188,7 @@ def is_shared_setting_source(source: PermissionRuleSource) -> bool:
     - command/config: From slash command frontmatter, potentially shared
     
     Personal settings:
-    - userSettings/user: User's global ~/.claude settings
+    - userSettings/user: User's global ~/.cortex settings
     - localSettings/session: Gitignored per-project settings
     - cliArg/session: Runtime CLI arguments
     - session/session: In-memory session rules

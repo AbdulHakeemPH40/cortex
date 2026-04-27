@@ -74,7 +74,7 @@ except ImportError:
     TEAM_LEAD_NAME = 'team-lead'
     
     def getTeamFilePath(team_name: str) -> str:
-        return f'~/.claude/teams/{team_name}/config.json'
+        return f'~/.cortex/teams/{team_name}/config.json'
     
     def readTeamFile(team_name: str):
         return None
@@ -178,8 +178,8 @@ async def call(input_data: Dict[str, Any], context: Dict[str, Any]) -> ToolResul
     Create a new team for coordinating multiple agents.
     
     Creates:
-    - Team file at ~/.claude/teams/{team-name}/config.json
-    - Task list directory at ~/.claude/tasks/{team-name}/
+    - Team file at ~/.cortex/teams/{team-name}/config.json
+    - Task list directory at ~/.cortex/tasks/{team-name}/
     - Team lead with deterministic agent ID
     
     Returns team name, file path, and lead agent ID.

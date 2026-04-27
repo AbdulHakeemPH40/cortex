@@ -668,14 +668,14 @@ def get_global_claude_file() -> str:
     """Get the global Claude config file path."""
     # TODO: Implement based on your config system
     home = os.path.expanduser('~')
-    return os.path.join(home, '.claude', 'CLAUDE.md')
+    return os.path.join(home, '.cortex', 'CLAUDE.md')
 
 
 def get_enterprise_mcp_file_path() -> str:
     """Get the enterprise MCP config file path."""
     # TODO: Implement based on your config system
     home = os.path.expanduser('~')
-    return os.path.join(home, '.claude', 'managed-mcp.json')
+    return os.path.join(home, '.cortex', 'managed-mcp.json')
 
 
 __all__ = [

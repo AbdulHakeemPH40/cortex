@@ -792,7 +792,12 @@ class BridgeBashTool:
 
         # ── Dangerous-command permission gate ────────────────────────────────
         warning = _get_destructive_warning(command)
-        if warning and not self._bridge._stop_requested:
+        if warning and self._bridge._always_allowed:
+            log.info(
+                "[BRIDGE] Permission gate bypassed (always_allow=True): %s",
+                command[:180].replace("\n", " "),
+            )
+        if warning and not self._bridge._stop_requested and not self._bridge._always_allowed:
             affected = _extract_affected_paths(command)
             import json as _json
             # Create a fresh event for this request
@@ -2804,6 +2809,7 @@ Use Markdown tables for structured data comparison:
             _CONSECUTIVE_READONLY_LIMIT = 3  # Max same read-only tool in a row
 
             _compacted_once = False  # Track if we already compacted
+            _mistral_downgraded_once = False  # Per-request, timeout-triggered model fallback within Mistral
 
             # ── Auto-compact state (ported from Claude Code's autoCompact.ts) ───
             _auto_compact_state = None
@@ -2923,9 +2929,18 @@ Use Markdown tables for structured data comparison:
                         except Exception as _mult_err:
                             pass  # Use base max_tokens if multiplier not available
                         
+                        _chat_kwargs = {
+                            "retry_callback": _retry_notify
+                        }
+                        if provider_type == ProviderType.MISTRAL and tool_defs:
+                            _chat_kwargs["max_retries"] = 3
+
+                        # Tool-planning turns generally don't need very high output caps.
+                        # Keeping this lower reduces first-token latency on Mistral.
+                        stream_max_tokens = min(max_tokens, 1200) if tool_defs else max_tokens
+
                         for chunk in provider.chat_stream(
-                            messages, model=model, max_tokens=max_tokens, tools=tool_defs,
-                            retry_callback=_retry_notify
+                            messages, model=model, max_tokens=stream_max_tokens, tools=tool_defs, **_chat_kwargs
                         ):
                             # Respect a stop request from the user
                             if self._stop_requested:
@@ -2960,7 +2975,12 @@ Use Markdown tables for structured data comparison:
                             'quota exceeded', 'insufficient_quota', 'billing',
                             'no credits', 'exceeded your current quota',
                         )
+                        _TIMEOUT_KEYWORDS = (
+                            'timed out', 'timeout', 'read timed out',
+                            'connect timeout', 'connection timed out',
+                        )
                         _is_rate_err = any(kw in _err_lower for kw in _RATE_LIMIT_KEYWORDS)
+                        _is_timeout_err = any(kw in _err_lower for kw in _TIMEOUT_KEYWORDS)
                         if _is_ctx_err and _compact_attempt < 2:
                             log.warning(
                                 f"[BRIDGE] Context limit on turn {turn + 1} "
@@ -2973,8 +2993,29 @@ Use Markdown tables for structured data comparison:
                             )
                             messages = self._compact_messages(messages, PCM)
                             continue   # retry with compacted history
-                        elif _is_rate_err and not getattr(self, '_failover_exhausted', False):
-                            # ── Provider auto-failover on rate limit ──────
+                        elif (_is_rate_err or _is_timeout_err) and not getattr(self, '_failover_exhausted', False):
+                            # Mistral-only recovery: on timeout with large model, downgrade model tier once.
+                            if (
+                                _is_timeout_err
+                                and provider_type == ProviderType.MISTRAL
+                                and isinstance(model, str)
+                                and "large" in model.lower()
+                                and not _mistral_downgraded_once
+                            ):
+                                _mistral_downgraded_once = True
+                                old_model = model
+                                model = "mistral-medium-latest"
+                                log.warning(
+                                    f"[BRIDGE] Timeout on {old_model} — retrying with {model} (Mistral-only fallback)"
+                                )
+                                self._safe_emit(
+                                    self.agent_status_update,
+                                    'retrying',
+                                    f'Timeout on {old_model} — retrying with {model}...'
+                                )
+                                continue
+
+                            # ── Provider auto-failover on rate-limit/timeout ───
                             _next = self._get_failover_provider(provider_type, registry)
                             if _next is not None:
                                 _old_name = provider_type.value
@@ -2982,13 +3023,14 @@ Use Markdown tables for structured data comparison:
                                 provider = registry.get_provider(provider_type)
                                 # Re-derive model for new provider
                                 model = self._get_default_model_for_provider(provider_type, model_id)
+                                reason = "rate limited" if _is_rate_err else "timed out"
                                 log.warning(
-                                    f"[BRIDGE] Rate limit on {_old_name} — failing over to {provider_type.value} (model={model})"
+                                    f"[BRIDGE] Provider {_old_name} {reason} — failing over to {provider_type.value} (model={model})"
                                 )
                                 self._safe_emit(
                                     self.agent_status_update,
                                     'failover',
-                                    f'Provider {_old_name} rate limited — switching to {provider_type.value}...'
+                                    f'Provider {_old_name} {reason} — switching to {provider_type.value}...'
                                 )
                                 continue  # retry with new provider
                             else:
@@ -3399,6 +3441,22 @@ Use Markdown tables for structured data comparison:
                 cmd = args.get("command", "")
                 info["command"] = cmd[:200] if cmd else ""
                 info["timeout"] = args.get("timeout", "")
+                # Include sandbox/container state so UI can show whether this
+                # command is running in sandboxed container or local shell.
+                try:
+                    from src.agent.src.utils.sandbox.sandbox_adapter import SandboxManager
+                    sandbox_enabled = bool(SandboxManager.is_sandbox_enabled_in_settings())
+                    sandbox_runtime_enabled = bool(SandboxManager.is_sandboxing_enabled())
+                    unavailable_reason = str(SandboxManager.get_sandbox_unavailable_reason() or "")
+                except Exception:
+                    sandbox_enabled = False
+                    sandbox_runtime_enabled = False
+                    unavailable_reason = ""
+                info["sandbox_enabled"] = sandbox_enabled
+                info["sandbox_runtime_enabled"] = sandbox_runtime_enabled
+                info["sandbox_active"] = bool(sandbox_enabled and sandbox_runtime_enabled)
+                if unavailable_reason:
+                    info["sandbox_unavailable_reason"] = unavailable_reason
                 if status in ("complete", "error") and result_str:
                     info["output"] = result_str[:2000]
 

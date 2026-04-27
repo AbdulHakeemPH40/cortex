@@ -2103,7 +2103,7 @@ async def bash_tool_has_permission(
         }
     
     # Track if compound command contains cd for security validation
-    # This prevents bypassing path checks via: cd .claude/ && mv test.txt settings.json
+    # This prevents bypassing path checks via: cd .cortex/ && mv test.txt settings.json
     compound_command_has_cd = len(cd_commands) > 0
     
     # SECURITY: Block compound commands that have both cd AND git

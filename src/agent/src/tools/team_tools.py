@@ -7,7 +7,7 @@ This module provides team creation and management capabilities:
 
 Key Features:
 - Team creation with member agents
-- Team file persistence (.claude/teams/)
+- Team file persistence (.cortex/teams/)
 - Member management (add/remove)
 - Team context sharing
 - Automatic cleanup on deletion
@@ -41,7 +41,7 @@ class TeamMember:
 
 @dataclass
 class TeamFile:
-    """Persistent team configuration stored in .claude/teams/"""
+    """Persistent team configuration stored in .cortex/teams/"""
     name: str
     members: List[TeamMember]
     created_at: float = field(default_factory=time.time)
@@ -88,11 +88,11 @@ def get_teams_directory() -> Path:
     Get the path to the teams directory.
     
     Returns:
-        Path to .claude/teams/ directory
+        Path to .cortex/teams/ directory
     """
     # Use current working directory or home directory
     cwd = Path.cwd()
-    teams_dir = cwd / '.claude' / 'teams'
+    teams_dir = cwd / '.cortex' / 'teams'
     teams_dir.mkdir(parents=True, exist_ok=True)
     return teams_dir
 

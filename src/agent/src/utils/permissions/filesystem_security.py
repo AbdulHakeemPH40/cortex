@@ -47,7 +47,7 @@ DANGEROUS_FILES: set[str] = {
     # MCP configuration (can add malicious MCP servers)
     '.mcp.json',
     # Claude configuration (can modify AI behavior)
-    '.claude.json',
+    '.cortex.json',
 }
 
 # Dangerous directories that should be protected from auto-editing.
@@ -60,7 +60,7 @@ DANGEROUS_DIRECTORIES: set[str] = {
     # JetBrains IDE settings (can execute scripts, modify IDE behavior)
     '.idea',
     # Claude Code settings (contains credentials, hooks, custom commands)
-    '.claude',
+    '.cortex',
 }
 
 # ============================================================================
@@ -84,7 +84,7 @@ def normalize_case_for_comparison(path: str) -> str:
         
     Example:
         >>> normalize_case_for_comparison('.cLauDe/Settings.json')
-        '.claude/settings.json'
+        '.cortex/settings.json'
     """
     return path.lower()
 
@@ -131,7 +131,7 @@ def has_suspicious_windows_path_pattern(path: str) -> bool:
     - NTFS Alternate Data Streams (e.g., file.txt::$DATA or file.txt:stream)
     - 8.3 short names (e.g., GIT~1, CLAUDE~1, SETTIN~1.JSON)
     - Long path prefixes (e.g., \\\\?\\C:\\..., \\\\.\\C:\\...)
-    - Trailing dots and spaces (e.g., .git., .claude , .bashrc...)
+    - Trailing dots and spaces (e.g., .git., .cortex , .bashrc...)
     - DOS device names (e.g., .git.CON, settings.json.PRN, .bashrc.AUX)
     - Three or more consecutive dots (e.g., .../file.txt, path/.../file)
     - UNC paths (e.g., \\\\server\\share, //server/share)
@@ -183,7 +183,7 @@ def has_suspicious_windows_path_pattern(path: str) -> bool:
         return True
     
     # Check for trailing dots and spaces that Windows strips during path resolution
-    # Examples: .git., .claude , .bashrc..., settings.json.
+    # Examples: .git., .cortex , .bashrc..., settings.json.
     if re.search(r'[.\s]+$', path):
         return True
     
@@ -244,7 +244,7 @@ def is_dangerous_directory_to_auto_edit(path: str) -> Optional[str]:
     Check if path is within a dangerous directory.
     
     Checks all path segments against DANGEROUS_DIRECTORIES with case-insensitive
-    matching. Special case: .claude/worktrees/ is allowed (structural path).
+    matching. Special case: .cortex/worktrees/ is allowed (structural path).
     
     Args:
         path: Path to check
@@ -255,8 +255,8 @@ def is_dangerous_directory_to_auto_edit(path: str) -> Optional[str]:
     Example:
         >>> is_dangerous_directory_to_auto_edit('/home/user/.git/config')
         'Path contains dangerous directory: .git'
-        >>> is_dangerous_directory_to_auto_edit('/home/user/.claude/worktrees/proj')
-        None  # .claude/worktrees is allowed
+        >>> is_dangerous_directory_to_auto_edit('/home/user/.cortex/worktrees/proj')
+        None  # .cortex/worktrees is allowed
     """
     absolute_path = expand_path(path)
     path_segments = absolute_path.split(os.sep)
@@ -268,12 +268,12 @@ def is_dangerous_directory_to_auto_edit(path: str) -> Optional[str]:
             if normalized_segment != normalize_case_for_comparison(dangerous_dir):
                 continue
             
-            # Special case: .claude/worktrees/ is a structural path
+            # Special case: .cortex/worktrees/ is a structural path
             # (where Claude stores git worktrees), not user-created
-            if dangerous_dir == '.claude':
+            if dangerous_dir == '.cortex':
                 next_segment = path_segments[i + 1] if i + 1 < len(path_segments) else None
                 if next_segment and normalize_case_for_comparison(next_segment) == 'worktrees':
-                    break  # Skip this .claude, continue checking other segments
+                    break  # Skip this .cortex, continue checking other segments
             
             return f'Path contains dangerous directory: {segment}'
     
@@ -511,7 +511,7 @@ def check_read_permission(
             }
     
     # Step 3: Check internal paths FIRST (before dangerous file check)
-    # This allows session memory, plans, etc. even if they're in .claude/
+    # This allows session memory, plans, etc. even if they're in .cortex/
     internal_result = check_readable_internal_path(path)
     if internal_result['behavior'] != 'passthrough':
         return internal_result
@@ -663,7 +663,7 @@ def check_editable_internal_path(path: str) -> PermissionDecision:
     - Scratchpad directory
     - Agent memory files
     - Auto memory files
-    - Launch config (.claude/launch.json)
+    - Launch config (.cortex/launch.json)
     
     Args:
         path: Path to check
@@ -834,9 +834,9 @@ def _is_session_memory_path(path: str) -> bool:
 
 
 def _is_project_directory(path: str) -> bool:
-    """Check if path is in project directory (~/.claude/projects/)"""
+    """Check if path is in project directory (~/.cortex/projects/)"""
     normalized = normalize_case_for_comparison(path)
-    return '/.claude/projects/' in normalized or '\\.claude\\projects\\' in normalized
+    return '/.cortex/projects/' in normalized or '\\.cortex\\projects\\' in normalized
 
 
 def _is_tool_results_path(path: str) -> bool:
@@ -856,27 +856,27 @@ def _is_agent_memory_path(path: str) -> bool:
 
 
 def _is_auto_memory_path(path: str) -> bool:
-    """Check if path is in auto memory directory (~/.claude/memory/)"""
+    """Check if path is in auto memory directory (~/.cortex/memory/)"""
     normalized = normalize_case_for_comparison(path)
-    return '/.claude/memory' in normalized or '\\.claude\\memory' in normalized
+    return '/.cortex/memory' in normalized or '\\.cortex\\memory' in normalized
 
 
 def _is_tasks_directory(path: str) -> bool:
-    """Check if path is in tasks directory (~/.claude/tasks/)"""
+    """Check if path is in tasks directory (~/.cortex/tasks/)"""
     normalized = normalize_case_for_comparison(path)
-    return '/.claude/tasks' in normalized or '\\.claude\\tasks' in normalized
+    return '/.cortex/tasks' in normalized or '\\.cortex\\tasks' in normalized
 
 
 def _is_teams_directory(path: str) -> bool:
-    """Check if path is in teams directory (~/.claude/teams/)"""
+    """Check if path is in teams directory (~/.cortex/teams/)"""
     normalized = normalize_case_for_comparison(path)
-    return '/.claude/teams' in normalized or '\\.claude\\teams' in normalized
+    return '/.cortex/teams' in normalized or '\\.cortex\\teams' in normalized
 
 
 def _is_launch_config(path: str) -> bool:
-    """Check if path is .claude/launch.json"""
+    """Check if path is .cortex/launch.json"""
     normalized = normalize_case_for_comparison(path)
-    return normalized.endswith('/.claude/launch.json') or normalized.endswith('\\.claude\\launch.json')
+    return normalized.endswith('/.cortex/launch.json') or normalized.endswith('\\.cortex\\launch.json')
 
 
 # Exported symbols

@@ -103,7 +103,7 @@ try:
     )
 except ImportError:
     def get_session_memory_dir():
-        return os.path.join(os.path.expanduser('~'), '.claude', 'session-memory')
+        return os.path.join(os.path.expanduser('~'), '.cortex', 'session-memory')
     def get_session_memory_path():
         return os.path.join(get_session_memory_dir(), 'memory.md')
 

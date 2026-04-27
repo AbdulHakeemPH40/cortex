@@ -10,6 +10,11 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple, Set
 from copy import deepcopy
 
+
+def _primary_config_home_dir() -> str:
+    return os.path.join(os.path.expanduser('~'), '.cortex')
+
+
 # ============================================================
 # PHASE 1: Core types and imports
 # ============================================================
@@ -101,7 +106,7 @@ try:
     from .managedPath import getManagedFilePath, getManagedSettingsDropInDir
 except ImportError:
     def getManagedFilePath():
-        return os.path.join(os.path.expanduser('~'), '.claude')
+        return _primary_config_home_dir()
     
     def getManagedSettingsDropInDir():
         return os.path.join(getManagedFilePath(), 'managed-settings.d')
@@ -357,14 +362,8 @@ def parseSettingsFileUncached(path: str) -> Dict[str, Any]:
 
 def getSettingsRootPathForSource(source: SettingSource) -> str:
     """Get the absolute path to the associated file root for a given settings source"""
-    try:
-        from .envUtils import getClaudeConfigHomeDir
-    except ImportError:
-        def getClaudeConfigHomeDir():
-            return os.path.join(os.path.expanduser('~'), '.claude')
-    
     if source == 'userSettings':
-        return str(Path(getClaudeConfigHomeDir()).resolve())
+        return str(Path(_primary_config_home_dir()).resolve())
     elif source in ['policySettings', 'projectSettings', 'localSettings']:
         return str(Path(getOriginalCwd()).resolve())
     elif source == 'flagSettings':
@@ -415,9 +414,9 @@ def getSettingsFilePathForSource(source: SettingSource) -> Optional[str]:
 def getRelativeSettingsFilePathForSource(source: str) -> str:
     """Get relative file path for project/local settings"""
     if source == 'projectSettings':
-        return os.path.join('.claude', 'settings.json')
+        return os.path.join('.cortex', 'settings.json')
     elif source == 'localSettings':
-        return os.path.join('.claude', 'settings.local.json')
+        return os.path.join('.cortex', 'settings.local.json')
     return ''
 
 
@@ -788,26 +787,33 @@ def loadSettingsFromDisk() -> SettingsWithErrors:
             filePath = getSettingsFilePathForSource(source)
             if filePath:
                 resolvedPath = str(Path(filePath).resolve())
-                
+
                 # Skip if we've already loaded this file
                 if resolvedPath not in seenFiles:
                     seenFiles.add(resolvedPath)
-                    
+
                     file_result = parseSettingsFile(filePath)
-                    
+
                     # Deduplicate errors
                     for error in file_result.get('errors', []):
                         errorKey = f'{error.file}:{error.path}:{error.message}'
                         if errorKey not in seenErrors:
                             seenErrors.add(errorKey)
                             allErrors.append(error)
-                    
+
                     if file_result.get('settings'):
-                        mergedSettings = mergeWith(
-                            mergedSettings,
-                            file_result['settings'],
-                            settingsMergeCustomizer,
-                        )
+                        selected_result = file_result
+                    else:
+                        selected_result = None
+                else:
+                    selected_result = None
+
+                if selected_result is not None and selected_result.get('settings'):
+                    mergedSettings = mergeWith(
+                        mergedSettings,
+                        selected_result['settings'],
+                        settingsMergeCustomizer,
+                    )
             
             # For flagSettings, also merge inline settings
             if source == 'flagSettings':

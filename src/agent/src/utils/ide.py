@@ -139,14 +139,14 @@ def get_ide_lockfile_paths() -> List[str]:
     """Get paths where IDE lockfiles might be stored."""
     home = Path.home()
     paths = [
-        home / '.claude' / 'ide',
+        home / '.cortex' / 'ide',
         home / '.cortex' / 'ide',
     ]
     return [str(p) for p in paths if p.exists()]
 
 
 async def get_sorted_ide_lockfiles() -> List[str]:
-    """Get sorted IDE lockfiles from ~/.claude/ide directory."""
+    """Get sorted IDE lockfiles from ~/.cortex/ide directory."""
     def _get_lockfiles():
         lockfiles = []
         for ide_path in get_ide_lockfile_paths():

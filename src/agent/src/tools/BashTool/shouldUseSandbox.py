@@ -37,9 +37,9 @@ except ImportError:
             return False
 
 try:
-    from ...utils.settings.settings import get_settings_deprecated
+    from ...utils.settings.settings import getSettings_DEPRECATED
 except ImportError:
-    def get_settings_deprecated() -> Dict[str, Any]:
+    def getSettings_DEPRECATED() -> Dict[str, Any]:
         return {"sandbox": {"excludedCommands": []}}
 
 try:
@@ -79,9 +79,11 @@ class SandboxInput:
         self,
         command: Optional[str] = None,
         dangerously_disable_sandbox: bool = False,
+        dangerously_disable_sandbox_approved: bool = False,
     ):
         self.command = command
         self.dangerously_disable_sandbox = dangerously_disable_sandbox
+        self.dangerously_disable_sandbox_approved = dangerously_disable_sandbox_approved
 
 
 # ============================================================
@@ -133,7 +135,7 @@ def contains_excluded_command(command: str) -> bool:
             pass
     
     # Check user-configured excluded commands from settings
-    settings = get_settings_deprecated()
+    settings = getSettings_DEPRECATED()
     sandbox_config = settings.get("sandbox", {})
     user_excluded_commands = sandbox_config.get("excludedCommands", [])
     
@@ -210,8 +212,10 @@ def contains_excluded_command(command: str) -> bool:
 # ============================================================
 
 def should_use_sandbox(
+    input_data: Optional[Dict[str, Any]] = None,
     command: Optional[str] = None,
     dangerously_disable_sandbox: bool = False,
+    dangerously_disable_sandbox_approved: bool = False,
 ) -> bool:
     """
     Determine whether a bash command should run in the sandbox.
@@ -223,12 +227,22 @@ def should_use_sandbox(
     Returns:
         True if command should run in sandbox, False otherwise
     """
+    if isinstance(input_data, dict):
+        command = input_data.get("command", command)
+        dangerously_disable_sandbox = bool(
+            input_data.get("dangerouslyDisableSandbox", dangerously_disable_sandbox)
+        )
+        dangerously_disable_sandbox_approved = bool(
+            input_data.get("_dangerouslyDisableSandboxApproved", dangerously_disable_sandbox_approved)
+        )
+
     if not SandboxManager.is_sandboxing_enabled():
         return False
     
-    # Don't sandbox if explicitly overridden AND unsandboxed commands are allowed by policy
+    # Only trusted internal callers can disable sandbox through the approved flag.
     if (
         dangerously_disable_sandbox and
+        dangerously_disable_sandbox_approved and
         SandboxManager.are_unsandboxed_commands_allowed()
     ):
         return False

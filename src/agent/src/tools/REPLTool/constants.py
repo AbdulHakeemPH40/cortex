@@ -36,7 +36,7 @@ except ImportError:
     BASH_TOOL_NAME = 'Bash'
 
 try:
-    from ..FileEditTool.completed.constants import FILE_EDIT_TOOL_NAME
+    from ..FileEditTool.constants import FILE_EDIT_TOOL_NAME
 except ImportError:
     FILE_EDIT_TOOL_NAME = 'FileEdit'
 

@@ -95,7 +95,7 @@ except ImportError:
         return default
 
 try:
-    from api.claude import getMaxOutputTokensForModel
+    from api.cortex import getMaxOutputTokensForModel
 except ImportError:
     def getMaxOutputTokensForModel(model: str) -> int:
         """Stub - returns max output tokens"""

@@ -40,7 +40,7 @@ except ImportError:
         return 3_600_000  # 60 minutes max
 
 try:
-    from ..FileEditTool.completed.constants import FILE_EDIT_TOOL_NAME
+    from ..FileEditTool.constants import FILE_EDIT_TOOL_NAME
 except ImportError:
     FILE_EDIT_TOOL_NAME = 'FileEdit'
 

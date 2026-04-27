@@ -98,7 +98,7 @@ def buildCronCreateDescription(durable_enabled: bool) -> str:
         return (
             'Schedule a prompt to run at a future time — either recurring on a '
             'cron schedule, or once at a specific time. Pass durable: true to '
-            'persist to .claude/scheduled_tasks.json; otherwise session-only.'
+            'persist to .cortex/scheduled_tasks.json; otherwise session-only.'
         )
     else:
         return (
@@ -112,9 +112,9 @@ def buildCronCreatePrompt(durable_enabled: bool) -> str:
     if durable_enabled:
         durability_section = """## Durability
 
-By default (durable: false) the job lives only in this Claude session — nothing is written to disk, and the job is gone when Claude exits. Pass durable: true to write to .claude/scheduled_tasks.json so the job survives restarts. Only use durable: true when the user explicitly asks for the task to persist ("keep doing this every day", "set this up permanently"). Most "remind me in 5 minutes" / "check back in an hour" requests should stay session-only."""
+By default (durable: false) the job lives only in this Claude session — nothing is written to disk, and the job is gone when Claude exits. Pass durable: true to write to .cortex/scheduled_tasks.json so the job survives restarts. Only use durable: true when the user explicitly asks for the task to persist ("keep doing this every day", "set this up permanently"). Most "remind me in 5 minutes" / "check back in an hour" requests should stay session-only."""
         durable_runtime_note = (
-            'Durable jobs persist to .claude/scheduled_tasks.json and survive session '
+            'Durable jobs persist to .cortex/scheduled_tasks.json and survive session '
             'restarts — on next launch they resume automatically. One-shot durable tasks '
             'that were missed while the REPL was closed are surfaced for catch-up. '
             'Session-only jobs die with the process. '
@@ -170,7 +170,7 @@ def buildCronDeletePrompt(durable_enabled: bool) -> str:
     if durable_enabled:
         return (
             f'Cancel a cron job previously scheduled with {CRON_CREATE_TOOL_NAME}. '
-            'Removes it from .claude/scheduled_tasks.json (durable jobs) or the '
+            'Removes it from .cortex/scheduled_tasks.json (durable jobs) or the '
             'in-memory session store (session-only jobs).'
         )
     else:
@@ -189,7 +189,7 @@ def buildCronListPrompt(durable_enabled: bool) -> str:
     if durable_enabled:
         return (
             f'List all cron jobs scheduled via {CRON_CREATE_TOOL_NAME}, both durable '
-            '(.claude/scheduled_tasks.json) and session-only.'
+            '(.cortex/scheduled_tasks.json) and session-only.'
         )
     else:
         return (

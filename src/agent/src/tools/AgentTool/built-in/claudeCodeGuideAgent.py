@@ -32,8 +32,8 @@ from ....utils.settings.settings import get_settings_deprecated
 # ----------------------------------------------------------------------
 # Documentation URLs (placeholders – replace with real URLs)
 # ----------------------------------------------------------------------
-CLAUDE_CODE_DOCS_MAP_URL = "https://code.claude.com/docs/en/claude_code_docs_map.md"
-CDP_DOCS_MAP_URL = "https://platform.claude.com/llms.txt"
+CLAUDE_CODE_DOCS_MAP_URL = "https://code.cortex.com/docs/en/claude_code_docs_map.md"
+CDP_DOCS_MAP_URL = "https://platform.cortex.com/llms.txt"
 
 # ----------------------------------------------------------------------
 # Agent identifiers

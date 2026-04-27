@@ -198,9 +198,9 @@ def filter_out_flags(args: List[str]) -> List[str]:
     `!arg.startswith('-')` filtering drops these, causing path validation to be
     silently skipped for attack payloads like:
     
-      rm -- -/../.claude/settings.local.json
+      rm -- -/../.cortex/settings.local.json
     
-    Here `-/../.claude/settings.local.json` starts with `-` so the naive filter
+    Here `-/../.cortex/settings.local.json` starts with `-` so the naive filter
     drops it, validation sees zero paths, returns passthrough, and the file is
     deleted without a prompt. With `--` handling, the path IS extracted and
     validated (blocked by is_claude_config_file_path / path_in_allowed_working_path).
@@ -702,8 +702,8 @@ def validate_command_paths(
     
     # SECURITY: Block write operations in compound commands containing 'cd'
     # This prevents bypassing path safety checks via directory changes before operations.
-    # Example attack: cd .claude/ && mv test.txt settings.json
-    # This would bypass the check for .claude/settings.json because paths are resolved
+    # Example attack: cd .cortex/ && mv test.txt settings.json
+    # This would bypass the check for .cortex/settings.json because paths are resolved
     # relative to the original CWD, not accounting for the cd's effect.
     if compound_command_has_cd and operation_type != 'read':
         return {
@@ -1253,7 +1253,7 @@ def validate_output_redirections(
     """Validate output redirection targets are within allowed directories."""
     # SECURITY: Block output redirections in compound commands containing 'cd'
     # This prevents bypassing path safety checks via directory changes before redirections.
-    # Example attack: cd .claude/ && echo "malicious" > settings.json
+    # Example attack: cd .cortex/ && echo "malicious" > settings.json
     # The redirection target would be validated relative to the original CWD, but the
     # actual write happens in the changed directory after 'cd' executes.
     if compound_command_has_cd and redirections:

@@ -48,9 +48,9 @@ except ImportError:
         return True
 
 try:
-    from ...utils.permissions.filesystem import get_claude_temp_dir
+    from ...utils.permissions.filesystem import get_cortex_temp_dir
 except ImportError:
-    def get_claude_temp_dir() -> str:
+    def get_cortex_temp_dir() -> str:
         import tempfile
         return tempfile.gettempdir()
 
@@ -118,7 +118,7 @@ except ImportError:
     AGENT_TOOL_NAME = "Agent"
 
 try:
-    from ..FileEditTool.completed.constants import FILE_EDIT_TOOL_NAME
+    from ..FileEditTool.constants import FILE_EDIT_TOOL_NAME
 except ImportError:
     FILE_EDIT_TOOL_NAME = "FileEdit"
 
@@ -346,10 +346,10 @@ def get_simple_sandbox_section() -> str:
     allow_unsandboxed_commands = SandboxManager.are_unsandboxed_commands_allowed()
     
     # Replace the per-UID temp dir literal with $TMPDIR
-    claude_temp_dir = get_claude_temp_dir()
+    cortex_temp_dir = get_cortex_temp_dir()
     
     def normalize_allow_only(paths: List[str]) -> List[str]:
-        return list(set(p.replace(claude_temp_dir, "$TMPDIR") for p in paths))
+        return list(set(p.replace(cortex_temp_dir, "$TMPDIR") for p in paths))
     
     filesystem_config = {
         "read": {

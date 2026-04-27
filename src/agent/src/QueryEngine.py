@@ -51,7 +51,7 @@ except ImportError:
     SDKUserMessageReplay = Dict[str, Any]
 
 try:
-    from .services.api.claude import accumulate_usage, update_usage
+    from .services.api.cortex import accumulate_usage, update_usage
 except ImportError:
     def accumulate_usage(total: dict, current: dict) -> dict:
         return {**total, **current}

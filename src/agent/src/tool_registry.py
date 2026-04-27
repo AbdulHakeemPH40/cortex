@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Set, Union, TYPE_CHECKING
 import os
 
 # Core type imports - always available from Tool.py
-from Tool import Tool, Tools, tool_matches_name, ToolPermissionContext
+from Tool import Tool, Tools, tool_matches_name, ToolPermissionContext, build_tool
 
 # Export these at module level for IDE type checking
 __all__ = [
@@ -66,18 +66,6 @@ except ImportError:
         return False
 
 try:
-    from utils.shell.shell_tool_utils import is_power_shell_tool_enabled
-except ImportError:
-    def is_power_shell_tool_enabled() -> bool:
-        return False
-
-try:
-    from utils.agent_swarms_enabled import is_agent_swarms_enabled
-except ImportError:
-    def is_agent_swarms_enabled() -> bool:
-        return False
-
-try:
     from utils.worktree_mode_enabled import is_worktree_mode_enabled
 except ImportError:
     def is_worktree_mode_enabled() -> bool:
@@ -128,11 +116,72 @@ def uniq_by(lst: List[Any], key: str) -> List[Any]:
     for item in lst:
         if item is None:
             continue
-        val = getattr(item, key, None)
+        if isinstance(item, dict):
+            val = item.get(key)
+        else:
+            val = getattr(item, key, None)
         if val not in seen:
             seen.add(val)
             result.append(item)
     return result
+
+
+def _get_tool_name(tool: Any) -> str:
+    """Get tool name from either Tool object or dict-like definition."""
+    if tool is None:
+        return ""
+    if isinstance(tool, dict):
+        return str(tool.get("name", ""))
+    return str(getattr(tool, "name", ""))
+
+
+def _is_tool_enabled(tool: Any) -> bool:
+    """Evaluate enabled status across Tool objects and dict-style definitions."""
+    if tool is None:
+        return False
+    if isinstance(tool, dict):
+        enabled = tool.get("isEnabled")
+        if enabled is None:
+            enabled = tool.get("is_enabled", True)
+        return bool(enabled() if callable(enabled) else enabled)
+
+    enabled_fn = getattr(tool, "is_enabled", None)
+    if callable(enabled_fn):
+        return bool(enabled_fn())
+    return bool(enabled_fn) if enabled_fn is not None else True
+
+
+def _normalize_tool(tool: Any) -> Optional[Any]:
+    """Normalize dict-style tools into Tool objects for consistent downstream usage."""
+    if tool is None:
+        return None
+    if isinstance(tool, dict):
+        try:
+            return build_tool(tool)
+        except Exception:
+            return None
+    return tool
+
+
+def _ensure_permission_context_compat(permission_context: Any) -> Any:
+    """Populate camelCase aliases expected by legacy permission helpers."""
+    if permission_context is None:
+        return permission_context
+
+    alias_map = {
+        "alwaysAllowRules": "always_allow_rules",
+        "alwaysDenyRules": "always_deny_rules",
+        "alwaysAskRules": "always_ask_rules",
+        "additionalWorkingDirectories": "additional_working_directories",
+        "prePlanMode": "pre_plan_mode",
+    }
+    for camel_name, snake_name in alias_map.items():
+        if not hasattr(permission_context, camel_name) and hasattr(permission_context, snake_name):
+            try:
+                setattr(permission_context, camel_name, getattr(permission_context, snake_name))
+            except Exception:
+                pass
+    return permission_context
 
 
 # ============================================================
@@ -156,7 +205,7 @@ except ImportError:
     BashTool = None
 
 try:
-    from tools.FileEditTool.completed.FileEditTool import FileEditTool
+    from tools.FileEditTool.FileEditTool import FileEditTool
 except ImportError:
     FileEditTool = None
 
@@ -195,10 +244,6 @@ try:
 except ImportError:
     BriefTool = None
 
-try:
-    from tools.TaskOutputTool.TaskOutputTool import TaskOutputTool
-except ImportError:
-    TaskOutputTool = None
 
 try:
     from tools.WebSearchTool.WebSearchTool import WebSearchTool
@@ -226,11 +271,6 @@ except ImportError:
     ConfigTool = None
 
 try:
-    from tools.TungstenTool.TungstenTool import TungstenTool
-except ImportError:
-    TungstenTool = None
-
-try:
     from tools.LSPTool.LSPTool import LSPTool
 except ImportError:
     LSPTool = None
@@ -246,24 +286,24 @@ except ImportError:
     ReadMcpResourceTool = None
 
 try:
-    from tools.ToolSearchTool.ToolSearchTool import ToolSearchTool
-except ImportError:
-    ToolSearchTool = None
-
-try:
     from tools.ExitPlanModeTool.ExitPlanModeV2Tool import ExitPlanModeV2Tool
 except ImportError:
     ExitPlanModeV2Tool = None
 
 try:
-    from tools.testing.TestingPermissionTool import TestingPermissionTool
-except ImportError:
-    TestingPermissionTool = None
-
-try:
     from tools.GrepTool.GrepTool import GrepTool
 except ImportError:
     GrepTool = None
+
+try:
+    from tools.ToolSearchTool.ToolSearchTool import ToolSearchTool
+except ImportError:
+    ToolSearchTool = None
+
+try:
+    from tools.testing.TestingPermissionTool import TestingPermissionTool
+except ImportError:
+    TestingPermissionTool = None
 
 try:
     from tools.EnterWorktreeTool.EnterWorktreeTool import EnterWorktreeTool
@@ -274,6 +314,11 @@ try:
     from tools.ExitWorktreeTool.ExitWorktreeTool import ExitWorktreeTool
 except ImportError:
     ExitWorktreeTool = None
+
+try:
+    from tools.SyntheticOutputTool.SyntheticOutputTool import SYNTHETIC_OUTPUT_TOOL_NAME
+except ImportError:
+    SYNTHETIC_OUTPUT_TOOL_NAME = "SyntheticOutput"
 
 try:
     from tools.TaskCreateTool.TaskCreateTool import TaskCreateTool
@@ -295,11 +340,6 @@ try:
 except ImportError:
     TaskListTool = None
 
-try:
-    from tools.SyntheticOutputTool.SyntheticOutputTool import SYNTHETIC_OUTPUT_TOOL_NAME
-except ImportError:
-    SYNTHETIC_OUTPUT_TOOL_NAME = "SyntheticOutput"
-
 
 # Conditional imports (feature-flagged or env-based)
 def _get_conditional_tool(module_path: str, class_name: str) -> Optional[Any]:
@@ -314,41 +354,7 @@ def _get_conditional_tool(module_path: str, class_name: str) -> Optional[Any]:
 
 # Ant-only tools
 REPLTool = _get_conditional_tool('tools.REPLTool.REPLTool', 'REPLTool') if os.environ.get('USER_TYPE') == 'ant' else None
-SuggestBackgroundPRTool = _get_conditional_tool('tools.SuggestBackgroundPRTool.SuggestBackgroundPRTool', 'SuggestBackgroundPRTool') if os.environ.get('USER_TYPE') == 'ant' else None
 
-# Feature-flagged tools
-SleepTool = _get_conditional_tool('tools.SleepTool.SleepTool', 'SleepTool') if (feature('PROACTIVE') or feature('KAIROS')) else None
-
-cronTools = [
-    _get_conditional_tool('tools.ScheduleCronTool.CronCreateTool', 'CronCreateTool'),
-    _get_conditional_tool('tools.ScheduleCronTool.CronDeleteTool', 'CronDeleteTool'),
-    _get_conditional_tool('tools.ScheduleCronTool.CronListTool', 'CronListTool'),
-] if feature('AGENT_TRIGGERS') else []
-
-# RemoteTriggerTool removed - cloud agent infrastructure not used
-MonitorTool = _get_conditional_tool('tools.MonitorTool.MonitorTool', 'MonitorTool') if feature('MONITOR_TOOL') else None
-SendUserFileTool = _get_conditional_tool('tools.SendUserFileTool.SendUserFileTool', 'SendUserFileTool') if feature('KAIROS') else None
-PushNotificationTool = _get_conditional_tool('tools.PushNotificationTool.PushNotificationTool', 'PushNotificationTool') if (feature('KAIROS') or feature('KAIROS_PUSH_NOTIFICATION')) else None
-SubscribePRTool = _get_conditional_tool('tools.SubscribePRTool.SubscribePRTool', 'SubscribePRTool') if feature('KAIROS_GITHUB_WEBHOOKS') else None
-OverflowTestTool = _get_conditional_tool('tools.OverflowTestTool.OverflowTestTool', 'OverflowTestTool') if feature('OVERFLOW_TEST_TOOL') else None
-CtxInspectTool = _get_conditional_tool('tools.CtxInspectTool.CtxInspectTool', 'CtxInspectTool') if feature('CONTEXT_COLLAPSE') else None
-TerminalCaptureTool = _get_conditional_tool('tools.TerminalCaptureTool.TerminalCaptureTool', 'TerminalCaptureTool') if feature('TERMINAL_PANEL') else None
-WebBrowserTool = _get_conditional_tool('tools.WebBrowserTool.WebBrowserTool', 'WebBrowserTool') if feature('WEB_BROWSER_TOOL') else None
-SnipTool = _get_conditional_tool('tools.SnipTool.SnipTool', 'SnipTool') if feature('HISTORY_SNIP') else None
-ListPeersTool = _get_conditional_tool('tools.ListPeersTool.ListPeersTool', 'ListPeersTool') if feature('UDS_INBOX') else None
-
-# VerifyPlanExecutionTool (env-based)
-VerifyPlanExecutionTool = _get_conditional_tool('tools.VerifyPlanExecutionTool.VerifyPlanExecutionTool', 'VerifyPlanExecutionTool') if os.environ.get('CLAUDE_CODE_VERIFY_PLAN') == 'true' else None
-
-# WorkflowTool (requires initialization)
-WorkflowTool = None
-if feature('WORKFLOW_SCRIPTS'):
-    try:
-        from tools.WorkflowTool.bundled.index import init_bundled_workflows
-        init_bundled_workflows()
-        WorkflowTool = _get_conditional_tool('tools.WorkflowTool.WorkflowTool', 'WorkflowTool')
-    except ImportError:
-        pass
 
 # Coordinator mode module
 coordinator_mode_module = None
@@ -360,19 +366,8 @@ if feature('COORDINATOR_MODE'):
         pass
 
 # Lazy-loaded tools (to avoid circular dependencies)
-def get_team_create_tool():
-    return _get_conditional_tool('tools.TeamCreateTool.TeamCreateTool', 'TeamCreateTool')
-
-def get_team_delete_tool():
-    return _get_conditional_tool('tools.TeamDeleteTool.TeamDeleteTool', 'TeamDeleteTool')
-
 def get_send_message_tool():
     return _get_conditional_tool('tools.SendMessageTool.SendMessageTool', 'SendMessageTool')
-
-def get_power_shell_tool():
-    if not is_power_shell_tool_enabled():
-        return None
-    return _get_conditional_tool('tools.PowerShellTool.PowerShellTool', 'PowerShellTool')
 
 
 # ============================================================
@@ -401,8 +396,7 @@ def get_tools_for_default_preset() -> List[str]:
         Array of tool names
     """
     tools = get_all_base_tools()
-    is_enabled = [tool.is_enabled() for tool in tools if tool]
-    return [tool.name for tool, enabled in zip(tools, is_enabled) if tool and enabled]
+    return [_get_tool_name(tool) for tool in tools if _get_tool_name(tool) and _is_tool_enabled(tool)]
 
 
 # ============================================================
@@ -419,7 +413,6 @@ def get_all_base_tools() -> Tools:
     """
     tools = [
         AgentTool,
-        TaskOutputTool,
         BashTool,
         # Ant-native builds have bfs/ugrep embedded in the bun binary.
         # When available, find/grep in Claude's shell are aliased to these
@@ -438,31 +431,11 @@ def get_all_base_tools() -> Tools:
         SkillTool,
         EnterPlanModeTool,
         *( [ConfigTool] if os.environ.get('USER_TYPE') == 'ant' else [] ),
-        *( [TungstenTool] if os.environ.get('USER_TYPE') == 'ant' else [] ),
-        *( [SuggestBackgroundPRTool] if SuggestBackgroundPRTool else [] ),
-        *( [WebBrowserTool] if WebBrowserTool else [] ),
         *( [TaskCreateTool, TaskGetTool, TaskUpdateTool, TaskListTool] if is_todo_v2_enabled() else [] ),
-        *( [OverflowTestTool] if OverflowTestTool else [] ),
-        *( [CtxInspectTool] if CtxInspectTool else [] ),
-        *( [TerminalCaptureTool] if TerminalCaptureTool else [] ),
         *( [LSPTool] if is_env_truthy(os.environ.get('ENABLE_LSP_TOOL', '')) else [] ),
         *( [EnterWorktreeTool, ExitWorktreeTool] if is_worktree_mode_enabled() else [] ),
         get_send_message_tool(),
-        *( [ListPeersTool] if ListPeersTool else [] ),
-        *( [get_team_create_tool(), get_team_delete_tool()] if is_agent_swarms_enabled() else [] ),
-        *( [VerifyPlanExecutionTool] if VerifyPlanExecutionTool else [] ),
-        *( [REPLTool] if os.environ.get('USER_TYPE') == 'ant' and REPLTool else [] ),
-        *( [WorkflowTool] if WorkflowTool else [] ),
-        *( [SleepTool] if SleepTool else [] ),
-        *cronTools,
-        # RemoteTriggerTool removed - cloud agent infrastructure not used
-        *( [MonitorTool] if MonitorTool else [] ),
         BriefTool,
-        *( [SendUserFileTool] if SendUserFileTool else [] ),
-        *( [PushNotificationTool] if PushNotificationTool else [] ),
-        *( [SubscribePRTool] if SubscribePRTool else [] ),
-        *( [get_power_shell_tool()] if get_power_shell_tool() else [] ),
-        *( [SnipTool] if SnipTool else [] ),
         *( [TestingPermissionTool] if os.environ.get('NODE_ENV') == 'test' else [] ),
         ListMcpResourcesTool,
         ReadMcpResourceTool,
@@ -471,8 +444,13 @@ def get_all_base_tools() -> Tools:
         *( [ToolSearchTool] if is_tool_search_enabled_optimistic() else [] ),
     ]
     
-    # Filter out None values
-    return [tool for tool in tools if tool is not None]
+    # Filter out None values and normalize dict-style tool definitions.
+    normalized_tools: List[Any] = []
+    for tool in tools:
+        normalized = _normalize_tool(tool)
+        if normalized is not None:
+            normalized_tools.append(normalized)
+    return normalized_tools
 
 
 def filter_tools_by_deny_rules(tools: List[Tool], permission_context: ToolPermissionContext) -> List[Tool]:
@@ -485,7 +463,15 @@ def filter_tools_by_deny_rules(tools: List[Tool], permission_context: ToolPermis
     server-prefix rules like `mcp__server` strip all tools from that server
     before the model sees them — not just at call time.
     """
-    return [tool for tool in tools if not get_deny_rule_for_tool(permission_context, tool)]
+    allowed: List[Tool] = []
+    compat_context = _ensure_permission_context_compat(permission_context)
+    for tool in tools:
+        normalized = _normalize_tool(tool)
+        if normalized is None:
+            continue
+        if not get_deny_rule_for_tool(compat_context, normalized):
+            allowed.append(normalized)
+    return allowed
 
 
 def get_tools(permission_context: ToolPermissionContext) -> Tools:
@@ -533,7 +519,7 @@ def get_tools(permission_context: ToolPermissionContext) -> Tools:
         SYNTHETIC_OUTPUT_TOOL_NAME,
     }
     
-    tools = [tool for tool in get_all_base_tools() if tool and tool.name not in special_tools]
+    tools = [tool for tool in get_all_base_tools() if tool and _get_tool_name(tool) not in special_tools]
     
     # Filter out tools that are denied by the deny rules
     allowed_tools = filter_tools_by_deny_rules(tools, permission_context)
@@ -543,10 +529,10 @@ def get_tools(permission_context: ToolPermissionContext) -> Tools:
     if is_repl_mode_enabled():
         repl_enabled = any(tool_matches_name(tool, REPL_TOOL_NAME) for tool in allowed_tools)
         if repl_enabled:
-            allowed_tools = [tool for tool in allowed_tools if tool and tool.name not in REPL_ONLY_TOOLS]
+            allowed_tools = [tool for tool in allowed_tools if tool and _get_tool_name(tool) not in REPL_ONLY_TOOLS]
     
     # Filter by isEnabled
-    return [tool for tool in allowed_tools if tool.is_enabled()]
+    return [tool for tool in allowed_tools if _is_tool_enabled(tool)]
 
 
 def assemble_tool_pool(
@@ -585,9 +571,8 @@ def assemble_tool_pool(
     # preserves insertion order, so built-ins win on name conflict.
     # Avoid Array.toSorted (Node 20+) — we support Node 18. builtInTools is
     # readonly so copy-then-sort; allowedMcpTools is a fresh .filter() result.
-    by_name = lambda a, b: (a.name > b.name) - (a.name < b.name)
-    sorted_built_ins = sorted(built_in_tools, key=lambda t: t.name)
-    sorted_mcp_tools = sorted(allowed_mcp_tools, key=lambda t: t.name)
+    sorted_built_ins = sorted(built_in_tools, key=lambda t: _get_tool_name(t))
+    sorted_mcp_tools = sorted(allowed_mcp_tools, key=lambda t: _get_tool_name(t))
     
     return uniq_by(sorted_built_ins + sorted_mcp_tools, 'name')
 

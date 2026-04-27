@@ -249,36 +249,35 @@ def _maybe_schedule_chat_summary(project_root: str, conversation_id: str, title:
             _CHAT_SUMMARY_IN_FLIGHT.add(conversation_id)
 
         def _runner():
+            def _emit_ui_signal(signal_name: str, payload: str = ""):
+                if not ui_widget:
+                    return
+                try:
+                    signal_obj = getattr(ui_widget, signal_name, None)
+                except Exception as signal_err:
+                    log.warning(f"[MEMORY] UI signal access failed for {signal_name}: {signal_err}")
+                    return
+                if signal_obj is None:
+                    return
+                try:
+                    signal_obj.emit(payload)
+                except Exception as emit_err:
+                    log.warning(f"[MEMORY] UI signal emit failed for {signal_name}: {emit_err}")
+
             try:
                 # Notify UI: Memory save started
-                if ui_widget:
-                    from PyQt6.QtCore import QMetaObject, Qt
-                    QMetaObject.invokeMethod(
-                        ui_widget,
-                        "show_memory_saving_animation",
-                        Qt.ConnectionType.QueuedConnection,
-                    )
+                _emit_ui_signal("memory_save_started", "Session insights")
                 
                 _write_chat_summary_memory(project_root, conversation_id, title, messages)
                 
                 # Notify UI: Memory save completed
-                if ui_widget:
-                    QMetaObject.invokeMethod(
-                        ui_widget,
-                        "show_memory_saved_confirmation",
-                        Qt.ConnectionType.QueuedConnection,
-                        "Session summary saved",
-                    )
+                _emit_ui_signal("memory_save_completed", "Session summary saved")
             except Exception as e:
                 log.error(f"[MEMORY] CRITICAL: Chat summary thread failed: {e}", exc_info=True)
                 # Notify UI: Memory save failed
-                if ui_widget:
-                    QMetaObject.invokeMethod(
-                        ui_widget,
-                        "hide_memory_saving_animation",
-                        Qt.ConnectionType.QueuedConnection,
-                    )
+                _emit_ui_signal("memory_save_failed", str(e))
             finally:
+                _emit_ui_signal("memory_save_failed", "")
                 with _CHAT_SUMMARY_LOCK:
                     _CHAT_SUMMARY_IN_FLIGHT.discard(conversation_id)
                     _CHAT_SUMMARY_LAST_TS[conversation_id] = time.time()
@@ -699,6 +698,7 @@ class ChatBridge(QObject):
 
     @pyqtSlot(bool)
     def on_always_allow_changed(self, allowed):
+        log.info(f"[Security] always_allow changed from UI: {allowed}")
         self.always_allow_changed.emit(allowed)
 
     @pyqtSlot()
@@ -764,6 +764,88 @@ class ChatBridge(QObject):
         # Emit signal to main_window to handle AutoGen toggle
         # The actual multi-agent logic is handled by the performance mode system
         self.toggle_autogen_requested.emit()
+
+    @pyqtSlot(result=str)
+    def get_sandbox_status(self):
+        """Return current sandbox toggle status for GUI sync."""
+        try:
+            from src.agent.src.utils.sandbox.sandbox_adapter import SandboxManager
+
+            enabled = bool(SandboxManager.is_sandbox_enabled_in_settings())
+            locked = bool(SandboxManager.are_sandbox_settings_locked_by_policy())
+            runtime_enabled = bool(SandboxManager.is_sandboxing_enabled())
+            unavailable_reason = SandboxManager.get_sandbox_unavailable_reason()
+            return json.dumps(
+                {
+                    "ok": True,
+                    "enabled": enabled,
+                    "locked": locked,
+                    "runtimeEnabled": runtime_enabled,
+                    "unavailableReason": unavailable_reason,
+                }
+            )
+        except Exception as e:
+            log.error(f"[Sandbox] Failed to read sandbox status: {e}", exc_info=True)
+            return json.dumps(
+                {
+                    "ok": False,
+                    "enabled": False,
+                    "locked": False,
+                    "runtimeEnabled": False,
+                    "unavailableReason": None,
+                    "error": str(e),
+                }
+            )
+
+    @pyqtSlot(result=str)
+    def on_toggle_sandbox(self):
+        """Toggle sandbox.enabled in local settings from GUI."""
+        try:
+            from src.agent.src.utils.sandbox.sandbox_adapter import SandboxManager
+
+            current_enabled = bool(SandboxManager.is_sandbox_enabled_in_settings())
+            locked = bool(SandboxManager.are_sandbox_settings_locked_by_policy())
+            if locked:
+                return json.dumps(
+                    {
+                        "ok": False,
+                        "enabled": current_enabled,
+                        "locked": True,
+                        "error": "Sandbox settings are locked by policy.",
+                    }
+                )
+
+            next_enabled = not current_enabled
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(SandboxManager.set_sandbox_settings({"enabled": next_enabled}))
+            finally:
+                loop.close()
+
+            enabled_after = bool(SandboxManager.is_sandbox_enabled_in_settings())
+            runtime_enabled = bool(SandboxManager.is_sandboxing_enabled())
+            unavailable_reason = SandboxManager.get_sandbox_unavailable_reason()
+            return json.dumps(
+                {
+                    "ok": True,
+                    "enabled": enabled_after,
+                    "locked": False,
+                    "runtimeEnabled": runtime_enabled,
+                    "unavailableReason": unavailable_reason,
+                }
+            )
+        except Exception as e:
+            log.error(f"[Sandbox] Failed to toggle sandbox setting: {e}", exc_info=True)
+            return json.dumps(
+                {
+                    "ok": False,
+                    "enabled": False,
+                    "locked": False,
+                    "runtimeEnabled": False,
+                    "unavailableReason": None,
+                    "error": str(e),
+                }
+            )
     
     # Add new signal for AutoGen toggle
     toggle_autogen_requested = pyqtSignal()
@@ -1100,7 +1182,7 @@ class ChatBridge(QObject):
                 )
             
             log.debug(f'âœ" Saved single chat {conversation_id} to SQLite (storage_key: {storage_key})')
-            _maybe_schedule_chat_summary(project_path, conversation_id, title, messages, self)
+            _maybe_schedule_chat_summary(project_path, conversation_id, title, messages, self._parent_widget)
             return "OK"
             
         except Exception as e:
@@ -1157,7 +1239,7 @@ class ChatBridge(QObject):
                         files_accessed=msg.get('files_accessed', []),
                         tools_used=msg.get('tools_used', [])
                     )
-                _maybe_schedule_chat_summary(project_path, conversation_id, title, messages, self)
+                _maybe_schedule_chat_summary(project_path, conversation_id, title, messages, self._parent_widget)
                         
             log.debug(f'âœ" Saved {len(chats)} chats to SQLite (storage_key: {storage_key})')
             return "OK"
@@ -1395,6 +1477,22 @@ class AIChatWidget(QWidget):
     def hide_memory_saving_animation(self):
         self._view.page().runJavaScript("if(window.hideMemorySavingAnimation) window.hideMemorySavingAnimation();")
 
+    @pyqtSlot(str)
+    def _on_memory_save_started(self, memory_name: str):
+        _ = memory_name
+        self.show_memory_saving_animation()
+
+    @pyqtSlot(str)
+    def _on_memory_save_completed(self, memory_name: str):
+        self.hide_memory_saving_animation()
+        self.show_memory_saved_confirmation(memory_name or "Session insights")
+
+    @pyqtSlot(str)
+    def _on_memory_save_failed(self, error_message: str):
+        self.hide_memory_saving_animation()
+        if error_message:
+            log.warning(f"[MEMORY] Summary save UI marked failed: {error_message}")
+
     def set_active_agent_mode(self, mode: str):
         """Activate a specific agent mode in the grid.
         
@@ -1629,6 +1727,11 @@ class AIChatWidget(QWidget):
         
         # Connect vision response signal
         self._bridge._vision_response_received.connect(self._on_vision_response)
+
+        # Thread-safe memory save UI signals
+        self.memory_save_started.connect(self._on_memory_save_started, Qt.ConnectionType.QueuedConnection)
+        self.memory_save_completed.connect(self._on_memory_save_completed, Qt.ConnectionType.QueuedConnection)
+        self.memory_save_failed.connect(self._on_memory_save_failed, Qt.ConnectionType.QueuedConnection)
         
         self._channel.registerObject("bridge", self._bridge)
 

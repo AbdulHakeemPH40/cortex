@@ -119,7 +119,7 @@ except ImportError:
         pass
 
 try:
-    from ...services.claudeAiLimits import current_limits
+    from ...services.cortexAiLimits import current_limits
 except ImportError:
     current_limits = type('obj', (object,), {'status': 'allowed'})()
 

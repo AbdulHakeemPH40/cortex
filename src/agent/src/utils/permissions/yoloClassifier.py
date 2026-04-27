@@ -39,7 +39,7 @@ except ImportError:
         pass
 
 try:
-    from ..services.api.claude import getCacheControl
+    from ..services.api.cortex import getCacheControl
 except ImportError:
     def getCacheControl(**kwargs) -> Optional[Dict]:
         return None
@@ -65,13 +65,13 @@ except ImportError:
 
 try:
     from ..bootstrap.state import (
-        getCachedClaudeMdContent,
+        getCachedCortexMdContent,
         getLastClassifierRequests,
         getSessionId,
         setLastClassifierRequests,
     )
 except ImportError:
-    def getCachedClaudeMdContent():
+    def getCachedCortexMdContent():
         return None
     
     def getLastClassifierRequests():
@@ -381,12 +381,12 @@ def buildDefaultExternalSystemPrompt() -> str:
 def getAutoModeDumpDir() -> str:
     """Get dump directory path"""
     try:
-        from .filesystem import getClaudeTempDir
+        from .filesystem import get_cortex_temp_dir
     except ImportError:
-        def getClaudeTempDir() -> str:
-            return os.path.join(os.path.expanduser('~'), '.claude', 'tmp')
+        def get_cortex_temp_dir() -> str:
+            return os.path.join(os.path.expanduser('~'), '.cortex', 'tmp')
     
-    return str(Path(getClaudeTempDir()) / 'auto-mode')
+    return str(Path(get_cortex_temp_dir()) / 'auto-mode')
 
 
 async def maybeDumpAutoMode(request: Any, response: Any, timestamp: int, suffix: str = None) -> None:
@@ -396,8 +396,8 @@ async def maybeDumpAutoMode(request: Any, response: Any, timestamp: int, suffix:
         if user_type != 'ant':
             return
         
-        # Check CLAUDE_CODE_DUMP_AUTO_MODE env var
-        dump_enabled = os.environ.get('CLAUDE_CODE_DUMP_AUTO_MODE', '').lower() in ('true', '1', 'yes')
+        # Check CORTEX_CODE_DUMP_AUTO_MODE env var
+        dump_enabled = os.environ.get('CORTEX_CODE_DUMP_AUTO_MODE', '').lower() in ('true', '1', 'yes')
         if not dump_enabled:
             return
         
@@ -420,12 +420,12 @@ async def maybeDumpAutoMode(request: Any, response: Any, timestamp: int, suffix:
 def getAutoModeClassifierErrorDumpPath() -> str:
     """Get session-scoped error dump path"""
     try:
-        from .filesystem import getClaudeTempDir
+        from .filesystem import get_cortex_temp_dir
     except ImportError:
-        def getClaudeTempDir() -> str:
-            return os.path.join(os.path.expanduser('~'), '.claude', 'tmp')
+        def get_cortex_temp_dir() -> str:
+            return os.path.join(os.path.expanduser('~'), '.cortex', 'tmp')
     
-    return str(Path(getClaudeTempDir()) / 'auto-mode-classifier-errors' / f'{getSessionId()}.txt')
+    return str(Path(get_cortex_temp_dir()) / 'auto-mode-classifier-errors' / f'{getSessionId()}.txt')
 
 
 def getAutoModeClassifierTranscript() -> Optional[str]:
@@ -567,7 +567,7 @@ def isJsonlTranscriptEnabled() -> bool:
     try:
         user_type = os.environ.get('USER_TYPE')
         if user_type == 'ant':
-            env = os.environ.get('CLAUDE_CODE_JSONL_TRANSCRIPT')
+            env = os.environ.get('CORTEX_CODE_JSONL_TRANSCRIPT')
             if isEnvTruthy(env):
                 return True
             if isEnvDefinedFalsy(env):
@@ -656,13 +656,13 @@ def formatActionForClassifier(toolName: str, toolInput: Any) -> TranscriptEntry:
     )
 
 
-def buildClaudeMdMessage() -> Optional[Dict]:
+def buildCortexMdMessage() -> Optional[Dict]:
     """
-    Build the CLAUDE.md prefix message for the classifier.
-    Returns null when CLAUDE.md is disabled or empty.
+    Build the CORTEX.md prefix message for the classifier.
+    Returns null when CORTEX.md is disabled or empty.
     """
-    claudeMd = getCachedClaudeMdContent()
-    if claudeMd is None:
+    cortexMd = getCachedCortexMdContent()
+    if cortexMd is None:
         return None
     
     return {
@@ -671,10 +671,10 @@ def buildClaudeMdMessage() -> Optional[Dict]:
             {
                 'type': 'text',
                 'text': (
-                    f"The following is the user's CLAUDE.md configuration. These are "
+                    f"The following is the user's CORTEX.md configuration. These are "
                     f"instructions the user provided to the agent and should be treated "
                     f"as part of the user's intent when evaluating actions.\n\n"
-                    f"<user_claude_md>\n{claudeMd}\n</user_claude_md>"
+                    f"<user_cortex_md>\n{cortexMd}\n</user_cortex_md>"
                 ),
                 'cache_control': getCacheControl(querySource='auto_mode'),
             },
@@ -1204,7 +1204,7 @@ def getClassifierModel() -> str:
     try:
         user_type = os.environ.get('USER_TYPE')
         if user_type == 'ant':
-            envModel = os.environ.get('CLAUDE_CODE_AUTO_MODE_MODEL')
+            envModel = os.environ.get('CORTEX_CODE_AUTO_MODE_MODEL')
             if envModel:
                 return envModel
     except:
@@ -1225,7 +1225,7 @@ def resolveTwoStageClassifier():
     try:
         user_type = os.environ.get('USER_TYPE')
         if user_type == 'ant':
-            env = os.environ.get('CLAUDE_CODE_TWO_STAGE_CLASSIFIER')
+            env = os.environ.get('CORTEX_CODE_TWO_STAGE_CLASSIFIER')
             if env in ('fast', 'thinking'):
                 return env
             if isEnvTruthy(env):
@@ -1279,9 +1279,9 @@ async def classifyYoloAction(
     # Build transcript entries
     transcriptEntries = buildTranscriptEntries(messages)
     
-    # Build CLAUDE.md prefix
-    claudeMdMessage = buildClaudeMdMessage()
-    prefixMessages = [claudeMdMessage] if claudeMdMessage else []
+    # Build CORTEX.md prefix
+    cortexMdMessage = buildCortexMdMessage()
+    prefixMessages = [cortexMdMessage] if cortexMdMessage else []
     
     # Calculate prompt lengths
     toolCallsLength = len(actionCompact)

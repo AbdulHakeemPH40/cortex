@@ -91,7 +91,7 @@ except ImportError:
         return False
 
 try:
-    from ..services.api.claude import get_api_metadata, get_extra_body_params
+    from ..services.api.cortex import get_api_metadata, get_extra_body_params
 except ImportError:
     def get_api_metadata() -> Dict[str, Any]:
         return {}

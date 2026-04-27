@@ -130,7 +130,7 @@ try:
     from .task.diskOutput import getTaskOutputDir
 except ImportError:
     def getTaskOutputDir() -> str:
-        return os.path.join(tempfile.gettempdir(), "claude_tasks")
+        return os.path.join(tempfile.gettempdir(), "cortex_tasks")
 
 try:
     from .task.TaskOutput import TaskOutput
@@ -155,10 +155,10 @@ except ImportError:
         pass
 
 try:
-    from .permissions.filesystem import getClaudeTempDirName
+    from .permissions.filesystem import get_cortex_temp_dir_name
 except ImportError:
-    def getClaudeTempDirName() -> str:
-        return "claude_tmp"
+    def get_cortex_temp_dir_name() -> str:
+        return "cortex_tmp"
 
 try:
     from .platform import getPlatform
@@ -269,7 +269,7 @@ def isExecutable(shellPath: str) -> bool:
 async def findSuitableShell() -> str:
     """Determines the best available shell to use."""
     # Check for explicit shell override first
-    shellOverride = os.environ.get('CLAUDE_CODE_SHELL')
+    shellOverride = os.environ.get('CORTEX_CODE_SHELL')
     if shellOverride:
         # Validate it's a supported shell type
         isSupported = 'bash' in shellOverride or 'zsh' in shellOverride
@@ -278,7 +278,7 @@ async def findSuitableShell() -> str:
             return shellOverride
         else:
             logForDebugging(
-                f'CLAUDE_CODE_SHELL="{shellOverride}" is not a valid bash/zsh path, '
+                f'CORTEX_CODE_SHELL="{shellOverride}" is not a valid bash/zsh path, '
                 f'falling back to detection'
             )
 
@@ -393,8 +393,8 @@ async def exec(
     id = f"{hash(command) & 0xFFFF:04x}"
 
     # Sandbox temp directory
-    tmp_base = os.environ.get('CLAUDE_CODE_TMPDIR', '/tmp')
-    sandboxTmpDir = os.path.join(tmp_base, getClaudeTempDirName())
+    tmp_base = os.environ.get('CORTEX_CODE_TMPDIR', '/tmp')
+    sandboxTmpDir = os.path.join(tmp_base, get_cortex_temp_dir_name())
 
     # Build the command string
     buildResult = await provider.buildExecCommand(command, {
@@ -419,7 +419,7 @@ async def exec(
             cwd = fallback
         except (OSError, RuntimeError):
             return createFailedCommand(
-                f'Working directory "{cwd}" no longer exists. Please restart Claude from an existing directory.'
+                f'Working directory "{cwd}" no longer exists. Please restart Cortex from an existing directory.'
             )
 
     # If already aborted, don't spawn the process at all
@@ -467,10 +467,10 @@ async def exec(
                 **subprocessEnv(),
                 **({'SHELL': binShell} if shellType == 'bash' else {}),
                 'GIT_EDITOR': 'true',
-                'CLAUDECODE': '1',
+                'CORTEXCODE': '1',
                 **envOverrides,
                 **(
-                    {'CLAUDE_CODE_SESSION_ID': getSessionId()}
+                    {'CORTEX_CODE_SESSION_ID': getSessionId()}
                     if os.environ.get('USER_TYPE') == 'ant'
                     else {}
                 ),

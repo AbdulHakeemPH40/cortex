@@ -66,77 +66,77 @@ ModelConfig = Dict[str, str]  # provider → model ID
 
 CLAUDE_3_7_SONNET_CONFIG: ModelConfig = {
     'anthropic': 'claude-3-7-sonnet-20250219',
-    'bedrock':   'us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+    'bedrock':   'us.anthropic.cortex-3-7-sonnet-20250219-v1:0',
     'vertex':    'claude-3-7-sonnet@20250219',
     'foundry':   'claude-3-7-sonnet',
 }
 
 CLAUDE_3_5_V2_SONNET_CONFIG: ModelConfig = {
     'anthropic': 'claude-3-5-sonnet-20241022',
-    'bedrock':   'anthropic.claude-3-5-sonnet-20241022-v2:0',
+    'bedrock':   'anthropic.cortex-3-5-sonnet-20241022-v2:0',
     'vertex':    'claude-3-5-sonnet-v2@20241022',
     'foundry':   'claude-3-5-sonnet',
 }
 
 CLAUDE_3_5_HAIKU_CONFIG: ModelConfig = {
     'anthropic': 'claude-3-5-haiku-20241022',
-    'bedrock':   'us.anthropic.claude-3-5-haiku-20241022-v1:0',
+    'bedrock':   'us.anthropic.cortex-3-5-haiku-20241022-v1:0',
     'vertex':    'claude-3-5-haiku@20241022',
     'foundry':   'claude-3-5-haiku',
 }
 
 CLAUDE_HAIKU_4_5_CONFIG: ModelConfig = {
     'anthropic': 'claude-haiku-4-5-20251001',
-    'bedrock':   'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+    'bedrock':   'us.anthropic.cortex-haiku-4-5-20251001-v1:0',
     'vertex':    'claude-haiku-4-5@20251001',
     'foundry':   'claude-haiku-4-5',
 }
 
 CLAUDE_SONNET_4_CONFIG: ModelConfig = {
     'anthropic': 'claude-sonnet-4-20250514',
-    'bedrock':   'us.anthropic.claude-sonnet-4-20250514-v1:0',
+    'bedrock':   'us.anthropic.cortex-sonnet-4-20250514-v1:0',
     'vertex':    'claude-sonnet-4@20250514',
     'foundry':   'claude-sonnet-4',
 }
 
 CLAUDE_SONNET_4_5_CONFIG: ModelConfig = {
     'anthropic': 'claude-sonnet-4-5-20250929',
-    'bedrock':   'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+    'bedrock':   'us.anthropic.cortex-sonnet-4-5-20250929-v1:0',
     'vertex':    'claude-sonnet-4-5@20250929',
     'foundry':   'claude-sonnet-4-5',
 }
 
 CLAUDE_OPUS_4_CONFIG: ModelConfig = {
     'anthropic': 'claude-opus-4-20250514',
-    'bedrock':   'us.anthropic.claude-opus-4-20250514-v1:0',
+    'bedrock':   'us.anthropic.cortex-opus-4-20250514-v1:0',
     'vertex':    'claude-opus-4@20250514',
     'foundry':   'claude-opus-4',
 }
 
 CLAUDE_OPUS_4_1_CONFIG: ModelConfig = {
     'anthropic': 'claude-opus-4-1-20250805',
-    'bedrock':   'us.anthropic.claude-opus-4-1-20250805-v1:0',
+    'bedrock':   'us.anthropic.cortex-opus-4-1-20250805-v1:0',
     'vertex':    'claude-opus-4-1@20250805',
     'foundry':   'claude-opus-4-1',
 }
 
 CLAUDE_OPUS_4_5_CONFIG: ModelConfig = {
     'anthropic': 'claude-opus-4-5-20251101',
-    'bedrock':   'us.anthropic.claude-opus-4-5-20251101-v1:0',
+    'bedrock':   'us.anthropic.cortex-opus-4-5-20251101-v1:0',
     'vertex':    'claude-opus-4-5@20251101',
     'foundry':   'claude-opus-4-5',
 }
 
 CLAUDE_OPUS_4_6_CONFIG: ModelConfig = {
     'anthropic': 'claude-opus-4-6',
-    'bedrock':   'us.anthropic.claude-opus-4-6-v1',
+    'bedrock':   'us.anthropic.cortex-opus-4-6-v1',
     'vertex':    'claude-opus-4-6',
     'foundry':   'claude-opus-4-6',
 }
 
 CLAUDE_SONNET_4_6_CONFIG: ModelConfig = {
     'anthropic': 'claude-sonnet-4-6',
-    'bedrock':   'us.anthropic.claude-sonnet-4-6',
+    'bedrock':   'us.anthropic.cortex-sonnet-4-6',
     'vertex':    'claude-sonnet-4-6',
     'foundry':   'claude-sonnet-4-6',
 }
@@ -383,7 +383,7 @@ def getModelConfig(modelKey: ModelKey) -> ModelConfig:
 
     Example:
         getModelConfig('opus46')['anthropic']  → 'claude-opus-4-6'
-        getModelConfig('sonnet40')['bedrock']  → 'us.anthropic.claude-sonnet-4-20250514-v1:0'
+        getModelConfig('sonnet40')['bedrock']  → 'us.anthropic.cortex-sonnet-4-20250514-v1:0'
     """
     return ALL_MODEL_CONFIGS[modelKey]
 
@@ -401,7 +401,7 @@ def getModelIdForProvider(modelKey: ModelKey, provider: str) -> Optional[str]:
 
     Example:
         getModelIdForProvider('opus46', 'anthropic') → 'claude-opus-4-6'
-        getModelIdForProvider('opus46', 'bedrock')   → 'us.anthropic.claude-opus-4-6-v1'
+        getModelIdForProvider('opus46', 'bedrock')   → 'us.anthropic.cortex-opus-4-6-v1'
         getModelIdForProvider('gpt4o', 'openai')     → 'gpt-4o'
         getModelIdForProvider('gemini2flash', 'google') → 'gemini-2.0-flash'
     """

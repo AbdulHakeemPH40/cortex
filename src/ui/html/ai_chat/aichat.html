@@ -590,6 +590,10 @@
                     </span>
                 </div>
                 <div class="actions">
+                    <div id="container-status-badge" class="container-status-badge state-unknown" title="Container status">
+                        <span class="container-status-dot" aria-hidden="true"></span>
+                        <span id="container-status-text">Container: Unknown</span>
+                    </div>
                     <button id="new-chat-btn" title="New Chat (Ctrl+N)" aria-label="Start new chat">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
                     </button>
@@ -837,13 +841,13 @@
                                 </div>
                             </div>
                             
-                            <!-- Always Allow Toggle -->
-                            <button id="always-allow-toggle" class="toolbar-btn" title="Always allow tool execution">
+                            <!-- Unified Security Toggle (Sandbox + Auto Approval) -->
+                            <button id="security-toggle" class="toolbar-btn" title="Toggle Security Mode (Sandbox + Auto Approval)">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
                                     <path d="M9 12l2 2 4-4"/>
                                 </svg>
-                                <span>Auto</span>
+                                <span>Security</span>
                             </button>
                         </div>
 

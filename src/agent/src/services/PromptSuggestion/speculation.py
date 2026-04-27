@@ -150,10 +150,10 @@ except ImportError:
     INTERRUPT_MESSAGE_FOR_TOOL_USE = '[TOOL INTERRUPTED]'
 
 try:
-    from ...utils.permissions.filesystem import get_claude_temp_dir
+    from ...utils.permissions.filesystem import get_cortex_temp_dir
 except ImportError:
-    def get_claude_temp_dir():
-        return os.path.join(os.path.expanduser('~'), '.claude', 'temp')
+    def get_cortex_temp_dir():
+        return os.path.join(os.path.expanduser('~'), '.cortex', 'temp')
 
 try:
     from ...utils.query_helpers import extract_read_files_from_messages
@@ -230,7 +230,7 @@ async def safe_remove_overlay(overlay_path: str) -> None:
 def get_overlay_path(spec_id: str) -> str:
     """Get the overlay directory path for a speculation session"""
     return join(
-        get_claude_temp_dir(),
+        get_cortex_temp_dir(),
         'speculation',
         str(os.getpid()),
         spec_id,

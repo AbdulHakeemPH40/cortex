@@ -61,13 +61,13 @@ _plugin_cache: Optional[PluginLoadResult] = None
 def get_plugins_directory() -> str:
     """Get the plugins directory path."""
     from pathlib import Path
-    return str(Path.home() / '.claude' / 'plugins')
+    return str(Path.home() / '.cortex' / 'plugins')
 
 
 def get_plugin_cache_path() -> str:
     """Get the plugin cache directory path."""
     from pathlib import Path
-    return str(Path.home() / '.claude' / 'plugins' / 'cache')
+    return str(Path.home() / '.cortex' / 'plugins' / 'cache')
 
 
 def getVersionedCachePath(plugin_id: str, version: str) -> str:
@@ -149,7 +149,7 @@ def load_plugin_manifest(plugin_path: str) -> Optional[Dict[str, Any]]:
     import os
     import json
     
-    manifest_path = os.path.join(plugin_path, '.claude-plugin', 'plugin.json')
+    manifest_path = os.path.join(plugin_path, '.cortex-plugin', 'plugin.json')
     
     if not os.path.exists(manifest_path):
         return None
@@ -170,11 +170,11 @@ def is_plugin_directory(path: str) -> bool:
         path: Path to check
     
     Returns:
-        True if directory contains .claude-plugin/plugin.json
+        True if directory contains .cortex-plugin/plugin.json
     """
     import os
     
-    manifest_path = os.path.join(path, '.claude-plugin', 'plugin.json')
+    manifest_path = os.path.join(path, '.cortex-plugin', 'plugin.json')
     return os.path.exists(manifest_path)
 
 

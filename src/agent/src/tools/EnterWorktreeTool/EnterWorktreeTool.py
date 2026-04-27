@@ -40,7 +40,7 @@ except ImportError:
         pass
 
 try:
-    from ...utils.claudemd import clearMemoryFileCaches
+    from ...utils.cortexmd import clearMemoryFileCaches
 except ImportError:
     def clearMemoryFileCaches():
         pass

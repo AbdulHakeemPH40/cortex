@@ -17,11 +17,11 @@ FILE_EDIT_TOOL_NAME = "Edit"
 # PERMISSION PATTERNS
 # ============================================================
 
-# Permission pattern for granting session-level access to the project's .claude/ folder
-CLAUDE_FOLDER_PERMISSION_PATTERN = "/.claude/**"
+# Permission pattern for granting session-level access to the project's .cortex/ folder
+CLAUDE_FOLDER_PERMISSION_PATTERN = "/.cortex/**"
 
-# Permission pattern for granting session-level access to the global ~/.claude/ folder
-GLOBAL_CLAUDE_FOLDER_PERMISSION_PATTERN = "~/.claude/**"
+# Permission pattern for granting session-level access to the global ~/.cortex/ folder
+GLOBAL_CLAUDE_FOLDER_PERMISSION_PATTERN = "~/.cortex/**"
 
 # ============================================================
 # ERROR MESSAGES

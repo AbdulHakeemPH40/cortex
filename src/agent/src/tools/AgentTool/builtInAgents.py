@@ -138,7 +138,7 @@ def get_built_in_agents() -> List[Dict[str, Any]]:
     
     if is_non_sdk_entrypoint:
         try:
-            from .built_in.claude_code_guide_agent import CLAUDE_CODE_GUIDE_AGENT
+            from .built_in.cortex_code_guide_agent import CLAUDE_CODE_GUIDE_AGENT
             agents.append(CLAUDE_CODE_GUIDE_AGENT)
         except ImportError:
             pass

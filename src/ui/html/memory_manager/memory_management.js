@@ -916,6 +916,24 @@
     if (bridge) {
       return;
     }
+    if (typeof window !== "undefined" && window.memoryBridge) {
+      bridge = window.memoryBridge;
+      console.info("[MEMORY] Using pre-initialized window.memoryBridge");
+      const dataChangedSignal = bridge.data_changed || bridge["data_changed(QString)"];
+      if (dataChangedSignal && typeof dataChangedSignal.connect === "function") {
+        dataChangedSignal.connect((payload) => receiveMemoryState(JSON.parse(payload)));
+      }
+      const toastSignal = bridge.toast_requested || bridge["toast_requested(QString,QString)"];
+      if (toastSignal && typeof toastSignal.connect === "function") {
+        toastSignal.connect(showToast);
+      }
+      callBridge(["loadInitialData", "loadInitialData()"])
+        .then((payload) => receiveMemoryState(JSON.parse(payload)))
+        .catch((error) => {
+          console.warn("[MEMORY] Failed to bootstrap from pre-initialized bridge", error);
+        });
+      return;
+    }
     bridgeInitAttempts += 1;
     if (typeof QWebChannel === "undefined") {
       console.warn("[MEMORY] QWebChannel script not ready yet");
@@ -931,35 +949,48 @@
       return;
     }
 
-    new QWebChannel(transport, async (channel) => {
-      const objects = channel.objects || {};
-      bridge = objects.memoryBridge || objects.MemoryBridge || Object.values(objects)[0] || null;
-      if (!bridge) {
-        console.warn("[MEMORY] Bridge object missing from QWebChannel");
-        scheduleBridgeInitRetry();
-        return;
-      }
-      console.info(`[MEMORY] Bridge ready. Methods/keys: ${Object.keys(bridge).slice(0, 30).join(", ")}`);
+    try {
+      let callbackFired = false;
+      new QWebChannel(transport, async (channel) => {
+        callbackFired = true;
+        const objects = channel.objects || {};
+        bridge = objects.memoryBridge || objects.MemoryBridge || (typeof window !== "undefined" ? window.memoryBridge : null) || Object.values(objects)[0] || null;
+        if (!bridge) {
+          console.warn("[MEMORY] Bridge object missing from QWebChannel");
+          scheduleBridgeInitRetry();
+          return;
+        }
+        console.info(`[MEMORY] Bridge ready. Methods/keys: ${Object.keys(bridge).slice(0, 30).join(", ")}`);
 
-      const dataChangedSignal = bridge.data_changed || bridge["data_changed(QString)"];
-      if (dataChangedSignal && typeof dataChangedSignal.connect === "function") {
-        dataChangedSignal.connect((payload) => receiveMemoryState(JSON.parse(payload)));
-      }
+        const dataChangedSignal = bridge.data_changed || bridge["data_changed(QString)"];
+        if (dataChangedSignal && typeof dataChangedSignal.connect === "function") {
+          dataChangedSignal.connect((payload) => receiveMemoryState(JSON.parse(payload)));
+        }
 
-      const toastSignal = bridge.toast_requested || bridge["toast_requested(QString,QString)"];
-      if (toastSignal && typeof toastSignal.connect === "function") {
-        toastSignal.connect(showToast);
-      }
+        const toastSignal = bridge.toast_requested || bridge["toast_requested(QString,QString)"];
+        if (toastSignal && typeof toastSignal.connect === "function") {
+          toastSignal.connect(showToast);
+        }
 
-      const loadInitialDataFn = resolveBridgeMethod(bridge, ["loadInitialData", "loadInitialData()"]);
-      if (!loadInitialDataFn) {
-        showToast("error", "Memory bridge API mismatch. Please reopen window.");
-        return;
-      }
+        const loadInitialDataFn = resolveBridgeMethod(bridge, ["loadInitialData", "loadInitialData()"]);
+        if (!loadInitialDataFn) {
+          showToast("error", "Memory bridge API mismatch. Please reopen window.");
+          return;
+        }
 
-      const payload = await callBridge(["loadInitialData", "loadInitialData()"]);
-      receiveMemoryState(JSON.parse(payload));
-    });
+        const payload = await callBridge(["loadInitialData", "loadInitialData()"]);
+        receiveMemoryState(JSON.parse(payload));
+      });
+      setTimeout(() => {
+        if (!bridge && !callbackFired) {
+          console.warn("[MEMORY] QWebChannel callback did not fire; retrying bridge init");
+          scheduleBridgeInitRetry();
+        }
+      }, 500);
+    } catch (error) {
+      console.warn("[MEMORY] QWebChannel init threw error", error);
+      scheduleBridgeInitRetry();
+    }
   }
 
   document.addEventListener("DOMContentLoaded", () => {

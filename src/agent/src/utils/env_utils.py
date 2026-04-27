@@ -6,17 +6,17 @@ import os
 from pathlib import Path
 
 
-def get_claude_config_home_dir() -> str:
-    """Get the Claude config home directory."""
-    config_dir = os.environ.get('CLAUDE_CONFIG_DIR')
+def get_cortex_config_home_dir() -> str:
+    """Get the Cortex config home directory."""
+    config_dir = os.environ.get('CORTEX_CONFIG_DIR')
     if config_dir:
         return config_dir
-    return str(Path.home() / '.claude')
+    return str(Path.home() / '.cortex')
 
 
 def get_teams_dir() -> str:
     """Get the teams directory."""
-    return str(Path(get_claude_config_home_dir()) / 'teams')
+    return str(Path(get_cortex_config_home_dir()) / 'teams')
 
 
 def has_node_option(flag: str) -> bool:
@@ -66,7 +66,7 @@ def is_env_defined_falsy(env_var) -> bool:
 
 
 __all__ = [
-    'get_claude_config_home_dir',
+    'get_cortex_config_home_dir',
     'get_teams_dir',
     'has_node_option',
     'is_env_truthy',

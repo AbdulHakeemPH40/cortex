@@ -80,7 +80,7 @@ except ImportError:
     def logForDebugging(msg, **kwargs): pass
     def parseEffortValue(val): return None
     EFFORT_LEVELS = ['minimal', 'medium', 'high']
-    def getClaudeConfigHomeDir(): return os.path.expanduser("~/.claude")
+    def getClaudeConfigHomeDir(): return os.path.expanduser("~/.cortex")
     def isBareMode(): return False
     def isEnvTruthy(val): return False
     def isENOENT(e): return False
@@ -100,7 +100,7 @@ except ImportError:
     def parseUserSpecifiedModel(model): return model
     async def executeShellCommandsInPrompt(content, ctx, name, shell): return content
     def isSettingSourceEnabled(source): return True
-    def getManagedFilePath(): return os.path.expanduser("~/.claude")
+    def getManagedFilePath(): return os.path.expanduser("~/.cortex")
     def isRestrictedToPluginOnly(resource): return False
     def HooksSchema(): 
         class Schema:
@@ -124,11 +124,11 @@ def getSkillsPath(
     Returns a claude config directory path for a given source.
     """
     if source == 'policySettings':
-        return os.path.join(getManagedFilePath(), '.claude', dir_name)
+        return os.path.join(getManagedFilePath(), '.cortex', dir_name)
     elif source == 'userSettings':
         return os.path.join(getClaudeConfigHomeDir(), dir_name)
     elif source == 'projectSettings':
-        return f".claude/{dir_name}"
+        return f".cortex/{dir_name}"
     elif source == 'plugin':
         return 'plugin'
     else:
@@ -663,7 +663,7 @@ async def getSkillDirCommands(cwd: str) -> List[Command]:
         return _skill_dir_commands_cache[cwd]
 
     user_skills_dir = os.path.join(getClaudeConfigHomeDir(), 'skills')
-    managed_skills_dir = os.path.join(getManagedFilePath(), '.claude', 'skills')
+    managed_skills_dir = os.path.join(getManagedFilePath(), '.cortex', 'skills')
     project_skills_dirs = getProjectDirsUpToHome('skills', cwd)
 
     logForDebugging(
@@ -687,7 +687,7 @@ async def getSkillDirCommands(cwd: str) -> List[Command]:
             return []
         additional_skills_nested = await asyncio.gather(*[
             loadSkillsFromSkillsDir(
-                os.path.join(dir, '.claude', 'skills'),
+                os.path.join(dir, '.cortex', 'skills'),
                 'projectSettings',
             )
             for dir in additional_dirs
@@ -725,7 +725,7 @@ async def getSkillDirCommands(cwd: str) -> List[Command]:
     additional_skills_task = (
         asyncio.gather(*[
             loadSkillsFromSkillsDir(
-                os.path.join(dir, '.claude', 'skills'),
+                os.path.join(dir, '.cortex', 'skills'),
                 'projectSettings',
             )
             for dir in additional_dirs
@@ -897,7 +897,7 @@ async def discoverSkillDirsForPaths(
         # CWD-level skills are already loaded at startup, so we only discover nested ones
         # Use prefix+separator check to avoid matching /project-backup when cwd is /project
         while current_dir.startswith(resolved_cwd + os.sep):
-            skill_dir = os.path.join(current_dir, '.claude', 'skills')
+            skill_dir = os.path.join(current_dir, '.cortex', 'skills')
 
             # Skip if we've already checked this path (hit or miss) — avoids
             # repeating the same failed stat on every Read/Write/Edit call when
@@ -907,7 +907,7 @@ async def discoverSkillDirsForPaths(
                 try:
                     await fs.stat(skill_dir)
                     # Skills dir exists. Before loading, check if the containing dir
-                    # is gitignored — blocks e.g. node_modules/pkg/.claude/skills from
+                    # is gitignored — blocks e.g. node_modules/pkg/.cortex/skills from
                     # loading silently. `git check-ignore` handles nested .gitignore,
                     # .git/info/exclude, and global gitignore. Fails open outside a
                     # git repo (exit 128 → false); the invocation-time trust dialog

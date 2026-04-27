@@ -278,7 +278,7 @@ async def load_agent_from_file(
             if field in frontmatter:
                 logger.debug(
                     f'Plugin agent file {file_path} sets {field}, which is ignored '
-                    f'for plugin agents. Use .claude/agents/ for this level of control.'
+                    f'for plugin agents. Use .cortex/agents/ for this level of control.'
                 )
         
         # Parse maxTurns

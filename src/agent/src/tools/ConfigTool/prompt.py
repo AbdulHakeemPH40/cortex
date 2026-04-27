@@ -67,7 +67,7 @@ View or change Claude Code settings. Use when the user requests configuration ch
 ## Configurable settings list
 The following settings are available for you to change:
 
-### Global Settings (stored in ~/.claude.json)
+### Global Settings (stored in ~/.cortex.json)
 {chr(10).join(globalSettings)}
 
 ### Project Settings (stored in settings.json)

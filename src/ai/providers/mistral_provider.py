@@ -63,12 +63,54 @@ class MistralProvider(BaseProvider):
         # Reuse HTTP connections across calls (reduces TLS/handshake overhead).
         self._session = requests.Session()
         self._token_count = {"input": 0, "output": 0}
-        self._max_retries = 3
+        self._max_retries = self._get_int_env("CORTEX_MISTRAL_MAX_RETRIES", 2, minimum=1, maximum=5)
         self._retry_delay = 1.0
+        self._connect_timeout = self._get_float_env("CORTEX_MISTRAL_CONNECT_TIMEOUT_SEC", 20.0, minimum=1.0, maximum=120.0)
+        self._read_timeout = self._get_float_env("CORTEX_MISTRAL_READ_TIMEOUT_SEC", 40.0, minimum=3.0, maximum=300.0)
+        self._tool_read_timeout = self._get_float_env("CORTEX_MISTRAL_TOOL_READ_TIMEOUT_SEC", 45.0, minimum=5.0, maximum=300.0)
+        self._tool_desc_max_chars = self._get_int_env("CORTEX_MISTRAL_TOOL_DESC_MAX_CHARS", 180, minimum=60, maximum=500)
+        self._param_desc_max_chars = self._get_int_env("CORTEX_MISTRAL_PARAM_DESC_MAX_CHARS", 140, minimum=40, maximum=400)
         self._allowed_tool_names = set(VALID_TOOL_NAMES)  # Dynamic tool name validation
         
         if not self.api_key:
             log.warning("MISTRAL_API_KEY not configured")
+
+    @staticmethod
+    def _get_int_env(name: str, default: int, minimum: int = 1, maximum: int = 10) -> int:
+        raw = os.getenv(name, "").strip()
+        if not raw:
+            return default
+        try:
+            value = int(raw)
+            return max(minimum, min(maximum, value))
+        except Exception:
+            return default
+
+    @staticmethod
+    def _get_float_env(name: str, default: float, minimum: float = 1.0, maximum: float = 300.0) -> float:
+        raw = os.getenv(name, "").strip()
+        if not raw:
+            return default
+        try:
+            value = float(raw)
+            return max(minimum, min(maximum, value))
+        except Exception:
+            return default
+
+    def _resolve_read_timeout(self, stream: bool, tools: Optional[List[Dict[str, Any]]]) -> float:
+        """Use a higher read-timeout for tool-heavy streaming first-token latency."""
+        if stream and tools:
+            return max(self._read_timeout, self._tool_read_timeout)
+        return self._read_timeout
+
+    @staticmethod
+    def _truncate_text(value: Any, max_chars: int) -> str:
+        if value is None:
+            return ""
+        s = str(value)
+        if len(s) <= max_chars:
+            return s
+        return s[: max_chars - 3].rstrip() + "..."
     
     def set_api_key(self, api_key: str):
         """Set the API key for this provider."""
@@ -236,7 +278,7 @@ class MistralProvider(BaseProvider):
                 "type": tool.get("type", "function"),
                 "function": {
                     "name": fn.get("name", ""),
-                    "description": fn.get("description", ""),
+                    "description": self._truncate_text(fn.get("description", ""), self._tool_desc_max_chars),
                     "parameters": params
                 }
             }
@@ -272,6 +314,10 @@ class MistralProvider(BaseProvider):
         # Fix nested objects in properties
         for prop_name, prop_schema in params.get("properties", {}).items():
             if isinstance(prop_schema, dict):
+                if "description" in prop_schema:
+                    prop_schema["description"] = self._truncate_text(
+                        prop_schema.get("description", ""), self._param_desc_max_chars
+                    )
                 if prop_schema.get("type") == "object" and "properties" in prop_schema:
                     prop_schema = self._fix_params_for_mistral(prop_schema)
                     params["properties"][prop_name] = prop_schema
@@ -483,10 +529,17 @@ class MistralProvider(BaseProvider):
             log.debug(f"[MISTRAL] Tools: {', '.join(tool_names)}")
         
         url = f"{self.base_url}/chat/completions"
+        req_read_timeout = self._resolve_read_timeout(stream=stream, tools=kwargs.get("tools"))
         
         try:
             if stream:
-                response = self._session.post(url, headers=headers, json=payload, stream=True, timeout=120)
+                response = self._session.post(
+                    url,
+                    headers=headers,
+                    json=payload,
+                    stream=True,
+                    timeout=(self._connect_timeout, req_read_timeout),
+                )
                 if not response.ok:
                     try:
                         error_body = response.json()
@@ -495,7 +548,8 @@ class MistralProvider(BaseProvider):
                         log.error(f"[Mistral] API error response (text): {response.text[:500]}")
                 response.raise_for_status()
                 
-                for line in response.iter_lines():
+                # chunk_size=1 reduces buffering delay for SSE token delivery.
+                for line in response.iter_lines(chunk_size=1):
                     if line:
                         try:
                             line_text = line.decode('utf-8', errors='replace').strip()
@@ -566,7 +620,12 @@ class MistralProvider(BaseProvider):
                                 continue
                                 
             else:
-                response = self._session.post(url, headers=headers, json=payload, timeout=120)
+                response = self._session.post(
+                    url,
+                    headers=headers,
+                    json=payload,
+                    timeout=(self._connect_timeout, req_read_timeout),
+                )
                 response.raise_for_status()
                 
                 result = response.json()
@@ -595,7 +654,15 @@ class MistralProvider(BaseProvider):
     def chat(self, messages: List[Dict[str, str]], model: str = "mistral-medium-latest",
              stream: bool = True, retry_callback=None, **kwargs) -> Generator[str, None, None]:
         """Standard chat interface with retry logic"""
-        yield from self.chat_with_retry(messages, model, stream, retry_callback=retry_callback, **kwargs)
+        max_retries = kwargs.pop("max_retries", self._max_retries)
+        yield from self.chat_with_retry(
+            messages,
+            model,
+            stream,
+            max_retries=max_retries,
+            retry_callback=retry_callback,
+            **kwargs,
+        )
     
     def chat_stream(self, messages, model, temperature=0.7, max_tokens=2000, tools=None, retry_callback=None, **kwargs):
         """Stream chat completion - delegates to chat()"""

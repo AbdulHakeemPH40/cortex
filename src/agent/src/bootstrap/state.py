@@ -37,9 +37,9 @@ _current_turn_token_budget: Optional[int] = None
 _turn_output_tokens: int = 0
 _budget_continuation_count: int = 0
 
-# Claude MD state
-_additional_directories_for_claude_md: List[str] = []
-_cached_claude_md_content: Dict[str, str] = {}
+# Cortex MD state
+_additional_directories_for_cortex_md: List[str] = []
+_cached_cortex_md_content: Dict[str, str] = {}
 
 # Classifier state
 _last_classifier_requests: List[Dict[str, Any]] = []
@@ -277,29 +277,29 @@ def get_cwd_state() -> Dict[str, Any]:
 
 
 # ============================================================================
-# CLAUDE MD FUNCTIONS
+# CORTEX MD FUNCTIONS
 # ============================================================================
 
 
-def get_additional_directories_for_claude_md() -> List[str]:
-    """Get additional directories for CLAUDE.md lookup."""
-    return _additional_directories_for_claude_md
+def get_additional_directories_for_cortex_md() -> List[str]:
+    """Get additional directories for CORTEX.md lookup."""
+    return _additional_directories_for_cortex_md
 
 
-def set_cached_claude_md_content(path: str, content: str) -> None:
-    """Cache CLAUDE.md content."""
-    _cached_claude_md_content[path] = content
+def set_cached_cortex_md_content(path: str, content: str) -> None:
+    """Cache CORTEX.md content."""
+    _cached_cortex_md_content[path] = content
 
 
-def get_cached_claude_md_content(path: str) -> Optional[str]:
-    """Get cached CLAUDE.md content."""
-    return _cached_claude_md_content.get(path)
+def get_cached_cortex_md_content(path: str) -> Optional[str]:
+    """Get cached CORTEX.md content."""
+    return _cached_cortex_md_content.get(path)
 
 
 # CamelCase alias
-def getCachedClaudeMdContent(path: str) -> Optional[str]:
-    """Get cached CLAUDE.md content (camelCase alias)."""
-    return get_cached_claude_md_content(path)
+def getCachedCortexMdContent(path: str) -> Optional[str]:
+    """Get cached CORTEX.md content (camelCase alias)."""
+    return get_cached_cortex_md_content(path)
 
 
 # ============================================================================
@@ -544,11 +544,11 @@ __all__ = [
     "get_turn_output_tokens",
     "increment_budget_continuation_count",
     "get_cwd_state",
-    # Claude MD
-    "get_additional_directories_for_claude_md",
-    "set_cached_claude_md_content",
-    "get_cached_claude_md_content",
-    "getCachedClaudeMdContent",
+    # Cortex MD
+    "get_additional_directories_for_cortex_md",
+    "set_cached_cortex_md_content",
+    "get_cached_cortex_md_content",
+    "getCachedCortexMdContent",
     # Classifier
     "get_last_classifier_requests",
     "set_last_classifier_requests",

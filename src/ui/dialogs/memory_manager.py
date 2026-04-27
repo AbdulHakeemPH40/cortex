@@ -758,10 +758,10 @@ class MemoryManagerDialog(QDialog):
 
     def _bind_web_channel(self):
         try:
-            # Preferred: bind in page MainWorld so normal page JS can access transport.
-            self._page.setWebChannel(self._channel, QWebEngineScript.ScriptWorldId.MainWorld)
+            # Use the same stable pattern as the working AI chat webview.
+            self._page.setWebChannel(self._channel)
         except TypeError:
-            # Fallback for older Qt/PyQt builds that only accept setWebChannel(channel).
+            # Fallback for builds that only accept setWebChannel(channel).
             self._page.setWebChannel(self._channel)
         except Exception as exc:
             log.warning(f"[MemoryManager] Failed to bind web channel: {exc}")

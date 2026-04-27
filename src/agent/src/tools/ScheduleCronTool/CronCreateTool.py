@@ -49,7 +49,7 @@ except ImportError:
         return _fake_tasks
     
     def getCronFilePath() -> str:
-        return '.claude/scheduled_tasks.json'
+        return '.cortex/scheduled_tasks.json'
 
 try:
     from ...utils.semanticBoolean import semanticBoolean
@@ -104,7 +104,7 @@ INPUT_SCHEMA = {
         },
         'durable': {
             'type': 'boolean',
-            'description': 'true = persist to .claude/scheduled_tasks.json and survive restarts. false (default) = in-memory only, dies when this Claude session ends. Use true only when the user asks the task to survive across sessions.',
+            'description': 'true = persist to .cortex/scheduled_tasks.json and survive restarts. false (default) = in-memory only, dies when this Claude session ends. Use true only when the user asks the task to survive across sessions.',
         },
     },
     'required': ['cron', 'prompt'],
@@ -271,11 +271,11 @@ CronCreateTool = buildTool(
         'type': 'tool_result',
         'content': (
             f"Scheduled recurring job {output.get('id')} ({output.get('humanSchedule')}). "
-            f"{'Persisted to .claude/scheduled_tasks.json' if output.get('durable') else 'Session-only (not written to disk, dies when Claude exits)'}. "
+            f"{'Persisted to .cortex/scheduled_tasks.json' if output.get('durable') else 'Session-only (not written to disk, dies when Claude exits)'}. "
             f"Auto-expires after {DEFAULT_MAX_AGE_DAYS} days. Use CronDelete to cancel sooner."
             if output.get('recurring')
             else f"Scheduled one-shot task {output.get('id')} ({output.get('humanSchedule')}). "
-                 f"{'Persisted to .claude/scheduled_tasks.json' if output.get('durable') else 'Session-only (not written to disk, dies when Claude exits)'}. "
+                 f"{'Persisted to .cortex/scheduled_tasks.json' if output.get('durable') else 'Session-only (not written to disk, dies when Claude exits)'}. "
                  f"It will fire once then auto-delete."
         ),
     },

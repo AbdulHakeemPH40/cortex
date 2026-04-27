@@ -284,7 +284,7 @@ async def add_cron_task(
         f"{cron_to_human(cron)}"
     )
     
-    # TODO: If durable=True, save to .claude/scheduled_tasks.json
+    # TODO: If durable=True, save to .cortex/scheduled_tasks.json
     
     return task_id
 

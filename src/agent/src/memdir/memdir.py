@@ -130,7 +130,7 @@ try:
     from .paths import getAutoMemPath, isAutoMemoryEnabled
 except ImportError:
     def getAutoMemPath():
-        return os.path.join(os.getcwd(), '.claude', 'memory')
+        return os.path.join(os.getcwd(), '.cortex', 'memory')
     
     def isAutoMemoryEnabled():
         return not isEnvTruthy(os.environ.get('CORTEX_DISABLE_AUTO_MEMORY'))
@@ -276,7 +276,7 @@ async def ensureMemoryDirExists(memory_dir: str) -> None:
     (once per session via systemPromptSection cache) so the model can always
     write without checking existence first. FsOperations.mkdir is recursive
     by default and already swallows EEXIST, so the full parent chain
-    (~/.claude/projects/<slug>/memory/) is created in one call with no
+    (~/.cortex/projects/<slug>/memory/) is created in one call with no
     try/catch needed for the happy path.
     """
     fs = getFsImplementation()

@@ -84,15 +84,14 @@ def check_write_permission_for_tool(
     Returns:
         PermissionDecision with behavior 'allow', 'deny', or 'ask'
     """
-    from ..utils.permissions.filesystem_security import check_write_permission
-    from ..utils.permissions.PermissionResult import PermissionDecision
+    from utils.permissions.filesystem_security import check_write_permission
 
     file_path = input_.get("file_path", "") if isinstance(input_, dict) else ""
     if not file_path:
-        return PermissionDecision(
-            behavior="ask",
-            message=f"Tool requested permissions to write, but no file path provided."
-        )
+        return {
+            "behavior": "ask",
+            "message": "Tool requested permissions to write, but no file path provided.",
+        }
 
     # Get working directories from permission context
     working_directories = getattr(tool_permission_context, "working_directories", None)
@@ -180,7 +179,7 @@ def get_fs_implementation() -> AsyncFS:
 def get_lsp_server_manager() -> Optional[Any]:
     """Get LSP server manager for language server notifications."""
     try:
-        from ..services.lsp.manager import get_lsp_server_manager as _get_manager
+        from services.lsp.manager import get_lsp_server_manager as _get_manager
         return _get_manager()
     except ImportError:
         return None
@@ -188,15 +187,15 @@ def get_lsp_server_manager() -> Optional[Any]:
 def clear_delivered_diagnostics_for_file(uri: str) -> None:
     """Clear diagnostics for file so new ones will be shown."""
     try:
-        from ..services.lsp.LSPDiagnosticRegistry import clearDeliveredDiagnosticsForFile
-        clearDeliveredDiagnosticsForFile(uri)
+        from services.lsp.lsPDiagnosticRegistry import clear_delivered_diagnostics_for_file
+        clear_delivered_diagnostics_for_file(uri)
     except ImportError:
         pass
 
 def notify_vscode_file_updated(path: str, old: Optional[str], new: str) -> None:
     """Notify VSCode about file update for diff view."""
     try:
-        from ..services.mcp.vscodeSdkMcp import notifyVscodeFileUpdated
+        from services.mcp.vscodeSdkMcp import notifyVscodeFileUpdated
         notifyVscodeFileUpdated(path, old, new)
     except ImportError:
         pass

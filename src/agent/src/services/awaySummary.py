@@ -62,7 +62,7 @@ except ImportError:
         return list(value)
 
 try:
-    from ..services.api.claude import query_model_without_streaming
+    from ..services.api.cortex import query_model_without_streaming
 except ImportError:
     async def query_model_without_streaming(**kwargs) -> Dict[str, Any]:
         """Stub - queries model without streaming"""

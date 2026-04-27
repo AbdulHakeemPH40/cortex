@@ -60,10 +60,10 @@ except ImportError:
         pass
 
 try:
-    from .utils.env_utils import get_claude_config_home_dir, is_env_truthy
+    from .utils.env_utils import get_cortex_config_home_dir, is_env_truthy
 except ImportError:
-    def get_claude_config_home_dir() -> str:
-        return os.path.expanduser("~/.claude")
+    def get_cortex_config_home_dir() -> str:
+        return os.path.expanduser("~/.cortex")
     
     def is_env_truthy(value: Optional[str]) -> bool:
         return value and value.lower() in ["true", "1", "yes"]
@@ -278,7 +278,7 @@ async def make_log_entry_reader() -> AsyncGenerator[LogEntry, None]:
         yield _pending_entries[i]
     
     # Read from global history file (shared across all projects)
-    history_path = os.path.join(get_claude_config_home_dir(), 'history.jsonl')
+    history_path = os.path.join(get_cortex_config_home_dir(), 'history.jsonl')
     
     try:
         async for line in read_lines_reverse(history_path):
@@ -472,7 +472,7 @@ async def immediate_flush_history() -> None:
     
     release = None
     try:
-        history_path = os.path.join(get_claude_config_home_dir(), 'history.jsonl')
+        history_path = os.path.join(get_cortex_config_home_dir(), 'history.jsonl')
         
         # Ensure the file exists before acquiring lock (append mode creates if missing)
         os.makedirs(os.path.dirname(history_path), exist_ok=True)
@@ -610,8 +610,8 @@ def add_to_history(command: Union[HistoryEntry, str]) -> None:
     Args:
         command: History entry or string command
     """
-    # Skip history when CLAUDE_CODE_SKIP_PROMPT_HISTORY is set
-    if is_env_truthy(os.environ.get('CLAUDE_CODE_SKIP_PROMPT_HISTORY')):
+    # Skip history when CORTEX_CODE_SKIP_PROMPT_HISTORY is set
+    if is_env_truthy(os.environ.get('CORTEX_CODE_SKIP_PROMPT_HISTORY')):
         return
     
     # Register cleanup on first use

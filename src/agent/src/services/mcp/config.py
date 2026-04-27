@@ -1211,7 +1211,7 @@ def parse_mcp_config(
                     file=file_path,
                     path=f'mcpServers.{name}',
                     message="Windows requires 'cmd /c' wrapper to execute npx",
-                    suggestion='Change command to "cmd" with args ["/c", "npx", ...]. See: https://code.claude.com/docs/en/mcp#configure-mcp-servers',
+                    suggestion='Change command to "cmd" with args ["/c", "npx", ...]. See: https://code.cortex.com/docs/en/mcp#configure-mcp-servers',
                     mcpErrorMetadata={
                         'scope': scope,
                         'serverName': name,

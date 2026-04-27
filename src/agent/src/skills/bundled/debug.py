@@ -37,14 +37,14 @@ except ImportError:
     def get_settings_file_path_for_source(source: str) -> str:
         """Fallback: return default settings paths."""
         paths = {
-            'userSettings': '~/.claude/settings.json',
-            'projectSettings': '.claude/settings.json',
-            'localSettings': '.claude/settings.local.json',
+            'userSettings': '~/.cortex/settings.json',
+            'projectSettings': '.cortex/settings.json',
+            'localSettings': '.cortex/settings.local.json',
         }
-        return paths.get(source, '~/.claude/settings.json')
+        return paths.get(source, '~/.cortex/settings.json')
 
 try:
-    from ...tools.AgentTool.built_in.claudeCodeGuideAgent import CLAUDE_CODE_GUIDE_AGENT_TYPE
+    from ...tools.AgentTool.built_in.cortexCodeGuideAgent import CLAUDE_CODE_GUIDE_AGENT_TYPE
 except ImportError:
     CLAUDE_CODE_GUIDE_AGENT_TYPE = "claude-code-guide"
 
@@ -101,7 +101,7 @@ def get_debug_log_path() -> str:
     
     # Default path based on home directory
     home = Path.home()
-    return str(home / '.claude' / 'debug' / 'session.log')
+    return str(home / '.cortex' / 'debug' / 'session.log')
 
 
 def enable_debug_logging() -> bool:

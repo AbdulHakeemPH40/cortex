@@ -21,7 +21,7 @@ except ImportError:
     BashTool = None
 
 try:
-    from ..FileEditTool.completed.FileEditTool import FileEditTool
+    from ..FileEditTool.FileEditTool import FileEditTool
 except ImportError:
     FileEditTool = None
 

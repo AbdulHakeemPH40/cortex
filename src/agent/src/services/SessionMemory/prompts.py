@@ -22,10 +22,10 @@ except ImportError:
         return len(text) // 4
 
 try:
-    from ...utils.envUtils import get_claude_config_home_dir
+    from ...utils.env_utils import get_cortex_config_home_dir
 except ImportError:
-    def get_claude_config_home_dir():
-        return os.path.join(os.path.expanduser('~'), '.claude')
+    def get_cortex_config_home_dir():
+        return os.path.join(os.path.expanduser('~'), '.cortex')
 
 try:
     from ...utils.errors import get_errno_code, to_error
@@ -127,7 +127,7 @@ REMEMBER: Use the Edit tool in parallel and stop. Do not continue after the edit
 async def load_session_memory_template() -> str:
     """Load custom session memory template from file if it exists"""
     template_path = join(
-        get_claude_config_home_dir(),
+        get_cortex_config_home_dir(),
         'session-memory',
         'config',
         'template.md',
@@ -146,11 +146,11 @@ async def load_session_memory_template() -> str:
 async def load_session_memory_prompt() -> str:
     """
     Load custom session memory prompt from file if it exists
-    Custom prompts can be placed at ~/.claude/session-memory/prompt.md
+    Custom prompts can be placed at ~/.cortex/session-memory/prompt.md
     Use {{variableName}} syntax for variable substitution (e.g., {{currentNotes}}, {{notesPath}})
     """
     prompt_path = join(
-        get_claude_config_home_dir(),
+        get_cortex_config_home_dir(),
         'session-memory',
         'config',
         'prompt.md',

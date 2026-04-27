@@ -45,7 +45,7 @@ try:
     from .settings.managedPath import getManagedFilePath
 except ImportError:
     def getManagedFilePath() -> str:
-        return os.path.join(os.path.expanduser('~'), '.claude')
+        return os.path.join(os.path.expanduser('~'), '.cortex')
 
 
 # ============================================================
@@ -827,7 +827,7 @@ def getConfigBackupDir() -> str:
         from .envUtils import getClaudeConfigHomeDir
     except ImportError:
         def getClaudeConfigHomeDir():
-            return os.path.join(os.path.expanduser('~'), '.claude')
+            return os.path.join(os.path.expanduser('~'), '.cortex')
     
     return os.path.join(getClaudeConfigHomeDir(), 'backups')
 
@@ -1171,9 +1171,9 @@ def getMemoryPath(memoryType: str) -> str:
         def getOriginalCwd():
             return os.getcwd()
         def getClaudeConfigHomeDir():
-            return os.path.join(os.path.expanduser('~'), '.claude')
+            return os.path.join(os.path.expanduser('~'), '.cortex')
         def getManagedFilePath():
-            return os.path.join(os.path.expanduser('~'), '.claude')
+            return os.path.join(os.path.expanduser('~'), '.cortex')
     
     cwd = getOriginalCwd()
     
@@ -1202,9 +1202,9 @@ def getManagedClaudeRulesDir() -> str:
         from .settings.managedPath import getManagedFilePath
     except ImportError:
         def getManagedFilePath():
-            return os.path.join(os.path.expanduser('~'), '.claude')
+            return os.path.join(os.path.expanduser('~'), '.cortex')
     
-    return os.path.join(getManagedFilePath(), '.claude', 'rules')
+    return os.path.join(getManagedFilePath(), '.cortex', 'rules')
 
 
 def getUserClaudeRulesDir() -> str:
@@ -1212,7 +1212,7 @@ def getUserClaudeRulesDir() -> str:
         from .envUtils import getClaudeConfigHomeDir
     except ImportError:
         def getClaudeConfigHomeDir():
-            return os.path.join(os.path.expanduser('~'), '.claude')
+            return os.path.join(os.path.expanduser('~'), '.cortex')
     
     return os.path.join(getClaudeConfigHomeDir(), 'rules')
 
@@ -1223,7 +1223,7 @@ def getGlobalClaudeFile() -> str:
         from .env import getGlobalClaudeFile as _getGlobalClaudeFile
         return _getGlobalClaudeFile()
     except ImportError:
-        return os.path.join(os.path.expanduser('~'), '.claude', 'claude.json')
+        return os.path.join(os.path.expanduser('~'), '.cortex', 'claude.json')
 
 
 # ============================================================

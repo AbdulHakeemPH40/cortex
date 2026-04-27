@@ -6,7 +6,7 @@ state (per-repository). The installed_plugins.json file tracks:
 - Which plugins are installed globally
 - Installation metadata (version, timestamps, paths)
 
-The enabled/disabled state remains in .claude/settings.json for per-repo control.
+The enabled/disabled state remains in .cortex/settings.json for per-repo control.
 
 Rationale: Installation is global (a plugin is either on disk or not), while
 enabled/disabled state is per-repository (different projects may want different
@@ -51,7 +51,7 @@ def get_installed_plugins_file_path() -> str:
     except ImportError:
         # Fallback for testing - use default path
         from pathlib import Path
-        return str(Path.home() / '.claude' / 'plugins' / 'installed_plugins.json')
+        return str(Path.home() / '.cortex' / 'plugins' / 'installed_plugins.json')
     return join(get_plugins_directory(), 'installed_plugins.json')
 
 
@@ -64,7 +64,7 @@ def get_installed_plugins_v2_file_path() -> str:
         from utils.plugins.pluginLoader import get_plugins_directory
     except ImportError:
         from pathlib import Path
-        return str(Path.home() / '.claude' / 'plugins' / 'installed_plugins_v2.json')
+        return str(Path.home() / '.cortex' / 'plugins' / 'installed_plugins_v2.json')
     return join(get_plugins_directory(), 'installed_plugins_v2.json')
 
 
@@ -169,7 +169,7 @@ def _get_plugin_cache_path() -> str:
         return get_plugin_cache_path()
     except ImportError:
         from pathlib import Path
-        return str(Path.home() / '.claude' / 'plugins' / 'cache')
+        return str(Path.home() / '.cortex' / 'plugins' / 'cache')
 
 
 def _get_versioned_cache_path(plugin_id: str, version: str) -> str:
@@ -286,7 +286,7 @@ def _migrate_v1_to_v2(v1_data: Dict[str, Any]) -> Dict[str, Any]:
     v2_plugins: InstalledPluginsMapV2 = {}
     
     for plugin_id, plugin in v1_data.get('plugins', {}).items():
-        # V2 format uses versioned cache path: ~/.claude/plugins/cache/{marketplace}/{plugin}/{version}
+        # V2 format uses versioned cache path: ~/.cortex/plugins/cache/{marketplace}/{plugin}/{version}
         # Compute it from pluginId and version instead of using the V1 installPath
         versioned_cache_path = _get_versioned_cache_path(plugin_id, plugin.get('version', 'unknown'))
         
@@ -308,8 +308,8 @@ def _cleanup_legacy_cache(v2_data: Dict[str, Any]) -> None:
     """
     Clean up legacy non-versioned cache directories.
     
-    Legacy cache structure: ~/.claude/plugins/cache/{plugin-name}/
-    Versioned cache structure: ~/.claude/plugins/cache/{marketplace}/{plugin}/{version}/
+    Legacy cache structure: ~/.cortex/plugins/cache/{plugin-name}/
+    Versioned cache structure: ~/.cortex/plugins/cache/{marketplace}/{plugin}/{version}/
     
     This function removes legacy directories that are not referenced by any installation.
     """
@@ -1082,7 +1082,7 @@ async def get_git_commit_sha(dir_path: str) -> Optional[str]:
 def _get_plugin_version_from_manifest(plugin_cache_path: str, plugin_id: str) -> str:
     """Try to read version from plugin manifest"""
     fs = _get_fs_implementation()
-    manifest_path = join(plugin_cache_path, '.claude-plugin', 'plugin.json')
+    manifest_path = join(plugin_cache_path, '.cortex-plugin', 'plugin.json')
     
     try:
         manifest_content = fs.read_file(manifest_path)
@@ -1311,8 +1311,8 @@ async def migrate_from_enabled_plugins() -> None:
                     
                     install_path = plugin_cache_path
                     
-                    # Only read manifest if the .claude-plugin dir is present
-                    if '.claude-plugin' in dir_entries:
+                    # Only read manifest if the .cortex-plugin dir is present
+                    if '.cortex-plugin' in dir_entries:
                         version = _get_plugin_version_from_manifest(plugin_cache_path, plugin_id)
                     
                     git_commit_sha = await get_git_commit_sha(plugin_cache_path)

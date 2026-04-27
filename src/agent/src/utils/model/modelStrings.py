@@ -61,8 +61,8 @@ def getBuiltinModelStrings(provider: APIProvider) -> ModelStrings:
 
         getBuiltinModelStrings('bedrock')
         → {
-            'opus46': 'us.anthropic.claude-opus-4-6-v1',
-            'sonnet40': 'us.anthropic.claude-sonnet-4-20250514-v1',
+            'opus46': 'us.anthropic.cortex-opus-4-6-v1',
+            'sonnet40': 'us.anthropic.cortex-sonnet-4-20250514-v1',
             ...
           }
     """
@@ -178,7 +178,7 @@ def getModelStrings(
         })
         → {
             'opus46': 'arn:aws:bedrock:us-east-1:123456:inference-profile/my-opus',
-            'sonnet40': 'us.anthropic.claude-sonnet-4-20250514-v1',
+            'sonnet40': 'us.anthropic.cortex-sonnet-4-20250514-v1',
             ...
           }
     """

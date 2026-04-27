@@ -13,8 +13,8 @@
 
 PREAPPROVED_HOSTS = {
     # Anthropic
-    'platform.claude.com',
-    'code.claude.com',
+    'platform.cortex.com',
+    'code.cortex.com',
     'modelcontextprotocol.io',
     'github.com/anthropics',
     'agentskills.io',

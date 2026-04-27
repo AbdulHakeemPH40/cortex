@@ -27,7 +27,7 @@ except ImportError:
         _fake_tasks = [t for t in _fake_tasks if t.get('id') not in task_ids]
     
     def getCronFilePath() -> str:
-        return '.claude/scheduled_tasks.json'
+        return '.cortex/scheduled_tasks.json'
 
 try:
     from ...utils.teammateContext import getTeammateContext

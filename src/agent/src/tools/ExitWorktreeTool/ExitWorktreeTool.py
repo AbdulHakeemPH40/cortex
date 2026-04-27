@@ -52,7 +52,7 @@ except ImportError:
         return sum(1 for item in iterable if predicate(item))
 
 try:
-    from ...utils.claudemd import clearMemoryFileCaches
+    from ...utils.cortexmd import clearMemoryFileCaches
 except ImportError:
     def clearMemoryFileCaches():
         pass

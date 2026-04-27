@@ -82,8 +82,7 @@ def check_read_permission_for_tool(
     Returns:
         PermissionDecision with behavior 'allow', 'deny', or 'ask'
     """
-    from ..utils.permissions.filesystem_security import check_read_permission
-    from ..utils.permissions.PermissionResult import PermissionDecision
+    from utils.permissions.filesystem_security import check_read_permission
 
     path = input_.get("path", "") if isinstance(input_, dict) else ""
     if not path:

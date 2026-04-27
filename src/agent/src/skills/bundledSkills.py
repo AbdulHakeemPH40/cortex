@@ -31,7 +31,7 @@ except ImportError:
         pass
 
     def getBundledSkillsRoot() -> str:
-        return os.path.join(os.path.expanduser("~"), ".claude", "skills")
+        return os.path.join(os.path.expanduser("~"), ".cortex", "skills")
 
 
 # Content block type for prompts

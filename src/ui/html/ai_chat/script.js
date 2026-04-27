@@ -1028,6 +1028,9 @@ function initBridge() {
             window.bridgeReady = true;
             bridge = window.bridge;
             console.log('[CHAT] Bridge initialized successfully');
+            if (typeof window.syncSandboxToggleState === 'function') {
+                window.syncSandboxToggleState();
+            }
             
             // Expose memory animation functions to bridge
             window.showMemorySaving = showMemorySavingAnimation;
@@ -1045,7 +1048,9 @@ function initBridge() {
                 }
             }
 
-            bridge.clear_chat_requested.connect(clearMessages);
+            if (bridgeReady && bridge.clear_chat_requested) {
+                bridge.clear_chat_requested.connect(clearMessages);
+            }
             
             // Terminal output with advanced throttling to prevent UI freezing
             var _terminalOutputBuffer = '';
@@ -1093,51 +1098,55 @@ function initBridge() {
                 _terminalOutputTimeout = null;
             }
             
-            bridge.terminal_output.connect(function (data) {
-                if (!term) return;
-                
-                // Add to pending queue for burst handling
-                _terminalPendingData.push(data);
-                
-                // If terminal is not visible, process less frequently
-                if (!_terminalVisible) {
-                    if (_terminalPendingData.length > 50) { // Higher threshold when hidden
-                        _flushTerminalOutput();
-                    } else if (!_terminalOutputTimeout) {
-                        _terminalOutputTimeout = setTimeout(_flushTerminalOutput, 100); // Slower update when hidden
-                    }
-                    return;
-                }
-                
-                // If we have too many pending items, flush immediately
-                if (_terminalPendingData.length > 10) {
-                    if (_terminalOutputTimeout) {
-                        clearTimeout(_terminalOutputTimeout);
-                        _terminalOutputTimeout = null;
-                    }
-                    if (_terminalOutputFrameId) {
-                        cancelAnimationFrame(_terminalOutputFrameId);
-                        _terminalOutputFrameId = null;
-                    }
-                    _flushTerminalOutput();
-                    return;
-                }
-                
-                // Use requestAnimationFrame for smoother rendering when possible
-                if (!_terminalOutputTimeout && !_terminalOutputFrameId) {
-                    var now = Date.now();
-                    var timeSinceLastWrite = now - _terminalLastWrite;
+            if (bridge.terminal_output && typeof bridge.terminal_output.connect === 'function') {
+                bridge.terminal_output.connect(function (data) {
+                    if (!term) return;
                     
-                    // If last write was recent, use timeout; otherwise use rAF
-                    if (timeSinceLastWrite < 32) {
-                        _terminalOutputTimeout = setTimeout(function() {
-                            _terminalOutputFrameId = requestAnimationFrame(_flushTerminalOutput);
-                        }, 16);
-                    } else {
-                        _terminalOutputFrameId = requestAnimationFrame(_flushTerminalOutput);
+                    // Add to pending queue for burst handling
+                    _terminalPendingData.push(data);
+                    
+                    // If terminal is not visible, process less frequently
+                    if (!_terminalVisible) {
+                        if (_terminalPendingData.length > 50) { // Higher threshold when hidden
+                            _flushTerminalOutput();
+                        } else if (!_terminalOutputTimeout) {
+                            _terminalOutputTimeout = setTimeout(_flushTerminalOutput, 100); // Slower update when hidden
+                        }
+                        return;
                     }
-                }
-            });
+                    
+                    // If we have too many pending items, flush immediately
+                    if (_terminalPendingData.length > 10) {
+                        if (_terminalOutputTimeout) {
+                            clearTimeout(_terminalOutputTimeout);
+                            _terminalOutputTimeout = null;
+                        }
+                        if (_terminalOutputFrameId) {
+                            cancelAnimationFrame(_terminalOutputFrameId);
+                            _terminalOutputFrameId = null;
+                        }
+                        _flushTerminalOutput();
+                        return;
+                    }
+                    
+                    // Use requestAnimationFrame for smoother rendering when possible
+                    if (!_terminalOutputTimeout && !_terminalOutputFrameId) {
+                        var now = Date.now();
+                        var timeSinceLastWrite = now - _terminalLastWrite;
+                        
+                        // If last write was recent, use timeout; otherwise use rAF
+                        if (timeSinceLastWrite < 32) {
+                            _terminalOutputTimeout = setTimeout(function() {
+                                _terminalOutputFrameId = requestAnimationFrame(_flushTerminalOutput);
+                            }, 16);
+                        } else {
+                            _terminalOutputFrameId = requestAnimationFrame(_flushTerminalOutput);
+                        }
+                    }
+                });
+            } else {
+                console.warn('[CHAT] bridge.terminal_output signal unavailable');
+            }
 
             console.log("Cortex: Bridge Successfully Connected.");
             bridgeReady = true;
@@ -1145,10 +1154,14 @@ function initBridge() {
             if (sendBtn) sendBtn.disabled = false;
             
             // Listen for file edit notifications
-            bridge.file_edit_notification.connect(function (filePath, editType, status) {
-                console.log("Received file edit notification:", filePath, editType, status);
-                updateAIEditsContainer();
-            });
+            if (bridge.file_edit_notification && typeof bridge.file_edit_notification.connect === 'function') {
+                bridge.file_edit_notification.connect(function (filePath, editType, status) {
+                    console.log("Received file edit notification:", filePath, editType, status);
+                    updateAIEditsContainer();
+                });
+            } else {
+                console.warn('[CHAT] bridge.file_edit_notification signal unavailable');
+            }
 
             // Start with empty chat - project-specific history will load when setProjectInfo is called
             console.log('Bridge ready, waiting for setProjectInfo to load project chats');
@@ -1349,39 +1362,256 @@ document.addEventListener('DOMContentLoaded', function () {
         console.error('[AutoGen] Banner or switch element not found!');
     }
     
-    // Always Allow Toggle Handler
-    var alwaysAllowBtn = document.getElementById('always-allow-toggle');
-    if (alwaysAllowBtn) {
-        // Check saved state
-        var alwaysAllowEnabled = localStorage.getItem('cortex_always_allow') === 'true';
-        if (alwaysAllowEnabled) {
-            alwaysAllowBtn.classList.add('active');
+    // Unified Security Toggle Handler (Sandbox + Auto Approval together)
+    var securityBtn = document.getElementById('security-toggle');
+    var containerStatusBadge = document.getElementById('container-status-badge');
+    var containerStatusTextEl = document.getElementById('container-status-text');
+    var SANDBOX_STORAGE_KEY = 'cortex_sandbox_enabled';
+    var AUTO_APPROVAL_STORAGE_KEY = 'cortex_always_allow';
+
+    function setContainerHeaderStatus(stateClass, text, title) {
+        if (!containerStatusBadge || !containerStatusTextEl) return;
+        containerStatusBadge.classList.remove('state-unknown', 'state-on', 'state-running', 'state-off', 'state-unavailable');
+        containerStatusBadge.classList.add(stateClass || 'state-unknown');
+        containerStatusTextEl.textContent = text || 'Container: Unknown';
+        containerStatusBadge.title = title || text || 'Container status';
+    }
+
+    function syncContainerHeaderStatus(active, runtimeEnabled, unavailableReason) {
+        var isActive = !!active;
+        var isRuntimeEnabled = !!runtimeEnabled;
+        var reason = unavailableReason || '';
+
+        if (isActive && isRuntimeEnabled) {
+            setContainerHeaderStatus(
+                'state-on',
+                'Container: Ready (Sandbox)',
+                'Security ON: commands will run in sandbox container'
+            );
+            return;
         }
-        
-        alwaysAllowBtn.onclick = function() {
-            var isActive = !alwaysAllowBtn.classList.contains('active');
-            alwaysAllowBtn.classList.toggle('active');
-            localStorage.setItem('cortex_always_allow', isActive);
-            
-            // Notify Python bridge
-            if (bridge && bridge.on_always_allow_changed) {
-                bridge.on_always_allow_changed(isActive);
+        if (isActive && !isRuntimeEnabled) {
+            setContainerHeaderStatus(
+                'state-unavailable',
+                'Container: Unavailable',
+                reason ? ('Sandbox unavailable: ' + reason) : 'Sandbox container unavailable on this system'
+            );
+            return;
+        }
+        setContainerHeaderStatus(
+            'state-off',
+            'Container: OFF',
+            'Security OFF: commands run without sandbox container'
+        );
+    }
+
+    function updateContainerHeaderForCommand(data, status) {
+        if (!data) return;
+        var cmd = (data.command || '').trim();
+        var cmdShort = cmd.length > 42 ? (cmd.substring(0, 42) + '...') : cmd;
+        var sandboxActive = !!data.sandbox_active;
+
+        if (status === 'running') {
+            if (sandboxActive) {
+                setContainerHeaderStatus(
+                    'state-running',
+                    'Container: Running (Sandbox)',
+                    cmdShort ? ('Running in sandbox: ' + cmdShort) : 'Running command in sandbox container'
+                );
+            } else {
+                setContainerHeaderStatus(
+                    'state-off',
+                    'Container: Running (Local)',
+                    cmdShort ? ('Running locally: ' + cmdShort) : 'Running command without sandbox'
+                );
             }
-            
-            // Show toast
-            try {
+            return;
+        }
+
+        if (typeof window.syncSandboxToggleState === 'function') {
+            window.syncSandboxToggleState();
+        }
+    }
+
+    function getStoredAutoApprovalState() {
+        try {
+            return localStorage.getItem(AUTO_APPROVAL_STORAGE_KEY) === 'true';
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function setStoredAutoApprovalState(enabled) {
+        try {
+            localStorage.setItem(AUTO_APPROVAL_STORAGE_KEY, enabled ? 'true' : 'false');
+        } catch (e) {}
+    }
+
+    function notifyAlwaysAllow(enabled) {
+        if (bridge && typeof bridge.on_always_allow_changed === 'function') {
+            bridge.on_always_allow_changed(!!enabled);
+        }
+    }
+
+    function applySecurityToggleState(active, locked, runtimeEnabled, unavailableReason) {
+        if (!securityBtn) return;
+        var isActive = !!active;
+        var isLocked = !!locked;
+        var isRuntimeEnabled = !!runtimeEnabled;
+
+        securityBtn.classList.toggle('active', isActive);
+        securityBtn.disabled = isLocked;
+        securityBtn.setAttribute('aria-disabled', isLocked ? 'true' : 'false');
+
+        var labelEl = securityBtn.querySelector('span');
+        if (labelEl) {
+            labelEl.textContent = isActive ? 'Security ON' : 'Security OFF';
+        }
+
+        if (isLocked) {
+            securityBtn.title = 'Security mode locked by policy settings';
+        } else if (isActive && !isRuntimeEnabled && unavailableReason) {
+            securityBtn.title = 'Cannot enable full security mode: ' + unavailableReason;
+        } else {
+            securityBtn.title = 'Toggle Security Mode (Sandbox + Auto Approval)';
+        }
+
+        syncContainerHeaderStatus(isActive, isRuntimeEnabled, unavailableReason || '');
+    }
+
+    function getSandboxStatus() {
+        if (!bridge || typeof bridge.get_sandbox_status !== 'function') return null;
+        try {
+            var statusRaw = bridge.get_sandbox_status();
+            var status = (typeof statusRaw === 'string') ? JSON.parse(statusRaw) : (statusRaw || {});
+            return {
+                ok: status.ok !== false,
+                enabled: !!status.enabled,
+                locked: !!status.locked,
+                runtimeEnabled: !!status.runtimeEnabled,
+                unavailableReason: status.unavailableReason || '',
+                error: status.error || ''
+            };
+        } catch (err) {
+            console.warn('[Security] Failed to read sandbox status:', err);
+            return null;
+        }
+    }
+
+    window.syncSandboxToggleState = function() {
+        if (!securityBtn) return;
+        var status = getSandboxStatus();
+        var autoApproval = getStoredAutoApprovalState();
+        if (!status) {
+            applySecurityToggleState(autoApproval, false, true, '');
+            notifyAlwaysAllow(autoApproval);
+            return;
+        }
+
+        var unifiedActive = autoApproval && status.enabled;
+        if (autoApproval !== unifiedActive) {
+            setStoredAutoApprovalState(unifiedActive);
+            notifyAlwaysAllow(unifiedActive);
+        } else {
+            notifyAlwaysAllow(autoApproval);
+        }
+
+        applySecurityToggleState(unifiedActive, status.locked, status.runtimeEnabled, status.unavailableReason);
+    };
+
+    if (securityBtn) {
+        var initialAuto = getStoredAutoApprovalState();
+        applySecurityToggleState(initialAuto, false, true, '');
+
+        securityBtn.onclick = function() {
+            if (!bridge || typeof bridge.on_toggle_sandbox !== 'function') {
+                if (typeof showToast === 'function') {
+                    showToast('Security bridge is not ready yet', 'warning', 2500);
+                }
+                return;
+            }
+
+            var currentStatus = getSandboxStatus();
+            var currentActive = securityBtn.classList.contains('active');
+            var desiredActive = !currentActive;
+
+            if (currentStatus && currentStatus.locked) {
+                applySecurityToggleState(currentActive, true, currentStatus.runtimeEnabled, currentStatus.unavailableReason);
+                if (typeof showToast === 'function') {
+                    showToast('Security mode is locked by policy', 'warning', 3200);
+                }
+                return;
+            }
+
+            var sandboxMatchesDesired = currentStatus ? (currentStatus.enabled === desiredActive) : false;
+            var sandboxResult = currentStatus;
+
+            if (!sandboxMatchesDesired) {
+                try {
+                    var toggleRaw = bridge.on_toggle_sandbox();
+                    var result = (typeof toggleRaw === 'string') ? JSON.parse(toggleRaw) : (toggleRaw || {});
+                    sandboxResult = {
+                        ok: result.ok !== false,
+                        enabled: !!result.enabled,
+                        locked: !!result.locked,
+                        runtimeEnabled: !!result.runtimeEnabled,
+                        unavailableReason: result.unavailableReason || '',
+                        error: result.error || ''
+                    };
+                } catch (err) {
+                    sandboxResult = { ok: false, enabled: false, locked: false, runtimeEnabled: false, unavailableReason: '', error: String(err) };
+                }
+            }
+
+            if (!sandboxResult || sandboxResult.ok === false) {
                 if (typeof showToast === 'function') {
                     showToast(
-                        isActive ? '? Auto-approval ENABLED' : '? Auto-approval DISABLED',
-                        isActive ? 'success' : 'info',
-                        3000
+                        sandboxResult && sandboxResult.error ? ('Security toggle failed: ' + sandboxResult.error) : 'Security toggle failed',
+                        'error',
+                        3800
                     );
                 }
-            } catch (err) {
-                console.log('[AlwaysAllow] Toast error:', err);
+                window.syncSandboxToggleState();
+                return;
             }
-            
-            console.log('[AlwaysAllow] Mode toggled:', isActive ? 'ON' : 'OFF');
+
+            if (sandboxResult.locked) {
+                applySecurityToggleState(currentActive, true, sandboxResult.runtimeEnabled, sandboxResult.unavailableReason);
+                if (typeof showToast === 'function') {
+                    showToast('Security mode is locked by policy', 'warning', 3200);
+                }
+                return;
+            }
+
+            // If runtime sandbox is unavailable, keep Security ON (green) but warn clearly.
+            // This means auto-approval is ON, while command sandboxing is not active at runtime.
+            if (desiredActive && (!sandboxResult.enabled || !sandboxResult.runtimeEnabled)) {
+                setStoredAutoApprovalState(true);
+                notifyAlwaysAllow(true);
+                applySecurityToggleState(true, !!sandboxResult.locked, !!sandboxResult.runtimeEnabled, sandboxResult.unavailableReason);
+                if (typeof showToast === 'function') {
+                    showToast(
+                        sandboxResult.unavailableReason
+                            ? ('Security ON: Auto ON, Container unavailable (' + sandboxResult.unavailableReason + ')')
+                            : 'Security ON: Auto ON, Container unavailable',
+                        'warning',
+                        4800
+                    );
+                }
+                return;
+            }
+
+            setStoredAutoApprovalState(desiredActive);
+            notifyAlwaysAllow(desiredActive);
+            applySecurityToggleState(desiredActive, !!sandboxResult.locked, !!sandboxResult.runtimeEnabled, sandboxResult.unavailableReason || '');
+
+            if (typeof showToast === 'function') {
+                if (desiredActive) {
+                    showToast('Security ON: Container + Auto ON', 'success', 3200);
+                } else {
+                    showToast('Security OFF: Ask before dangerous commands', 'info', 3400);
+                }
+            }
         };
     }
 
@@ -3066,6 +3296,7 @@ function showToolActivity(type, info, status) {
 
     // -- Terminal command: keep existing terminal card system --
     if (type === 'run_command') {
+        updateContainerHeaderForCommand(data, status);
         _taHandleTerminal(container, data, status);
         return;
     }
@@ -3212,6 +3443,56 @@ function _taRenderRead(itemsEl, data, status) {
         ? (requestedOffset + '-' + (requestedOffset + requestedLimit - 1))
         : '';
 
+    function renderReadErrorCard(targetItem, rawError) {
+        if (!targetItem) return;
+        var cleanMsg = String(rawError || 'Unknown read error').replace(/^Error:\s*/i, '').trim();
+        var errPath = '';
+        var quotedPath = cleanMsg.match(/'([^']+)'/);
+        if (quotedPath && quotedPath[1]) errPath = quotedPath[1];
+        var errno = '';
+        var errnoMatch = cleanMsg.match(/\[Errno\s+(\d+)\]/i);
+        if (errnoMatch && errnoMatch[1]) errno = errnoMatch[1];
+        var title = errno ? ('[Errno ' + errno + '] File Read Failed') : 'File Read Failed';
+
+        targetItem.classList.add('ta-read-error-item');
+        targetItem.classList.add('expanded');
+
+        var headerEl = targetItem.querySelector('.ta-item-header');
+        if (headerEl) {
+            headerEl.onclick = function(e) {
+                e.stopPropagation();
+                targetItem.classList.toggle('expanded');
+            };
+            if (!headerEl.querySelector('.ta-item-chevron')) {
+                var chevronSvg =
+                    '<svg class="ta-item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+                        '<polyline points="9 18 15 12 9 6"></polyline>' +
+                    '</svg>';
+                headerEl.insertAdjacentHTML('afterbegin', chevronSvg);
+            }
+        }
+
+        var detailsEl = targetItem.querySelector('.ta-item-details');
+        if (!detailsEl) {
+            detailsEl = document.createElement('div');
+            detailsEl.className = 'ta-item-details';
+            targetItem.appendChild(detailsEl);
+        }
+
+        detailsEl.innerHTML =
+            '<div class="tool-error">' +
+                '<div class="tool-error-head">' +
+                    '<span class="tool-error-dot"></span>' +
+                    '<div class="tool-error-title">' + escapeHtml(title) + '</div>' +
+                '</div>' +
+                (errPath
+                    ? ('<div class="tool-error-kv"><div class="tool-error-k">Path</div><div class="tool-error-v">' + escapeHtml(errPath) + '</div></div>')
+                    : '') +
+                '<div class="tool-error-kv"><div class="tool-error-k">Range</div><div class="tool-error-v">' + escapeHtml(lineRange) + '</div></div>' +
+                '<div class="tool-error-kv"><div class="tool-error-k">Message</div><div class="tool-error-v">' + escapeHtml(cleanMsg) + '</div></div>' +
+            '</div>';
+    }
+
     // Track each read chunk independently: file + line range
     var existing = _taFindItem(itemsEl, 'read', readKey);
     if (existing) {
@@ -3221,15 +3502,7 @@ function _taRenderRead(itemsEl, data, status) {
         } else if (status === 'error') {
             var stErr = existing.querySelector('.ta-item-status');
             if (stErr) stErr.innerHTML = '<span class="ta-err">ERR</span>';
-            if (data.error) {
-                var errEl = existing.querySelector('.ta-read-error');
-                if (!errEl) {
-                    errEl = document.createElement('div');
-                    errEl.className = 'ta-read-error ta-muted';
-                    existing.appendChild(errEl);
-                }
-                errEl.textContent = '  ' + String(data.error).replace(/^Error:\s*/i, '');
-            }
+            renderReadErrorCard(existing, data.error);
         }
         return;
     }
@@ -3291,39 +3564,7 @@ function _taRenderRead(itemsEl, data, status) {
         (status === 'error' ? '<div class="ta-item-details"></div>' : '');
 
     if (status === 'error') {
-        var headerEl = item.querySelector('.ta-item-header');
-        if (headerEl) {
-            headerEl.onclick = function(e) {
-                e.stopPropagation();
-                item.classList.toggle('expanded');
-            };
-        }
-        if (data.error) {
-            var detailsEl = item.querySelector('.ta-item-details');
-            if (detailsEl) {
-                var cleanMsg = String(data.error).replace(/^Error:\s*/i, '').trim();
-                var errPath = '';
-                var quotedPath = cleanMsg.match(/'([^']+)'/);
-                if (quotedPath && quotedPath[1]) errPath = quotedPath[1];
-                var errno = '';
-                var errnoMatch = cleanMsg.match(/\[Errno\s+(\d+)\]/i);
-                if (errnoMatch && errnoMatch[1]) errno = errnoMatch[1];
-                var title = errno ? ('[Errno ' + errno + '] File Read Failed') : 'File Read Failed';
-                detailsEl.innerHTML =
-                    '<div class="tool-error">' +
-                        '<div class="tool-error-head">' +
-                            '<span class="tool-error-dot"></span>' +
-                            '<div class="tool-error-title">' + escapeHtml(title) + '</div>' +
-                        '</div>' +
-                        (errPath
-                            ? ('<div class="tool-error-kv"><div class="tool-error-k">Path</div><div class="tool-error-v">' + escapeHtml(errPath) + '</div></div>')
-                            : '') +
-                        '<div class="tool-error-kv"><div class="tool-error-k">Range</div><div class="tool-error-v">' + escapeHtml(lineRange) + '</div></div>' +
-                        '<div class="tool-error-kv"><div class="tool-error-k">Message</div><div class="tool-error-v">' + escapeHtml(cleanMsg) + '</div></div>' +
-                    '</div>';
-                item.classList.add('expanded');
-            }
-        }
+        renderReadErrorCard(item, data.error);
     }
     itemsEl.appendChild(item);
 }

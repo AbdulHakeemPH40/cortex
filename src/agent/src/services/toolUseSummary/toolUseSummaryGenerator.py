@@ -47,7 +47,7 @@ except ImportError:
         return list(value)
 
 try:
-    from ...services.api.claude import query_haiku
+    from ...services.api.cortex import query_haiku
 except ImportError:
     async def query_haiku(**kwargs) -> Dict[str, Any]:
         """Stub - queries Haiku model"""

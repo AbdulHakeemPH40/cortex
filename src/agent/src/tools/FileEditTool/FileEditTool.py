@@ -87,15 +87,14 @@ def check_write_permission_for_tool(
     Returns:
         PermissionDecision with behavior 'allow', 'deny', or 'ask'
     """
-    from ..utils.permissions.filesystem_security import check_write_permission
-    from ..utils.permissions.PermissionResult import PermissionDecision
+    from utils.permissions.filesystem_security import check_write_permission
     
     file_path = input_.get("file_path", "") if isinstance(input_, dict) else ""
     if not file_path:
-        return PermissionDecision(
-            behavior="ask",
-            message=f"Tool requested permissions to write, but no file path provided."
-        )
+        return {
+            "behavior": "ask",
+            "message": "Tool requested permissions to write, but no file path provided.",
+        }
     
     # Get working directories from permission context
     working_directories = getattr(tool_permission_context, "working_directories", None)
@@ -130,7 +129,7 @@ def matching_rule_for_input(
     if not tool_permission_context:
         return None
     
-    from ..utils.permissions.filesystem_security import expand_path as secure_expand_path
+    from utils.permissions.filesystem_security import expand_path as secure_expand_path
     import re
     
     absolute_path = secure_expand_path(path)
@@ -319,7 +318,7 @@ def get_lsp_server_manager() -> Optional[Any]:
     # Try to get LSP manager from global state or app context
     # This is framework-specific - integrate with your LSP system
     try:
-        from ..services.lsp.manager import get_lsp_server_manager as _get_manager
+        from services.lsp.manager import get_lsp_server_manager as _get_manager
         return _get_manager()
     except ImportError:
         return None
@@ -327,15 +326,15 @@ def get_lsp_server_manager() -> Optional[Any]:
 def clear_delivered_diagnostics_for_file(uri: str) -> None:
     """Clear diagnostics for file so new ones will be shown."""
     try:
-        from ..services.lsp.LSPDiagnosticRegistry import clearDeliveredDiagnosticsForFile
-        clearDeliveredDiagnosticsForFile(uri)
+        from services.lsp.lsPDiagnosticRegistry import clear_delivered_diagnostics_for_file
+        clear_delivered_diagnostics_for_file(uri)
     except ImportError:
         pass
 
 def notify_vscode_file_updated(path: str, old: str, new: str) -> None:
     """Notify VSCode about file update for diff view."""
     try:
-        from ..services.mcp.vscodeSdkMcp import notifyVscodeFileUpdated
+        from services.mcp.vscodeSdkMcp import notifyVscodeFileUpdated
         notifyVscodeFileUpdated(path, old, new)
     except ImportError:
         pass
@@ -498,7 +497,7 @@ def validate_input_for_settings_file_edit(
     
     # Only validate known settings files
     settings_patterns = [
-        r'\.claude\.json$',
+        r'\.cortex\.json$',
         r'package\.json$',
         r'tsconfig\.json$',
         r'pyproject\.toml$',
