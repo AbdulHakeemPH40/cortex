@@ -1,5 +1,7 @@
 (function () {
   let bridge = null;
+  let bridgeInitAttempts = 0;
+  let bridgeInitScheduled = false;
   let state = {
     enabled: true,
     activeScope: "project",
@@ -19,6 +21,68 @@
 
   function $(id) {
     return document.getElementById(id);
+  }
+
+  function resolveBridgeMethod(obj, names) {
+    for (const name of names) {
+      if (obj && typeof obj[name] === "function") {
+        return obj[name].bind(obj);
+      }
+    }
+    return null;
+  }
+
+  function callBridge(methodNames, args = [], timeoutMs = 6000) {
+    const names = Array.isArray(methodNames) ? methodNames : [methodNames];
+    return new Promise((resolve, reject) => {
+      const fn = resolveBridgeMethod(bridge, names);
+      if (!fn) {
+        reject(new Error(`Bridge method unavailable: ${names.join(", ")}`));
+        return;
+      }
+
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        reject(new Error(`Bridge call timeout: ${names[0]}`));
+      }, timeoutMs);
+
+      try {
+        fn(...args, (result) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve(result);
+        });
+      } catch (error) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      }
+    });
+  }
+
+  function scheduleBridgeInitRetry() {
+    if (bridge || bridgeInitScheduled) {
+      return;
+    }
+    bridgeInitScheduled = true;
+    setTimeout(() => {
+      bridgeInitScheduled = false;
+      initBridge();
+    }, 150);
+  }
+
+  function getWebChannelTransport() {
+    const directQt = typeof qt !== "undefined" ? qt : null;
+    const windowQt = typeof window !== "undefined" ? window.qt : null;
+    const qtObj = directQt || windowQt;
+    if (!qtObj) {
+      return null;
+    }
+    return qtObj.webChannelTransport || null;
   }
 
   function escapeHtml(value) {
@@ -51,6 +115,10 @@
     els.staleCountLabel.textContent = staleCount ? `${staleCount} stale` : "All fresh";
     els.memoryDirLabel.textContent = scope.memoryDir || "No memory directory";
     els.projectRootLabel.textContent = scope.name || "No scope";
+      const rulesScope = state.activeScope === "global" || state.activeScope === "shared" ? "Global" : "Project";
+    if (els.openRulesBtn) {
+      els.openRulesBtn.innerHTML = `<i class="fas fa-sliders-h"></i> ${rulesScope} Rules`;
+    }
     els.enabledToggle.classList.toggle("is-on", !!state.enabled);
     els.enabledToggle.setAttribute("aria-pressed", state.enabled ? "true" : "false");
     els.searchInput.value = uiState.isSearchMode ? uiState.searchQuery : uiState.query;
@@ -209,7 +277,7 @@
         if (!approved) {
           return;
         }
-        const payload = await bridge.deleteMemory(state.activeScope, rawPath);
+        const payload = await callBridge(["deleteMemory", "deleteMemory(QString,QString)"], [state.activeScope, rawPath]);
         receiveMemoryState(JSON.parse(payload));
       });
     });
@@ -219,7 +287,7 @@
     if (!bridge) {
       return;
     }
-    const payload = await bridge.refresh();
+    const payload = await callBridge(["refresh", "refresh()"]);
     receiveMemoryState(JSON.parse(payload));
   }
 
@@ -236,7 +304,7 @@
     }
 
     try {
-      const payload = await bridge.setMemoryEnabled(Boolean(state.enabled));
+      const payload = await callBridge(["setMemoryEnabled", "setMemoryEnabled(PyQt_PyObject)"], [Boolean(state.enabled)]);
       receiveMemoryState(JSON.parse(payload));
     } catch (error) {
       console.error("[MEMORY] Toggle update failed", error);
@@ -259,7 +327,7 @@
     if (!approved) {
       return;
     }
-    const payload = await bridge.clearAll(state.activeScope);
+    const payload = await callBridge(["clearAll", "clearAll(QString)"], [state.activeScope]);
     receiveMemoryState(JSON.parse(payload));
   }
 
@@ -283,7 +351,7 @@
       uiState.isSearchMode = true;
       uiState.searchQuery = query;
       
-      const payload = await bridge.semanticSearch(query);
+      const payload = await callBridge(["semanticSearch", "semanticSearch(QString)"], [query]);
       receiveMemoryState(JSON.parse(payload));
       
       showToast("success", "Semantic search complete");
@@ -305,7 +373,7 @@
     uiState.isSearchMode = false;
     uiState.searchQuery = "";
     
-    const payload = await bridge.exitSearchMode();
+    const payload = await callBridge(["exitSearchMode", "exitSearchMode()"]);
     receiveMemoryState(JSON.parse(payload));
     showToast("success", "Exited search mode");
   }
@@ -317,7 +385,7 @@
     }
     
     try {
-      const statsJson = await bridge.getMemoryStats(state.activeScope);
+      const statsJson = await callBridge(["getMemoryStats", "getMemoryStats(QString)"], [state.activeScope]);
       const stats = JSON.parse(statsJson);
       
       // Show stats modal
@@ -402,7 +470,7 @@
       els.consolidateBtn.disabled = true;
       
       // Run consolidation (scan only, no auto-merge)
-      const reportJson = await bridge.runConsolidation(state.activeScope, false);
+      const reportJson = await callBridge(["runConsolidation", "runConsolidation(QString,bool)"], [state.activeScope, false]);
       const report = JSON.parse(reportJson);
       
       if (report.error) {
@@ -486,7 +554,7 @@
       els.mergeAllBtn.disabled = true;
       
       // Run consolidation with auto-merge
-      const reportJson = await bridge.runConsolidation(state.activeScope, true);
+      const reportJson = await callBridge(["runConsolidation", "runConsolidation(QString,bool)"], [state.activeScope, true]);
       const report = JSON.parse(reportJson);
       
       if (report.error) {
@@ -516,7 +584,7 @@
     }
     
     try {
-      const resultJson = await bridge.getGlobalMemories();
+      const resultJson = await callBridge(["getGlobalMemories", "getGlobalMemories()"]);
       const result = JSON.parse(resultJson);
       
       if (result.error) {
@@ -559,7 +627,7 @@
       els.syncGlobalBtn.disabled = true;
       
       const projectRoot = state.scopes.project.memoryDir;
-      const resultJson = await bridge.syncGlobalMemoriesToProject(projectRoot, true);
+      const resultJson = await callBridge(["syncGlobalMemoriesToProject", "syncGlobalMemoriesToProject(QString,bool)"], [projectRoot, true]);
       const result = JSON.parse(resultJson);
       
       if (result.error) {
@@ -602,7 +670,7 @@
       els.promoteBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
       els.promoteBtn.disabled = true;
       
-      const resultJson = await bridge.promoteToGlobal(memoryPath);
+      const resultJson = await callBridge(["promoteToGlobal", "promoteToGlobal(QString)"], [memoryPath]);
       const result = JSON.parse(resultJson);
       
       if (result.error) {
@@ -619,6 +687,98 @@
     } finally {
       els.promoteBtn.innerHTML = '<i class="fas fa-arrow-up"></i> Promote';
       els.promoteBtn.disabled = false;
+    }
+  }
+
+  function closeModal() {
+    els.modalHost.classList.add("hidden");
+    els.modalHost.innerHTML = "";
+  }
+
+  async function waitForBridgeReady(timeoutMs = 3200) {
+    if (bridge) {
+      return true;
+    }
+    initBridge();
+    const start = Date.now();
+    while (!bridge && Date.now() - start < timeoutMs) {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      if (!bridge) {
+        initBridge();
+      }
+    }
+    return !!bridge;
+  }
+
+  function showRulesEditorModal(rulesPayload) {
+    const scopeLabel = rulesPayload.scope === "global" ? "Global" : "Project";
+    const safePath = escapeHtml(rulesPayload.filePath || "");
+    els.modalHost.innerHTML = `
+      <div class="modal rules-editor-modal">
+        <h3><i class="fas fa-sliders-h"></i> ${scopeLabel} Rules Setup</h3>
+        <p>Edit rules directly in IDE. These rules are higher priority than memory.</p>
+        <div class="kv">
+          <label>File</label>
+          <code>${safePath}</code>
+        </div>
+        <textarea id="rulesEditorInput" class="rules-editor-input" placeholder="Write rules here..."></textarea>
+        <div class="modal-actions">
+          <button type="button" class="ghost" data-modal-action="cancel">Cancel</button>
+          <button type="button" class="primary-btn" data-modal-action="save">Save Rules</button>
+        </div>
+      </div>
+    `;
+    els.modalHost.classList.remove("hidden");
+
+    const input = $("rulesEditorInput");
+    if (input) {
+      input.value = rulesPayload.content || "";
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+
+    els.modalHost.querySelector('[data-modal-action="cancel"]')?.addEventListener("click", closeModal);
+    els.modalHost.querySelector('[data-modal-action="save"]')?.addEventListener("click", async () => {
+      const edited = $("rulesEditorInput")?.value ?? "";
+      try {
+        const saveJson = await callBridge(["saveRules", "saveRules(QString,QString)"], [state.activeScope, edited]);
+        const saveResult = JSON.parse(saveJson);
+        if (saveResult.error) {
+          showToast("error", saveResult.error);
+          return;
+        }
+        showToast("success", `${scopeLabel} rules saved`);
+        closeModal();
+      } catch (error) {
+        console.error("[MEMORY] Failed to save rules", error);
+        showToast("error", "Failed to save rules");
+      }
+    });
+  }
+
+  async function onOpenRulesFolder() {
+    const preTransport = !!getWebChannelTransport();
+    console.info(`[MEMORY] Rules click: bridge=${!!bridge}, transport=${preTransport}, QWebChannel=${typeof QWebChannel !== "undefined"}`);
+    const ready = await waitForBridgeReady();
+    if (!ready) {
+      console.warn("[MEMORY] Bridge still unavailable after wait; continuing to retry in background.");
+      initBridge();
+      showToast("error", "Rules setup is not available yet. Please retry in a second.");
+      return;
+    }
+    try {
+      const resultJson = await callBridge(["loadRules", "loadRules(QString)"], [state.activeScope], 8000);
+      const result = JSON.parse(resultJson);
+      if (result.error) {
+        showToast("error", result.error);
+        return;
+      }
+      showRulesEditorModal(result);
+    } catch (error) {
+      const keys = bridge ? Object.keys(bridge).slice(0, 40).join(", ") : "none";
+      console.warn(`[MEMORY] loadRules failed. Bridge keys: ${keys}`);
+      console.error("[MEMORY] Failed to open rules editor", error);
+      showToast("error", "Failed to open rules setup. Please reopen Memory Manager.");
     }
   }
 
@@ -649,6 +809,7 @@
     els.mergeAllBtn.addEventListener("click", onMergeAllDuplicates);
     els.syncGlobalBtn.addEventListener("click", onSyncGlobalMemories);
     els.promoteBtn.addEventListener("click", onPromoteToGlobal);
+    els.openRulesBtn.addEventListener("click", onOpenRulesFolder);
     els.semanticSearchBtn.addEventListener("click", onSemanticSearch);
     els.exitSearchBtn.addEventListener("click", onExitSearchMode);
     if (els.scopeSwitch) {
@@ -667,7 +828,7 @@
           }
           
           if (bridge && typeof bridge.setActiveScope === "function") {
-            const payload = await bridge.setActiveScope(next);
+            const payload = await callBridge(["setActiveScope", "setActiveScope(QString)"], [next]);
             receiveMemoryState(JSON.parse(payload));
           } else {
             state.activeScope = next;
@@ -720,6 +881,7 @@
     els.mergeAllBtn = $("mergeAllBtn");
     els.syncGlobalBtn = $("syncGlobalBtn");
     els.promoteBtn = $("promoteBtn");
+    els.openRulesBtn = $("openRulesBtn");
   }
 
   function confirmAction(title, description, actionLabel) {
@@ -742,7 +904,7 @@
         resolve(result);
       };
 
-      els.modalHost.querySelectorAll("[data-modal-action]").forEach((button) => {
+    els.modalHost.querySelectorAll("[data-modal-action]").forEach((button) => {
         button.addEventListener("click", () => {
           cleanup(button.dataset.modalAction === "confirm");
         });
@@ -751,17 +913,51 @@
   }
 
   function initBridge() {
-    if (typeof qt === "undefined" || !qt.webChannelTransport) {
-      showToast("error", "QWebChannel is not available.");
+    if (bridge) {
+      return;
+    }
+    bridgeInitAttempts += 1;
+    if (typeof QWebChannel === "undefined") {
+      console.warn("[MEMORY] QWebChannel script not ready yet");
+      scheduleBridgeInitRetry();
+      return;
+    }
+    const transport = getWebChannelTransport();
+    if (!transport) {
+      const hasWindowQt = typeof window !== "undefined" && !!window.qt;
+      const hasDirectQt = typeof qt !== "undefined";
+      console.warn(`[MEMORY] QWebChannel transport not ready yet (attempt=${bridgeInitAttempts}, window.qt=${hasWindowQt}, qt=${hasDirectQt})`);
+      scheduleBridgeInitRetry();
       return;
     }
 
-    new QWebChannel(qt.webChannelTransport, async (channel) => {
-      bridge = channel.objects.memoryBridge;
-      bridge.data_changed.connect((payload) => receiveMemoryState(JSON.parse(payload)));
-      bridge.toast_requested.connect(showToast);
+    new QWebChannel(transport, async (channel) => {
+      const objects = channel.objects || {};
+      bridge = objects.memoryBridge || objects.MemoryBridge || Object.values(objects)[0] || null;
+      if (!bridge) {
+        console.warn("[MEMORY] Bridge object missing from QWebChannel");
+        scheduleBridgeInitRetry();
+        return;
+      }
+      console.info(`[MEMORY] Bridge ready. Methods/keys: ${Object.keys(bridge).slice(0, 30).join(", ")}`);
 
-      const payload = await bridge.loadInitialData();
+      const dataChangedSignal = bridge.data_changed || bridge["data_changed(QString)"];
+      if (dataChangedSignal && typeof dataChangedSignal.connect === "function") {
+        dataChangedSignal.connect((payload) => receiveMemoryState(JSON.parse(payload)));
+      }
+
+      const toastSignal = bridge.toast_requested || bridge["toast_requested(QString,QString)"];
+      if (toastSignal && typeof toastSignal.connect === "function") {
+        toastSignal.connect(showToast);
+      }
+
+      const loadInitialDataFn = resolveBridgeMethod(bridge, ["loadInitialData", "loadInitialData()"]);
+      if (!loadInitialDataFn) {
+        showToast("error", "Memory bridge API mismatch. Please reopen window.");
+        return;
+      }
+
+      const payload = await callBridge(["loadInitialData", "loadInitialData()"]);
       receiveMemoryState(JSON.parse(payload));
     });
   }

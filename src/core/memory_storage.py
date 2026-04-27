@@ -39,11 +39,19 @@ class MemoryStorage:
         dirs = [
             self.base_dir / "user" / "memory",
             self.base_dir / "sessions",
-            self.base_dir / ".cortex" / "agent-memory",
-            self.base_dir / ".cortex" / "agent-memory-local"
+            self.base_dir / "agent-memory",
+            self.base_dir / "agent-memory-local"
         ]
         for dir_path in dirs:
             dir_path.mkdir(parents=True, exist_ok=True)
+
+    def _get_legacy_memory_path(self, scope: MemoryScope, key: str) -> Optional[Path]:
+        """Legacy path layout used by older builds (kept for read compatibility)."""
+        if scope == MemoryScope.PROJECT:
+            return self.base_dir / ".cortex" / "agent-memory" / f"{key}.json"
+        if scope == MemoryScope.LOCAL:
+            return self.base_dir / ".cortex" / "agent-memory-local" / f"{key}.json"
+        return None
     
     def _get_memory_path(self, scope: MemoryScope, key: str) -> Path:
         """Get path for memory entry based on scope.
@@ -58,11 +66,11 @@ class MemoryStorage:
         if scope == MemoryScope.USER:
             return self.base_dir / "user" / "memory" / f"{key}.json"
         elif scope == MemoryScope.PROJECT:
-            return self.base_dir / ".cortex" / "agent-memory" / f"{key}.json"
+            return self.base_dir / "agent-memory" / f"{key}.json"
         elif scope == MemoryScope.SESSION:
             return self.base_dir / "sessions" / f"{key}.json"
         elif scope == MemoryScope.LOCAL:
-            return self.base_dir / ".cortex" / "agent-memory-local" / f"{key}.json"
+            return self.base_dir / "agent-memory-local" / f"{key}.json"
         else:
             raise ValueError(f"Unknown memory scope: {scope}")
     
@@ -110,8 +118,12 @@ class MemoryStorage:
         try:
             path = self._get_memory_path(scope, key)
             if not path.exists():
-                log.debug(f"Memory entry not found: {scope.value}/{key}")
-                return None
+                legacy_path = self._get_legacy_memory_path(scope, key)
+                if legacy_path and legacy_path.exists():
+                    path = legacy_path
+                else:
+                    log.debug(f"Memory entry not found: {scope.value}/{key}")
+                    return None
             
             storage_data = json.loads(path.read_text())
             log.debug(f"Loaded memory entry: {scope.value}/{key}")
@@ -133,11 +145,17 @@ class MemoryStorage:
         """
         try:
             path = self._get_memory_path(scope, key)
+            legacy_path = self._get_legacy_memory_path(scope, key)
+            deleted = False
             if path.exists():
                 path.unlink()
+                deleted = True
+            if legacy_path and legacy_path.exists():
+                legacy_path.unlink()
+                deleted = True
+            if deleted:
                 log.debug(f"Deleted memory entry: {scope.value}/{key}")
-                return True
-            return False
+            return deleted
             
         except Exception as e:
             log.error(f"Failed to delete memory entry {scope.value}/{key}: {e}")
@@ -155,10 +173,17 @@ class MemoryStorage:
         try:
             path = self._get_memory_path(scope, "*")
             parent_dir = path.parent
-            if not parent_dir.exists():
-                return []
-            
-            return [f.stem for f in parent_dir.glob("*.json")]
+            entries = set()
+            if parent_dir.exists():
+                entries.update(f.stem for f in parent_dir.glob("*.json"))
+
+            legacy_probe = self._get_legacy_memory_path(scope, "*")
+            if legacy_probe:
+                legacy_parent = legacy_probe.parent
+                if legacy_parent.exists():
+                    entries.update(f.stem for f in legacy_parent.glob("*.json"))
+
+            return sorted(entries)
             
         except Exception as e:
             log.error(f"Failed to list memory entries for {scope.value}: {e}")

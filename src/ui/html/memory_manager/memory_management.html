@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Memory Manager</title>
-  <link rel="stylesheet" href="./memory_management.css">
+  <script src="../ai_chat/qwebchannel.js"></script>
+  <link rel="stylesheet" href="./memory_management.css?v=6">
 </head>
 <body>
   <div class="shell">
@@ -17,6 +18,7 @@
       <div class="topbar-actions">
         <button id="statsBtn" class="ghost" title="Memory Statistics"><i class="fas fa-chart-bar"></i></button>
         <button id="consolidateBtn" class="ghost" title="Consolidate & Deduplicate"><i class="fas fa-compress-arrows-alt"></i></button>
+        <button id="openRulesBtn" class="ghost" title="Edit active rules in IDE"><i class="fas fa-sliders-h"></i> Rules Setup</button>
         <button id="refreshBtn" class="ghost">Refresh</button>
         <button id="clearBtn" class="danger">Clear All</button>
       </div>
@@ -118,6 +120,6 @@
   </div>
 
   <script src="../ai_chat/qwebchannel.js"></script>
-  <script src="./memory_management.js"></script>
+  <script src="./memory_management.js?v=11"></script>
 </body>
 </html>

@@ -1417,17 +1417,43 @@
             if (content !== null) {
                 const contentEl = card.querySelector('.tool-card-scrollable');
                 if (contentEl) {
-                    contentEl.innerHTML = content;
+                    const raw = String(content);
+                    const clean = raw.replace(/^Error:\s*/i, '').trim();
+                    const quotedPath = clean.match(/'([^']+)'/);
+                    const errPath = (quotedPath && quotedPath[1]) ? quotedPath[1] : '';
+                    const errnoMatch = clean.match(/\[Errno\s+(\d+)\]/i);
+                    const errno = (errnoMatch && errnoMatch[1]) ? errnoMatch[1] : '';
+                    const isFailed = newStatus === 'failed';
+
+                    if (isFailed) {
+                        const title = errno ? ('[Errno ' + errno + '] Tool Error') : 'Tool Error';
+                        contentEl.classList.add('ta-read-error');
+                        contentEl.innerHTML =
+                            '<div class="tool-error">' +
+                                '<div class="tool-error-head">' +
+                                    '<span class="tool-error-dot"></span>' +
+                                    '<div class="tool-error-title">' + escapeHtml(title) + '</div>' +
+                                '</div>' +
+                                (errPath
+                                    ? ('<div class="tool-error-kv"><div class="tool-error-k">Path</div><div class="tool-error-v">' + escapeHtml(errPath) + '</div></div>')
+                                    : '') +
+                                '<div class="tool-error-kv"><div class="tool-error-k">Message</div><div class="tool-error-v">' + escapeHtml(clean) + '</div></div>' +
+                            '</div>';
+                    } else {
+                        contentEl.innerHTML = raw;
+                    }
+
+                    contentEl.style.display = 'block';
                 }
             }
             
-            // Auto-expand on running/completed
-            if (newStatus === 'running' || newStatus === 'completed') {
+            // Auto-expand when there is something to show
+            if (newStatus === 'running' || newStatus === 'completed' || newStatus === 'failed') {
                 expandCard(card);
             }
             
-            // Remove completed/failed cards after delay (unless they have content)
-            if ((newStatus === 'completed' || newStatus === 'failed') && !card.querySelector('.tool-card-scrollable')?.innerHTML) {
+            // Remove completed cards after delay only when empty (never auto-remove failed cards)
+            if (newStatus === 'completed' && !card.querySelector('.tool-card-scrollable')?.innerHTML) {
                 setTimeout(() => {
                     removeToolCard(operationId);
                 }, 3000);

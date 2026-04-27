@@ -18,9 +18,10 @@ from pathlib import Path
 from typing import List
 
 from PyQt6.QtCore import QObject, QUrl, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import QDialog, QHBoxLayout, QMessageBox, QVBoxLayout
 from PyQt6.QtWebChannel import QWebChannel
-from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
+from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineScript, QWebEngineSettings
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 
 from src.utils.logger import get_logger
@@ -58,14 +59,22 @@ def _parse_frontmatter(content: str):
 
 
 def _compute_memory_dir(project_root: str) -> str:
-    sanitized = re.sub(r'[<>:"/\\|?*\0]', "_", project_root).strip("_ ")
-    if len(sanitized) > 60:
-        digest = hashlib.md5(project_root.encode("utf-8")).hexdigest()[:8]
-        sanitized = sanitized[-52:].lstrip("_") + "_" + digest
-    return os.path.join(os.path.expanduser("~"), ".cortex", "projects", sanitized, "memory")
+    try:
+        from src.agent.src.memdir.paths import getAutoMemPath
+        return getAutoMemPath().rstrip("/\\")
+    except Exception:
+        sanitized = re.sub(r'[<>:"/\\|?*\0]', "_", project_root).strip("_ ")
+        if len(sanitized) > 60:
+            digest = hashlib.md5(project_root.encode("utf-8")).hexdigest()[:8]
+            sanitized = sanitized[-52:].lstrip("_") + "_" + digest
+        return os.path.join(os.path.expanduser("~"), ".cortex", "projects", sanitized, "memory")
 
 def _compute_global_memory_dir() -> str:
-    return os.path.join(os.path.expanduser("~"), ".cortex", "global", "memory")
+    try:
+        from src.agent.src.memdir.paths import getGlobalMemPath
+        return getGlobalMemPath().rstrip("/\\")
+    except Exception:
+        return os.path.join(os.path.expanduser("~"), ".cortex", "global", "memory")
 
 
 def _compute_project_rules_dir(project_root: str) -> str:
@@ -171,6 +180,12 @@ class MemoryManagerBridge(QObject):
     def _get_scope_dir(self, scope: str) -> str:
         return self._global_memory_dir if scope == "global" else self._project_memory_dir
 
+    def _get_rules_dir(self, scope: str) -> str:
+        return self._global_rules_dir if scope == "global" else self._project_rules_dir
+
+    def _get_rules_file(self, scope: str) -> str:
+        return os.path.join(self._get_rules_dir(scope), "ide_rules.md")
+
     def _serialize_state(self) -> str:
         payload = {
             "enabled": self._enabled,
@@ -228,6 +243,80 @@ class MemoryManagerBridge(QObject):
         if self._settings:
             self._settings.set("memory", "ui_scope", scope)
         return self._emit_refresh()
+
+    @pyqtSlot(str, result=str)
+    def openRulesDir(self, scope: str):
+        scope = (scope or "").strip().lower()
+        if scope == "shared":
+            scope = "global"
+        if scope not in ("project", "global"):
+            scope = self._active_scope
+
+        rules_dir = self._global_rules_dir if scope == "global" else self._project_rules_dir
+        try:
+            os.makedirs(rules_dir, exist_ok=True)
+            opened = QDesktopServices.openUrl(QUrl.fromLocalFile(rules_dir))
+            if not opened:
+                raise RuntimeError("Could not open rules folder in file explorer")
+            return json.dumps({"success": True, "scope": scope, "rulesDir": rules_dir})
+        except Exception as exc:
+            log.error(f"[MemoryManager] Failed to open rules dir '{rules_dir}': {exc}")
+            return json.dumps({"error": str(exc), "scope": scope, "rulesDir": rules_dir})
+
+    @pyqtSlot(str, result=str)
+    def loadRules(self, scope: str):
+        scope = (scope or "").strip().lower()
+        if scope == "shared":
+            scope = "global"
+        if scope not in ("project", "global"):
+            scope = self._active_scope
+        try:
+            rules_dir = self._get_rules_dir(scope)
+            os.makedirs(rules_dir, exist_ok=True)
+            target = self._get_rules_file(scope)
+            content = ""
+            if os.path.exists(target):
+                with open(target, encoding="utf-8") as handle:
+                    content = handle.read()
+            return json.dumps(
+                {
+                    "success": True,
+                    "scope": scope,
+                    "rulesDir": rules_dir,
+                    "filePath": target,
+                    "content": content,
+                }
+            )
+        except Exception as exc:
+            log.error(f"[MemoryManager] Failed to load rules for scope '{scope}': {exc}")
+            return json.dumps({"error": str(exc), "scope": scope})
+
+    @pyqtSlot(str, str, result=str)
+    def saveRules(self, scope: str, content: str):
+        scope = (scope or "").strip().lower()
+        if scope == "shared":
+            scope = "global"
+        if scope not in ("project", "global"):
+            scope = self._active_scope
+        try:
+            rules_dir = self._get_rules_dir(scope)
+            os.makedirs(rules_dir, exist_ok=True)
+            target = self._get_rules_file(scope)
+            normalized = (content or "").rstrip() + "\n"
+            with open(target, "w", encoding="utf-8") as handle:
+                handle.write(normalized)
+            self.toast_requested.emit("success", f"Saved {scope} rules")
+            return json.dumps(
+                {
+                    "success": True,
+                    "scope": scope,
+                    "rulesDir": rules_dir,
+                    "filePath": target,
+                }
+            )
+        except Exception as exc:
+            log.error(f"[MemoryManager] Failed to save rules for scope '{scope}': {exc}")
+            return json.dumps({"error": str(exc), "scope": scope})
 
     @pyqtSlot(object, result=str)
     def setMemoryEnabled(self, checked):
@@ -637,7 +726,7 @@ class MemoryManagerDialog(QDialog):
 
         self._channel = QWebChannel(self)
         self._channel.registerObject("memoryBridge", self._bridge)
-        self._page.setWebChannel(self._channel)
+        self._bind_web_channel()
 
         self._view.loadFinished.connect(self._on_page_loaded)
         self._bridge.data_changed.connect(self._push_state_to_page)
@@ -663,7 +752,19 @@ class MemoryManagerDialog(QDialog):
         if not ok:
             QMessageBox.warning(self, "Memory Manager", "Failed to load memory management page.")
             return
+        # Re-apply channel binding after load to avoid intermittent transport injection races.
+        self._bind_web_channel()
         self._push_state_to_page(self._bridge.loadInitialData())
+
+    def _bind_web_channel(self):
+        try:
+            # Preferred: bind in page MainWorld so normal page JS can access transport.
+            self._page.setWebChannel(self._channel, QWebEngineScript.ScriptWorldId.MainWorld)
+        except TypeError:
+            # Fallback for older Qt/PyQt builds that only accept setWebChannel(channel).
+            self._page.setWebChannel(self._channel)
+        except Exception as exc:
+            log.warning(f"[MemoryManager] Failed to bind web channel: {exc}")
 
     def _push_state_to_page(self, payload: str):
         if not self._page_loaded:

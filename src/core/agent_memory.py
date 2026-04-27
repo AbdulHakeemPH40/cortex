@@ -120,7 +120,10 @@ class AgentMemoryManager:
         Returns:
             Formatted string with all vision contexts
         """
-        contexts = self.storage.get_recent_vision_contexts(limit, scope)
+        contexts = self.storage.get_recent_vision_contexts(limit=max(limit * 4, limit), scope=scope)
+        if session_id:
+            contexts = [ctx for ctx in contexts if ctx.session_id == session_id]
+        contexts = contexts[:limit]
         if not contexts:
             return ""
         

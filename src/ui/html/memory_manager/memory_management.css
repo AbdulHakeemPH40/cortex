@@ -373,6 +373,31 @@ button.danger {
   max-width: 600px;
 }
 
+.rules-editor-modal {
+  width: min(860px, calc(100vw - 32px));
+}
+
+.rules-editor-input {
+  width: 100%;
+  min-height: 320px;
+  margin-top: 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(8, 11, 18, 0.86);
+  color: var(--text);
+  padding: 12px 14px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.45;
+  resize: vertical;
+  outline: none;
+}
+
+.rules-editor-input:focus {
+  border-color: rgba(77, 163, 255, 0.42);
+  box-shadow: 0 0 0 4px rgba(77, 163, 255, 0.12);
+}
+
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);

@@ -3692,9 +3692,9 @@ body.loaded #loading-overlay {
 }
 
 .tool-error-v {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 .tool-error-msg {
@@ -4193,6 +4193,14 @@ body.loaded #loading-overlay {
 /* Read item (inline, no expandable details) */
 .ta-item.ta-read .ta-item-header {
     cursor: default;
+}
+
+.ta-item.ta-read.ta-read-error-item .ta-item-header {
+    cursor: pointer;
+}
+
+.ta-item.ta-read.ta-read-error-item .ta-item-details {
+    padding: 10px 14px 12px 52px;
 }
 
 /* Scrollbar inside details */

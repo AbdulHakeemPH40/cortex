@@ -17,7 +17,9 @@ from PyQt6.QtWidgets import (
     QStackedWidget, QScrollArea, QTreeView, QLineEdit
 )
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtSlot, QTimer, QRect, QProcessEnvironment, QSignalBlocker, QEventLoop, QDir, QModelIndex, QThread
+from PyQt6.QtWebChannel import QWebChannel
 from PyQt6.QtGui import QFileSystemModel, QAction, QKeySequence, QIcon, QFont, QPainter, QColor, QMouseEvent, QCloseEvent, QPixmap
+from PyQt6.QtWebChannel import QWebChannel
 from PyQt6.QtWebEngineCore import QWebEnginePage
 
 from src.config.settings import get_settings

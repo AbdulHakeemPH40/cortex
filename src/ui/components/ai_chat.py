@@ -1380,18 +1380,19 @@ class AIChatWidget(QWidget):
         """Hide the Agent Mode grid indicator in chat UI."""
         self._view.page().runJavaScript("if(window.hideAgentMode) window.hideAgentMode();")
     
-    def show_memory_saving_animation(self, memory_name: str = "Session insights"):
-        """Show memory saving animation in chat UI."""
+    @pyqtSlot()
+    def show_memory_saving_animation(self):
+        memory_name = "Session insights"
         safe_name = json.dumps(memory_name)
         self._view.page().runJavaScript(f"if(window.showMemorySavingAnimation) window.showMemorySavingAnimation({safe_name});")
     
+    @pyqtSlot(str)
     def show_memory_saved_confirmation(self, memory_name: str = "Session insights"):
-        """Show memory saved confirmation in chat UI."""
         safe_name = json.dumps(memory_name)
         self._view.page().runJavaScript(f"if(window.showMemorySavedConfirmation) window.showMemorySavedConfirmation({safe_name});")
     
+    @pyqtSlot()
     def hide_memory_saving_animation(self):
-        """Hide memory saving animation in chat UI."""
         self._view.page().runJavaScript("if(window.hideMemorySavingAnimation) window.hideMemorySavingAnimation();")
 
     def set_active_agent_mode(self, mode: str):

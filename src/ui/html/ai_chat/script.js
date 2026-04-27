@@ -3256,7 +3256,7 @@ function _taRenderRead(itemsEl, data, status) {
     _taFileCount++;
 
     var item = document.createElement('div');
-    item.className = 'ta-item ta-read';
+    item.className = 'ta-item ta-read' + (status === 'error' ? ' ta-read-error-item' : '');
     item.dataset.taType = 'read';
     item.dataset.taKey = readKey;
     item.dataset.taFile = fp || fname;
@@ -3270,8 +3270,13 @@ function _taRenderRead(itemsEl, data, status) {
     if (data.remaining_range && status === 'complete') {
         mutedText += ' [' + data.remaining_lines + ' lines remain: ' + data.remaining_range + ']';
     }
+    var chevron = (status === 'error')
+        ? '<svg class="ta-item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>'
+        : '';
+
     item.innerHTML =
         '<div class="ta-item-header">' +
+            chevron +
             '<span class="ta-item-icon">' + _taExtBadge(ext) + '</span>' +
             '<span class="ta-item-label">' +
                 '<span class="ta-highlight">' + escapeHtml(fname) + '</span>' +
@@ -3282,9 +3287,43 @@ function _taRenderRead(itemsEl, data, status) {
                     ? '<span class="ta-ok">OK</span>'
                     : (status === 'error' ? '<span class="ta-err">ERR</span>' : '<span class="ta-spinner"></span>')) +
             '</span>' +
-        '</div>';
-    if (status === 'error' && data.error) {
-        item.innerHTML += '<div class="ta-read-error ta-muted">  ' + escapeHtml(String(data.error).replace(/^Error:\s*/i, '')) + '</div>';
+        '</div>' +
+        (status === 'error' ? '<div class="ta-item-details"></div>' : '');
+
+    if (status === 'error') {
+        var headerEl = item.querySelector('.ta-item-header');
+        if (headerEl) {
+            headerEl.onclick = function(e) {
+                e.stopPropagation();
+                item.classList.toggle('expanded');
+            };
+        }
+        if (data.error) {
+            var detailsEl = item.querySelector('.ta-item-details');
+            if (detailsEl) {
+                var cleanMsg = String(data.error).replace(/^Error:\s*/i, '').trim();
+                var errPath = '';
+                var quotedPath = cleanMsg.match(/'([^']+)'/);
+                if (quotedPath && quotedPath[1]) errPath = quotedPath[1];
+                var errno = '';
+                var errnoMatch = cleanMsg.match(/\[Errno\s+(\d+)\]/i);
+                if (errnoMatch && errnoMatch[1]) errno = errnoMatch[1];
+                var title = errno ? ('[Errno ' + errno + '] File Read Failed') : 'File Read Failed';
+                detailsEl.innerHTML =
+                    '<div class="tool-error">' +
+                        '<div class="tool-error-head">' +
+                            '<span class="tool-error-dot"></span>' +
+                            '<div class="tool-error-title">' + escapeHtml(title) + '</div>' +
+                        '</div>' +
+                        (errPath
+                            ? ('<div class="tool-error-kv"><div class="tool-error-k">Path</div><div class="tool-error-v">' + escapeHtml(errPath) + '</div></div>')
+                            : '') +
+                        '<div class="tool-error-kv"><div class="tool-error-k">Range</div><div class="tool-error-v">' + escapeHtml(lineRange) + '</div></div>' +
+                        '<div class="tool-error-kv"><div class="tool-error-k">Message</div><div class="tool-error-v">' + escapeHtml(cleanMsg) + '</div></div>' +
+                    '</div>';
+                item.classList.add('expanded');
+            }
+        }
     }
     itemsEl.appendChild(item);
 }
@@ -10487,8 +10526,8 @@ window.createToolCard = function(toolName, params, status) {
     card.className = 'tool-operation-card ' + cardType + ' expanded';
     card.id = cardId;
     
-    var statusClass = status === 'completed' ? 'completed' : 
-                      status === 'failed' ? 'pending' : 'running';
+    var statusClass = status === 'completed' ? 'completed' :
+                      status === 'failed' ? 'failed' : 'running';
     var statusText = status ? status.charAt(0).toUpperCase() + status.slice(1) : 'Running';
     
     // Map to new card icons
@@ -10551,7 +10590,7 @@ window.updateToolCard = function(cardId, status, result) {
         
         if (statusEl) {
             var statusClass = status === 'completed' ? 'completed' : 
-                              status === 'failed' ? 'pending' : 'running';
+                              status === 'failed' ? 'failed' : 'running';
             statusEl.className = 'tool-card-status ' + statusClass;
             statusEl.textContent = status.charAt(0).toUpperCase() + status.slice(1);
         }
@@ -10559,7 +10598,34 @@ window.updateToolCard = function(cardId, status, result) {
         if (result) {
             var scrollable = card.querySelector('.tool-card-scrollable');
             if (scrollable) {
-                scrollable.textContent += '\n' + result;
+                if (status === 'failed') {
+                    var msg = String(result);
+                    var clean = msg.replace(/^Error:\s*/i, '').trim();
+                    var errPath = '';
+                    var quotedPath = clean.match(/'([^']+)'/);
+                    if (quotedPath && quotedPath[1]) errPath = quotedPath[1];
+                    var errno = '';
+                    var errnoMatch = clean.match(/\[Errno\s+(\d+)\]/i);
+                    if (errnoMatch && errnoMatch[1]) errno = errnoMatch[1];
+                    var title = errno ? ('[Errno ' + errno + '] Tool Error') : 'Tool Error';
+
+                    scrollable.classList.add('ta-read-error');
+                    scrollable.innerHTML =
+                        '<div class="tool-error">' +
+                            '<div class="tool-error-head">' +
+                                '<span class="tool-error-dot"></span>' +
+                                '<div class="tool-error-title">' + escapeHtml(title) + '</div>' +
+                            '</div>' +
+                            (errPath
+                                ? ('<div class="tool-error-kv"><div class="tool-error-k">Path</div><div class="tool-error-v">' + escapeHtml(errPath) + '</div></div>')
+                                : '') +
+                            '<div class="tool-error-kv"><div class="tool-error-k">Message</div><div class="tool-error-v">' + escapeHtml(clean) + '</div></div>' +
+                        '</div>';
+                    card.classList.remove('collapsed');
+                    card.classList.add('expanded');
+                } else {
+                    scrollable.textContent += '\n' + result;
+                }
             }
         }
         return;
