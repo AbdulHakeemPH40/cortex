@@ -19,7 +19,7 @@ class SiliconFlowProvider(BaseProvider):
     BASE_URL = "https://api.siliconflow.com/v1"
     
     def __init__(self):
-        super().__init__(ProviderType.OPENAI)  # Uses OpenAI-compatible API
+        super().__init__(ProviderType.SILICONFLOW)  # SiliconFlow provider
         self._api_key = os.getenv("SILICONFLOW_API_KEY", "")
         if not self._api_key:
             log.warning("SiliconFlow API key not configured")
@@ -138,8 +138,10 @@ class SiliconFlowProvider(BaseProvider):
                    temperature: float = 0.7,
                    max_tokens: int = 2000,
                    tools: Optional[List[Dict[str, Any]]] = None,
-                   images: Optional[List[Dict[str, Any]]] = None) -> Generator[str, None, None]:
+                   images: Optional[List[Dict[str, Any]]] = None,
+                   retry_callback=None) -> Generator[str, None, None]:
         """Stream chat completion."""
+        # retry_callback is for API compatibility with agent_bridge
         try:
             headers = {
                 "Authorization": f"Bearer {self._api_key}",

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>NEW Pipeline Test</title>
+    <script src="../../components/assets/marked.min.js"></script>
+    <style>
+        body { background: #1e1e1e; color: #fff; font-family: sans-serif; padding: 20px; }
+        .test-case { margin: 20px 0; padding: 15px; border: 1px solid #444; }
+        .input { background: #2d2d2d; padding: 10px; margin: 10px 0; white-space: pre-wrap; font-family: monospace; }
+        .output { background: #252525; padding: 10px; margin: 10px 0; }
+        table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+        th, td { border: 1px solid #555; padding: 8px; text-align: left; }
+        th { background: #333; }
+        .pass { border-color: #4caf50; }
+        .fail { border-color: #f44336; }
+    </style>
+</head>
+<body>
+    <h1>NEW 4-Stage Pipeline Test</h1>
+    <div id="results"></div>
+
+<script src="script.js"></script>
+<script>
+// Test cases from behavior.txt
+const testCases = [
+    {
+        id: "T7",
+        name: "Tab-separated with --- dividers",
+        input: "Project Type\tBest Framework\nSingle-Page App (SPA)\tReact / Vue / Svelte\n---\t---\nSEO-Friendly Website\tNext.js / Nuxt.js",
+        expectTable: true
+    },
+    {
+        id: "T8",
+        name: "Heading merged with table",
+        input: "###1. Performance| Python |Rust|\n------------| ---------- |\n\nInterpreted\tCompiled",
+        expectTable: true
+    },
+    {
+        id: "CODE1",
+        name: "Code block with pipes (should NOT become table)",
+        input: "```bash\necho \"a | b | c\"\n```",
+        expectTable: false
+    }
+];
+
+function runTests() {
+    const results = document.getElementById('results');
+    
+    testCases.forEach((test, i) => {
+        const normalized = normalizeMarkdownText(test.input);
+        let html;
+        try {
+            html = marked.parse(normalized) || '';
+        } catch(e) {
+            html = 'Error: ' + e.message;
+        }
+        
+        const hasTable = html.includes('<table>');
+        const passed = hasTable === test.expectTable;
+        
+        const div = document.createElement('div');
+        div.className = 'test-case ' + (passed ? 'pass' : 'fail');
+        div.innerHTML = `
+            <h3>${test.id}. ${test.name} ${passed ? '✓ PASS' : '✗ FAIL'}</h3>
+            <div><strong>Input:</strong></div>
+            <div class="input">${test.input.replace(/</g, '&lt;').replace(/\n/g, '\\n')}</div>
+            <div><strong>Normalized:</strong></div>
+            <div class="input">${normalized.replace(/</g, '&lt;').replace(/\n/g, '\\n')}</div>
+            <div><strong>HTML:</strong></div>
+            <div class="output">${html}</div>
+        `;
+        results.appendChild(div);
+    });
+}
+
+runTests();
+</script>
+</body>
+</html>

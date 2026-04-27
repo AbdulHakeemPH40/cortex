@@ -1,0 +1,261 @@
+{,
+  "project_root": "C:\\Users\\Hakeem1\\OneDrive\\Desktop\\Cortex_Ai_Agent\\Cortex",
+  "directories": {
+    "top_level": [
+      {
+        "name": ".cortex",
+        "description": "Cortex-specific configurations, rules, and memory files."
+      },
+      {
+        "name": ".git",
+        "description": "Git repository metadata and version control files."
+      },
+      {
+        "name": "Docs",
+        "description": "Project documentation, including guides and explanations."
+      },
+      {
+        "name": "src",
+        "description": "Core source code directory, including agent logic, UI, tools, and utilities.",
+        "subdirectories": [
+          {
+            "name": "agent",
+            "description": "Agent-related logic, tools, and utilities."
+          },
+          {
+            "name": "ai",
+            "description": "AI-related source code and models."
+          },
+          {
+            "name": "assets",
+            "description": "Static assets like images, stylesheets, and fonts."
+          },
+          {
+            "name": "config",
+            "description": "Configuration files for the project."
+          },
+          {
+            "name": "coordinator",
+            "description": "Coordinator logic for multi-agent systems."
+          },
+          {
+            "name": "core",
+            "description": "Core functionality and utilities."
+          },
+          {
+            "name": "plugin",
+            "description": "Plugin logic for extensibility."
+          },
+          {
+            "name": "services",
+            "description": "Service definitions and implementations."
+          },
+          {
+            "name": "tests",
+            "description": "Test files for the project."
+          },
+          {
+            "name": "tools",
+            "description": "Tool definitions and implementations."
+          },
+          {
+            "name": "ui",
+            "description": "User interface logic and components."
+          },
+          {
+            "name": "utils",
+            "description": "Utility functions and helpers."
+          }
+        ],
+        "key_files": [
+          {
+            "name": "main.py",
+            "description": "Main entry point for the application."
+          },
+          {
+            "name": "main_window.py",
+            "description": "Main UI window logic."
+          }
+        ]
+      },
+      {
+        "name": "bin",
+        "description": "Binary files or scripts for execution."
+      },
+      {
+        "name": "build",
+        "description": "Build-related files and outputs."
+      },
+      {
+        "name": "dist",
+        "description": "Distribution files for packaging."
+      },
+      {
+        "name": "installer_output",
+        "description": "Output from installer scripts."
+      },
+      {
+        "name": "memory",
+        "description": "Memory-related files and logs."
+      },
+      {
+        "name": "node_modules",
+        "description": "Node.js dependencies and modules."
+      },
+      {
+        "name": "plugins",
+        "description": "Plugin files for extensibility."
+      },
+      {
+        "name": "referenc_image",
+        "description": "Reference images for the project."
+      },
+      {
+        "name": "tests",
+        "description": "Test files for the project."
+      },
+      {
+        "name": "tmp",
+        "description": "Temporary files and outputs."
+      },
+      {
+        "name": "venv",
+        "description": "Python virtual environment."
+      },
+      {
+        "name": "vscode-extension",
+        "description": "VSCode extension files."
+      }
+    ]
+  },
+  "key_files": [
+    {
+      "name": ".env",
+      "description": "Environment variables for configuration."
+    },
+    {
+      "name": ".env.example",
+      "description": "Example environment variables."
+    },
+    {
+      "name": ".gitignore",
+      "description": "Git ignore rules."
+    },
+    {
+      "name": "build_installer.bat",
+      "description": "Batch script for building the installer."
+    },
+    {
+      "name": "cortex.spec",
+      "description": "PyInstaller spec file for building the executable."
+    },
+    {
+      "name": "cortex_setup.iss",
+      "description": "Inno Setup script for creating an installer."
+    },
+    {
+      "name": "crash_output.log",
+      "description": "Log file for crashes."
+    },
+    {
+      "name": "install_lsp_servers.js",
+      "description": "Script for installing LSP servers."
+    },
+    {
+      "name": "package.json",
+      "description": "Node.js project configuration."
+    },
+    {
+      "name": "package-lock.json",
+      "description": "Node.js dependency lock file."
+    },
+    {
+      "name": "requirements.txt",
+      "description": "Python dependencies."
+    },
+    {
+      "name": "requirements2.txt",
+      "description": "Additional Python dependencies."
+    },
+    {
+      "name": "terminal2.log",
+      "description": "Terminal log file."
+    }
+  ],
+  "documentation": [
+    {
+      "name": "AI_AGENT_SEARCH_ENHANCEMENT_PLAN.md",
+      "description": "Plan for enhancing AI agent search capabilities."
+    },
+    {
+      "name": "AI_AGENT_SEARCH_STRATEGY_GUIDE.md",
+      "description": "Guide for AI agent search strategies."
+    },
+    {
+      "name": "CONVERSATION_PERSISTENCE_EXPLAINED.md",
+      "description": "Explanation of conversation persistence."
+    },
+    {
+      "name": "HOW_CORTEX_SEARCHES_FILES.md",
+      "description": "Guide on how Cortex searches files."
+    },
+    {
+      "name": "HOW_MEMORY_SYSTEM_WORKS.md",
+      "description": "Explanation of the memory system."
+    },
+    {
+      "name": "MEMORY_ANIMATION_ENHANCEMENT.md",
+      "description": "Enhancements for memory animation."
+    },
+    {
+      "name": "MEMORY_SYSTEM_FLOW_DIAGRAM.md",
+      "description": "Flow diagram for the memory system."
+    },
+    {
+      "name": "MEMORY_SYSTEM_TESTS.md",
+      "description": "Tests for the memory system."
+    },
+    {
+      "name": "P3_MEMORY_CONSOLIDATION_COMPLETE.md",
+      "description": "Documentation for memory consolidation."
+    },
+    {
+      "name": "P4_CROSS_PROJECT_MEMORY_COMPLETE.md",
+      "description": "Documentation for cross-project memory."
+    },
+    {
+      "name": "project_structure_analysis.md",
+      "description": "Analysis of the project structure."
+    }
+  ],
+  "scripts": [
+    {
+      "name": "build.ps1",
+      "description": "PowerShell script for building the project."
+    },
+    {
+      "name": "build_installer.bat",
+      "description": "Batch script for building the installer."
+    },
+    {
+      "name": "fix_memory_animation_regex.py",
+      "description": "Script for fixing memory animation regex."
+    },
+    {
+      "name": "fix_regex_v2.py",
+      "description": "Script for fixing regex issues."
+    },
+    {
+      "name": "install_lsp_servers.js",
+      "description": "Script for installing LSP servers."
+    },
+    {
+      "name": "run_memory_tests.py",
+      "description": "Script for running memory tests."
+    },
+    {
+      "name": "verify_chat_persistence.py",
+      "description": "Script for verifying chat persistence."
+    }
+  ]
+}

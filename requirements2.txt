@@ -1,6 +1,5 @@
-pip install together
-
-pip install pywinpty
-
-
-pip install numpy sentence-transformers
+# Temporary file - can be deleted
+pip install openhands-sdk
+pip install black
+pip install jsbeautifier
+choco install ripgrep

@@ -1,0 +1,593 @@
+/* ================================================================
+   UNIVERSAL SYNTAX HIGHLIGHTING - DRACULA THEME
+   Applied to ALL Programming Languages & Frameworks
+   Python, JavaScript, TypeScript, Java, C++, C, CSS, HTML, etc.
+   
+   NOTE: All design tokens (--font-*, --dracula-*) are now defined
+   in style.css :root block. This file only contains syntax rules.
+   ================================================================ */
+
+/* ========== APPLY FONT TO ALL CODE ELEMENTS ========== */
+/* Ensure JetBrains Mono font is applied to ALL code blocks in chat */
+.markdown-body pre,
+.markdown-body code,
+.md-content pre,
+.md-content code,
+.code-block-container,
+.code-block,
+.code-snippet,
+pre code,
+pre,
+code,
+.hljs,
+[class*="language-"] {
+    font-family: var(--font-mono) !important;
+}
+
+/* ========== DRACULA THEME COLOR PALETTE ==========
+ * NOTE: All --dracula-* tokens moved to style.css :root
+ * This section kept as reference only (no :root block needed)
+ * ==================================================== */
+
+/* ========== MARKDOWN STYLING - MAXIMUM SPECIFICITY ========== */
+/* CRITICAL: Override ALL other stylesheets including highlight.js dracula */
+
+/* Level 1: Base container - HIGHEST PRIORITY */
+html body .markdown-body,
+html body .md-content {
+    font-family: var(--font-sans) !important;
+    color: #ffffff !important;  /* WHITE - OVERRIDE everything */
+    background: var(--dracula-bg) !important;
+}
+
+/* Level 2: Force inheritance on ALL descendants */
+html body .markdown-body *,
+html body .md-content * {
+    color: inherit !important;
+}
+
+/* Level 3: Exception — code blocks keep Dracula syntax colors */
+html body .markdown-body .hljs,
+html body .markdown-body pre code,
+html body .markdown-body [class*="language-"] {
+    color: var(--dracula-text) !important;
+}
+
+/* Level 3b: Let hljs child spans use their own syntax colors (not inherit white) */
+html body .markdown-body .hljs [class^="hljs-"],
+html body .markdown-body pre code [class^="hljs-"],
+html body .markdown-body [class*="language-"] [class^="hljs-"] {
+    color: unset !important;
+}
+
+/* Level 4: Specific element overrides - MAXIMUM SPECIFICITY */
+html body .markdown-body p,
+html body .markdown-body li,
+html body .markdown-body td,
+html body .markdown-body th,
+html body .markdown-body blockquote,
+html body .markdown-body span:not(.hljs):not([class*="language-"]),
+html body .markdown-body div:not(.code-block):not(pre),
+html body .markdown-body strong,
+html body .markdown-body em,
+html body .markdown-body b,
+html body .markdown-body i {
+    color: #ffffff !important;  /* PURE WHITE - cannot be overridden */
+    font-family: var(--font-sans) !important;
+}
+
+/* Markdown Main Heading (H1) - Pure White */
+html body .markdown-body h1,
+html body .md-h1 {
+    color: #ffffff !important;
+    font-size: 1.75em !important;
+    font-weight: 700 !important;
+    font-family: var(--font-sans) !important;
+    margin: 24px 0 12px 0 !important;
+    padding-bottom: 8px !important;
+    border-bottom: 2px solid var(--border-light) !important;
+}
+
+/* Markdown H2 - Section Heading (Soft Blue) */
+html body .markdown-body h2,
+html body .md-h2 {
+    color: #a8c8ff !important;
+    font-size: 1.5em !important;
+    font-weight: 600 !important;
+    font-family: var(--font-sans) !important;
+    margin: 20px 0 10px 0 !important;
+    padding-bottom: 6px !important;
+    border-bottom: 1px solid var(--border) !important;
+}
+
+/* Markdown H3 - Subsection (Soft Purple) */
+html body .markdown-body h3,
+html body .md-h3 {
+    color: #c4b5fd !important;
+    font-size: 1.25em !important;
+    font-weight: 600 !important;
+    font-family: var(--font-sans) !important;
+    margin: 18px 0 8px 0 !important;
+}
+
+/* Markdown H4 - Sub-subsection (Soft Cyan) */
+html body .markdown-body h4,
+html body .md-h4 {
+    color: #67e8f9 !important;
+    font-size: 1.1em !important;
+    font-weight: 600 !important;
+    font-family: var(--font-sans) !important;
+    margin: 16px 0 6px 0 !important;
+}
+
+/* Markdown H5 - Detail (Soft Green) */
+html body .markdown-body h5,
+html body .md-h5 {
+    color: #86efac !important;
+    font-size: 1em !important;
+    font-weight: 600 !important;
+    font-family: var(--font-sans) !important;
+    margin: 14px 0 6px 0 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.03em !important;
+}
+
+/* Markdown H6 - Minor Detail (Soft Amber) */
+html body .markdown-body h6,
+html body .md-h6 {
+    color: #fcd34d !important;
+    font-size: 0.9em !important;
+    font-weight: 600 !important;
+    font-family: var(--font-sans) !important;
+    margin: 12px 0 4px 0 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.04em !important;
+}
+
+/* Markdown Code in text - String color */
+.markdown-body code:not(pre code),
+.md-inline-code {
+    color: var(--dracula-string);
+    background: rgba(82, 250, 123, 0.1);
+    border: 1px solid rgba(82, 250, 123, 0.2);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: var(--font-mono);
+}
+
+/* Markdown Links */
+.markdown-body a,
+.md-link {
+    color: var(--dracula-tag);
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+    transition: border-color 0.2s;
+}
+
+.markdown-body a:hover,
+.md-link:hover {
+    border-bottom-color: var(--dracula-tag);
+}
+
+/* ========== UNIVERSAL CODE BLOCK STYLING ========== */
+.code-block-container,
+pre, code,
+.hljs,
+.code-block,
+.code-snippet {
+    background: var(--dracula-bg) !important;
+    color: var(--dracula-text) !important;
+    font-family: var(--font-mono) !important;
+    font-size: 10px;
+    line-height: 1.6;
+    padding: 0;
+    margin: 0;
+}
+
+/* ========== DRACULA THEME - ALL LANGUAGES ========== */
+
+/* Base */
+.hljs {
+    color: var(--dracula-text);
+    background: var(--dracula-bg);
+}
+
+/* Comments - Blue-gray */
+.hljs-comment,
+.hljs-quote,
+.hljs-doctag,
+.hljs-formula {
+    color: var(--dracula-comment);
+    font-style: italic;
+}
+
+/* Strings & Text - Yellow (Guide §4.1) */
+.hljs-string,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition {
+    color: var(--dracula-string);
+}
+
+/* Keywords & Reserved Words - Pink (Guide §4.1) */
+.hljs-keyword,
+.hljs-selector-tag {
+    color: var(--dracula-keyword);
+}
+
+/* Built-ins & Types - Cyan (Guide §4.1: Types/Cyan) */
+.hljs-built_in,
+.hljs-type,
+.hljs-params {
+    color: var(--dracula-class);
+}
+
+/* Regex & Literals - separate colors per Guide */
+.hljs-regexp {
+    color: var(--dracula-regex);
+}
+
+.hljs-literal {
+    color: var(--dracula-number);
+}
+
+.hljs-selector-id,
+.hljs-selector-class {
+    color: var(--dracula-keyword);
+}
+
+/* Function & Method Names - Green (Guide §4.1) */
+.hljs-title,
+.hljs-section,
+.hljs-function {
+    color: var(--dracula-function);
+    font-weight: 600;
+}
+
+/* Meta / Decorators - Orange (Guide §4.1: Orange Accent) */
+.hljs-meta {
+    color: var(--dracula-decorator);
+    font-style: italic;
+}
+
+/* Tags & Attributes - Pink / Green (Guide §4.2) */
+.hljs-tag,
+.hljs-name {
+    color: var(--dracula-tag);
+}
+
+/* attribute.name = Green, attribute.value = Yellow (Guide §4.2) */
+.hljs-attr {
+    color: var(--dracula-function);
+}
+
+.hljs-attribute {
+    color: var(--dracula-string);
+}
+
+/* Numbers & Literals - Purple (Guide §4.1) */
+.hljs-number {
+    color: var(--dracula-number);
+}
+
+/* Variables - White (Guide §4.2: variable = foreground) */
+.hljs-variable,
+.hljs-template-variable {
+    color: var(--dracula-variable);
+}
+
+/* Deletion - Red */
+.hljs-deletion {
+    color: var(--dracula-invalid);
+}
+
+.hljs-link {
+    color: var(--dracula-class);
+}
+
+/* Emphasis */
+.hljs-emphasis {
+    font-style: italic;
+}
+
+.hljs-strong {
+    font-weight: bold;
+}
+
+/* ========== LANGUAGE-SPECIFIC STYLING ========== */
+
+/* PYTHON - Dracula Colors */
+.language-python .hljs-string { color: var(--dracula-string); }
+.language-python .hljs-keyword { color: var(--dracula-keyword); }
+.language-python .hljs-number { color: var(--dracula-number); }
+.language-python .hljs-built_in { color: var(--dracula-builtin); }
+.language-python .hljs-function { color: var(--dracula-function); }
+.language-python .hljs-title.function_ { color: var(--dracula-function); }
+.language-python .hljs-class { color: var(--dracula-class); }
+.language-python .hljs-decorator { color: var(--dracula-function); }
+
+/* JAVASCRIPT / TYPESCRIPT - Dracula Colors */
+.language-javascript .hljs-string { color: var(--dracula-string); }
+.language-javascript .hljs-keyword { color: var(--dracula-keyword); }
+.language-javascript .hljs-number { color: var(--dracula-number); }
+.language-javascript .hljs-title.function_ { color: var(--dracula-function); }
+.language-javascript .hljs-attr { color: var(--dracula-tag); }
+.language-javascript .hljs-variable { color: var(--dracula-variable); }
+.language-javascript .hljs-built_in { color: var(--dracula-builtin); }
+.language-typescript .hljs-string { color: var(--dracula-string); }
+.language-typescript .hljs-keyword { color: var(--dracula-keyword); }
+.language-typescript .hljs-built_in { color: var(--dracula-builtin); }
+.language-typescript .hljs-title.class_ { color: var(--dracula-class); }
+
+/* JSX / TSX - Dracula Colors */
+.language-jsx .hljs-tag { color: var(--dracula-tag); }
+.language-jsx .hljs-attr { color: var(--dracula-tag); }
+.language-jsx .hljs-string { color: var(--dracula-string); }
+.language-jsx .hljs-name { color: var(--dracula-tag); }
+.language-tsx .hljs-tag { color: var(--dracula-tag); }
+.language-tsx .hljs-attr { color: var(--dracula-tag); }
+.language-tsx .hljs-string { color: var(--dracula-string); }
+.language-tsx .hljs-name { color: var(--dracula-tag); }
+
+/* HTML - Dracula Colors */
+.language-html .hljs-tag { color: var(--dracula-tag); }
+.language-html .hljs-attr { color: var(--dracula-tag); }
+.language-html .hljs-string { color: var(--dracula-string); }
+.language-html .hljs-name { color: var(--dracula-tag); }
+.language-html .hljs-title { color: var(--dracula-tag); }
+
+/* CSS / SCSS / LESS - Dracula Colors */
+.language-css .hljs-selector-class { color: var(--dracula-function); }
+.language-css .hljs-selector-id { color: var(--dracula-variable); }
+.language-css .hljs-attr { color: var(--dracula-tag); }
+.language-css .hljs-number { color: var(--dracula-number); }
+.language-css .hljs-string { color: var(--dracula-string); }
+.language-css .hljs-selector-tag { color: var(--dracula-function); }
+.language-scss .hljs-attr { color: var(--dracula-tag); }
+.language-scss .hljs-string { color: var(--dracula-string); }
+.language-scss .hljs-variable { color: var(--dracula-variable); }
+.language-less .hljs-attr { color: var(--dracula-tag); }
+.language-less .hljs-string { color: var(--dracula-string); }
+
+/* JAVA - Dracula Colors */
+.language-java .hljs-keyword { color: var(--dracula-keyword); }
+.language-java .hljs-title.class_ { color: var(--dracula-class); }
+.language-java .hljs-string { color: var(--dracula-string); }
+.language-java .hljs-number { color: var(--dracula-number); }
+.language-java .hljs-built_in { color: var(--dracula-builtin); }
+
+/* C++ / C# / C - Dracula Colors */
+.language-cpp .hljs-keyword { color: var(--dracula-keyword); }
+.language-cpp .hljs-string { color: var(--dracula-string); }
+.language-cpp .hljs-number { color: var(--dracula-number); }
+.language-cpp .hljs-title.function_ { color: var(--dracula-function); }
+.language-c .hljs-keyword { color: var(--dracula-keyword); }
+.language-c .hljs-string { color: var(--dracula-string); }
+.language-c .hljs-number { color: var(--dracula-number); }
+.language-csharp .hljs-keyword { color: var(--dracula-keyword); }
+.language-csharp .hljs-string { color: var(--dracula-string); }
+.language-csharp .hljs-title.class_ { color: var(--dracula-class); }
+
+/* GO / RUST / PHP - Dracula Colors */
+.language-go .hljs-keyword { color: var(--dracula-keyword); }
+.language-go .hljs-string { color: var(--dracula-string); }
+.language-go .hljs-function { color: var(--dracula-function); }
+.language-rust .hljs-keyword { color: var(--dracula-keyword); }
+.language-rust .hljs-string { color: var(--dracula-string); }
+.language-php .hljs-keyword { color: var(--dracula-keyword); }
+.language-php .hljs-string { color: var(--dracula-string); }
+.language-php .hljs-variable { color: var(--dracula-variable); }
+
+/* SQL - Dracula Colors */
+.language-sql .hljs-keyword { color: var(--dracula-keyword); }
+.language-sql .hljs-string { color: var(--dracula-string); }
+.language-sql .hljs-number { color: var(--dracula-number); }
+.language-sql .hljs-title { color: var(--dracula-function); }
+
+/* JSON / YAML - Dracula Colors */
+.language-json .hljs-attr { color: var(--dracula-tag); }
+.language-json .hljs-string { color: var(--dracula-string); }
+.language-json .hljs-number { color: var(--dracula-number); }
+.language-yaml .hljs-attr { color: var(--dracula-tag); }
+.language-yaml .hljs-string { color: var(--dracula-string); }
+
+/* SHELL / BASH - Dracula Colors */
+.language-bash .hljs-keyword { color: var(--dracula-keyword); }
+.language-bash .hljs-string { color: var(--dracula-string); }
+.language-bash .hljs-number { color: var(--dracula-number); }
+.language-shell .hljs-keyword { color: var(--dracula-keyword); }
+.language-shell .hljs-string { color: var(--dracula-string); }
+
+/* FRAMEWORKS - React/Vue/Angular - Dracula Colors */
+.language-jsx .hljs-keyword { color: var(--dracula-keyword); }
+.language-tsx .hljs-keyword { color: var(--dracula-keyword); }
+.language-vue .hljs-tag { color: var(--dracula-tag); }
+.language-vue .hljs-attr { color: var(--dracula-tag); }
+.language-vue .hljs-string { color: var(--dracula-string); }
+.language-typescript .hljs-title.class_ { color: var(--dracula-class); }
+
+/* Django / Flask / FastAPI - Dracula Colors */
+.language-python .hljs-title.function_ { color: var(--dracula-function); }
+.language-python .hljs-decorator { color: var(--dracula-function); }
+
+/* ========== CODE HEADER STYLING ========== */
+.code-header {
+    background: #1e1e2e;
+    padding: 7px 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+    color: rgba(255,255,255,0.4);
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    font-family: var(--font-mono);
+}
+
+/* Match both .lang-label AND .code-lang (JS uses .code-lang) */
+.code-header .lang-label,
+.code-header .code-lang {
+    font-size: 10px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.35);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    background: rgba(255,255,255,0.05);
+    padding: 2px 8px;
+    border-radius: 3px;
+}
+
+/* ========== COPY/RUN BUTTONS ========== */
+.copy-btn,
+.run-btn,
+.code-copy-btn,
+.code-insert-btn,
+.code-run-btn {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: rgba(255,255,255,0.55);
+    cursor: pointer;
+    font-size: 10px;
+    padding: 3px 10px;
+    border-radius: 4px;
+    transition: all 0.15s;
+    font-family: var(--font-mono);
+    font-weight: 600;
+    letter-spacing: 0.3px;
+}
+
+.copy-btn:hover,
+.run-btn:hover,
+.code-copy-btn:hover,
+.code-insert-btn:hover,
+.code-run-btn:hover {
+    background: rgba(255,255,255,0.12);
+    border-color: rgba(255,255,255,0.2);
+    color: rgba(255,255,255,0.9);
+}
+
+/* ========== LINE NUMBERS ========== */
+.hljs-ln-line {
+    background: transparent;
+}
+
+.hljs-ln-numbers {
+    text-align: right;
+    color: var(--dracula-comment);
+    user-select: none;
+    padding-right: 12px;
+    border-right: 1px solid var(--dracula-bg-light);
+}
+
+.hljs-ln-code {
+    padding-left: 12px;
+}
+
+/* ========== SELECTION & HIGHLIGHT ========== */
+.hljs::selection,
+.hljs *::selection {
+    background: rgba(189, 147, 249, 0.3);
+}
+
+/* ========== SCROLLBAR STYLING ========== */
+pre::-webkit-scrollbar {
+    height: 8px;
+}
+
+pre::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+pre::-webkit-scrollbar-thumb {
+    background: var(--dracula-comment);
+    border-radius: 4px;
+}
+
+pre::-webkit-scrollbar-thumb:hover {
+    background: var(--dracula-string);
+}
+
+/* ========== LIGHT MODE OVERRIDES ========== */
+/* IMPORTANT: Code blocks ALWAYS stay dark Dracula (#282a36).
+   Only markdown prose text and headings switch to light colors. */
+
+/* Light mode - Markdown prose text becomes dark on white */
+body.light-mode .markdown-body,
+body.light-mode .md-content {
+    color: var(--text-main) !important;
+    background: transparent !important;
+}
+
+body.light-mode .markdown-body p,
+body.light-mode .markdown-body li,
+body.light-mode .markdown-body td,
+body.light-mode .markdown-body th,
+body.light-mode .markdown-body blockquote,
+body.light-mode .markdown-body span:not(.hljs):not([class*="language-"]),
+body.light-mode .markdown-body div:not(.code-block):not(pre),
+body.light-mode .markdown-body strong,
+body.light-mode .markdown-body em {
+    color: var(--text-main) !important;
+}
+
+/* Light mode headings - distinct colors maintained */
+body.light-mode .markdown-body h1,
+body.light-mode .md-h1 {
+    color: #1a1a1e !important;  /* Dark for light mode */
+    border-bottom-color: var(--border-light) !important;
+}
+
+body.light-mode .markdown-body h2,
+body.light-mode .md-h2 {
+    color: #3b6cb5 !important;  /* Darker blue for light mode */
+    border-bottom-color: var(--border) !important;
+}
+
+body.light-mode .markdown-body h3,
+body.light-mode .md-h3 {
+    color: #7c3aed !important;  /* Darker purple for light mode */
+}
+
+body.light-mode .markdown-body h4,
+body.light-mode .md-h4 {
+    color: #0891b2 !important;  /* Darker cyan for light mode */
+}
+
+body.light-mode .markdown-body h5,
+body.light-mode .md-h5 {
+    color: #16a34a !important;  /* Darker green for light mode */
+}
+
+body.light-mode .markdown-body h6,
+body.light-mode .md-h6 {
+    color: #d97706 !important;  /* Darker amber for light mode */
+}
+
+/* Light mode links */
+body.light-mode .markdown-body a {
+    color: var(--accent-primary) !important;
+}
+
+/* Light mode inline code - STILL dark background */
+body.light-mode .markdown-body code:not(pre code) {
+    background: #282a36 !important;
+    color: #f1fa8c !important;
+    border-color: #44475a !important;
+}
+
+/* Code blocks ALWAYS dark — do NOT override in light mode */
+/* (No background/color overrides for pre, code, .hljs) */
+
+/* ========== RESPONSIVE TEXT SIZING ========== */
+@media (max-width: 768px) {
+    .code-block-container,
+    pre, code {
+        font-size: 12px !important;
+    }
+}
+
+@media (max-width: 480px) {
+    .code-block-container,
+    pre, code {
+        font-size: 11px !important;
+    }
+}
