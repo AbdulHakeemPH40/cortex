@@ -3,7 +3,7 @@ import os
 import sys
 import json
 import uuid as _uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
