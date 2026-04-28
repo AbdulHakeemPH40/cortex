@@ -1,3 +1,4 @@
+# pyright: reportUnknownMemberType=information, reportUnknownVariableType=information, reportUnknownArgumentType=information
 # ------------------------------------------------------------
 # loadSkillsDir.py
 # Python conversion of loadSkillsDir.ts (1087 lines)
@@ -18,9 +19,8 @@ from __future__ import annotations
 import asyncio
 import os
 import platform
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Optional, Set
 
 # ============================================================
 # PHASE 1: Core imports, type definitions, utility functions
@@ -30,7 +30,6 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 try:
     from ..bootstrap.state import getAdditionalDirectoriesForCortexMd, getSessionId
     from ..services.analytics.index import (
-        AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
         logEvent,
     )
     from ..services.tokenEstimation import roughTokenCountEstimation
@@ -46,7 +45,7 @@ try:
         splitPathInFrontmatter,
     )
     from ..utils.fsOperations import getFsImplementation
-    from ..utils.git.gitignore import isPathGitignored
+    from ..utils.git.gitignore import isPathGitignored  # noqa: F401
     from ..utils.log import logError
     from ..utils.markdownConfigLoader import (
         extractDescriptionFromMarkdown,
@@ -72,12 +71,12 @@ except ImportError:
     MarkdownFile = Any
     SettingSource = str
 
-    def getAdditionalDirectoriesForCortexMd(): return []
-    def getSessionId(): return "test-session"
+    def getAdditionalDirectoriesForCortexMd() -> List[str]: return []
+    def getSessionId() -> str: return "test-session"
     def logEvent(*args, **kwargs): pass
-    def roughTokenCountEstimation(text): return len(text) // 4
-    def parseArgumentNames(args): return []
-    def substituteArguments(content, args, strict, names): return content
+    def roughTokenCountEstimation(content: str, bytesPerToken: int = 4) -> int: return len(content) // bytesPerToken
+    def parseArgumentNames(argumentNames): return []
+    def substituteArguments(content: str, args, appendIfNoPlaceholder: bool = True, argumentNames = None): return content
     def logForDebugging(msg, **kwargs): pass
     def parseEffortValue(val): return None
     EFFORT_LEVELS = ['minimal', 'medium', 'high']
@@ -88,21 +87,21 @@ except ImportError:
     def isFsInaccessible(e): return False
     def coerceDescriptionToString(desc, name): return desc
     def parseBooleanFrontmatter(val): return bool(val)
-    def parseFrontmatter(content, path): return {'frontmatter': {}, 'content': content}
+    def parseFrontmatter(content: str, file_path: str = ''): return {'frontmatter': {}, 'content': content}
     def parseShellFrontmatter(shell, name): return None
     def splitPathInFrontmatter(paths): return paths if isinstance(paths, list) else []
     def getFsImplementation(): return None
-    def isPathGitignored(path, cwd): return False
-    def logError(e): pass
-    def extractDescriptionFromMarkdown(content, label): return label
-    def getProjectDirsUpToHome(name, cwd): return []
-    def loadMarkdownFilesForSubdir(subdir, cwd): return []
-    def parseSlashCommandToolsFromFrontmatter(tools): return []
-    def parseUserSpecifiedModel(model): return model
-    async def executeShellCommandsInPrompt(content, ctx, name, shell): return content
+    def isPathGitignored(filePath: str, cwd: str): return False
+    def logError(error): pass
+    def extractDescriptionFromMarkdown(content: str, defaultDescription: str = 'Custom item'): return defaultDescription
+    def getProjectDirsUpToHome(subdir: str, cwd: str): return []
+    def loadMarkdownFilesForSubdir(subdir: str, cwd: str): return []
+    def parseSlashCommandToolsFromFrontmatter(toolsValue): return []
+    def parseUserSpecifiedModel(model_str: str): return model_str
+    async def executeShellCommandsInPrompt(text: str, context, slashCommandName: str, shell = None): return text
     def isSettingSourceEnabled(source): return True
     def getManagedFilePath(): return os.path.expanduser("~/.cortex")
-    def isRestrictedToPluginOnly(resource): return False
+    def isRestrictedToPluginOnly(surface): return False
     def HooksSchema(): 
         class Schema:
             def safeParse(self, data): return type('Result', (), {'success': True, 'data': data})()
@@ -187,8 +186,11 @@ def parseHooksFromFrontmatter(
 
     result = HooksSchema().safeParse(hooks)
     if not result.success:
+        # result may not have 'error' attribute in all cases
+        error_msg = getattr(result, 'error', None)
+        error_detail = getattr(error_msg, 'message', str(error_msg)) if error_msg else 'unknown error'
         logForDebugging(
-            f"Invalid hooks in skill '{skill_name}': {result.error.message}"
+            f"Invalid hooks in skill '{skill_name}': {error_detail}"
         )
         return None
 

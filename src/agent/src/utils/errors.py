@@ -129,6 +129,35 @@ def is_abort_error(e: Any) -> bool:
     )
 
 
+def isENOENT(e: Any) -> bool:
+    """
+    Check if error is ENOENT (file/directory not found).
+    
+    Args:
+        e: The error to check
+        
+    Returns:
+        True if error code is 'ENOENT'
+    """
+    return get_errno_code(e) == 'ENOENT'
+
+
+def isFsInaccessible(e: Any) -> bool:
+    """
+    Check if error indicates filesystem inaccessibility.
+    
+    Returns True for: ENOENT, EACCES, EPERM, ENOTDIR, ELOOP
+    
+    Args:
+        e: The error to check
+        
+    Returns:
+        True if error is a filesystem access error
+    """
+    code = get_errno_code(e)
+    return code in ('ENOENT', 'EACCES', 'EPERM', 'ENOTDIR', 'ELOOP')
+
+
 def has_exact_error_message(error: Any, message: str) -> bool:
     """
     Check if error has exact message match.
