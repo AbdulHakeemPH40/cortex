@@ -1,4 +1,4 @@
-# pyright: reportUnknownMemberType=information, reportUnknownVariableType=information, reportUnknownArgumentType=information, reportRedeclaration=information, reportAssignmentType=false
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportRedeclaration=false, reportAssignmentType=false
 # ------------------------------------------------------------
 # loadSkillsDir.py
 # Python conversion of loadSkillsDir.ts (1087 lines)
