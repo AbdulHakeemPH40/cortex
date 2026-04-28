@@ -1,3 +1,4 @@
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportRedeclaration=false, reportAssignmentType=false, reportAttributeAccessIssue=information, reportInvalidTypeForm=information, reportConstantRedefinition=information, reportUnusedImport=information
 # ------------------------------------------------------------
 # bundledSkills.py
 # Python conversion of bundledSkills.ts
@@ -11,8 +12,7 @@ from __future__ import annotations
 import os
 import sys
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # Try to import from src, fallback to stubs
 try:
@@ -208,10 +208,10 @@ async def writeSkillFiles(
 
 # Get O_NOFOLLOW constant (may not exist on all platforms)
 try:
-    import fcntl
-    O_NOFOLLOW = getattr(os, 'O_NOFOLLOW', 0)
+    import fcntl  # noqa: F401
+    _O_NOFOLLOW = getattr(os, 'O_NOFOLLOW', 0)
 except ImportError:
-    O_NOFOLLOW = 0
+    _O_NOFOLLOW = 0
 
 # On Windows, use string flags — numeric O_EXCL can produce EINVAL through libuv.
 if sys.platform == 'win32':
@@ -221,7 +221,7 @@ else:
         os.O_WRONLY |
         os.O_CREAT |
         os.O_EXCL |
-        O_NOFOLLOW
+        _O_NOFOLLOW
     )
 
 
