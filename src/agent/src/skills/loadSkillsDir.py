@@ -79,23 +79,23 @@ except ImportError:
 
     def getAdditionalDirectoriesForCortexMd() -> List[str]: return []
     def getSessionId() -> str: return "test-session"
-    def logEvent(*args, **kwargs): pass
+    def logEvent(*_args: Any, **_kwargs: Any) -> None: pass
     def roughTokenCountEstimation(content: str, bytesPerToken: int = 4) -> int: return len(content) // bytesPerToken
-    def parseArgumentNames(argumentNames): return []
-    def substituteArguments(content: str, args, appendIfNoPlaceholder: bool = True, argumentNames = None): return content
-    def logForDebugging(msg, **kwargs): pass
-    def parseEffortValue(val): return None
+    def parseArgumentNames(_argumentNames: Any) -> List[str]: return []
+    def substituteArguments(content: str, _args: Any, appendIfNoPlaceholder: bool = True, _argumentNames: Any = None) -> str: return content
+    def logForDebugging(msg: str, **_kwargs: Any) -> None: pass
+    def parseEffortValue(_val: Any) -> None: return None
     EFFORT_LEVELS = ['minimal', 'medium', 'high']
-    def getCortexConfigHomeDir(): return os.path.expanduser("~/.cortex")
-    def isBareMode(): return False
-    def isEnvTruthy(val): return False
+    def getCortexConfigHomeDir() -> str: return os.path.expanduser("~/.cortex")
+    def isBareMode() -> bool: return False
+    def isEnvTruthy(_val: Any) -> bool: return False
     def isENOENT(e: Any) -> bool: return False
     def isFsInaccessible(e: Any) -> bool: return False
-    def coerceDescriptionToString(desc, name): return desc
-    def parseBooleanFrontmatter(val): return bool(val)
-    def parseFrontmatter(content: str, file_path: str = ''): return {'frontmatter': {}, 'content': content}
-    def parseShellFrontmatter(shell, name): return None
-    def splitPathInFrontmatter(paths): return paths if isinstance(paths, list) else []
+    def coerceDescriptionToString(desc: Any, _name: Any) -> Any: return desc
+    def parseBooleanFrontmatter(val: Any) -> bool: return bool(val)
+    def parseFrontmatter(content: str, _file_path: str = '') -> Dict[str, Any]: return {'frontmatter': {}, 'content': content}
+    def parseShellFrontmatter(_shell: Any, _name: Any) -> None: return None
+    def splitPathInFrontmatter(paths: Any) -> Any: return paths if isinstance(paths, list) else []
     def getFsImplementation() -> FsOperations:
         from ..utils.fsOperations import FsOperations as FsOps
         class MockFs(FsOps):
@@ -104,22 +104,22 @@ except ImportError:
             async def stat(self, path: str) -> Any: pass
         return MockFs()
     async def isPathGitignored(filePath: str, cwd: str) -> bool: return False
-    def logError(error): pass
-    def extractDescriptionFromMarkdown(content: str, defaultDescription: str = 'Custom item'): return defaultDescription
-    def getProjectDirsUpToHome(subdir: str, cwd: str): return []
-    async def loadMarkdownFilesForSubdir(subdir: str, cwd: str) -> List[Any]: return []
-    def parseSlashCommandToolsFromFrontmatter(toolsValue): return []
+    def logError(_error: Any) -> None: pass
+    def extractDescriptionFromMarkdown(content: str, _defaultDescription: str = 'Custom item') -> str: return _defaultDescription
+    def getProjectDirsUpToHome(_subdir: str, _cwd: str) -> List[str]: return []
+    async def loadMarkdownFilesForSubdir(_subdir: str, _cwd: str) -> List[Any]: return []
+    def parseSlashCommandToolsFromFrontmatter(_toolsValue: Any) -> List[str]: return []
     def parseUserSpecifiedModel(model_str: str) -> Optional[str]: return model_str
-    async def executeShellCommandsInPrompt(text: str, context, slashCommandName: str, shell = None): return text
-    def isSettingSourceEnabled(source): return True
-    def getManagedFilePath(): return os.path.expanduser("~/.cortex")
-    def isRestrictedToPluginOnly(surface: str) -> bool: return False
-    def HooksSchema(): 
+    async def executeShellCommandsInPrompt(text: str, _context: Any, _slashCommandName: str, _shell: Any = None) -> str: return text
+    def isSettingSourceEnabled(_source: Any) -> bool: return True
+    def getManagedFilePath() -> str: return os.path.expanduser("~/.cortex")
+    def isRestrictedToPluginOnly(_surface: str) -> bool: return False
+    def HooksSchema() -> Any: 
         class Schema:
             def safeParse(self, data: Any) -> ZodSafeParseResult:
                 return ZodSafeParseResult(success=True, data=data)
         return Schema()
-    def createSignal():
+    def createSignal() -> Any:
         class Signal:
             def subscribe(self, cb: Callable[[], None]) -> Callable[[], None]: return lambda: None
             def emit(self) -> None: pass
@@ -603,7 +603,7 @@ async def loadSkillsFromCommandsDir(cwd: str) -> List[SkillWithPath]:
 
         for file in processed_files:
             try:
-                base_dir: str = file.base_dir if hasattr(file, 'base_dir') else str(file.get('base_dir', ''))
+                _base_dir: str = file.base_dir if hasattr(file, 'base_dir') else str(file.get('base_dir', ''))
                 file_path: str = file.file_path if hasattr(file, 'file_path') else str(file.get('file_path', ''))
                 frontmatter: Dict[str, Any] = file.frontmatter if hasattr(file, 'frontmatter') else file.get('frontmatter', {})
                 content: str = file.content if hasattr(file, 'content') else str(file.get('content', ''))
