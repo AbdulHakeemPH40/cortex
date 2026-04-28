@@ -700,7 +700,6 @@ async def getSkillDirCommands(cwd: str) -> List[Command]:
 
     # Load from /skills/ directories, additional dirs, and legacy /commands/ in parallel
     # (all independent — different directories, no shared state)
-    import asyncio
     
     managed_skills_task = (
         asyncio.ensure_future(asyncio.coroutine(lambda: [])())
