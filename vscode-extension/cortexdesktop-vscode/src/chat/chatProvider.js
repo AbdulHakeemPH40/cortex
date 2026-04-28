@@ -25,12 +25,12 @@ async function openFileInEditor(filePath) {
 }
 
 function getLaunchConfig() {
-  const cfg = vscode.workspace.getConfiguration('openclaude');
-  const command = cfg.get('launchCommand', 'openclaude');
+  const cfg = vscode.workspace.getConfiguration('cortexdesktop');
+  const command = cfg.get('launchCommand', 'cortex');
   const shimEnabled = cfg.get('useOpenAIShim', false);
   const permissionMode = cfg.get('permissionMode', 'acceptEdits');
   const env = {};
-  if (shimEnabled) env.CLAUDE_CODE_USE_OPENAI = '1';
+  if (shimEnabled) env.CORTEX_CODE_USE_OPENAI = '1';
   const folders = vscode.workspace.workspaceFolders;
   const cwd = folders && folders.length > 0 ? folders[0].uri.fsPath : undefined;
   return { command, cwd, env, permissionMode };
@@ -458,7 +458,7 @@ class ChatController {
   }
 }
 
-class OpenClaudeChatViewProvider {
+class CortexDesktopChatViewProvider {
   constructor(chatController) {
     this._chatController = chatController;
     this._webviewView = null;
@@ -553,7 +553,7 @@ class OpenClaudeChatViewProvider {
   }
 }
 
-class OpenClaudeChatPanelManager {
+class CortexDesktopChatPanelManager {
   constructor(chatController) {
     this._chatController = chatController;
     this._panel = null;
@@ -566,8 +566,8 @@ class OpenClaudeChatPanelManager {
     }
 
     this._panel = vscode.window.createWebviewPanel(
-      'openclaude.chatPanel',
-      'OpenClaude Chat',
+      'cortexdesktop.chatPanel',
+      'Cortex Desktop Chat',
       vscode.ViewColumn.Beside,
       {
         enableScripts: true,
@@ -671,6 +671,6 @@ class OpenClaudeChatPanelManager {
 
 module.exports = {
   ChatController,
-  OpenClaudeChatViewProvider,
-  OpenClaudeChatPanelManager,
+  CortexDesktopChatViewProvider,
+  CortexDesktopChatPanelManager,
 };

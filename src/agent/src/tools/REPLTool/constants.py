@@ -74,7 +74,7 @@ def isReplModeEnabled() -> bool:
     Check if REPL mode is enabled.
     
     REPL mode is default-on for ants in the interactive AI agent (opt out with
-    CLAUDE_CODE_REPL=0). The legacy CLAUDE_REPL_MODE=1 also forces it on.
+    CORTEX_CODE_REPL=0). The legacy CORTEX_REPL_MODE=1 also forces it on.
     
     SDK entrypoints (sdk-ts, sdk-py, sdk-cli) are NOT defaulted on — SDK
     consumers script direct tool calls (Bash, Read, etc.) and REPL mode
@@ -83,23 +83,23 @@ def isReplModeEnabled() -> bool:
     of the env the caller passes.
     """
     # Check if explicitly disabled
-    if isEnvDefinedFalsy(os.environ.get('CLAUDE_CODE_REPL')):
+    if isEnvDefinedFalsy(os.environ.get('CORTEX_CODE_REPL')):
         return False
     
     # Check legacy env var
-    if isEnvTruthy(os.environ.get('CLAUDE_REPL_MODE')):
+    if isEnvTruthy(os.environ.get('CORTEX_REPL_MODE')):
         return True
     
     # Default: enabled for internal agents in AI agent mode
     user_type = os.environ.get('USER_TYPE', '')
-    entrypoint = os.environ.get('CLAUDE_CODE_ENTRYPOINT', '')
+    entrypoint = os.environ.get('CORTEX_CODE_ENTRYPOINT', '')
     
     return user_type == 'ant' and entrypoint == 'cli'
 
 
 # Tools that are only accessible via REPL when REPL mode is enabled.
-# When REPL mode is on, these tools are hidden from Claude's direct use,
-# forcing Claude to use REPL for batch operations.
+# When REPL mode is on, these tools are hidden from Cortex's direct use,
+# forcing Cortex to use REPL for batch operations.
 REPL_ONLY_TOOLS: Set[str] = {
     FILE_READ_TOOL_NAME,
     FILE_WRITE_TOOL_NAME,

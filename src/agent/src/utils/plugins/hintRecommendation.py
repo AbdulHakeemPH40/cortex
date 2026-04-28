@@ -3,7 +3,7 @@ Plugin-hint recommendations.
 
 Companion to lspRecommendation.py: where LSP recommendations are triggered
 by file edits, plugin hints are triggered by AI agent tools emitting a
-`<claude-code-hint />` tag (detected by the Bash/PowerShell tools).
+`<cortex-code-hint />` tag (detected by the Bash/PowerShell tools).
 
 State persists in GlobalConfig.cortexCodeHints — a show-once record per
 plugin and a disabled flag (user picked "don't show again"). Official-
@@ -19,7 +19,7 @@ from functools import lru_cache
 MAX_SHOWN_PLUGINS = 100
 
 @dataclass
-class ClaudeCodeHint:
+class CortexCodeHint:
     value: str
     source_command: str
 
@@ -40,7 +40,7 @@ class HintRecommendationSystem:
     def __init__(self):
         self.tried_this_session = set()
     
-    def maybe_record_plugin_hint(self, hint: ClaudeCodeHint) -> None:
+    def maybe_record_plugin_hint(self, hint: CortexCodeHint) -> None:
         """
         Pre-store gate called by shell tools when a `type="plugin"` hint is detected.
         Drops the hint if:
@@ -68,12 +68,12 @@ class HintRecommendationSystem:
         
         # Config state check
         config = self._get_global_config()
-        claude_hints = config.get('claudeCodeHints', {})
+        cortex_hints = config.get('cortexCodeHints', {})
         
-        if claude_hints.get('disabled', False):
+        if cortex_hints.get('disabled', False):
             return
         
-        shown_plugins = claude_hints.get('plugin', [])
+        shown_plugins = cortex_hints.get('plugin', [])
         if len(shown_plugins) >= MAX_SHOWN_PLUGINS:
             return
         
@@ -111,7 +111,7 @@ class HintRecommendationSystem:
     
     async def resolve_plugin_hint(
         self, 
-        hint: ClaudeCodeHint
+        hint: CortexCodeHint
     ) -> Optional[PluginHintRecommendation]:
         """
         Resolve the pending hint to a renderable recommendation. Runs the async
@@ -162,16 +162,16 @@ class HintRecommendationSystem:
             from config import saveGlobalConfig
             
             def update_config(current: Dict[str, Any]) -> Dict[str, Any]:
-                claude_hints = current.get('claudeCodeHints', {})
-                existing_plugins = claude_hints.get('plugin', [])
+                cortex_hints = current.get('cortexCodeHints', {})
+                existing_plugins = cortex_hints.get('plugin', [])
                 
                 if plugin_id in existing_plugins:
                     return current  # No change needed
                 
                 return {
                     **current,
-                    'claudeCodeHints': {
-                        **claude_hints,
+                    'cortexCodeHints': {
+                        **cortex_hints,
                         'plugin': [*existing_plugins, plugin_id]
                     }
                 }
@@ -190,14 +190,14 @@ class HintRecommendationSystem:
             from config import saveGlobalConfig
             
             def update_config(current: Dict[str, Any]) -> Dict[str, Any]:
-                claude_hints = current.get('claudeCodeHints', {})
+                cortex_hints = current.get('cortexCodeHints', {})
                 
-                if claude_hints.get('disabled', False):
+                if cortex_hints.get('disabled', False):
                     return current  # Already disabled
                 
                 return {
                     **current,
-                    'claudeCodeHints': {**claude_hints, 'disabled': True}
+                    'cortexCodeHints': {**cortex_hints, 'disabled': True}
                 }
             
             saveGlobalConfig(update_config)
@@ -223,7 +223,7 @@ class HintRecommendationSystem:
     def _has_shown_hint_this_session(self) -> bool:
         """Check if hint shown this session."""
         try:
-            from claudeCodeHints import hasShownHintThisSession
+            from cortexCodeHints import hasShownHintThisSession
             return hasShownHintThisSession()
         except ImportError:
             return False
@@ -234,7 +234,7 @@ class HintRecommendationSystem:
             from config import getGlobalConfig
             return getGlobalConfig()
         except ImportError:
-            return {'claudeCodeHints': {}}
+            return {'cortexCodeHints': {}}
     
     def _save_global_config(self, config: Dict[str, Any]) -> None:
         """Save global configuration.
@@ -301,10 +301,10 @@ class HintRecommendationSystem:
         except ImportError:
             return False
     
-    def _set_pending_hint(self, hint: ClaudeCodeHint) -> None:
+    def _set_pending_hint(self, hint: CortexCodeHint) -> None:
         """Set pending hint for later resolution."""
         try:
-            from claudeCodeHints import setPendingHint
+            from cortexCodeHints import setPendingHint
             setPendingHint(hint)
         except ImportError:
             pass
@@ -337,11 +337,11 @@ class HintRecommendationSystem:
 hint_system = HintRecommendationSystem()
 
 # Public API functions (mirroring TypeScript exports)
-def maybe_record_plugin_hint(hint: ClaudeCodeHint) -> None:
+def maybe_record_plugin_hint(hint: CortexCodeHint) -> None:
     """Public wrapper for synchronous hint recording."""
     hint_system.maybe_record_plugin_hint(hint)
 
-async def resolve_plugin_hint(hint: ClaudeCodeHint) -> Optional[PluginHintRecommendation]:
+async def resolve_plugin_hint(hint: CortexCodeHint) -> Optional[PluginHintRecommendation]:
     """Public wrapper for async hint resolution."""
     return await hint_system.resolve_plugin_hint(hint)
 
@@ -360,7 +360,7 @@ def _reset_hint_recommendation_for_testing() -> None:
 # Example usage
 if __name__ == "__main__":
     # Example 1: Synchronous hint recording
-    hint = ClaudeCodeHint(
+    hint = CortexCodeHint(
         value="python-linter@official",
         source_command="python my_script.py"
     )

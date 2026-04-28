@@ -144,6 +144,10 @@ MAX_ENTRYPOINT_BYTES = 25_000
 AUTO_MEM_DISPLAY_NAME = 'auto memory'
 
 
+async def load_memory_prompt() -> str:
+    return ""
+
+
 class EntrypointTruncation(TypedDict):
     """Truncation result for MEMORY.md content."""
     content: str
@@ -159,7 +163,7 @@ def truncateEntrypointContent(raw: str) -> EntrypointTruncation:
     that names which cap fired. Line-truncates first (natural boundary), then
     byte-truncates at the last newline before the cap so we don't cut mid-line.
     
-    Shared by buildMemoryPrompt and claudemd getMemoryFiles (previously
+    Shared by buildMemoryPrompt and cortexmd getMemoryFiles (previously
     duplicated the line-only logic).
     """
     trimmed = raw.strip()
@@ -482,7 +486,7 @@ def buildMemoryLines(
 def buildMemoryPrompt(params: Dict) -> str:
     """
     Build the typed-memory prompt with MEMORY.md content included.
-    Used by agent memory (which has no getClaudeMds() equivalent).
+    Used by agent memory (which has no getCortexMds() equivalent).
     """
     display_name = params['displayName']
     memory_dir = params['memoryDir']
@@ -532,7 +536,7 @@ def buildAssistantDailyLogPrompt(skip_index: bool = False) -> str:
     Assistant sessions are effectively perpetual, so the agent writes memories
     append-only to a date-named log file rather than maintaining MEMORY.md as
     a live index. A separate nightly /dream skill distills logs into topic
-    files + MEMORY.md. MEMORY.md is still loaded into context (via claudemd.ts)
+    files + MEMORY.md. MEMORY.md is still loaded into context (via cortexmd.ts)
     as the distilled index — this prompt only changes where NEW memories go.
     """
     memory_dir = getAutoMemPath()
@@ -611,7 +615,7 @@ async def loadMemoryPrompt() -> Optional[str]:
     # Cowork injects memory-policy text via env var; thread into all builders.
     cowork_extra_guidelines = (
         os.environ.get('CORTEX_MEMORY_EXTRA_GUIDELINES')
-        or os.environ.get('CLAUDE_COWORK_MEMORY_EXTRA_GUIDELINES')
+        or os.environ.get('CORTEX_COWORK_MEMORY_EXTRA_GUIDELINES')
     )
     extra_guidelines = (
         [cowork_extra_guidelines]
@@ -665,7 +669,7 @@ async def loadMemoryPrompt() -> Optional[str]:
         settings_enabled = getattr(settings_obj, 'autoMemoryEnabled', None)
     disabled_env = (
         isEnvTruthy(os.environ.get('CORTEX_DISABLE_AUTO_MEMORY'))
-        or isEnvTruthy(os.environ.get('CLAUDE_CODE_DISABLE_AUTO_MEMORY'))
+        or isEnvTruthy(os.environ.get('CORTEX_CODE_DISABLE_AUTO_MEMORY'))
     )
     logEvent('tengu_memdir_disabled', {
         'disabled_by_env_var': disabled_env,

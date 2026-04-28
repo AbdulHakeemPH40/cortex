@@ -261,17 +261,17 @@ def describe_mcp_config_file_path(scope: str) -> str:
         A description of where the config is stored
     """
     if scope == 'user':
-        return get_global_claude_file()
+        return get_global_cortex_file()
     elif scope == 'project':
         return str(Path.cwd() / '.mcp.json')
     elif scope == 'local':
-        return f"{get_global_claude_file()} [project: {os.getcwd()}]"
+        return f"{get_global_cortex_file()} [project: {os.getcwd()}]"
     elif scope == 'dynamic':
         return 'Dynamically configured'
     elif scope == 'enterprise':
         return get_enterprise_mcp_file_path()
     elif scope == 'cloud':
-        return 'claude.ai'
+        return 'cortex.ai'
     else:
         return scope
 
@@ -629,7 +629,7 @@ def extract_agent_mcp_servers(agents: List[Dict[str, Any]]) -> List[Dict[str, An
                 'url': config.get('url'),
                 'needs_auth': False,
             })
-        # Skip unsupported transport types (sdk, claudeai-proxy, sse-ide, ws-ide)
+        # Skip unsupported transport types (sdk, cortexai-proxy, sse-ide, ws-ide)
     
     return sorted(result, key=lambda x: x['name'])
 
@@ -664,11 +664,11 @@ def get_logging_safe_mcp_base_url(config: Dict[str, Any]) -> Optional[str]:
 
 
 # Placeholder functions - implement based on your architecture
-def get_global_claude_file() -> str:
-    """Get the global Claude config file path."""
+def get_global_cortex_file() -> str:
+    """Get the global Cortex config file path."""
     # TODO: Implement based on your config system
     home = os.path.expanduser('~')
-    return os.path.join(home, '.cortex', 'CLAUDE.md')
+    return os.path.join(home, '.cortex', 'CORTEX.md')
 
 
 def get_enterprise_mcp_file_path() -> str:

@@ -2,7 +2,7 @@
 services/oauth/oauthClient.py
 Python conversion of services/oauth/client.ts (567 lines)
 
-OAuth client for handling authentication flows with Claude services.
+OAuth client for handling authentication flows with Cortex services.
 Manages token exchange, refresh, profile fetching, and account storage.
 """
 
@@ -19,15 +19,15 @@ except ImportError:
 try:
     from ...constants.oauth import (
         ALL_OAUTH_SCOPES,
-        CLAUDE_AI_INFERENCE_SCOPE,
-        CLAUDE_AI_OAUTH_SCOPES,
+        CORTEX_AI_INFERENCE_SCOPE,
+        CORTEX_AI_OAUTH_SCOPES,
         get_oauth_config,
     )
 except ImportError:
     # Fallback constants for standalone testing
-    CLAUDE_AI_INFERENCE_SCOPE = 'claude:inference'
-    ALL_OAUTH_SCOPES = ['claude:inference', 'user:profile', 'org:read']
-    CLAUDE_AI_OAUTH_SCOPES = ['claude:inference', 'user:profile']
+    CORTEX_AI_INFERENCE_SCOPE = 'cortex:inference'
+    ALL_OAUTH_SCOPES = ['cortex:inference', 'user:profile', 'org:read']
+    CORTEX_AI_OAUTH_SCOPES = ['cortex:inference', 'user:profile']
     def get_oauth_config():
         return {}
 
@@ -106,8 +106,8 @@ class OAuthTokens:
 
 
 def should_use_cloud_ai_auth(scopes: Optional[list]) -> bool:
-    """Check if the user has Claude.ai authentication scope"""
-    return bool(scopes and CLAUDE_AI_INFERENCE_SCOPE in scopes)
+    """Check if the user has cortex.ai authentication scope"""
+    return bool(scopes and CORTEX_AI_INFERENCE_SCOPE in scopes)
 
 
 def parse_scopes(scope_string: Optional[str]) -> list:
@@ -122,7 +122,7 @@ def build_auth_url(
     state: str,
     port: int,
     is_manual: bool,
-    login_with_claude_ai: bool = False,
+    login_with_cortex_ai: bool = False,
     inference_only: bool = False,
     org_uuid: Optional[str] = None,
     login_hint: Optional[str] = None,
@@ -132,13 +132,13 @@ def build_auth_url(
     config = get_oauth_config()
     
     auth_url_base = (
-        config.get('CLAUDE_AI_AUTHORIZE_URL')
-        if login_with_claude_ai
+        config.get('CORTEX_AI_AUTHORIZE_URL')
+        if login_with_cortex_ai
         else config.get('CONSOLE_AUTHORIZE_URL')
     )
     
     params = {
-        'code': 'true',  # Show Claude Max upsell
+        'code': 'true',  # Show Cortex Max upsell
         'client_id': config.get('CLIENT_ID', ''),
         'response_type': 'code',
         'redirect_uri': (
@@ -147,7 +147,7 @@ def build_auth_url(
             else f'http://localhost:{port}/callback'
         ),
         'scope': ' '.join(
-            [CLAUDE_AI_INFERENCE_SCOPE]
+            [CORTEX_AI_INFERENCE_SCOPE]
             if inference_only
             else ALL_OAUTH_SCOPES
         ),
@@ -239,7 +239,7 @@ async def refresh_oauth_token(
         'refresh_token': refresh_token,
         'client_id': config.get('CLIENT_ID', ''),
         'scope': ' '.join(
-            scopes if scopes else CLAUDE_AI_OAUTH_SCOPES
+            scopes if scopes else CORTEX_AI_OAUTH_SCOPES
         ),
     }
     
@@ -424,10 +424,10 @@ async def fetch_profile_info(access_token: str) -> Optional[Dict[str, Any]]:
         
         # Map organization type to subscription type
         subscription_type_map = {
-            'claude_max': 'max',
-            'claude_pro': 'pro',
-            'claude_enterprise': 'enterprise',
-            'claude_team': 'team',
+            'cortex_max': 'max',
+            'cortex_pro': 'pro',
+            'cortex_enterprise': 'enterprise',
+            'cortex_team': 'team',
         }
         subscription_type = subscription_type_map.get(org_type)
         
@@ -476,9 +476,9 @@ async def populate_oauth_account_info_if_needed() -> bool:
     import os
     
     # Check env vars first
-    env_account_uuid = os.getenv('CLAUDE_CODE_ACCOUNT_UUID')
-    env_user_email = os.getenv('CLAUDE_CODE_USER_EMAIL')
-    env_organization_uuid = os.getenv('CLAUDE_CODE_ORGANIZATION_UUID')
+    env_account_uuid = os.getenv('CORTEX_CODE_ACCOUNT_UUID')
+    env_user_email = os.getenv('CORTEX_CODE_USER_EMAIL')
+    env_organization_uuid = os.getenv('CORTEX_CODE_ORGANIZATION_UUID')
     
     has_env_vars = bool(env_account_uuid and env_user_email and env_organization_uuid)
     

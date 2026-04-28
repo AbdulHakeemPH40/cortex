@@ -29,8 +29,8 @@ from ...utils.generators import all_
 # ============================================================
 
 def get_max_tool_use_concurrency() -> int:
-    """Read CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY from environment."""
-    val = os.environ.get("CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY", "")
+    """Read CORTEX_CODE_MAX_TOOL_USE_CONCURRENCY from environment."""
+    val = os.environ.get("CORTEX_CODE_MAX_TOOL_USE_CONCURRENCY", "")
     return int(val) if val.strip() else 10
 
 

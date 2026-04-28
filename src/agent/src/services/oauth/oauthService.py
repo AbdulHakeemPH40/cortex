@@ -84,7 +84,7 @@ class OAuthService:
         Args:
             auth_url_handler: Callback to handle auth URL (for manual flow)
             options: Optional configuration
-                - login_with_claude_ai: Use Claude.ai auth
+                - login_with_cortex_ai: Use cortex.ai auth
                 - inference_only: Request only inference scope
                 - expires_in: Token expiration time
                 - org_uuid: Organization UUID
@@ -111,7 +111,7 @@ class OAuthService:
             'code_challenge': code_challenge,
             'state': state,
             'port': self.port,
-            'login_with_claude_ai': options.get('login_with_claude_ai'),
+            'login_with_cortex_ai': options.get('login_with_cortex_ai'),
             'inference_only': options.get('inference_only'),
             'org_uuid': options.get('org_uuid'),
             'login_hint': options.get('login_hint'),

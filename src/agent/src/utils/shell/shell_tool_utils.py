@@ -25,9 +25,9 @@ def is_power_shell_tool_enabled() -> bool:
     from ..env_utils import is_env_truthy, is_env_defined_falsy
     
     if os.environ.get('USER_TYPE') == 'ant':
-        return not is_env_defined_falsy(os.environ.get('CLAUDE_CODE_USE_POWERSHELL_TOOL'))
+        return not is_env_defined_falsy(os.environ.get('CORTEX_CODE_USE_POWERSHELL_TOOL'))
     else:
-        return is_env_truthy(os.environ.get('CLAUDE_CODE_USE_POWERSHELL_TOOL'))
+        return is_env_truthy(os.environ.get('CORTEX_CODE_USE_POWERSHELL_TOOL'))
 
 
 __all__ = ['SHELL_TOOL_NAMES', 'is_power_shell_tool_enabled']

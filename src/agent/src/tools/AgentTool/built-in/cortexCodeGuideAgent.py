@@ -1,15 +1,15 @@
 # cortex_code_guide_agent.py
 """
-Cortex IDE Guide agent - helps users understand and use the Cortex IDE.
+Cortex AI Agent Guide agent - helps users understand and use the Cortex AI Agent.
 
 Features:
 - Agent type: ``cortex-code-guide``.
-- Multi‑LLM support: Claude (Anthropic), GPT/Codex (OpenAI), Gemini (Google), 
+- Multi‑LLM support: Calude (Anthropic), GPT/Codex (OpenAI), Gemini (Google), 
   Grok, and DeepSeek (via OpenAI SDK compatibility).
 - Conditional tool list based on embedded search support.
 - Dynamic system prompt incorporating custom skills, agents, MCP servers,
   plugin commands, and user settings.
-- Focuses on Cortex IDE features and LLM provider integration.
+- Focuses on Cortex AI Agent features and LLM provider integration.
 """
 
 from __future__ import annotations
@@ -32,19 +32,19 @@ from ....utils.settings.settings import get_settings_deprecated
 # ----------------------------------------------------------------------
 # Documentation URLs (placeholders – replace with real URLs)
 # ----------------------------------------------------------------------
-CLAUDE_CODE_DOCS_MAP_URL = "https://code.cortex.com/docs/en/claude_code_docs_map.md"
+CORTEX_CODE_DOCS_MAP_URL = "https://code.cortex.com/docs/en/cortex_code_docs_map.md"
 CDP_DOCS_MAP_URL = "https://platform.cortex.com/llms.txt"
 
 # ----------------------------------------------------------------------
 # Agent identifiers
 # ----------------------------------------------------------------------
-CLAUDE_CODE_GUIDE_AGENT_TYPE = "claude-code-guide"
+CORTEX_CODE_GUIDE_AGENT_TYPE = "cortex-code-guide"
 
 # ----------------------------------------------------------------------
 # Multi‑LLM support
 # ----------------------------------------------------------------------
 SUPPORTED_MODELS: Dict[str, str] = {
-    "anthropic": "Claude (Anthropic)",
+    "anthropic": "Cortex (Anthropic)",
     "openai-codex": "OpenAI Codex",
     "mistral": "Mistral",
     "deepseek": "DeepSeek (uses OpenAI SDK)",
@@ -70,37 +70,37 @@ def _local_search_hint() -> str:
     return f"{FILE_READ_TOOL_NAME}, {GLOB_TOOL_NAME}, and {GREP_TOOL_NAME}"
 
 def get_cortex_code_guide_base_prompt() -> str:
-    """Core system prompt describing Cortex IDE's expertise and docs sources."""
+    """Core system prompt describing Cortex AI Agent's expertise and docs sources."""
     local_search = _local_search_hint()
     return f"""You are the Cortex guide agent. Your primary responsibility is helping users understand
-and use the Cortex IDE effectively.
+and use the Cortex AI Agent effectively.
 
 Cortex is an intelligent development environment that connects to industry-leading LLM providers
-including Claude (Anthropic), GPT/Codex (OpenAI), Gemini (Google), Grok, and DeepSeek.
+including Cortex (Anthropic), GPT/Codex (OpenAI), Gemini (Google), Grok, and DeepSeek.
 Each model uses its native SDK - DeepSeek uses the OpenAI SDK compatibility layer.
 
 **Your expertise:**
 
-1. **Cortex IDE Features**: Installation, configuration, custom skills, MCP servers,
+1. **Cortex AI Agent Features**: Installation, configuration, custom skills, MCP servers,
    keyboard shortcuts, settings, workflows, and multi-model support.
 
 2. **Model Integration**: How Cortex connects to different LLM providers through their
    official SDKs (Anthropic SDK, OpenAI SDK, Google AI SDK, etc.).
 
 3. **Development Workflow**: Using AI assistance for coding, debugging, refactoring,
-   testing, and documentation within the Cortex IDE.
+   testing, and documentation within the Cortex AI Agent.
 
 **Documentation sources:**
 
-- **Cortex IDE docs** ({CLAUDE_CODE_DOCS_MAP_URL}): Installation, setup, configuration,
+- **Cortex AI Agent docs** ({CORTEX_CODE_DOCS_MAP_URL}): Installation, setup, configuration,
   custom skills, MCP servers, settings, keyboard shortcuts, model switching, plugins,
   and security.
 
 - **Model-specific docs**: Official SDK documentation for each supported provider
-  (Claude, OpenAI, Gemini, Grok, DeepSeek) accessible via {WEB_FETCH_TOOL_NAME}.
+  (Cortex, OpenAI, Gemini, Grok, DeepSeek) accessible via {WEB_FETCH_TOOL_NAME}.
 
 **Approach:**
-1. Understand if the question is about Cortex IDE features or specific model usage.
+1. Understand if the question is about Cortex AI Agent features or specific model usage.
 2. Use {WEB_FETCH_TOOL_NAME} to fetch relevant documentation.
 3. Provide clear, practical guidance with examples.
 4. For model-specific questions, reference the appropriate SDK docs.
@@ -219,13 +219,13 @@ def _determine_tool_list() -> List[str]:
 # ----------------------------------------------------------------------
 # Exported agent definition
 # ----------------------------------------------------------------------
-CLAUDE_CODE_GUIDE_AGENT = BuiltInAgentDefinition(
-    agent_type=CLAUDE_CODE_GUIDE_AGENT_TYPE,
+CORTEX_CODE_GUIDE_AGENT = BuiltInAgentDefinition(
+    agent_type=CORTEX_CODE_GUIDE_AGENT_TYPE,
     when_to_use=(
         "Use this agent when the user asks questions (e.g., \"Can Cortex...\", "
-        "\"Does Cortex...\", \"How do I...\") about: (1) Cortex IDE features – "
+        "\"Does Cortex...\", \"How do I...\") about: (1) Cortex AI Agent features – "
         "installation, configuration, custom skills, MCP servers, settings, shortcuts, "
-        "model switching; (2) LLM provider integration – using Claude, OpenAI, Gemini, "
+        "model switching; (2) LLM provider integration – using Cortex, OpenAI, Gemini, "
         "Grok, or DeepSeek within Cortex; (3) Development workflows – coding, debugging, "
         "refactoring with AI assistance. "
         f"**IMPORTANT:** Before spawning a new agent, check if there is already a running "

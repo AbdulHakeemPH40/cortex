@@ -7,7 +7,7 @@
 # - Coordinator system prompt (in coordinator mode)
 # - Agent system prompt (appended or replaces default, proactive-aware)
 # - Custom system prompt (from --system-prompt flag)
-# - Default system prompt (standard Claude Code prompt)
+# - Default system prompt (standard Cortex Code prompt)
 # - Append system prompt (always appended at end)
 # ------------------------------------------------------------
 
@@ -98,14 +98,14 @@ def build_effective_system_prompt(
        - In proactive mode: APPENDED to default (agent adds domain instructions)
        - Otherwise: REPLACES default
     4. Custom system prompt — if specified via --system-prompt
-    5. Default system prompt — standard Claude Code prompt
+    5. Default system prompt — standard Cortex Code prompt
     6. appendSystemPrompt — ALWAYS appended at the end (except when override is set)
 
     Args:
         main_thread_agent_definition: Agent definition for main thread agent
         tool_use_context: Tool use context (options subset)
         custom_system_prompt: Custom prompt from --system-prompt flag
-        default_system_prompt: Standard Claude Code prompt sections
+        default_system_prompt: Standard Cortex Code prompt sections
         append_system_prompt: Always appended at end
         override_system_prompt: If set, replaces everything
 
@@ -120,7 +120,7 @@ def build_effective_system_prompt(
     # Uses inline env check to avoid circular dependency at module load time
     if (
         feature("COORDINATOR_MODE") and
-        is_env_truthy(os.environ.get("CLAUDE_CODE_COORDINATOR_MODE")) and
+        is_env_truthy(os.environ.get("CORTEX_CODE_COORDINATOR_MODE")) and
         not main_thread_agent_definition
     ):
         parts: List[str] = [get_coordinator_system_prompt()]

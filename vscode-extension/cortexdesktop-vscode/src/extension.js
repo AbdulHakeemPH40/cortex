@@ -2,6 +2,8 @@ const vscode = require('vscode');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const http = require('node:http');
+const { URL } = require('node:url');
 
 const {
   chooseLaunchWorkspace,
@@ -12,13 +14,13 @@ const {
   resolveCommandCheckPath,
 } = require('./state');
 const { buildControlCenterViewModel } = require('./presentation');
-const { ChatController, OpenClaudeChatViewProvider, OpenClaudeChatPanelManager } = require('./chat/chatProvider');
+const { ChatController, CortexDesktopChatViewProvider, CortexDesktopChatPanelManager } = require('./chat/chatProvider');
 const { SessionManager } = require('./chat/sessionManager');
 const { DiffContentProvider, SCHEME: DIFF_SCHEME } = require('./chat/diffController');
 
-const OPENCLAUDE_REPO_URL = 'https://github.com/Gitlawb/openclaude';
-const OPENCLAUDE_SETUP_URL = 'https://github.com/Gitlawb/openclaude/blob/main/README.md#quick-start';
-const PROFILE_FILE_NAME = '.openclaude-profile.json';
+const CORTEXDESKTOP_REPO_URL = 'https://github.com/';
+const CORTEXDESKTOP_SETUP_URL = 'https://github.com/';
+const PROFILE_FILE_NAME = '.cortex-profile.json';
 
 function escapeHtml(value) {
   return String(value)
@@ -134,6 +136,342 @@ function resolveLaunchTargets({ activeFilePath, workspacePath, workspaceSourceLa
   };
 }
 
+function createLspBridge() {
+  let server = null;
+  let runningPort = null;
+  let config = {
+    enabled: false,
+    port: 53999,
+    authToken: '',
+  };
+
+  function loadConfig() {
+    const cfg = vscode.workspace.getConfiguration('cortexdesktop');
+    const enabled = Boolean(cfg.get('lspBridge.enabled', false));
+    const port = Number(cfg.get('lspBridge.port', 53999));
+    const authToken = String(cfg.get('lspBridge.authToken', '') || '').trim();
+    return {
+      enabled,
+      port: Number.isFinite(port) ? port : 53999,
+      authToken,
+    };
+  }
+
+  function serializePosition(pos) {
+    return pos ? { line: pos.line, character: pos.character } : null;
+  }
+
+  function serializeRange(range) {
+    if (!range) return null;
+    return {
+      start: serializePosition(range.start),
+      end: serializePosition(range.end),
+    };
+  }
+
+  function serializeUri(uri) {
+    return uri ? uri.toString() : null;
+  }
+
+  function serializeLocation(loc) {
+    if (!loc) return null;
+    return {
+      uri: serializeUri(loc.uri),
+      range: serializeRange(loc.range),
+    };
+  }
+
+  function serializeLocationLink(link) {
+    if (!link) return null;
+    return {
+      targetUri: serializeUri(link.targetUri),
+      targetRange: serializeRange(link.targetRange),
+      targetSelectionRange: serializeRange(link.targetSelectionRange),
+      originSelectionRange: serializeRange(link.originSelectionRange),
+    };
+  }
+
+  function serializeDocumentSymbol(symbol) {
+    return {
+      name: symbol.name,
+      detail: symbol.detail || '',
+      kind: symbol.kind,
+      tags: symbol.tags || [],
+      range: serializeRange(symbol.range),
+      selectionRange: serializeRange(symbol.selectionRange),
+      children: Array.isArray(symbol.children) ? symbol.children.map(serializeDocumentSymbol) : [],
+    };
+  }
+
+  function serializeSymbolInformation(symbol) {
+    return {
+      name: symbol.name,
+      kind: symbol.kind,
+      tags: symbol.tags || [],
+      containerName: symbol.containerName || '',
+      location: serializeLocation(symbol.location),
+    };
+  }
+
+  function serializeDiagnostic(d) {
+    return {
+      range: serializeRange(d.range),
+      severity: d.severity ?? null,
+      code: d.code ?? null,
+      source: d.source ?? null,
+      message: d.message ?? '',
+    };
+  }
+
+  function normalizeUri(payload) {
+    const rawUri = payload && typeof payload.uri === 'string' ? payload.uri : null;
+    if (rawUri) {
+      return vscode.Uri.parse(rawUri);
+    }
+    const rawPath = payload && typeof payload.path === 'string' ? payload.path : null;
+    if (rawPath) {
+      return vscode.Uri.file(rawPath);
+    }
+    return null;
+  }
+
+  function normalizePosition(payload) {
+    const pos = payload && payload.position ? payload.position : null;
+    const line = pos && Number.isFinite(pos.line) ? pos.line : null;
+    const character = pos && Number.isFinite(pos.character) ? pos.character : null;
+    if (line === null || character === null) return null;
+    return new vscode.Position(line, character);
+  }
+
+  function sendJson(res, statusCode, payload) {
+    const body = Buffer.from(JSON.stringify(payload));
+    res.writeHead(statusCode, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Length': body.length,
+      'Cache-Control': 'no-store',
+    });
+    res.end(body);
+  }
+
+  function readJson(req, maxBytes = 1_000_000) {
+    return new Promise((resolve, reject) => {
+      let total = 0;
+      const chunks = [];
+      req.on('data', chunk => {
+        total += chunk.length;
+        if (total > maxBytes) {
+          reject(new Error('Payload too large'));
+          req.destroy();
+          return;
+        }
+        chunks.push(chunk);
+      });
+      req.on('end', () => {
+        if (chunks.length === 0) {
+          resolve({});
+          return;
+        }
+        const raw = Buffer.concat(chunks).toString('utf8');
+        try {
+          resolve(JSON.parse(raw));
+        } catch {
+          reject(new Error('Invalid JSON'));
+        }
+      });
+      req.on('error', reject);
+    });
+  }
+
+  function isAuthorized(req) {
+    if (!config.authToken) return true;
+    const header = String(req.headers.authorization || '');
+    return header === `Bearer ${config.authToken}`;
+  }
+
+  async function handleHealth(_payload) {
+    return { ok: true, port: runningPort };
+  }
+
+  async function handleDiagnostics(payload) {
+    const uri = normalizeUri(payload);
+    if (uri) {
+      const diagnostics = vscode.languages.getDiagnostics(uri).map(serializeDiagnostic);
+      return { uri: uri.toString(), diagnostics };
+    }
+    const entries = vscode.languages.getDiagnostics().map(([docUri, list]) => ({
+      uri: docUri.toString(),
+      diagnostics: list.map(serializeDiagnostic),
+    }));
+    return { diagnostics: entries };
+  }
+
+  async function handleDocumentSymbols(payload) {
+    const uri = normalizeUri(payload);
+    if (!uri) {
+      throw new Error('Missing uri');
+    }
+    await vscode.workspace.openTextDocument(uri);
+    const result = await vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', uri);
+    const symbols = Array.isArray(result) ? result : [];
+    const isDocumentSymbol = symbols.length > 0 && typeof symbols[0]?.range === 'object';
+    return {
+      uri: uri.toString(),
+      symbols: isDocumentSymbol
+        ? symbols.map(serializeDocumentSymbol)
+        : symbols.map(serializeSymbolInformation),
+      format: isDocumentSymbol ? 'DocumentSymbol[]' : 'SymbolInformation[]',
+    };
+  }
+
+  async function handleDefinition(payload) {
+    const uri = normalizeUri(payload);
+    const position = normalizePosition(payload);
+    if (!uri || !position) throw new Error('Missing uri or position');
+    await vscode.workspace.openTextDocument(uri);
+    const result = await vscode.commands.executeCommand('vscode.executeDefinitionProvider', uri, position);
+    const locations = Array.isArray(result) ? result : result ? [result] : [];
+    const isLink = locations.length > 0 && locations[0] && typeof locations[0] === 'object' && 'targetUri' in locations[0];
+    return {
+      uri: uri.toString(),
+      position: serializePosition(position),
+      locations: isLink ? locations.map(serializeLocationLink) : locations.map(serializeLocation),
+      format: isLink ? 'LocationLink[]' : 'Location[]',
+    };
+  }
+
+  async function handleReferences(payload) {
+    const uri = normalizeUri(payload);
+    const position = normalizePosition(payload);
+    const includeDeclaration = Boolean(payload && payload.includeDeclaration);
+    if (!uri || !position) throw new Error('Missing uri or position');
+    await vscode.workspace.openTextDocument(uri);
+    const result = await vscode.commands.executeCommand(
+      'vscode.executeReferenceProvider',
+      uri,
+      position,
+      { includeDeclaration },
+    );
+    const locations = Array.isArray(result) ? result : [];
+    return {
+      uri: uri.toString(),
+      position: serializePosition(position),
+      includeDeclaration,
+      locations: locations.map(serializeLocation),
+    };
+  }
+
+  async function handleHover(payload) {
+    const uri = normalizeUri(payload);
+    const position = normalizePosition(payload);
+    if (!uri || !position) throw new Error('Missing uri or position');
+    await vscode.workspace.openTextDocument(uri);
+    const result = await vscode.commands.executeCommand('vscode.executeHoverProvider', uri, position);
+    const hovers = Array.isArray(result) ? result : [];
+    const normalized = hovers.map(h => ({
+      range: serializeRange(h.range),
+      contents: Array.isArray(h.contents)
+        ? h.contents.map(c => (typeof c === 'string' ? c : c.value ?? String(c)))
+        : [],
+    }));
+    return { uri: uri.toString(), position: serializePosition(position), hovers: normalized };
+  }
+
+  function route(pathname) {
+    switch (pathname) {
+      case '/health':
+        return handleHealth;
+      case '/diagnostics':
+        return handleDiagnostics;
+      case '/documentSymbols':
+        return handleDocumentSymbols;
+      case '/definition':
+        return handleDefinition;
+      case '/references':
+        return handleReferences;
+      case '/hover':
+        return handleHover;
+      default:
+        return null;
+    }
+  }
+
+  async function start() {
+    if (server) return;
+    if (!config.enabled) return;
+    server = http.createServer(async (req, res) => {
+      try {
+        if (req.method !== 'POST') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        if (!isAuthorized(req)) {
+          sendJson(res, 401, { ok: false, error: 'Unauthorized' });
+          return;
+        }
+        const url = new URL(req.url || '/', 'http://127.0.0.1');
+        const handler = route(url.pathname);
+        if (!handler) {
+          sendJson(res, 404, { ok: false, error: 'Not found' });
+          return;
+        }
+        const payload = await readJson(req);
+        const result = await handler(payload);
+        sendJson(res, 200, { ok: true, result });
+      } catch (err) {
+        sendJson(res, 500, { ok: false, error: String(err && err.message ? err.message : err) });
+      }
+    });
+
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(config.port, '127.0.0.1', () => {
+        runningPort = config.port;
+        resolve();
+      });
+    });
+  }
+
+  async function stop() {
+    if (!server) return;
+    const toClose = server;
+    server = null;
+    runningPort = null;
+    await new Promise(resolve => {
+      toClose.close(() => resolve());
+    });
+  }
+
+  async function refreshConfig() {
+    const next = loadConfig();
+    const needsRestart = server && (
+      next.port !== config.port ||
+      next.authToken !== config.authToken ||
+      !next.enabled
+    );
+    config = next;
+    if (needsRestart) {
+      await stop();
+    }
+    if (config.enabled && !server) {
+      try {
+        await start();
+      } catch (err) {
+        await vscode.window.showErrorMessage(
+          `Cortex Desktop LSP bridge failed to start on port ${config.port}: ${String(err && err.message ? err.message : err)}`,
+        );
+        await stop();
+      }
+    }
+  }
+
+  return {
+    refreshConfig,
+    dispose: () => {
+      void stop();
+    },
+  };
+}
+
 function resolveLaunchWorkspace() {
   return chooseLaunchWorkspace({
     activeWorkspacePath: getActiveWorkspacePath(),
@@ -204,9 +542,9 @@ function readWorkspaceProfile(profilePath) {
 }
 
 async function collectControlCenterState() {
-  const configured = vscode.workspace.getConfiguration('openclaude');
-  const launchCommand = configured.get('launchCommand', 'openclaude');
-  const terminalName = configured.get('terminalName', 'OpenClaude');
+  const configured = vscode.workspace.getConfiguration('cortexdesktop');
+  const launchCommand = configured.get('launchCommand', 'cortex');
+  const terminalName = configured.get('terminalName', 'Cortex Desktop');
   const shimEnabled = configured.get('useOpenAIShim', false);
   const executable = getExecutableFromCommand(launchCommand);
   const launchWorkspace = resolveLaunchWorkspace();
@@ -262,11 +600,11 @@ async function collectControlCenterState() {
   };
 }
 
-async function launchOpenClaude(options = {}) {
+async function launchCortexDesktop(options = {}) {
   const { requireWorkspace = false } = options;
-  const configured = vscode.workspace.getConfiguration('openclaude');
-  const launchCommand = configured.get('launchCommand', 'openclaude');
-  const terminalName = configured.get('terminalName', 'OpenClaude');
+  const configured = vscode.workspace.getConfiguration('cortexdesktop');
+  const launchCommand = configured.get('launchCommand', 'cortex');
+  const terminalName = configured.get('terminalName', 'Cortex Desktop');
   const shimEnabled = configured.get('useOpenAIShim', false);
   const executable = getExecutableFromCommand(launchCommand);
   const launchWorkspace = resolveLaunchWorkspace();
@@ -291,15 +629,15 @@ async function launchOpenClaude(options = {}) {
 
   if (!installed) {
     const action = await vscode.window.showErrorMessage(
-      `OpenClaude command not found: ${executable}. Install it with: npm install -g @gitlawb/openclaude`,
+      `Cortex Desktop command not found: ${executable}.`,
       'Open Setup Guide',
       'Open Repository',
     );
 
     if (action === 'Open Setup Guide') {
-      await vscode.env.openExternal(vscode.Uri.parse(OPENCLAUDE_SETUP_URL));
+      await vscode.env.openExternal(vscode.Uri.parse(CORTEXDESKTOP_SETUP_URL));
     } else if (action === 'Open Repository') {
-      await vscode.env.openExternal(vscode.Uri.parse(OPENCLAUDE_REPO_URL));
+      await vscode.env.openExternal(vscode.Uri.parse(CORTEXDESKTOP_REPO_URL));
     }
 
     return;
@@ -307,7 +645,7 @@ async function launchOpenClaude(options = {}) {
 
   const env = {};
   if (shimEnabled) {
-    env.CLAUDE_CODE_USE_OPENAI = '1';
+    env.CORTEX_CODE_USE_OPENAI = '1';
   }
 
   const terminalOptions = {
@@ -423,7 +761,7 @@ function getWorkspaceRootActionDetail(status, fallbackDetail) {
   }
 
   if (status.launchActionsShareTargetReason === 'relative-launch-command') {
-    return `Same workspace-root target as Launch OpenClaude because the relative command resolves from the workspace root · ${status.workspaceRootCwdLabel}`;
+    return `Same workspace-root target as Launch Cortex Desktop because the relative command resolves from the workspace root · ${status.workspaceRootCwdLabel}`;
   }
 
   return `Always starts at the workspace root · ${status.workspaceRootCwdLabel}`;
@@ -841,7 +1179,7 @@ function renderControlCenterHtml(status, options = {}) {
         <div class="hero-top">
           <div class="brand">
             <div class="eyebrow">${escapeHtml(viewModel.header.eyebrow)}</div>
-            <div class="wordmark" aria-label="OpenClaude wordmark">Open<span class="wordmark-accent">Claude</span></div>
+            <div class="wordmark" aria-label="Cortex Desktop wordmark">Cortex<span class="wordmark-accent">Desktop</span></div>
             <div class="headline">
               <h1 class="headline-title" id="control-center-title">${escapeHtml(viewModel.header.title)}</h1>
               <p class="headline-subtitle">${escapeHtml(viewModel.header.subtitle)}</p>
@@ -881,11 +1219,11 @@ function renderControlCenterHtml(status, options = {}) {
             </button>
             <button class="support-link" id="repo" type="button">
               <span class="support-link-label">Open Repository</span>
-              <span class="summary-detail">Browse the upstream OpenClaude project.</span>
+              <span class="summary-detail">Browse the Cortex Desktop project.</span>
             </button>
             <button class="support-link" id="commands" type="button">
               <span class="support-link-label">Open Command Palette</span>
-              <span class="summary-detail">Access VS Code and OpenClaude commands quickly.</span>
+              <span class="summary-detail">Access VS Code and Cortex Desktop commands quickly.</span>
             </button>
           </div>
         </section>
@@ -915,7 +1253,7 @@ function renderControlCenterHtml(status, options = {}) {
 </html>`;
 }
 
-class OpenClaudeControlCenterProvider {
+class CortexDesktopControlCenterProvider {
   constructor() {
     this.webviewView = null;
   }
@@ -933,19 +1271,19 @@ class OpenClaudeControlCenterProvider {
     webviewView.webview.onDidReceiveMessage(async message => {
       switch (message?.type) {
         case 'launch':
-          await launchOpenClaude();
+          await launchCortexDesktop();
           break;
         case 'launchRoot':
-          await launchOpenClaude({ requireWorkspace: true });
+          await launchCortexDesktop({ requireWorkspace: true });
           break;
         case 'openProfile':
           await openWorkspaceProfile();
           break;
         case 'repo':
-          await vscode.env.openExternal(vscode.Uri.parse(OPENCLAUDE_REPO_URL));
+          await vscode.env.openExternal(vscode.Uri.parse(CORTEXDESKTOP_REPO_URL));
           break;
         case 'setup':
-          await vscode.env.openExternal(vscode.Uri.parse(OPENCLAUDE_SETUP_URL));
+          await vscode.env.openExternal(vscode.Uri.parse(CORTEXDESKTOP_SETUP_URL));
           break;
         case 'commands':
           await vscode.commands.executeCommand('workbench.action.showCommands');
@@ -1045,10 +1383,13 @@ class OpenClaudeControlCenterProvider {
  */
 function activate(context) {
   // ── Control Center (existing) ──
-  const provider = new OpenClaudeControlCenterProvider();
+  const provider = new CortexDesktopControlCenterProvider();
   const refreshProvider = () => {
     void provider.refresh();
   };
+
+  const lspBridge = createLspBridge();
+  void lspBridge.refreshConfig();
 
   // ── Chat system ──
   const sessionManager = new SessionManager();
@@ -1058,8 +1399,8 @@ function activate(context) {
   }
 
   const chatController = new ChatController(sessionManager);
-  const chatViewProvider = new OpenClaudeChatViewProvider(chatController);
-  const chatPanelManager = new OpenClaudeChatPanelManager(chatController);
+  const chatViewProvider = new CortexDesktopChatViewProvider(chatController);
+  const chatPanelManager = new CortexDesktopChatPanelManager(chatController);
 
   // ── Diff content provider ──
   const diffProvider = new DiffContentProvider();
@@ -1073,73 +1414,73 @@ function activate(context) {
     vscode.StatusBarAlignment.Right,
     100,
   );
-  statusBarItem.text = '$(comment-discussion) OpenClaude';
-  statusBarItem.tooltip = 'Open OpenClaude Chat';
-  statusBarItem.command = 'openclaude.openChat';
+  statusBarItem.text = '$(comment-discussion) Cortex Desktop';
+  statusBarItem.tooltip = 'Open Cortex Desktop Chat';
+  statusBarItem.command = 'cortexdesktop.openChat';
   statusBarItem.show();
 
   chatController.onDidChangeState((state) => {
     switch (state) {
       case 'streaming':
-        statusBarItem.text = '$(sync~spin) OpenClaude';
-        statusBarItem.tooltip = 'OpenClaude is generating...';
+        statusBarItem.text = '$(sync~spin) Cortex Desktop';
+        statusBarItem.tooltip = 'Cortex Desktop is generating...';
         break;
       case 'connected':
-        statusBarItem.text = '$(comment-discussion) OpenClaude';
-        statusBarItem.tooltip = 'OpenClaude connected';
+        statusBarItem.text = '$(comment-discussion) Cortex Desktop';
+        statusBarItem.tooltip = 'Cortex Desktop connected';
         break;
       default:
-        statusBarItem.text = '$(comment-discussion) OpenClaude';
-        statusBarItem.tooltip = 'Open OpenClaude Chat';
+        statusBarItem.text = '$(comment-discussion) Cortex Desktop';
+        statusBarItem.tooltip = 'Open Cortex Desktop Chat';
         break;
     }
   });
 
   // ── Existing commands ──
-  const startCommand = vscode.commands.registerCommand('openclaude.start', async () => {
-    await launchOpenClaude();
+  const startCommand = vscode.commands.registerCommand('cortexdesktop.start', async () => {
+    await launchCortexDesktop();
   });
 
   const startInWorkspaceRootCommand = vscode.commands.registerCommand(
-    'openclaude.startInWorkspaceRoot',
+    'cortexdesktop.startInWorkspaceRoot',
     async () => {
-      await launchOpenClaude({ requireWorkspace: true });
+      await launchCortexDesktop({ requireWorkspace: true });
     },
   );
 
-  const openDocsCommand = vscode.commands.registerCommand('openclaude.openDocs', async () => {
-    await vscode.env.openExternal(vscode.Uri.parse(OPENCLAUDE_REPO_URL));
+  const openDocsCommand = vscode.commands.registerCommand('cortexdesktop.openDocs', async () => {
+    await vscode.env.openExternal(vscode.Uri.parse(CORTEXDESKTOP_REPO_URL));
   });
 
   const openSetupDocsCommand = vscode.commands.registerCommand(
-    'openclaude.openSetupDocs',
+    'cortexdesktop.openSetupDocs',
     async () => {
-      await vscode.env.openExternal(vscode.Uri.parse(OPENCLAUDE_SETUP_URL));
+      await vscode.env.openExternal(vscode.Uri.parse(CORTEXDESKTOP_SETUP_URL));
     },
   );
 
   const openWorkspaceProfileCommand = vscode.commands.registerCommand(
-    'openclaude.openWorkspaceProfile',
+    'cortexdesktop.openWorkspaceProfile',
     async () => {
       await openWorkspaceProfile();
     },
   );
 
-  const openUiCommand = vscode.commands.registerCommand('openclaude.openControlCenter', async () => {
-    await vscode.commands.executeCommand('workbench.view.extension.openclaude');
+  const openUiCommand = vscode.commands.registerCommand('cortexdesktop.openControlCenter', async () => {
+    await vscode.commands.executeCommand('workbench.view.extension.cortexdesktop');
   });
 
   // ── New chat commands ──
-  const newChatCommand = vscode.commands.registerCommand('openclaude.newChat', () => {
+  const newChatCommand = vscode.commands.registerCommand('cortexdesktop.newChat', () => {
     chatController.stopSession();
     chatController.broadcast({ type: 'session_cleared' });
   });
 
-  const openChatCommand = vscode.commands.registerCommand('openclaude.openChat', () => {
+  const openChatCommand = vscode.commands.registerCommand('cortexdesktop.openChat', () => {
     chatPanelManager.openPanel();
   });
 
-  const resumeSessionCommand = vscode.commands.registerCommand('openclaude.resumeSession', async () => {
+  const resumeSessionCommand = vscode.commands.registerCommand('cortexdesktop.resumeSession', async () => {
     const sessions = await sessionManager.listSessions();
     if (sessions.length === 0) {
       await vscode.window.showInformationMessage('No sessions found to resume.');
@@ -1161,18 +1502,18 @@ function activate(context) {
     }
   });
 
-  const abortChatCommand = vscode.commands.registerCommand('openclaude.abortChat', () => {
+  const abortChatCommand = vscode.commands.registerCommand('cortexdesktop.abortChat', () => {
     chatController.abort();
   });
 
   // ── Register providers ──
   const controlCenterProviderReg = vscode.window.registerWebviewViewProvider(
-    'openclaude.controlCenter',
+    'cortexdesktop.controlCenter',
     provider,
   );
 
   const chatViewProviderReg = vscode.window.registerWebviewViewProvider(
-    'openclaude.chat',
+    'cortexdesktop.chat',
     chatViewProvider,
     { webviewOptions: { retainContextWhenHidden: true } },
   );
@@ -1199,8 +1540,9 @@ function activate(context) {
     // watchers
     profileWatcher,
     vscode.workspace.onDidChangeConfiguration(event => {
-      if (event.affectsConfiguration('openclaude')) {
+      if (event.affectsConfiguration('cortexdesktop')) {
         refreshProvider();
+        void lspBridge.refreshConfig();
       }
     }),
     vscode.workspace.onDidChangeWorkspaceFolders((e) => {
@@ -1218,6 +1560,7 @@ function activate(context) {
     { dispose: () => chatController.dispose() },
     { dispose: () => chatPanelManager.dispose() },
     { dispose: () => diffProvider.dispose() },
+    { dispose: () => lspBridge.dispose() },
   );
 }
 
@@ -1226,10 +1569,10 @@ function deactivate() {}
 module.exports = {
   activate,
   deactivate,
-  OpenClaudeControlCenterProvider,
+  CortexDesktopControlCenterProvider,
   renderControlCenterHtml,
   resolveLaunchTargets,
   ChatController,
-  OpenClaudeChatViewProvider,
-  OpenClaudeChatPanelManager,
+  CortexDesktopChatViewProvider,
+  CortexDesktopChatPanelManager,
 };

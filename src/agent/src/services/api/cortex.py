@@ -1,10 +1,10 @@
 """
-services/api/claude.py
+services/api/cortex.py
 API usage accumulation and tracking for Cortex AI Agent IDE.
 Handles multi-LLM token usage tracking across providers.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 
 def accumulate_usage(total: Dict[str, Any], current: Dict[str, Any]) -> Dict[str, Any]:

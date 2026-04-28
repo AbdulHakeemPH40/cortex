@@ -149,9 +149,9 @@ try:
         TMUX_COMMAND,
     )
 except ImportError:
-    SWARM_SESSION_NAME = 'claude-swarm'
+    SWARM_SESSION_NAME = 'cortex-swarm'
     TEAM_LEAD_NAME = 'team-lead'
-    TEAMMATE_COMMAND_ENV_VAR = 'CLAUDE_TEAMMATE_COMMAND'
+    TEAMMATE_COMMAND_ENV_VAR = 'CORTEX_TEAMMATE_COMMAND'
     TMUX_COMMAND = 'tmux'
 
 try:
@@ -434,7 +434,7 @@ async def _handle_spawn_split_pane(
     """
     Handle spawn operation using split-pane view (default).
     When inside tmux: Creates teammates in a shared window with leader on left, teammates on right.
-    When outside tmux: Creates a claude-swarm session with all teammates in a tiled layout.
+    When outside tmux: Creates a cortex-swarm session with all teammates in a tiled layout.
     """
     set_app_state = context.setAppState
     get_app_state = context.getAppState
@@ -491,7 +491,7 @@ async def _handle_spawn_split_pane(
     if is_first_teammate and inside_tmux:
         await enable_pane_border_status()
     
-    # Build the command to spawn Claude Code with teammate identity
+    # Build the command to spawn Cortex Code with teammate identity
     binary_path = _get_teammate_command()
     
     # Build teammate identity AI agent args
@@ -942,7 +942,7 @@ async def _handle_spawn(
     context: ToolUseContext,
 ) -> Dict[str, Any]:
     """
-    Handle spawn operation - creates a new Claude Code instance.
+    Handle spawn operation - creates a new Cortex Code instance.
     Uses in-process mode when enabled, otherwise uses tmux/iTerm2 split-pane view.
     Falls back to in-process if pane backend detection fails.
     """

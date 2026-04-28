@@ -9,7 +9,7 @@
 # - Rough byte-based estimation for offline scenarios
 # - Bedrock and Vertex AI provider support
 # - Thinking block handling for reasoning models
-# Multi-LLM compatible: Claude, OpenAI, Gemini, Bedrock, Vertex
+# Multi-LLM compatible: Claude , OpenAI, Gemini, Bedrock, Vertex
 # ------------------------------------------------------------
 
 import json
@@ -64,13 +64,13 @@ try:
     )
 except ImportError:
     def get_default_sonnet_model() -> str:
-        return "claude-sonnet-4-20250514"
+        return "cortex-sonnet-4-20250514"
     
     def get_main_loop_model() -> str:
-        return "claude-sonnet-4-20250514"
+        return "cortex-sonnet-4-20250514"
     
     def get_small_fast_model() -> str:
-        return "claude-3-5-haiku-4-20250514"
+        return "cortex-3-5-haiku-4-20250514"
     
     def normalize_model_string_for_api(model: str) -> str:
         return model
@@ -112,9 +112,9 @@ except ImportError:
     def get_api_provider() -> str:
         """Stub - returns API provider"""
         import os
-        if os.environ.get("CLAUDE_CODE_USE_BEDROCK"):
+        if os.environ.get("CORTEX_CODE_USE_BEDROCK"):
             return "bedrock"
-        if os.environ.get("CLAUDE_CODE_USE_VERTEX"):
+        if os.environ.get("CORTEX_CODE_USE_VERTEX"):
             return "vertex"
         return "anthropic"
 
@@ -427,14 +427,14 @@ async def count_tokens_via_haiku_fallback(
     
     # Determine which model to use based on provider and thinking support
     is_vertex_global_endpoint = (
-        is_env_truthy("CLAUDE_CODE_USE_VERTEX") and
+        is_env_truthy("CORTEX_CODE_USE_VERTEX") and
         get_vertex_region_for_model(get_small_fast_model()) == "global"
     )
     is_bedrock_with_thinking = (
-        is_env_truthy("CLAUDE_CODE_USE_BEDROCK") and contains_thinking
+        is_env_truthy("CORTEX_CODE_USE_BEDROCK") and contains_thinking
     )
     is_vertex_with_thinking = (
-        is_env_truthy("CLAUDE_CODE_USE_VERTEX") and contains_thinking
+        is_env_truthy("CORTEX_CODE_USE_VERTEX") and contains_thinking
     )
     
     # Use Sonnet for incompatible configurations, Haiku otherwise

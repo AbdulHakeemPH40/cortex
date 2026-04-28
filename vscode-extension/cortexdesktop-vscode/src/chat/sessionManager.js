@@ -3,9 +3,9 @@
  * and provides metadata for the session list UI.
  *
  * Session files live under:
- *   ~/.openclaude/projects/<sanitized-cwd>/<sessionId>.jsonl
+ *   ~/.cortex/projects/<sanitized-cwd>/<sessionId>.jsonl
  *
- * Falls back to ~/.cortex/projects/ for legacy installs.
+ * Falls back to ~/.openclaude/projects/ for legacy installs.
  */
 
 const fs = require('fs');
@@ -32,15 +32,15 @@ function simpleHash(str) {
 }
 
 function resolveConfigDir() {
-  const envDir = process.env.CLAUDE_CONFIG_DIR;
+  const envDir = process.env.CORTEX_CONFIG_DIR;
   if (envDir) return envDir;
   const home = os.homedir();
-  const openClaudeDir = path.join(home, '.openclaude');
-  const legacyDir = path.join(home, '.cortex');
-  if (!fs.existsSync(openClaudeDir) && fs.existsSync(legacyDir)) {
+  const cortexDir = path.join(home, '.cortex');
+  const legacyDir = path.join(home, '.openclaude');
+  if (!fs.existsSync(cortexDir) && fs.existsSync(legacyDir)) {
     return legacyDir;
   }
-  return openClaudeDir;
+  return cortexDir;
 }
 
 function getProjectsDir() {

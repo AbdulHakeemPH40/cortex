@@ -417,17 +417,17 @@ async def run_agent(
         base_system_context_future,
     )
     
-    # Omit CLAUDE.md for read-only agents (Explore, Plan)
-    should_omit_claude_md = (
-        agent_definition.get('omitClaudeMd') and
+    # Omit CORTEX.md for read-only agents (Explore, Plan)
+    should_omit_cortex_md = (
+        agent_definition.get('omitCortexMd') and
         not override.get('user_context') and
-        get_feature_value_cached_may_be_stale('tengu_slim_subagent_claudemd', True)
+        get_feature_value_cached_may_be_stale('tengu_slim_subagent_cortexmd', True)
     )
     
-    if should_omit_claude_md:
+    if should_omit_cortex_md:
         resolved_user_context = {
             k: v for k, v in base_user_context.items()
-            if k != 'claudeMd'
+            if k != 'cortexMd'
         }
     else:
         resolved_user_context = base_user_context

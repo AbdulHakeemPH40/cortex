@@ -1,7 +1,7 @@
 {
-  "name": "openclaude-vscode",
-  "displayName": "OpenClaude",
-  "description": "Practical VS Code companion for OpenClaude with project-aware launch behavior and a real Control Center.",
+  "name": "cortexdesktop-vscode",
+  "displayName": "Cortex Desktop",
+  "description": "VS Code companion for Cortex Desktop with project-aware launch behavior and a Control Center.",
   "version": "0.2.0",
   "publisher": "devnull-bootloader",
   "engines": {
@@ -13,18 +13,18 @@
   ],
   "activationEvents": [
     "onStartupFinished",
-    "onCommand:openclaude.start",
-    "onCommand:openclaude.startInWorkspaceRoot",
-    "onCommand:openclaude.openDocs",
-    "onCommand:openclaude.openSetupDocs",
-    "onCommand:openclaude.openWorkspaceProfile",
-    "onCommand:openclaude.openControlCenter",
-    "onCommand:openclaude.newChat",
-    "onCommand:openclaude.openChat",
-    "onCommand:openclaude.resumeSession",
-    "onCommand:openclaude.abortChat",
-    "onView:openclaude.controlCenter",
-    "onView:openclaude.chat"
+    "onCommand:cortexdesktop.start",
+    "onCommand:cortexdesktop.startInWorkspaceRoot",
+    "onCommand:cortexdesktop.openDocs",
+    "onCommand:cortexdesktop.openSetupDocs",
+    "onCommand:cortexdesktop.openWorkspaceProfile",
+    "onCommand:cortexdesktop.openControlCenter",
+    "onCommand:cortexdesktop.newChat",
+    "onCommand:cortexdesktop.openChat",
+    "onCommand:cortexdesktop.resumeSession",
+    "onCommand:cortexdesktop.abortChat",
+    "onView:cortexdesktop.controlCenter",
+    "onView:cortexdesktop.chat"
   ],
   "main": "./src/extension.js",
   "files": [
@@ -39,74 +39,74 @@
   "contributes": {
     "commands": [
       {
-        "command": "openclaude.start",
-        "title": "OpenClaude: Launch in Terminal",
-        "category": "OpenClaude"
+        "command": "cortexdesktop.start",
+        "title": "Cortex Desktop: Launch in Terminal",
+        "category": "Cortex Desktop"
       },
       {
-        "command": "openclaude.startInWorkspaceRoot",
-        "title": "OpenClaude: Launch in Workspace Root",
-        "category": "OpenClaude"
+        "command": "cortexdesktop.startInWorkspaceRoot",
+        "title": "Cortex Desktop: Launch in Workspace Root",
+        "category": "Cortex Desktop"
       },
       {
-        "command": "openclaude.openDocs",
-        "title": "OpenClaude: Open Repository",
-        "category": "OpenClaude"
+        "command": "cortexdesktop.openDocs",
+        "title": "Cortex Desktop: Open Repository",
+        "category": "Cortex Desktop"
       },
       {
-        "command": "openclaude.openSetupDocs",
-        "title": "OpenClaude: Open Setup Guide",
-        "category": "OpenClaude"
+        "command": "cortexdesktop.openSetupDocs",
+        "title": "Cortex Desktop: Open Setup Guide",
+        "category": "Cortex Desktop"
       },
       {
-        "command": "openclaude.openWorkspaceProfile",
-        "title": "OpenClaude: Open Workspace Profile",
-        "category": "OpenClaude"
+        "command": "cortexdesktop.openWorkspaceProfile",
+        "title": "Cortex Desktop: Open Workspace Profile",
+        "category": "Cortex Desktop"
       },
       {
-        "command": "openclaude.openControlCenter",
-        "title": "OpenClaude: Open Control Center",
-        "category": "OpenClaude"
+        "command": "cortexdesktop.openControlCenter",
+        "title": "Cortex Desktop: Open Control Center",
+        "category": "Cortex Desktop"
       },
       {
-        "command": "openclaude.newChat",
-        "title": "OpenClaude: New Chat",
-        "category": "OpenClaude"
+        "command": "cortexdesktop.newChat",
+        "title": "Cortex Desktop: New Chat",
+        "category": "Cortex Desktop"
       },
       {
-        "command": "openclaude.openChat",
-        "title": "OpenClaude: Open Chat Panel",
-        "category": "OpenClaude"
+        "command": "cortexdesktop.openChat",
+        "title": "Cortex Desktop: Open Chat Panel",
+        "category": "Cortex Desktop"
       },
       {
-        "command": "openclaude.resumeSession",
-        "title": "OpenClaude: Resume Session",
-        "category": "OpenClaude"
+        "command": "cortexdesktop.resumeSession",
+        "title": "Cortex Desktop: Resume Session",
+        "category": "Cortex Desktop"
       },
       {
-        "command": "openclaude.abortChat",
-        "title": "OpenClaude: Abort Generation",
-        "category": "OpenClaude"
+        "command": "cortexdesktop.abortChat",
+        "title": "Cortex Desktop: Abort Generation",
+        "category": "Cortex Desktop"
       }
     ],
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "openclaude",
-          "title": "Cortex CLI",
+          "id": "cortexdesktop",
+          "title": "Cortex Desktop",
           "icon": "media/cortexcli.svg"
         }
       ]
     },
     "views": {
-      "openclaude": [
+      "cortexdesktop": [
         {
-          "id": "openclaude.chat",
+          "id": "cortexdesktop.chat",
           "name": "Chat",
           "type": "webview"
         },
         {
-          "id": "openclaude.controlCenter",
+          "id": "cortexdesktop.controlCenter",
           "name": "Control Center",
           "type": "webview"
         }
@@ -114,30 +114,30 @@
     },
     "keybindings": [
       {
-        "command": "openclaude.openChat",
+        "command": "cortexdesktop.openChat",
         "key": "ctrl+shift+l",
         "mac": "cmd+shift+l"
       }
     ],
     "configuration": {
-      "title": "OpenClaude",
+      "title": "Cortex Desktop",
       "properties": {
-        "openclaude.launchCommand": {
+        "cortexdesktop.launchCommand": {
           "type": "string",
-          "default": "openclaude",
-          "description": "Command run in the integrated terminal when launching OpenClaude."
+          "default": "cortex",
+          "description": "Command run in the integrated terminal when launching Cortex Desktop."
         },
-        "openclaude.terminalName": {
+        "cortexdesktop.terminalName": {
           "type": "string",
-          "default": "OpenClaude",
-          "description": "Integrated terminal tab name for OpenClaude sessions."
+          "default": "Cortex Desktop",
+          "description": "Integrated terminal tab name for Cortex Desktop sessions."
         },
-        "openclaude.useOpenAIShim": {
+        "cortexdesktop.useOpenAIShim": {
           "type": "boolean",
           "default": false,
-          "description": "Optionally set CLAUDE_CODE_USE_OPENAI=1 in launched OpenClaude terminals."
+          "description": "Optionally set CORTEX_CODE_USE_OPENAI=1 in launched Cortex Desktop terminals."
         },
-        "openclaude.permissionMode": {
+        "cortexdesktop.permissionMode": {
           "type": "string",
           "default": "acceptEdits",
           "enum": ["default", "acceptEdits", "bypassPermissions", "plan"],
@@ -148,6 +148,21 @@
             "Read-only mode — no file modifications allowed"
           ],
           "description": "Permission mode for chat sessions. Controls which tool operations are auto-approved."
+        },
+        "cortexdesktop.lspBridge.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Expose VS Code language features (LSP-backed) over a local HTTP bridge so Cortex Desktop can request symbols/definitions/diagnostics."
+        },
+        "cortexdesktop.lspBridge.port": {
+          "type": "number",
+          "default": 53999,
+          "description": "Localhost port for the LSP bridge HTTP server (127.0.0.1)."
+        },
+        "cortexdesktop.lspBridge.authToken": {
+          "type": "string",
+          "default": "",
+          "description": "Optional bearer token required by the LSP bridge. If set, requests must include Authorization: Bearer <token>."
         }
       }
     },
@@ -160,12 +175,12 @@
     ]
   },
   "scripts": {
-    "test": "node --test ./src/*.test.js",
+    "test": "node --test ./src/extension.test.js ./src/presentation.test.js ./src/state.test.js",
     "lint": "node scripts/lint.js",
     "package": "npx @vscode/vsce package --no-dependencies"
   },
   "keywords": [
-    "openclaude",
+    "cortex",
     "terminal",
     "theme",
     "cli",
@@ -173,7 +188,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/Gitlawb/openclaude"
+    "url": "https://github.com/"
   },
   "license": "MIT"
 }

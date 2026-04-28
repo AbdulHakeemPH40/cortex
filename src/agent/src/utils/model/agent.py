@@ -109,7 +109,7 @@ def getAgentModel(
     Get the effective model string for an agent.
     
     Priority order:
-    1. Environment variable CLAUDE_CODE_SUBAGENT_MODEL
+    1. Environment variable CORTEX_CODE_SUBAGENT_MODEL
     2. Tool-specified model (if provided)
     3. Agent model setting (or 'inherit' default)
     
@@ -122,7 +122,7 @@ def getAgentModel(
     TS lines 37-95 (~59 lines - full implementation)
     """
     # Check environment variable override
-    subagent_model_env = os.environ.get('CLAUDE_CODE_SUBAGENT_MODEL')
+    subagent_model_env = os.environ.get('CORTEX_CODE_SUBAGENT_MODEL')
     if subagent_model_env:
         return parseUserSpecifiedModel(subagent_model_env)
     
@@ -182,7 +182,7 @@ def aliasMatchesParentTier(alias: str, parentModel: str) -> bool:
     Prevents surprising downgrades: a Vertex user on Opus 4.6 (via /model) who
     spawns a subagent with `model: opus` should get Opus 4.6, not whatever
     getDefaultOpusModel() returns for 3P.
-    See https://github.com/anthropics/claude-code/issues/30815.
+    See https://github.com/anthropics/cortex-code/issues/30815.
     
     Only bare family aliases match. `opus[1m]`, `best`, `opusplan` fall through
     since they carry semantics beyond "same tier as parent".

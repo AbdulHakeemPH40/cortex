@@ -82,7 +82,7 @@ def getMaxTimeoutMs() -> int:
 
 def getBackgroundUsageNote() -> Optional[str]:
     """Get background task usage note if enabled."""
-    if isEnvTruthy(os.environ.get('CLAUDE_CODE_DISABLE_BACKGROUND_TASKS')):
+    if isEnvTruthy(os.environ.get('CORTEX_CODE_DISABLE_BACKGROUND_TASKS')):
         return None
     
     return '  - You can use the `run_in_background` parameter to run the command in the background. Only use this if you don\'t need the result immediately and are OK being notified when the command completes later. You do not need to check the output right away - you\'ll be notified when it finishes.'
@@ -90,7 +90,7 @@ def getBackgroundUsageNote() -> Optional[str]:
 
 def getSleepGuidance() -> Optional[str]:
     """Get sleep guidance if background tasks are enabled."""
-    if isEnvTruthy(os.environ.get('CLAUDE_CODE_DISABLE_BACKGROUND_TASKS')):
+    if isEnvTruthy(os.environ.get('CORTEX_CODE_DISABLE_BACKGROUND_TASKS')):
         return None
     
     return '''  - Avoid unnecessary `Start-Sleep` commands:

@@ -27,7 +27,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 # Try to import from src, fallback to stubs
 try:
-    from ..bootstrap.state import getAdditionalDirectoriesForClaudeMd, getSessionId
+    from ..bootstrap.state import getAdditionalDirectoriesForCortexMd, getSessionId
     from ..services.analytics.index import (
         AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
         logEvent,
@@ -71,7 +71,7 @@ except ImportError:
     MarkdownFile = Any
     SettingSource = str
 
-    def getAdditionalDirectoriesForClaudeMd(): return []
+    def getAdditionalDirectoriesForCortexMd(): return []
     def getSessionId(): return "test-session"
     def logEvent(*args, **kwargs): pass
     def roughTokenCountEstimation(text): return len(text) // 4
@@ -80,7 +80,7 @@ except ImportError:
     def logForDebugging(msg, **kwargs): pass
     def parseEffortValue(val): return None
     EFFORT_LEVELS = ['minimal', 'medium', 'high']
-    def getClaudeConfigHomeDir(): return os.path.expanduser("~/.cortex")
+    def getCortexConfigHomeDir(): return os.path.expanduser("~/.cortex")
     def isBareMode(): return False
     def isEnvTruthy(val): return False
     def isENOENT(e): return False
@@ -121,12 +121,12 @@ def getSkillsPath(
     dir_name: str,  # 'skills' | 'commands'
 ) -> str:
     """
-    Returns a claude config directory path for a given source.
+    Returns a cortex config directory path for a given source.
     """
     if source == 'policySettings':
         return os.path.join(getManagedFilePath(), '.cortex', dir_name)
     elif source == 'userSettings':
-        return os.path.join(getClaudeConfigHomeDir(), dir_name)
+        return os.path.join(getCortexConfigHomeDir(), dir_name)
     elif source == 'projectSettings':
         return f".cortex/{dir_name}"
     elif source == 'plugin':
@@ -157,7 +157,7 @@ async def getFileIdentity(file_path: str) -> Optional[str]:
 
     Uses os.path.realpath to resolve symlinks, which is filesystem-agnostic and avoids
     issues with filesystems that report unreliable inode values.
-    See: https://github.com/anthropics/claude-code/issues/13893
+    See: upstream issue #13893
     """
     try:
         return os.path.realpath(file_path)
@@ -196,7 +196,7 @@ def parseHooksFromFrontmatter(
 
 def parseSkillPaths(frontmatter: FrontmatterData) -> Optional[List[str]]:
     """
-    Parse paths frontmatter from a skill, using the same format as CLAUDE.md rules.
+    Parse paths frontmatter from a skill, using the same format as CORTEX.md rules.
     Returns None if no paths are specified or if all patterns are match-all.
     """
     paths = frontmatter.get('paths')
@@ -328,22 +328,22 @@ def createSkillCommand(
             argument_names,
         )
 
-        # Replace ${CLAUDE_SKILL_DIR} with the skill's own directory so bash
+        # Replace ${CORTEX_SKILL_DIR} with the skill's own directory so bash
         # injection (!`...`) can reference bundled scripts. Normalize backslashes
         # to forward slashes on Windows so shell commands don't treat them as escapes.
         if base_dir:
             skill_dir = base_dir.replace('\\', '/') if platform.system() == 'Windows' else base_dir
-            final_content = final_content.replace('${CLAUDE_SKILL_DIR}', skill_dir)
+            final_content = final_content.replace('${CORTEX_SKILL_DIR}', skill_dir)
 
-        # Replace ${CLAUDE_SESSION_ID} with the current session ID
+        # Replace ${CORTEX_SESSION_ID} with the current session ID
         final_content = final_content.replace(
-            '${CLAUDE_SESSION_ID}',
+            '${CORTEX_SESSION_ID}',
             getSessionId(),
         )
 
         # Security: MCP skills are remote and untrusted — never execute inline
         # shell commands (!`…` / ```! … ```) from their markdown body.
-        # ${CLAUDE_SKILL_DIR} is meaningless for MCP skills anyway.
+        # ${CORTEX_SKILL_DIR} is meaningless for MCP skills anyway.
         if loaded_from != 'mcp':
             # Create a modified tool_use_context with updated getAppState
             class ModifiedContext:
@@ -662,7 +662,7 @@ async def getSkillDirCommands(cwd: str) -> List[Command]:
     if cwd in _skill_dir_commands_cache:
         return _skill_dir_commands_cache[cwd]
 
-    user_skills_dir = os.path.join(getClaudeConfigHomeDir(), 'skills')
+    user_skills_dir = os.path.join(getCortexConfigHomeDir(), 'skills')
     managed_skills_dir = os.path.join(getManagedFilePath(), '.cortex', 'skills')
     project_skills_dirs = getProjectDirsUpToHome('skills', cwd)
 
@@ -671,7 +671,7 @@ async def getSkillDirCommands(cwd: str) -> List[Command]:
     )
 
     # Load from additional directories (--add-dir)
-    additional_dirs = getAdditionalDirectoriesForClaudeMd()
+    additional_dirs = getAdditionalDirectoriesForCortexMd()
     skills_locked = isRestrictedToPluginOnly('skills')
     project_settings_enabled = isSettingSourceEnabled('projectSettings') and not skills_locked
 
@@ -703,7 +703,7 @@ async def getSkillDirCommands(cwd: str) -> List[Command]:
     
     managed_skills_task = (
         asyncio.ensure_future(asyncio.coroutine(lambda: [])())
-        if isEnvTruthy(os.environ.get('CLAUDE_CODE_DISABLE_POLICY_SKILLS', ''))
+        if isEnvTruthy(os.environ.get('CORTEX_CODE_DISABLE_POLICY_SKILLS', ''))
         else asyncio.ensure_future(loadSkillsFromSkillsDir(managed_skills_dir, 'policySettings'))
     )
     
@@ -1002,7 +1002,7 @@ def activateConditionalSkillsForPaths(
     dynamic skills map, making them available to the model.
 
     Uses gitignore-style matching (would use 'ignore' library in full implementation),
-    matching the behavior of CLAUDE.md conditional rules.
+    matching the behavior of CORTEX.md conditional rules.
 
     Args:
         file_paths: Array of file paths being operated on

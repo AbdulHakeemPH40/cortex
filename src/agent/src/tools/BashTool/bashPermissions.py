@@ -652,9 +652,9 @@ def strip_all_leading_env_vars(command: str, blocklist: Optional[re.Pattern] = N
     Strip ALL leading env var prefixes from a command, regardless of whether the
     var name is in the safe-list.
     
-    Used for deny/ask rule matching: when a user denies `claude` or `rm`, the
+    Used for deny/ask rule matching: when a user denies `cortex` or `rm`, the
     command should stay blocked even if prefixed with arbitrary env vars like
-    `FOO=bar claude`. The safe-list restriction in strip_safe_wrappers is correct
+    `FOO=bar cortex`. The safe-list restriction in strip_safe_wrappers is correct
     for allow rules (prevents `DOCKER_HOST=evil docker ps` from auto-matching
     `Bash(docker ps:*)`), but deny rules must be harder to circumvent.
     
@@ -1140,7 +1140,7 @@ async def check_command_and_suggest_rules(
     # hidden substitutions or structural tricks.
     if (
         not ast_parse_succeeded and
-        not is_env_truthy(os.environ.get('CLAUDE_CODE_DISABLE_COMMAND_INJECTION_CHECK', ''))
+        not is_env_truthy(os.environ.get('CORTEX_CODE_DISABLE_COMMAND_INJECTION_CHECK', ''))
     ):
         safety_result = await bash_command_is_safe_async_deprecated(input_data.get('command', ''))
         
@@ -1606,7 +1606,7 @@ async def bash_tool_has_permission(
     # tree-sitter produces either a clean SimpleCommand[] (quotes resolved,
     # no hidden substitutions) or 'too-complex'.
     injection_check_disabled = is_env_truthy(
-        os.environ.get('CLAUDE_CODE_DISABLE_COMMAND_INJECTION_CHECK', '')
+        os.environ.get('CORTEX_CODE_DISABLE_COMMAND_INJECTION_CHECK', '')
     )
     
     # GrowthBook killswitch for shadow mode
@@ -2003,7 +2003,7 @@ async def bash_tool_has_permission(
     # and we've already validated structure; this block is skipped entirely.
     if (
         ast_subcommands is None and
-        not is_env_truthy(os.environ.get('CLAUDE_CODE_DISABLE_COMMAND_INJECTION_CHECK', ''))
+        not is_env_truthy(os.environ.get('CORTEX_CODE_DISABLE_COMMAND_INJECTION_CHECK', ''))
     ):
         original_command_safety_result = await bash_command_is_safe_async_deprecated(
             input_data.get('command', '')
@@ -2193,7 +2193,7 @@ async def bash_tool_has_permission(
     has_possible_command_injection = False
     if (
         ast_subcommands is None and
-        not is_env_truthy(os.environ.get('CLAUDE_CODE_DISABLE_COMMAND_INJECTION_CHECK', ''))
+        not is_env_truthy(os.environ.get('CORTEX_CODE_DISABLE_COMMAND_INJECTION_CHECK', ''))
     ):
         # Batch safety checks for all subcommands
         safety_results = await asyncio.gather(*[

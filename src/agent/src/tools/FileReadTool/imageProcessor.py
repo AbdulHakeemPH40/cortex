@@ -79,7 +79,7 @@ def _is_in_bundled_mode() -> bool:
     """Check if running in bundled mode."""
     import os
     # Check for environment variable or bundled mode indicator
-    return os.environ.get('CLAUDE_CODE_BUNDLED', '').lower() in ('1', 'true', 'yes')
+    return os.environ.get('CORTEX_CODE_BUNDLED', '').lower() in ('1', 'true', 'yes')
 
 
 # ============================================================

@@ -145,7 +145,7 @@ def getMemoryBaseDir() -> str:
     """
     remote_dir = (
         os.environ.get("CORTEX_REMOTE_MEMORY_DIR")
-        or os.environ.get("CLAUDE_CODE_REMOTE_MEMORY_DIR")
+        or os.environ.get("CORTEX_CODE_REMOTE_MEMORY_DIR")
     )
     if remote_dir:
         return remote_dir

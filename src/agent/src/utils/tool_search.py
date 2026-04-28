@@ -13,7 +13,7 @@ def is_tool_search_enabled_optimistic() -> bool:
     The actual decision to defer tools happens at request time.
     """
     from .env_utils import is_env_truthy
-    return is_env_truthy(os.environ.get('CLAUDE_CODE_TOOL_SEARCH'))
+    return is_env_truthy(os.environ.get('CORTEX_CODE_TOOL_SEARCH'))
 
 
 __all__ = ['is_tool_search_enabled_optimistic']

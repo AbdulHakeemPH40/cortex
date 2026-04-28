@@ -143,8 +143,8 @@ class ProjectConfig(TypedDict, total=False):
     hasTrustDialogAccepted: bool
     hasCompletedProjectOnboarding: bool
     projectOnboardingSeenCount: int
-    hasClaudeMdExternalIncludesApproved: bool
-    hasClaudeMdExternalIncludesWarningShown: bool
+    hasCortexMdExternalIncludesApproved: bool
+    hasCortexMdExternalIncludesWarningShown: bool
     enabledMcpjsonServers: List[str]
     disabledMcpjsonServers: List[str]
     enableAllProjectMcpServers: bool
@@ -162,8 +162,8 @@ DEFAULT_PROJECT_CONFIG: ProjectConfig = {
     'disabledMcpjsonServers': [],
     'hasTrustDialogAccepted': False,
     'projectOnboardingSeenCount': 0,
-    'hasClaudeMdExternalIncludesApproved': False,
-    'hasClaudeMdExternalIncludesWarningShown': False,
+    'hasCortexMdExternalIncludesApproved': False,
+    'hasCortexMdExternalIncludesWarningShown': False,
 }
 
 
@@ -214,7 +214,7 @@ class GlobalConfig(TypedDict, total=False):
     changelogLastFetched: float
     cachedChangelog: str
     mcpServers: Dict[str, Any]
-    claudeAiMcpEverConnected: List[str]
+    cortexAiMcpEverConnected: List[str]
     preferredNotifChannel: NotificationChannel
     customNotifyCommand: str
     verbose: bool
@@ -278,7 +278,7 @@ GLOBAL_CONFIG_KEYS = [
     'messageIdleNotifThresholdMs', 'autoConnectIde', 'autoInstallIdeExtension',
     'fileCheckpointingEnabled', 'terminalProgressBarEnabled', 'showStatusInTerminalTab',
     'taskCompleteNotifEnabled', 'inputNeededNotifEnabled', 'agentPushNotifEnabled',
-    'respectGitignore', 'claudeInChromeDefaultEnabled', 'hasCompletedClaudeInChromeOnboarding',
+    'respectGitignore', 'cortexInChromeDefaultEnabled', 'hasCompletedCortexInChromeOnboarding',
     'lspRecommendationDisabled', 'lspRecommendationNeverPlugins', 'lspRecommendationIgnoredCount',
     'copyFullResponse', 'copyOnSelect', 'permissionExplainerEnabled', 'prStatusFooterEnabled',
     'remoteControlAtStartup', 'remoteDialogSeen',
@@ -455,7 +455,7 @@ def saveGlobalConfig(updater: Callable[[GlobalConfig], GlobalConfig]) -> None:
     written = None
     try:
         didWrite = saveConfigWithLock(
-            getGlobalClaudeFile(),
+            getGlobalCortexFile(),
             createDefaultGlobalConfig,
             lambda current: _applyUpdater(current, updater, written)
         )
@@ -464,7 +464,7 @@ def saveGlobalConfig(updater: Callable[[GlobalConfig], GlobalConfig]) -> None:
     except Exception as error:
         logForDebugging(f'Failed to save config with lock: {error}', level='error')
         # Fall back to non-locked version
-        currentConfig = getConfig(getGlobalClaudeFile(), createDefaultGlobalConfig)
+        currentConfig = getConfig(getGlobalCortexFile(), createDefaultGlobalConfig)
         if wouldLoseAuthState(currentConfig):
             logForDebugging(
                 'saveGlobalConfig fallback: auth-loss guard triggered',
@@ -477,7 +477,7 @@ def saveGlobalConfig(updater: Callable[[GlobalConfig], GlobalConfig]) -> None:
             return
         
         written = {**config, 'projects': removeProjectHistory(currentConfig.get('projects'))}
-        saveConfig(getGlobalClaudeFile(), written, DEFAULT_GLOBAL_CONFIG)
+        saveConfig(getGlobalCortexFile(), written, DEFAULT_GLOBAL_CONFIG)
         writeThroughGlobalConfigCache(written)
 
 
@@ -530,7 +530,7 @@ def saveConfig(file: str, config: Dict, defaultConfig: Dict) -> None:
         os.fsync(f.fileno())
     os.chmod(file, 0o600)
     
-    if file == getGlobalClaudeFile():
+    if file == getGlobalCortexFile():
         global globalConfigWriteCount
         globalConfigWriteCount += 1
 
@@ -551,7 +551,7 @@ def saveConfigWithLock(
     
     # Check for stale write - file changed since we last read it
     # Only check for global config file since lastReadFileStats tracks that specific file
-    if lastReadFileStats and file == getGlobalClaudeFile():
+    if lastReadFileStats and file == getGlobalCortexFile():
         try:
             currentStats = os.stat(file)
             if (
@@ -571,7 +571,7 @@ def saveConfigWithLock(
             logForDebugging(f'Stale write check error: {e}', level='error')
     
     currentConfig = getConfig(file, createDefault)
-    if file == getGlobalClaudeFile() and wouldLoseAuthState(currentConfig):
+    if file == getGlobalCortexFile() and wouldLoseAuthState(currentConfig):
         logForDebugging('saveConfigWithLock: auth-loss guard triggered', level='error')
         logEvent('tengu_config_auth_loss_prevented', {})
         return False
@@ -599,7 +599,7 @@ def saveConfigWithLock(
         os.fsync(f.fileno())
     os.chmod(file, 0o600)
     
-    if file == getGlobalClaudeFile():
+    if file == getGlobalCortexFile():
         global globalConfigWriteCount
         globalConfigWriteCount += 1
     
@@ -607,7 +607,7 @@ def saveConfigWithLock(
     lockTime = (time.time() * 1000) - startTime
     if lockTime > 100:
         logForDebugging(
-            'Lock acquisition took longer than expected - another Claude instance may be running'
+            'Lock acquisition took longer than expected - another Cortex instance may be running'
         )
         logEvent('tengu_config_lock_contention', {
             'lock_time_ms': lockTime,
@@ -714,7 +714,7 @@ def getConfig(file: str, createDefault: Callable, throwOnInvalid: bool = False) 
             finally:
                 insideGetConfig = False
         
-        print(f'\nClaude configuration file at {file} is corrupted: {error}\n')
+        print(f'\nCortex configuration file at {file} is corrupted: {error}\n')
         
         # Try to backup the corrupted config file (only if not already backed up)
         fileBase = Path(file).name
@@ -824,12 +824,12 @@ def findMostRecentBackup(file: str) -> Optional[str]:
 def getConfigBackupDir() -> str:
     """Get backup directory path"""
     try:
-        from .envUtils import getClaudeConfigHomeDir
+        from .envUtils import getCortexConfigHomeDir
     except ImportError:
-        def getClaudeConfigHomeDir():
+        def getCortexConfigHomeDir():
             return os.path.join(os.path.expanduser('~'), '.cortex')
     
-    return os.path.join(getClaudeConfigHomeDir(), 'backups')
+    return os.path.join(getCortexConfigHomeDir(), 'backups')
 
 
 # ============================================================
@@ -878,13 +878,13 @@ def getGlobalConfig() -> GlobalConfig:
     try:
         stats = None
         try:
-            stat = os.stat(getGlobalClaudeFile())
+            stat = os.stat(getGlobalCortexFile())
             stats = {'mtimeMs': stat.st_mtime * 1000, 'size': stat.st_size}
         except:
             pass
         
         config = migrateConfigFields(
-            getConfig(getGlobalClaudeFile(), createDefaultGlobalConfig)
+            getConfig(getGlobalCortexFile(), createDefaultGlobalConfig)
         )
         
         globalConfigCache = {
@@ -897,7 +897,7 @@ def getGlobalConfig() -> GlobalConfig:
         return config
     except:
         return migrateConfigFields(
-            getConfig(getGlobalClaudeFile(), createDefaultGlobalConfig)
+            getConfig(getGlobalCortexFile(), createDefaultGlobalConfig)
         )
 
 
@@ -951,7 +951,7 @@ def enableConfigs() -> None:
     # to prevent us from adding config reading during module initialization
     configReadingAllowed = True
     # We only check the global config because currently all the configs share a file
-    getConfig(getGlobalClaudeFile(), createDefaultGlobalConfig, True)
+    getConfig(getGlobalCortexFile(), createDefaultGlobalConfig, True)
     
     logForDiagnosticsNoPII('info', 'enable_configs_completed', {
         'duration_ms': time.time() * 1000 - startTime,
@@ -1056,7 +1056,7 @@ def saveCurrentProjectConfig(updater: Callable[[ProjectConfig], ProjectConfig]) 
     
     try:
         didWrite = saveConfigWithLock(
-            getGlobalClaudeFile(),
+            getGlobalCortexFile(),
             createDefaultGlobalConfig,
             lambda current: _applyProjectUpdater(current, absolutePath, updater, written)
         )
@@ -1065,7 +1065,7 @@ def saveCurrentProjectConfig(updater: Callable[[ProjectConfig], ProjectConfig]) 
     except Exception as error:
         logForDebugging(f'Failed to save project config: {error}', level='error')
         # Fallback without lock
-        config = getConfig(getGlobalClaudeFile(), createDefaultGlobalConfig)
+        config = getConfig(getGlobalCortexFile(), createDefaultGlobalConfig)
         if wouldLoseAuthState(config):
             return
         
@@ -1079,7 +1079,7 @@ def saveCurrentProjectConfig(updater: Callable[[ProjectConfig], ProjectConfig]) 
             **config,
             'projects': {**config.get('projects', {}), absolutePath: newProjectConfig}
         }
-        saveConfig(getGlobalClaudeFile(), written[0], DEFAULT_GLOBAL_CONFIG)
+        saveConfig(getGlobalCortexFile(), written[0], DEFAULT_GLOBAL_CONFIG)
         writeThroughGlobalConfigCache(written[0])
 
 
@@ -1165,12 +1165,12 @@ def getMemoryPath(memoryType: str) -> str:
     """Get memory file path"""
     try:
         from .bootstrap.state import getOriginalCwd
-        from .envUtils import getClaudeConfigHomeDir
+        from .envUtils import getCortexConfigHomeDir
         from .settings.managedPath import getManagedFilePath
     except ImportError:
         def getOriginalCwd():
             return os.getcwd()
-        def getClaudeConfigHomeDir():
+        def getCortexConfigHomeDir():
             return os.path.join(os.path.expanduser('~'), '.cortex')
         def getManagedFilePath():
             return os.path.join(os.path.expanduser('~'), '.cortex')
@@ -1178,13 +1178,13 @@ def getMemoryPath(memoryType: str) -> str:
     cwd = getOriginalCwd()
     
     if memoryType == 'User':
-        return os.path.join(getClaudeConfigHomeDir(), 'CLAUDE.md')
+        return os.path.join(getCortexConfigHomeDir(), 'CORTEX.md')
     elif memoryType == 'Local':
-        return os.path.join(cwd, 'CLAUDE.local.md')
+        return os.path.join(cwd, 'CORTEX.local.md')
     elif memoryType == 'Project':
-        return os.path.join(cwd, 'CLAUDE.md')
+        return os.path.join(cwd, 'CORTEX.md')
     elif memoryType == 'Managed':
-        return os.path.join(getManagedFilePath(), 'CLAUDE.md')
+        return os.path.join(getManagedFilePath(), 'CORTEX.md')
     elif memoryType == 'AutoMem':
         try:
             from .memdir.paths import getAutoMemEntrypoint
@@ -1197,7 +1197,7 @@ def getMemoryPath(memoryType: str) -> str:
     return ''  # unreachable in external builds where TeamMem is not in MemoryType
 
 
-def getManagedClaudeRulesDir() -> str:
+def getManagedCortexRulesDir() -> str:
     try:
         from .settings.managedPath import getManagedFilePath
     except ImportError:
@@ -1207,23 +1207,23 @@ def getManagedClaudeRulesDir() -> str:
     return os.path.join(getManagedFilePath(), '.cortex', 'rules')
 
 
-def getUserClaudeRulesDir() -> str:
+def getUserCortexRulesDir() -> str:
     try:
-        from .envUtils import getClaudeConfigHomeDir
+        from .envUtils import getCortexConfigHomeDir
     except ImportError:
-        def getClaudeConfigHomeDir():
+        def getCortexConfigHomeDir():
             return os.path.join(os.path.expanduser('~'), '.cortex')
     
-    return os.path.join(getClaudeConfigHomeDir(), 'rules')
+    return os.path.join(getCortexConfigHomeDir(), 'rules')
 
 
-def getGlobalClaudeFile() -> str:
+def getGlobalCortexFile() -> str:
     """Get global config file path"""
     try:
-        from .env import getGlobalClaudeFile as _getGlobalClaudeFile
-        return _getGlobalClaudeFile()
+        from .env import getGlobalCortexFile as _getGlobalCortexFile
+        return _getGlobalCortexFile()
     except ImportError:
-        return os.path.join(os.path.expanduser('~'), '.cortex', 'claude.json')
+        return os.path.join(os.path.expanduser('~'), '.cortex', 'cortex.json')
 
 
 # ============================================================
@@ -1277,7 +1277,7 @@ save_global_config = saveGlobalConfig
 get_current_project_config = getCurrentProjectConfig
 save_current_project_config = saveCurrentProjectConfig
 create_default_global_config = createDefaultGlobalConfig
-get_global_claude_file = getGlobalClaudeFile
+get_global_cortex_file = getGlobalCortexFile
 get_project_path_for_config = getProjectPathForConfig
 get_or_create_user_id = getOrCreateUserID
 record_first_start_time = recordFirstStartTime
@@ -1288,8 +1288,8 @@ get_auto_updater_disabled_reason = getAutoUpdaterDisabledReason
 format_auto_updater_disabled_reason = formatAutoUpdaterDisabledReason
 should_skip_plugin_autoupdate = shouldSkipPluginAutoupdate
 get_memory_path = getMemoryPath
-get_managed_claude_rules_dir = getManagedClaudeRulesDir
-get_user_claude_rules_dir = getUserClaudeRulesDir
+get_managed_cortex_rules_dir = getManagedCortexRulesDir
+get_user_cortex_rules_dir = getUserCortexRulesDir
 check_has_trust_dialog_accepted = checkHasTrustDialogAccepted
 is_path_trusted = isPathTrusted
 canonicalize_config_key = lambda k: k  # stub
@@ -1321,7 +1321,7 @@ __all__ = [
     "getCurrentProjectConfig",
     "saveCurrentProjectConfig",
     "createDefaultGlobalConfig",
-    "getGlobalClaudeFile",
+    "getGlobalCortexFile",
     "getProjectPathForConfig",
     "getOrCreateUserID",
     "recordFirstStartTime",
@@ -1332,8 +1332,8 @@ __all__ = [
     "formatAutoUpdaterDisabledReason",
     "shouldSkipPluginAutoupdate",
     "getMemoryPath",
-    "getManagedClaudeRulesDir",
-    "getUserClaudeRulesDir",
+    "getManagedCortexRulesDir",
+    "getUserCortexRulesDir",
     "checkHasTrustDialogAccepted",
     "isPathTrusted",
     "isGlobalConfigKey",
@@ -1347,7 +1347,7 @@ __all__ = [
     "get_current_project_config",
     "save_current_project_config",
     "create_default_global_config",
-    "get_global_claude_file",
+    "get_global_cortex_file",
     "get_project_path_for_config",
     "get_or_create_user_id",
     "record_first_start_time",
@@ -1358,8 +1358,8 @@ __all__ = [
     "format_auto_updater_disabled_reason",
     "should_skip_plugin_autoupdate",
     "get_memory_path",
-    "get_managed_claude_rules_dir",
-    "get_user_claude_rules_dir",
+    "get_managed_cortex_rules_dir",
+    "get_user_cortex_rules_dir",
     "check_has_trust_dialog_accepted",
     "is_path_trusted",
     "is_global_config_key",

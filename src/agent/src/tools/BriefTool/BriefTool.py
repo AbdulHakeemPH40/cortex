@@ -101,7 +101,7 @@ def isBriefEntitled() -> bool:
     listing should be honored. Use `isBriefEnabled()` to decide whether the
     tool is actually active in the current session.
     
-    CLAUDE_CODE_BRIEF env var force-grants entitlement for dev/testing —
+    CORTEX_CODE_BRIEF env var force-grants entitlement for dev/testing —
     bypasses the GB gate so you can test without being enrolled. Still
     requires an opt-in action to activate (--brief, defaultView, etc.), but
     the env var alone also sets userMsgOptIn via maybeActivateBrief().
@@ -115,7 +115,7 @@ def isBriefEntitled() -> bool:
     if kairos_enabled or kairos_brief_enabled:
         return (
             getKairosActive() or
-            isEnvTruthy(__import__('os').environ.get('CLAUDE_CODE_BRIEF')) or
+            isEnvTruthy(__import__('os').environ.get('CORTEX_CODE_BRIEF')) or
             getFeatureValue_CACHED_WITH_REFRESH(
                 'tengu_kairos_brief',
                 False,
@@ -138,7 +138,7 @@ def isBriefEnabled() -> bool:
       - `/brief` slash command (brief.ts)
       - `/config` defaultView picker (Config.tsx)
       - SendUserMessage in `--tools` / SDK `tools` option (main.tsx)
-      - CLAUDE_CODE_BRIEF env var (maybeActivateBrief — dev/testing bypass)
+      - CORTEX_CODE_BRIEF env var (maybeActivateBrief — dev/testing bypass)
     Assistant mode (kairosActive) bypasses opt-in since its system prompt
     hard-codes "you MUST use SendUserMessage" (systemPrompt.md:14).
     

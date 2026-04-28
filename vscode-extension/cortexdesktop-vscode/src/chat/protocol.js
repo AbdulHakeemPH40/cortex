@@ -1,8 +1,8 @@
 /**
- * NDJSON protocol helpers and message type constants for the OpenClaude
+ * NDJSON protocol helpers and message type constants for the Cortex Desktop
  * stream-json SDK wire format.
  *
- * The extension spawns `openclaude --print --input-format=stream-json
+ * The extension spawns `cortex --print --input-format=stream-json
  * --output-format=stream-json` and speaks NDJSON over stdin/stdout.
  * This module provides lightweight parsing, serialization, and type guards
  * so the rest of the extension never touches raw JSON strings.

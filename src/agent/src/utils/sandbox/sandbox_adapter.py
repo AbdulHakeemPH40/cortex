@@ -1,5 +1,5 @@
 """
-Sandbox adapter with OpenClaude-style behavior for Cortex Python runtime.
+Sandbox adapter with Cortex-style behavior for Cortex Python runtime.
 
 This module ports key logic from TS sandbox-adapter:
 - settings -> runtime config conversion

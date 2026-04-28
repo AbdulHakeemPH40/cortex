@@ -264,8 +264,8 @@ def should_use_session_memory_compaction(
     Check if session memory compaction should be used.
     
     Args:
-        enable_env: Environment override (ENABLE_CLAUDE_CODE_SM_COMPACT)
-        disable_env: Environment override (DISABLE_CLAUDE_CODE_SM_COMPACT)
+        enable_env: Environment override (ENABLE_CORTEX_CODE_SM_COMPACT)
+        disable_env: Environment override (DISABLE_CORTEX_CODE_SM_COMPACT)
         
     Returns:
         True if SM compaction should be used
@@ -273,10 +273,10 @@ def should_use_session_memory_compaction(
     import os
     
     # Allow env var overrides
-    if enable_env or os.environ.get('ENABLE_CLAUDE_CODE_SM_COMPACT', '').lower() in ('true', '1', 'yes'):
+    if enable_env or os.environ.get('ENABLE_CORTEX_CODE_SM_COMPACT', '').lower() in ('true', '1', 'yes'):
         return True
     
-    if disable_env or os.environ.get('DISABLE_CLAUDE_CODE_SM_COMPACT', '').lower() in ('true', '1', 'yes'):
+    if disable_env or os.environ.get('DISABLE_CORTEX_CODE_SM_COMPACT', '').lower() in ('true', '1', 'yes'):
         return False
     
     # Would check feature flags (GrowthBook/Statsig) in real implementation

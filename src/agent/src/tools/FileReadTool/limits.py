@@ -19,7 +19,7 @@ class FileReadingLimits:
 
 
 def get_env_max_tokens() -> Optional[int]:
-    override = os.environ.get('CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS')
+    override = os.environ.get('CORTEX_CODE_FILE_READ_MAX_OUTPUT_TOKENS')
     if override:
         try:
             parsed = int(override)

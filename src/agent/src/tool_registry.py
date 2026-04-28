@@ -415,7 +415,7 @@ def get_all_base_tools() -> Tools:
         AgentTool,
         BashTool,
         # Ant-native builds have bfs/ugrep embedded in the bun binary.
-        # When available, find/grep in Claude's shell are aliased to these
+        # When available, find/grep in Cortex's shell are aliased to these
         # fast tools, so the dedicated Glob/Grep tools are unnecessary.
         *([] if has_embedded_search_tools() else [GlobTool, GrepTool]),
         ExitPlanModeV2Tool,
@@ -440,7 +440,7 @@ def get_all_base_tools() -> Tools:
         ListMcpResourcesTool,
         ReadMcpResourceTool,
         # Include ToolSearchTool when tool search might be enabled (optimistic check)
-        # The actual decision to defer tools happens at request time in claude.ts
+        # The actual decision to defer tools happens at request time in cortex.ts
         *( [ToolSearchTool] if is_tool_search_enabled_optimistic() else [] ),
     ]
     
@@ -485,7 +485,7 @@ def get_tools(permission_context: ToolPermissionContext) -> Tools:
         Filtered list of tools based on mode and permissions
     """
     # Simple mode: only Bash, Read, and Edit tools
-    if is_env_truthy(os.environ.get('CLAUDE_CODE_SIMPLE', '')):
+    if is_env_truthy(os.environ.get('CORTEX_CODE_SIMPLE', '')):
         # --bare + REPL mode: REPL wraps Bash/Read/Edit/etc inside the VM, so
         # return REPL instead of the raw primitives. Matches the non-bare path
         # below which also hides REPL_ONLY_TOOLS when REPL is enabled.
@@ -564,7 +564,7 @@ def assemble_tool_pool(
     allowed_mcp_tools = filter_tools_by_deny_rules(mcp_tools, permission_context)
     
     # Sort each partition for prompt-cache stability, keeping built-ins as a
-    # contiguous prefix. The server's claude_code_system_cache_policy places a
+    # contiguous prefix. The server's cortex_code_system_cache_policy places a
     # global cache breakpoint after the last prefix-matched built-in tool; a flat
     # sort would interleave MCP tools into built-ins and invalidate all downstream
     # cache keys whenever an MCP tool sorts between existing built-ins. uniqBy

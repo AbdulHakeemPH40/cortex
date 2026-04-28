@@ -304,7 +304,7 @@ def create_plugin_command(
             )
         )
         
-        # Substitute ${CLAUDE_PLUGIN_ROOT} in allowed-tools before parsing
+        # Substitute ${CORTEX_PLUGIN_ROOT} in allowed-tools before parsing
         raw_allowed_tools = frontmatter.get('allowed-tools')
         if isinstance(raw_allowed_tools, str):
             substituted_allowed_tools = substitute_plugin_variables(
@@ -379,7 +379,7 @@ def create_plugin_command(
                 argument_names,
             )
             
-            # Replace ${CLAUDE_PLUGIN_ROOT} and ${plugin_source}
+            # Replace ${CORTEX_PLUGIN_ROOT} and ${plugin_source}
             final_content = substitute_plugin_variables(final_content, {
                 'path': plugin_path,
                 'source': source_name,
@@ -393,20 +393,20 @@ def create_plugin_command(
                     plugin_manifest['userConfig'],
                 )
             
-            # Replace ${CLAUDE_SKILL_DIR} with this specific skill's directory
+            # Replace ${CORTEX_SKILL_DIR} with this specific skill's directory
             if config and config.is_skill_mode:
                 raw_skill_dir = dirname(file.file_path)
                 # Normalize to forward slashes
                 skill_dir = raw_skill_dir.replace('\\', '/')
                 final_content = final_content.replace(
-                    '${CLAUDE_SKILL_DIR}',
+                    '${CORTEX_SKILL_DIR}',
                     skill_dir,
                 )
             
-            # Replace ${CLAUDE_SESSION_ID} with the current session ID
+            # Replace ${CORTEX_SESSION_ID} with the current session ID
             # TODO: Integrate with session management when available
             # from bootstrap.state import get_session_id
-            # final_content = final_content.replace('${CLAUDE_SESSION_ID}', get_session_id())
+            # final_content = final_content.replace('${CORTEX_SESSION_ID}', get_session_id())
             
             # TODO: Execute shell commands in prompt when available
             # from utils.promptShellExecution import execute_shell_commands_in_prompt

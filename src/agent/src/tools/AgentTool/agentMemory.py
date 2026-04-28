@@ -33,17 +33,17 @@ def sanitize_agent_type_for_path(agent_type: str) -> str:
 def get_local_agent_memory_dir(dir_name: str) -> str:
     """
     Returns the local agent memory directory, which is project-specific and not checked into VCS.
-    When CLAUDE_CODE_REMOTE_MEMORY_DIR is set, persists to the mount with project namespacing.
+    When CORTEX_CODE_REMOTE_MEMORY_DIR is set, persists to the mount with project namespacing.
     Otherwise, uses <cwd>/.cortex/agent-memory-local/<agentType>/.
     """
-    if os.environ.get("CLAUDE_CODE_REMOTE_MEMORY_DIR"):
+    if os.environ.get("CORTEX_CODE_REMOTE_MEMORY_DIR"):
         project_root = (
             find_canonical_git_root(get_project_root()) 
             or get_project_root()
         )
         return (
             str(Path(
-                os.environ["CLAUDE_CODE_REMOTE_MEMORY_DIR"],
+                os.environ["CORTEX_CODE_REMOTE_MEMORY_DIR"],
                 "projects",
                 sanitize_path(project_root),
                 "agent-memory-local",
@@ -92,8 +92,8 @@ def is_agent_memory_path(absolute_path: str) -> bool:
     ):
         return True
     
-    # Local scope: persisted to mount when CLAUDE_CODE_REMOTE_MEMORY_DIR is set, otherwise cwd-based
-    remote_memory_dir = os.environ.get("CLAUDE_CODE_REMOTE_MEMORY_DIR")
+    # Local scope: persisted to mount when CORTEX_CODE_REMOTE_MEMORY_DIR is set, otherwise cwd-based
+    remote_memory_dir = os.environ.get("CORTEX_CODE_REMOTE_MEMORY_DIR")
     if remote_memory_dir:
         if (
             os.sep + "agent-memory-local" + os.sep in str(normalized_path)
@@ -178,7 +178,7 @@ def load_agent_memory_prompt(
     # it hasn't, FileWriteTool does its own mkdir of the parent directory.
     ensure_memory_dir_exists(memory_dir)
     
-    cowork_extra_guidelines = os.environ.get("CLAUDE_COWORK_MEMORY_EXTRA_GUIDELINES")
+    cowork_extra_guidelines = os.environ.get("CORTEX_COWORK_MEMORY_EXTRA_GUIDELINES")
     
     extra_guidelines = (
         [scope_note, cowork_extra_guidelines]

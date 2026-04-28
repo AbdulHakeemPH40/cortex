@@ -368,7 +368,7 @@ async def setup(
         # Start UDS messaging server (Mac/Linux only).
         # Enabled by default for ants — creates a socket in tmpdir if no
         # --messaging-socket-path is passed. Awaited so the server is bound
-        # and $CLAUDE_CODE_MESSAGING_SOCKET is exported before any hook
+        # and $CORTEX_CODE_MESSAGING_SOCKET is exported before any hook
         # (SessionStart in particular) can spawn and snapshot process.env.
         if feature('UDS_INBOX'):
             try:
@@ -571,7 +571,7 @@ async def setup(
     # Pre-fetch promises - only items needed before render
     log_for_diagnostics_no_pii('info', 'setup_prefetch_starting')
     
-    # When CLAUDE_CODE_SYNC_PLUGIN_INSTALL is set, skip all plugin prefetch.
+    # When CORTEX_CODE_SYNC_PLUGIN_INSTALL is set, skip all plugin prefetch.
     # The sync install path in print.ts calls refresh_plugin_state() after
     # installing, which reloads commands, hooks, and agents. Prefetching here
     # races with the install (concurrent copy_plugin_to_versioned_cache / cache_plugin
@@ -579,7 +579,7 @@ async def setup(
     # mid-install when policy_settings arrives.
     skip_plugin_prefetch = (
         (get_is_non_interactive_session() and
-         is_env_truthy(os.environ.get('CLAUDE_CODE_SYNC_PLUGIN_INSTALL'))) or
+         is_env_truthy(os.environ.get('CORTEX_CODE_SYNC_PLUGIN_INSTALL'))) or
         # --bare: load_plugin_hooks → load_all_plugins is filesystem work that's
         # wasted when execute_hooks early-returns under --bare anyway.
         is_bare_mode()
@@ -681,7 +681,7 @@ async def setup(
         # Allow root if in a sandbox (e.g., TPU devspaces that require root)
         if sys.platform != 'win32' and hasattr(os, 'getuid') and os.getuid() == 0:
             if (os.environ.get('IS_SANDBOX') != '1' and
-                not is_env_truthy(os.environ.get('CLAUDE_CODE_BUBBLEWRAP'))):
+                not is_env_truthy(os.environ.get('CORTEX_CODE_BUBBLEWRAP'))):
                 print(
                     '--dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons',
                     file=sys.stderr,
@@ -692,10 +692,10 @@ async def setup(
             # Skip for Desktop's local agent mode — same trust model as CCR/BYOC
             # (trusted Anthropic-managed launcher intentionally pre-approving everything).
             # Precedent: permissionSetup.ts:861, applySettingsChange.ts:55 (PR #19116)
-            os.environ.get('CLAUDE_CODE_ENTRYPOINT') != 'local-agent' and
-            # Same for CCD (Claude Code in Desktop) — apps#29127 passes the flag
+            os.environ.get('CORTEX_CODE_ENTRYPOINT') != 'local-agent' and
+            # Same for CCD (Cortex Code in Desktop) — apps#29127 passes the flag
             # unconditionally to unlock mid-session bypass switching
-            os.environ.get('CLAUDE_CODE_ENTRYPOINT') != 'claude-desktop'):
+            os.environ.get('CORTEX_CODE_ENTRYPOINT') != 'cortex-desktop'):
             # Only await if permission mode is set to bypass
             is_docker, has_internet = await asyncio.gather(
                 env_dynamic.get_is_docker(),

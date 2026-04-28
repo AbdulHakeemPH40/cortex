@@ -3,7 +3,7 @@
 # Python conversion of query.ts (lines 1-1730)
 # 
 # Core query engine for multi-LLM orchestration supporting:
-# - Claude (Anthropic), OpenAI, Gemini, DeepSeek, Minimax, Grok
+# - Cortex (Anthropic), OpenAI, Gemini, DeepSeek, Minimax, Grok
 # - Streaming API calls with fallback models
 # - Tool execution orchestration (streaming and batch modes)
 # - Auto-compaction, reactive compaction, context collapse
@@ -243,7 +243,7 @@ try:
     from .utils.model.model import get_runtime_main_loop_model, render_model_name
 except ImportError:
     def get_runtime_main_loop_model(**kwargs) -> str:
-        return "claude-3-5-sonnet"
+        return "cortex-3-5-sonnet"
     
     def render_model_name(model: str) -> str:
         return model
@@ -539,7 +539,7 @@ async def query(params: QueryParams) -> AsyncGenerator[
     Main query generator that orchestrates the entire conversation loop.
     
     Supports multiple LLM providers:
-    - Claude (Anthropic)
+    - Cortex (Anthropic)
     - OpenAI (GPT-4, GPT-3.5)
     - Google Gemini
     - DeepSeek
@@ -1259,7 +1259,7 @@ async def query_loop(
                 if (
                     cap_enabled and
                     max_output_tokens_override is None and
-                    not os.environ.get('CLAUDE_CODE_MAX_OUTPUT_TOKENS')
+                    not os.environ.get('CORTEX_CODE_MAX_OUTPUT_TOKENS')
                 ):
                     # Note: log_event would go here
                     
@@ -1540,7 +1540,7 @@ async def query_loop(
         # Note: log_event would go here
         
         # Get queued commands snapshot before processing attachments.
-        # These will be sent as attachments so Claude can respond to them in the current turn.
+        # These will be sent as attachments so Cortex can respond to them in the current turn.
         sleep_ran = any(b['name'] == SLEEP_TOOL_NAME for b in tool_use_blocks)
         is_main_thread = query_source.startswith('repl_main_thread') or query_source == 'sdk'
         current_agent_id = tool_use_context.get('agentId')
@@ -1636,7 +1636,7 @@ async def query_loop(
         # Each time we have tool results and are about to recurse, that's a turn
         next_turn_count = turn_count + 1
         
-        # Periodic task summary for `claude ps` — fires mid-turn so a
+        # Periodic task summary for `cortex ps` — fires mid-turn so a
         # long-running agent still refreshes what it's working on.
         
         # Check if we've reached the max turns limit

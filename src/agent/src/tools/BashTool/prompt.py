@@ -174,7 +174,7 @@ def get_max_timeout_ms() -> int:
 
 def get_background_usage_note() -> Optional[str]:
     """Get the background usage note if enabled."""
-    if is_env_truthy("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"):
+    if is_env_truthy("CORTEX_CODE_DISABLE_BACKGROUND_TASKS"):
         return None
     
     return (
@@ -206,7 +206,7 @@ def get_commit_and_pr_instructions() -> str:
     # For ant users, use the short version pointing to skills
     if os.environ.get("USER_TYPE") == "ant":
         skills_section = ""
-        if not is_env_truthy("CLAUDE_CODE_SIMPLE"):
+        if not is_env_truthy("CORTEX_CODE_SIMPLE"):
             skills_section = """For git commits and pull requests, use the `/commit` and `/commit-push-pr` skills:
 - `/commit` - Create a git commit with staged changes
 - `/commit-push-pr` - Commit, push, and create a pull request

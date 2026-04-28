@@ -46,7 +46,7 @@ DANGEROUS_FILES: set[str] = {
     '.ripgreprc',
     # MCP configuration (can add malicious MCP servers)
     '.mcp.json',
-    # Claude configuration (can modify AI behavior)
+    # Cortex configuration (can modify AI behavior)
     '.cortex.json',
 }
 
@@ -59,7 +59,7 @@ DANGEROUS_DIRECTORIES: set[str] = {
     '.vscode',
     # JetBrains IDE settings (can execute scripts, modify IDE behavior)
     '.idea',
-    # Claude Code settings (contains credentials, hooks, custom commands)
+    # Cortex Code settings (contains credentials, hooks, custom commands)
     '.cortex',
 }
 
@@ -72,7 +72,7 @@ def normalize_case_for_comparison(path: str) -> str:
     Normalizes a path for case-insensitive comparison.
     
     Prevents bypassing security checks using mixed-case paths on case-insensitive
-    filesystems (macOS/Windows) like `.cLauDe/Settings.locaL.json`.
+    filesystems (macOS/Windows) like `.cOrTeX/Settings.locaL.json`.
     
     We always normalize to lowercase regardless of platform for consistent security.
     
@@ -83,7 +83,7 @@ def normalize_case_for_comparison(path: str) -> str:
         The lowercase path for safe comparison
         
     Example:
-        >>> normalize_case_for_comparison('.cLauDe/Settings.json')
+        >>> normalize_case_for_comparison('.cOrTeX/Settings.json')
         '.cortex/settings.json'
     """
     return path.lower()
@@ -129,7 +129,7 @@ def has_suspicious_windows_path_pattern(path: str) -> bool:
     
     These patterns include:
     - NTFS Alternate Data Streams (e.g., file.txt::$DATA or file.txt:stream)
-    - 8.3 short names (e.g., GIT~1, CLAUDE~1, SETTIN~1.JSON)
+    - 8.3 short names (e.g., GIT~1, CORTEX~1, SETTIN~1.JSON)
     - Long path prefixes (e.g., \\\\?\\C:\\..., \\\\.\\C:\\...)
     - Trailing dots and spaces (e.g., .git., .cortex , .bashrc...)
     - DOS device names (e.g., .git.CON, settings.json.PRN, .bashrc.AUX)
@@ -170,7 +170,7 @@ def has_suspicious_windows_path_pattern(path: str) -> bool:
     
     # Check for 8.3 short names
     # Look for '~' followed by a digit
-    # Examples: GIT~1, CLAUDE~1, SETTIN~1.JSON, BASHRC~1
+    # Examples: GIT~1, CORTEX~1, SETTIN~1.JSON, BASHRC~1
     if re.search(r'~\d', path):
         return True
     
@@ -269,7 +269,7 @@ def is_dangerous_directory_to_auto_edit(path: str) -> Optional[str]:
                 continue
             
             # Special case: .cortex/worktrees/ is a structural path
-            # (where Claude stores git worktrees), not user-created
+            # (where Cortex stores git worktrees), not user-created
             if dangerous_dir == '.cortex':
                 next_segment = path_segments[i + 1] if i + 1 < len(path_segments) else None
                 if next_segment and normalize_case_for_comparison(next_segment) == 'worktrees':
@@ -342,7 +342,7 @@ def check_path_safety_for_auto_edit(path: str) -> dict:
         if reason:
             return {
                 'safe': False,
-                'message': f'Claude requested permissions to edit {path} which is a sensitive file: {reason}.',
+                'message': f'Cortex requested permissions to edit {path} which is a sensitive file: {reason}.',
                 'reason': 'dangerous_file',
             }
     
@@ -352,7 +352,7 @@ def check_path_safety_for_auto_edit(path: str) -> dict:
         if reason:
             return {
                 'safe': False,
-                'message': f'Claude requested permissions to edit {path} which is in a sensitive directory: {reason}.',
+                'message': f'Cortex requested permissions to edit {path} which is in a sensitive directory: {reason}.',
                 'reason': 'dangerous_directory',
             }
     
@@ -536,7 +536,7 @@ def check_read_permission(
     # Step 6: Default to asking for permission
     return {
         'behavior': 'ask',
-        'message': f'Claude requested permissions to read from {path}, but you haven\'t granted it yet.',
+        'message': f'Cortex requested permissions to read from {path}, but you haven\'t granted it yet.',
         'reason': 'outside_working_directory',
     }
 
@@ -616,7 +616,7 @@ def check_write_permission(
     # Step 6: Default to asking for permission
     return {
         'behavior': 'ask',
-        'message': f'Claude requested permissions to write to {path}, but you haven\'t granted it yet.',
+        'message': f'Cortex requested permissions to write to {path}, but you haven\'t granted it yet.',
         'reason': 'outside_working_directory' if not is_path_in_working_directories(path, working_directories or []) else 'default',
     }
 
@@ -847,7 +847,7 @@ def _is_tool_results_path(path: str) -> bool:
 def _is_project_temp_path(path: str) -> bool:
     """Check if path is in project temp directory"""
     normalized = normalize_case_for_comparison(path)
-    return '/claude/' in normalized and '/temp' in normalized
+    return '/cortex/' in normalized and '/temp' in normalized
 
 
 def _is_agent_memory_path(path: str) -> bool:

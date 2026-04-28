@@ -48,7 +48,7 @@ def isKairosCronEnabled() -> bool:
     AGENT_TRIGGERS is independently shippable from KAIROS.
     The default is `true` — /loop is GA.
     
-    `CLAUDE_CODE_DISABLE_CRON` is a local override that wins over GB.
+    `CORTEX_CODE_DISABLE_CRON` is a local override that wins over GB.
     
     Returns:
         True if cron scheduling is enabled
@@ -60,7 +60,7 @@ def isKairosCronEnabled() -> bool:
         return False
     
     # Check local override
-    if isEnvTruthy(os.environ.get('CLAUDE_CODE_DISABLE_CRON')):
+    if isEnvTruthy(os.environ.get('CORTEX_CODE_DISABLE_CRON')):
         return False
     
     # Check GrowthBook feature flag
@@ -102,7 +102,7 @@ def buildCronCreateDescription(durable_enabled: bool) -> str:
         )
     else:
         return (
-            'Schedule a prompt to run at a future time within this Claude session '
+            'Schedule a prompt to run at a future time within this Cortex session '
             '— either recurring on a cron schedule, or once at a specific time.'
         )
 
@@ -112,7 +112,7 @@ def buildCronCreatePrompt(durable_enabled: bool) -> str:
     if durable_enabled:
         durability_section = """## Durability
 
-By default (durable: false) the job lives only in this Claude session — nothing is written to disk, and the job is gone when Claude exits. Pass durable: true to write to .cortex/scheduled_tasks.json so the job survives restarts. Only use durable: true when the user explicitly asks for the task to persist ("keep doing this every day", "set this up permanently"). Most "remind me in 5 minutes" / "check back in an hour" requests should stay session-only."""
+By default (durable: false) the job lives only in this Cortex session — nothing is written to disk, and the job is gone when Cortex exits. Pass durable: true to write to .cortex/scheduled_tasks.json so the job survives restarts. Only use durable: true when the user explicitly asks for the task to persist ("keep doing this every day", "set this up permanently"). Most "remind me in 5 minutes" / "check back in an hour" requests should stay session-only."""
         durable_runtime_note = (
             'Durable jobs persist to .cortex/scheduled_tasks.json and survive session '
             'restarts — on next launch they resume automatically. One-shot durable tasks '
@@ -122,7 +122,7 @@ By default (durable: false) the job lives only in this Claude session — nothin
     else:
         durability_section = """## Session-only
 
-Jobs live only in this Claude session — nothing is written to disk, and the job is gone when Claude exits."""
+Jobs live only in this Cortex session — nothing is written to disk, and the job is gone when Cortex exits."""
         durable_runtime_note = ''
 
     return f"""Schedule a prompt to be enqueued at a future time. Use for both recurring schedules and one-shot reminders.

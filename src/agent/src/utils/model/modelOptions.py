@@ -44,9 +44,9 @@ class ModelOption(TypedDict):
 
 MODEL_PRICING = {
     # Anthropic
-    'claude-opus-4-6': {'input': 15.0, 'output': 75.0, 'currency': 'USD'},
-    'claude-sonnet-4-20250514': {'input': 3.15, 'output': 15.75, 'currency': 'USD'},
-    'claude-3-5-haiku-4-20250514': {'input': 0.80, 'output': 4.0, 'currency': 'USD'},
+    'cortex-opus-4-6': {'input': 15.0, 'output': 75.0, 'currency': 'USD'},
+    'cortex-sonnet-4-20250514': {'input': 3.15, 'output': 15.75, 'currency': 'USD'},
+    'cortex-3-5-haiku-4-20250514': {'input': 0.80, 'output': 4.0, 'currency': 'USD'},
     # OpenAI
     'gpt-4o': {'input': 2.50, 'output': 10.0, 'currency': 'USD'},
     'gpt-4o-mini': {'input': 0.15, 'output': 0.60, 'currency': 'USD'},
@@ -77,7 +77,7 @@ def formatPricing(modelId: str) -> str:
         Pricing string or empty string if not found
 
     Example:
-        formatPricing('claude-sonnet-4-20250514')
+        formatPricing('cortex-sonnet-4-20250514')
         → '$3.15/M input · $15.75/M output'
     """
     pricing = MODEL_PRICING.get(modelId)
@@ -102,42 +102,42 @@ def getDefaultOption() -> ModelOption:
     Get the default recommended model option.
 
     Returns:
-        ModelOption for the recommended default (Claude Sonnet)
+        ModelOption for the recommended default (Cortex Sonnet)
 
     Example:
         getDefaultOption()
         → {
             'value': 'sonnet',
-            'label': 'Claude Sonnet 4.6',
+            'label': 'Cortex Sonnet 4.6',
             'description': 'Best for everyday coding tasks · $3.15/M input · $15.75/M output',
             'category': 'recommended'
           }
     """
     return {
         'value': 'sonnet',
-        'label': 'Claude Sonnet 4.6',
+        'label': 'Cortex Sonnet 4.6',
         'description': 'Best for everyday coding tasks',
         'category': 'recommended',
     }
 
 
 def getOpusOption() -> ModelOption:
-    """Get Claude Opus option for complex tasks."""
-    pricing = formatPricing('claude-opus-4-6')
+    """Get Cortex Opus option for complex tasks."""
+    pricing = formatPricing('cortex-opus-4-6')
     return {
         'value': 'opus',
-        'label': 'Claude Opus 4.6',
+        'label': 'Cortex Opus 4.6',
         'description': f'Most capable for complex work{f" · {pricing}" if pricing else ""}',
         'category': 'recommended',
     }
 
 
 def getHaikuOption() -> ModelOption:
-    """Get Claude Haiku option for fast, cheap responses."""
-    pricing = formatPricing('claude-3-5-haiku-4-20250514')
+    """Get Cortex Haiku option for fast, cheap responses."""
+    pricing = formatPricing('cortex-3-5-haiku-4-20250514')
     return {
         'value': 'haiku',
-        'label': 'Claude Haiku 4.5',
+        'label': 'Cortex Haiku 4.5',
         'description': f'Fastest for quick answers{f" · {pricing}" if pricing else ""}',
         'category': 'budget',
     }
@@ -284,7 +284,7 @@ def getModelOptions(
     Example:
         getModelOptions()
         → [
-            {'value': 'sonnet', 'label': 'Claude Sonnet 4.6', ...},
+            {'value': 'sonnet', 'label': 'Cortex Sonnet 4.6', ...},
             {'value': 'gpt4o', 'label': 'GPT-4o', ...},
             ...
           ]

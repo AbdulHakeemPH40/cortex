@@ -84,11 +84,11 @@ def build_query_config() -> QueryConfig:
                 "tengu_streaming_tool_execution2"
             ),
             emit_tool_use_summaries=_is_env_truthy(
-                os.environ.get("CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES")
+                os.environ.get("CORTEX_CODE_EMIT_TOOL_USE_SUMMARIES")
             ),
             is_ant=os.environ.get("USER_TYPE") == "ant",
             fast_mode_enabled=not _is_env_truthy(
-                os.environ.get("CLAUDE_CODE_DISABLE_FAST_MODE")
+                os.environ.get("CORTEX_CODE_DISABLE_FAST_MODE")
             ),
         ),
     )

@@ -19,7 +19,7 @@ def is_agent_swarms_enabled() -> bool:
     
     Ant builds: always enabled.
     External builds require both:
-    1. Opt-in via CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS env var OR --agent-teams flag
+    1. Opt-in via CORTEX_CODE_EXPERIMENTAL_AGENT_TEAMS env var OR --agent-teams flag
     2. GrowthBook gate 'tengu_amber_flint' enabled (killswitch)
     """
     from .env_utils import is_env_truthy
@@ -29,7 +29,7 @@ def is_agent_swarms_enabled() -> bool:
         return True
     
     # External: require opt-in via env var or --agent-teams flag
-    if not is_env_truthy(os.environ.get('CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS')):
+    if not is_env_truthy(os.environ.get('CORTEX_CODE_EXPERIMENTAL_AGENT_TEAMS')):
         if not _is_agent_teams_flag_set():
             return False
     

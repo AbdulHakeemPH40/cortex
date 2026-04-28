@@ -147,7 +147,7 @@ def substitute_plugin_variables(
     Substitute plugin variables in content.
     
     Replaces:
-    - `${CLAUDE_PLUGIN_ROOT}` → plugin path
+    - `${CORTEX_PLUGIN_ROOT}` → plugin path
     - `${user_config.X}` → user config values (non-sensitive only)
     
     Args:
@@ -160,8 +160,8 @@ def substitute_plugin_variables(
     path = plugin_info.get('path', '')
     source = plugin_info.get('source', '')
     
-    # Replace ${CLAUDE_PLUGIN_ROOT}
-    content = content.replace('${CLAUDE_PLUGIN_ROOT}', path)
+    # Replace ${CORTEX_PLUGIN_ROOT}
+    content = content.replace('${CORTEX_PLUGIN_ROOT}', path)
     
     # Replace ${plugin_source}
     content = content.replace('${plugin_source}', source)

@@ -160,18 +160,18 @@ async def resolveAttachments(
     # Dynamic import inside the feature() guard so upload.py (axios, crypto,
     # zod, auth utils, MIME map) is fully eliminated from non-BRIDGE_MODE
     # builds. A static import would force module-scope evaluation regardless
-    # of the guard inside uploadBriefAttachment — CLAUDE.md: "helpers defined
+    # of the guard inside uploadBriefAttachment — CORTEX.md: "helpers defined
     # outside remain in the build even if never called".
     bridge_mode = isEnvTruthy(os.environ.get('BRIDGE_MODE'))
     
     if bridge_mode:
         # Headless/SDK callers never set appState.replBridgeEnabled (only the TTY
-        # REPL does, at main.tsx init). CLAUDE_CODE_BRIEF_UPLOAD lets a host that
+        # REPL does, at main.tsx init). CORTEX_CODE_BRIEF_UPLOAD lets a host that
         # runs the AI agent as a subprocess opt in — e.g. the cowork desktop bridge,
-        # which already passes CLAUDE_CODE_OAUTH_TOKEN for auth.
+        # which already passes CORTEX_CODE_OAUTH_TOKEN for auth.
         shouldUpload = (
             uploadCtx.get('replBridgeEnabled', False) or
-            isEnvTruthy(os.environ.get('CLAUDE_CODE_BRIEF_UPLOAD'))
+            isEnvTruthy(os.environ.get('CORTEX_CODE_BRIEF_UPLOAD'))
         )
         
         try:

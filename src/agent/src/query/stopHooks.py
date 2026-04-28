@@ -280,7 +280,7 @@ async def handleStopHooks(
     # Template job classification
     if (
         feature('TEMPLATES')
-        and os.environ.get('CLAUDE_JOB_DIR')
+        and os.environ.get('CORTEX_JOB_DIR')
         and querySource.startswith('repl_main_thread')
         and not toolUseContext.get('agentId')
     ):
@@ -294,7 +294,7 @@ async def handleStopHooks(
             try:
                 if _jobClassifierModule:
                     await classifyAndWriteState(
-                        os.environ.get('CLAUDE_JOB_DIR'),
+                        os.environ.get('CORTEX_JOB_DIR'),
                         turnAssistantMessages,
                     )
             except Exception as err:
@@ -315,7 +315,7 @@ async def handleStopHooks(
     # Skip background bookkeeping in bare mode
     if not isBareMode():
         # Prompt suggestion
-        if not isEnvDefinedFalsy(os.environ.get('CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION')):
+        if not isEnvDefinedFalsy(os.environ.get('CORTEX_CODE_ENABLE_PROMPT_SUGGESTION')):
             try:
                 asyncio.create_task(executePromptSuggestion(stopHookContext))
             except:

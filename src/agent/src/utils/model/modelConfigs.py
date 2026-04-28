@@ -3,7 +3,7 @@ Model configuration mappings for Cortex AI Agent IDE.
 
 Maps each model to its correct ID across multiple providers.
 Supports all 9+ LLM providers in Cortex IDE:
-  - Anthropic (Claude)
+  - Anthropic (Cortex)
   - OpenAI (GPT-4o, o1, o3, Codex)
   - Google Gemini
   - Mistral
@@ -64,81 +64,81 @@ ModelConfig = Dict[str, str]  # provider → model ID
 # Per-model provider configurations
 # ---------------------------------------------------------------------------
 
-CLAUDE_3_7_SONNET_CONFIG: ModelConfig = {
-    'anthropic': 'claude-3-7-sonnet-20250219',
+CORTEX_3_7_SONNET_CONFIG: ModelConfig = {
+    'anthropic': 'cortex-3-7-sonnet-20250219',
     'bedrock':   'us.anthropic.cortex-3-7-sonnet-20250219-v1:0',
-    'vertex':    'claude-3-7-sonnet@20250219',
-    'foundry':   'claude-3-7-sonnet',
+    'vertex':    'cortex-3-7-sonnet@20250219',
+    'foundry':   'cortex-3-7-sonnet',
 }
 
-CLAUDE_3_5_V2_SONNET_CONFIG: ModelConfig = {
-    'anthropic': 'claude-3-5-sonnet-20241022',
+CORTEX_3_5_V2_SONNET_CONFIG: ModelConfig = {
+    'anthropic': 'cortex-3-5-sonnet-20241022',
     'bedrock':   'anthropic.cortex-3-5-sonnet-20241022-v2:0',
-    'vertex':    'claude-3-5-sonnet-v2@20241022',
-    'foundry':   'claude-3-5-sonnet',
+    'vertex':    'cortex-3-5-sonnet-v2@20241022',
+    'foundry':   'cortex-3-5-sonnet',
 }
 
-CLAUDE_3_5_HAIKU_CONFIG: ModelConfig = {
-    'anthropic': 'claude-3-5-haiku-20241022',
+CORTEX_3_5_HAIKU_CONFIG: ModelConfig = {
+    'anthropic': 'cortex-3-5-haiku-20241022',
     'bedrock':   'us.anthropic.cortex-3-5-haiku-20241022-v1:0',
-    'vertex':    'claude-3-5-haiku@20241022',
-    'foundry':   'claude-3-5-haiku',
+    'vertex':    'cortex-3-5-haiku@20241022',
+    'foundry':   'cortex-3-5-haiku',
 }
 
-CLAUDE_HAIKU_4_5_CONFIG: ModelConfig = {
-    'anthropic': 'claude-haiku-4-5-20251001',
+CORTEX_HAIKU_4_5_CONFIG: ModelConfig = {
+    'anthropic': 'cortex-haiku-4-5-20251001',
     'bedrock':   'us.anthropic.cortex-haiku-4-5-20251001-v1:0',
-    'vertex':    'claude-haiku-4-5@20251001',
-    'foundry':   'claude-haiku-4-5',
+    'vertex':    'cortex-haiku-4-5@20251001',
+    'foundry':   'cortex-haiku-4-5',
 }
 
-CLAUDE_SONNET_4_CONFIG: ModelConfig = {
-    'anthropic': 'claude-sonnet-4-20250514',
+CORTEX_SONNET_4_CONFIG: ModelConfig = {
+    'anthropic': 'cortex-sonnet-4-20250514',
     'bedrock':   'us.anthropic.cortex-sonnet-4-20250514-v1:0',
-    'vertex':    'claude-sonnet-4@20250514',
-    'foundry':   'claude-sonnet-4',
+    'vertex':    'cortex-sonnet-4@20250514',
+    'foundry':   'cortex-sonnet-4',
 }
 
-CLAUDE_SONNET_4_5_CONFIG: ModelConfig = {
-    'anthropic': 'claude-sonnet-4-5-20250929',
+CORTEX_SONNET_4_5_CONFIG: ModelConfig = {
+    'anthropic': 'cortex-sonnet-4-5-20250929',
     'bedrock':   'us.anthropic.cortex-sonnet-4-5-20250929-v1:0',
-    'vertex':    'claude-sonnet-4-5@20250929',
-    'foundry':   'claude-sonnet-4-5',
+    'vertex':    'cortex-sonnet-4-5@20250929',
+    'foundry':   'cortex-sonnet-4-5',
 }
 
-CLAUDE_OPUS_4_CONFIG: ModelConfig = {
-    'anthropic': 'claude-opus-4-20250514',
+CORTEX_OPUS_4_CONFIG: ModelConfig = {
+    'anthropic': 'cortex-opus-4-20250514',
     'bedrock':   'us.anthropic.cortex-opus-4-20250514-v1:0',
-    'vertex':    'claude-opus-4@20250514',
-    'foundry':   'claude-opus-4',
+    'vertex':    'cortex-opus-4@20250514',
+    'foundry':   'cortex-opus-4',
 }
 
-CLAUDE_OPUS_4_1_CONFIG: ModelConfig = {
-    'anthropic': 'claude-opus-4-1-20250805',
+CORTEX_OPUS_4_1_CONFIG: ModelConfig = {
+    'anthropic': 'cortex-opus-4-1-20250805',
     'bedrock':   'us.anthropic.cortex-opus-4-1-20250805-v1:0',
-    'vertex':    'claude-opus-4-1@20250805',
-    'foundry':   'claude-opus-4-1',
+    'vertex':    'cortex-opus-4-1@20250805',
+    'foundry':   'cortex-opus-4-1',
 }
 
-CLAUDE_OPUS_4_5_CONFIG: ModelConfig = {
-    'anthropic': 'claude-opus-4-5-20251101',
+CORTEX_OPUS_4_5_CONFIG: ModelConfig = {
+    'anthropic': 'cortex-opus-4-5-20251101',
     'bedrock':   'us.anthropic.cortex-opus-4-5-20251101-v1:0',
-    'vertex':    'claude-opus-4-5@20251101',
-    'foundry':   'claude-opus-4-5',
+    'vertex':    'cortex-opus-4-5@20251101',
+    'foundry':   'cortex-opus-4-5',
 }
 
-CLAUDE_OPUS_4_6_CONFIG: ModelConfig = {
-    'anthropic': 'claude-opus-4-6',
+CORTEX_OPUS_4_6_CONFIG: ModelConfig = {
+    'anthropic': 'cortex-opus-4-6',
     'bedrock':   'us.anthropic.cortex-opus-4-6-v1',
-    'vertex':    'claude-opus-4-6',
-    'foundry':   'claude-opus-4-6',
+    'vertex':    'cortex-opus-4-6',
+    'foundry':   'cortex-opus-4-6',
 }
 
-CLAUDE_SONNET_4_6_CONFIG: ModelConfig = {
-    'anthropic': 'claude-sonnet-4-6',
+CORTEX_SONNET_4_6_CONFIG: ModelConfig = {
+    'anthropic': 'cortex-sonnet-4-6',
     'bedrock':   'us.anthropic.cortex-sonnet-4-6',
-    'vertex':    'claude-sonnet-4-6',
-    'foundry':   'claude-sonnet-4-6',
+    'vertex':    'cortex-sonnet-4-6',
+    'foundry':   'cortex-sonnet-4-6',
 }
 
 # ---------------------------------------------------------------------------
@@ -301,17 +301,17 @@ SILICONFLOW_QWQ_32B_CONFIG: ModelConfig = {
 
 ALL_MODEL_CONFIGS: Dict[ModelKey, ModelConfig] = {
     # ── Anthropic ──────────────────────────────────────────────────────────
-    'haiku35':  CLAUDE_3_5_HAIKU_CONFIG,
-    'haiku45':  CLAUDE_HAIKU_4_5_CONFIG,
-    'sonnet35': CLAUDE_3_5_V2_SONNET_CONFIG,
-    'sonnet37': CLAUDE_3_7_SONNET_CONFIG,
-    'sonnet40': CLAUDE_SONNET_4_CONFIG,
-    'sonnet45': CLAUDE_SONNET_4_5_CONFIG,
-    'sonnet46': CLAUDE_SONNET_4_6_CONFIG,
-    'opus40':   CLAUDE_OPUS_4_CONFIG,
-    'opus41':   CLAUDE_OPUS_4_1_CONFIG,
-    'opus45':   CLAUDE_OPUS_4_5_CONFIG,
-    'opus46':   CLAUDE_OPUS_4_6_CONFIG,
+    'haiku35':  CORTEX_3_5_HAIKU_CONFIG,
+    'haiku45':  CORTEX_HAIKU_4_5_CONFIG,
+    'sonnet35': CORTEX_3_5_V2_SONNET_CONFIG,
+    'sonnet37': CORTEX_3_7_SONNET_CONFIG,
+    'sonnet40': CORTEX_SONNET_4_CONFIG,
+    'sonnet45': CORTEX_SONNET_4_5_CONFIG,
+    'sonnet46': CORTEX_SONNET_4_6_CONFIG,
+    'opus40':   CORTEX_OPUS_4_CONFIG,
+    'opus41':   CORTEX_OPUS_4_1_CONFIG,
+    'opus45':   CORTEX_OPUS_4_5_CONFIG,
+    'opus46':   CORTEX_OPUS_4_6_CONFIG,
     # ── OpenAI ────────────────────────────────────────────────────────────
     'gpt4o':      GPT_4O_CONFIG,
     'gpt4omini':  GPT_4O_MINI_CONFIG,
@@ -355,13 +355,13 @@ ALL_MODEL_CONFIGS: Dict[ModelKey, ModelConfig] = {
 # ---------------------------------------------------------------------------
 
 # Tuple of all canonical model IDs (primary provider format)
-# Claude → Anthropic, OpenAI → openai, Gemini → google, etc.
+# Cortex → Anthropic, OpenAI → openai, Gemini → google, etc.
 CANONICAL_MODEL_IDS: Tuple[str, ...] = tuple(
     list(cfg.values())[0] for cfg in ALL_MODEL_CONFIGS.values()
 )
 
 # Reverse lookup: model ID → short key
-# e.g. 'claude-opus-4-6' → 'opus46', 'gpt-4o' → 'gpt4o'
+# e.g. 'cortex-opus-4-6' → 'opus46', 'gpt-4o' → 'gpt4o'
 CANONICAL_ID_TO_KEY: Dict[str, ModelKey] = {}
 for key, cfg in ALL_MODEL_CONFIGS.items():
     for model_id in cfg.values():
@@ -382,7 +382,7 @@ def getModelConfig(modelKey: ModelKey) -> ModelConfig:
         Dict mapping provider → model ID
 
     Example:
-        getModelConfig('opus46')['anthropic']  → 'claude-opus-4-6'
+        getModelConfig('opus46')['anthropic']  → 'cortex-opus-4-6'
         getModelConfig('sonnet40')['bedrock']  → 'us.anthropic.cortex-sonnet-4-20250514-v1:0'
     """
     return ALL_MODEL_CONFIGS[modelKey]
@@ -400,7 +400,7 @@ def getModelIdForProvider(modelKey: ModelKey, provider: str) -> Optional[str]:
         Provider-specific model ID string, or None if provider not supported for this model
 
     Example:
-        getModelIdForProvider('opus46', 'anthropic') → 'claude-opus-4-6'
+        getModelIdForProvider('opus46', 'anthropic') → 'cortex-opus-4-6'
         getModelIdForProvider('opus46', 'bedrock')   → 'us.anthropic.cortex-opus-4-6-v1'
         getModelIdForProvider('gpt4o', 'openai')     → 'gpt-4o'
         getModelIdForProvider('gemini2flash', 'google') → 'gemini-2.0-flash'
@@ -413,14 +413,14 @@ def resolveModelKey(modelId: str) -> Optional[ModelKey]:
     Resolve a model ID to its short key.
 
     Args:
-        modelId: Model ID from any provider (e.g. 'claude-opus-4-6', 'gpt-4o', 'gemini-2.0-flash')
+        modelId: Model ID from any provider (e.g. 'cortex-opus-4-6', 'gpt-4o', 'gemini-2.0-flash')
 
     Returns:
         Short model key, or None if not recognised
 
     Example:
-        resolveModelKey('claude-opus-4-6')      → 'opus46'
-        resolveModelKey('claude-sonnet-4-5-20250929') → 'sonnet45'
+        resolveModelKey('cortex-opus-4-6')      → 'opus46'
+        resolveModelKey('cortex-sonnet-4-5-20250929') → 'sonnet45'
         resolveModelKey('gpt-4o')               → 'gpt4o'
         resolveModelKey('gemini-2.0-flash')     → 'gemini2flash'
         resolveModelKey('unknown-model')        → None
@@ -439,7 +439,7 @@ def isCanonicalModelId(modelId: str) -> bool:
         True if modelId is in CANONICAL_MODEL_IDS
 
     Example:
-        isCanonicalModelId('claude-opus-4-6') → True
+        isCanonicalModelId('cortex-opus-4-6') → True
         isCanonicalModelId('gpt-4o') → True
         isCanonicalModelId('gemini-2.0-flash') → True
         isCanonicalModelId('custom-model') → False
@@ -473,18 +473,18 @@ __all__ = [
     'APIProvider',
     'ModelKey',
     'ModelConfig',
-    # Claude configs
-    'CLAUDE_3_7_SONNET_CONFIG',
-    'CLAUDE_3_5_V2_SONNET_CONFIG',
-    'CLAUDE_3_5_HAIKU_CONFIG',
-    'CLAUDE_HAIKU_4_5_CONFIG',
-    'CLAUDE_SONNET_4_CONFIG',
-    'CLAUDE_SONNET_4_5_CONFIG',
-    'CLAUDE_OPUS_4_CONFIG',
-    'CLAUDE_OPUS_4_1_CONFIG',
-    'CLAUDE_OPUS_4_5_CONFIG',
-    'CLAUDE_OPUS_4_6_CONFIG',
-    'CLAUDE_SONNET_4_6_CONFIG',
+    # Cortex configs
+    'CORTEX_3_7_SONNET_CONFIG',
+    'CORTEX_3_5_V2_SONNET_CONFIG',
+    'CORTEX_3_5_HAIKU_CONFIG',
+    'CORTEX_HAIKU_4_5_CONFIG',
+    'CORTEX_SONNET_4_CONFIG',
+    'CORTEX_SONNET_4_5_CONFIG',
+    'CORTEX_OPUS_4_CONFIG',
+    'CORTEX_OPUS_4_1_CONFIG',
+    'CORTEX_OPUS_4_5_CONFIG',
+    'CORTEX_OPUS_4_6_CONFIG',
+    'CORTEX_SONNET_4_6_CONFIG',
     # OpenAI configs
     'GPT_4O_CONFIG',
     'GPT_4O_MINI_CONFIG',

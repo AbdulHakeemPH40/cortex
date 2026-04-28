@@ -40,7 +40,7 @@ class SubagentContext(TypedDict, total=False):
     """
     # The subagent's UUID (from createAgentId())
     agentId: str
-    # The team lead's session ID (from CLAUDE_CODE_PARENT_SESSION_ID env var)
+    # The team lead's session ID (from CORTEX_CODE_PARENT_SESSION_ID env var)
     parentSessionId: Optional[str]
     # Agent type - 'subagent' for Agent tool agents
     agentType: Literal['subagent']

@@ -1972,7 +1972,7 @@ class CortexAgentBridge(QObject):
             self._ensure_memory_dir(memory_dir)
             memory_section = self._load_memory_section(memory_dir)
 
-        prompt = f"""You are Cortex AI Agent, an autonomous coding assistant integrated into Cortex IDE.
+        prompt = f"""You are Cortex AI Agent, an autonomous coding assistant integrated into Cortex AI Agent.
 You are a world-class software engineer who writes clean, efficient, well-tested code.
 
 ## Environment

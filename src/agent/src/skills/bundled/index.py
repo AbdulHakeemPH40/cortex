@@ -14,8 +14,8 @@ Skipped skills (static prompts, internal-only, or deleted):
 - remember.ts (static memory prompts)
 - verify.ts (internal-only, USER_TYPE === 'ant')
 - stuck.ts (internal-only, USER_TYPE === 'ant')
-- claudeInChrome.ts (MCP tool registration, deleted)
-- claudeApi.ts (static documentation, deleted)
+- cortexInChrome.ts (MCP tool registration, deleted)
+- cortexApi.ts (static documentation, deleted)
 """
 
 import os
@@ -195,8 +195,8 @@ def init_bundled_skills(register_callback: Callable[[dict[str, Any]], None]) -> 
     # remember.ts        - Static memory prompts, no AI logic
     # verify.ts          - Internal-only (USER_TYPE === 'ant')
     # stuck.ts           - Internal-only (USER_TYPE === 'ant')
-    # claudeInChrome.ts  - MCP tool registration, deleted (no AI logic)
-    # claudeApi.ts       - Static documentation bundling, deleted (no AI logic)
+    # cortexInChrome.ts  - MCP tool registration, deleted (no AI logic)
+    # cortexApi.ts       - Static documentation bundling, deleted (no AI logic)
     #
     # Feature-gated skills (not converted):
     # dream.ts           - Feature: KAIROS/KAIROS_DREAM

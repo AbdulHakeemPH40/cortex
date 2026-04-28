@@ -72,14 +72,14 @@ def get_built_in_agents() -> List[Dict[str, Any]]:
     # Allow disabling all built-in agents via env var (SDK/API usage)
     # Only applies in non-interactive mode
     if (
-        is_env_truthy(os.environ.get('CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS')) and
+        is_env_truthy(os.environ.get('CORTEX_AGENT_SDK_DISABLE_BUILTIN_AGENTS')) and
         get_is_non_interactive_session()
     ):
         return []
     
     # Coordinator mode - lazy import to avoid circular dependencies
     if feature('COORDINATOR_MODE'):
-        if is_env_truthy(os.environ.get('CLAUDE_CODE_COORDINATOR_MODE')):
+        if is_env_truthy(os.environ.get('CORTEX_CODE_COORDINATOR_MODE')):
             # Lazy require inside function body to avoid circular dependency
             # The coordinator module depends on tools which depend on AgentTool
             try:
@@ -133,13 +133,13 @@ def get_built_in_agents() -> List[Dict[str, Any]]:
     
     # Include Code Guide agent for non-SDK entrypoints
     sdk_entrypoints = {'sdk-ts', 'sdk-py', 'sdk-cli'}
-    current_entrypoint = os.environ.get('CLAUDE_CODE_ENTRYPOINT')
+    current_entrypoint = os.environ.get('CORTEX_CODE_ENTRYPOINT')
     is_non_sdk_entrypoint = current_entrypoint not in sdk_entrypoints
     
     if is_non_sdk_entrypoint:
         try:
-            from .built_in.cortex_code_guide_agent import CLAUDE_CODE_GUIDE_AGENT
-            agents.append(CLAUDE_CODE_GUIDE_AGENT)
+            from .built_in.cortex_code_guide_agent import CORTEX_CODE_GUIDE_AGENT
+            agents.append(CORTEX_CODE_GUIDE_AGENT)
         except ImportError:
             pass
     

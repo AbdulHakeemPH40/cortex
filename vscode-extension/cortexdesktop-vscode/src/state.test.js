@@ -76,24 +76,24 @@ test('parseProfileFile returns null when env is not an object', () => {
 
 test('resolveCommandCheckPath resolves workspace-relative executables', () => {
   assert.equal(
-    resolveCommandCheckPath('./node_modules/.bin/openclaude', '/repo'),
-    require('node:path').resolve('/repo', './node_modules/.bin/openclaude'),
+    resolveCommandCheckPath('./node_modules/.bin/cortex', '/repo'),
+    require('node:path').resolve('/repo', './node_modules/.bin/cortex'),
   );
 });
 
 test('resolveCommandCheckPath leaves bare commands alone', () => {
-  assert.equal(resolveCommandCheckPath('openclaude', '/repo'), null);
+  assert.equal(resolveCommandCheckPath('cortex', '/repo'), null);
 });
 
 test('findCommandPath treats shell-like input as a literal executable name', t => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openclaude-command-'));
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cortex-command-'));
   t.after(() => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
   const commandName = process.platform === 'win32'
-    ? 'openclaude & whoami'
-    : 'openclaude && whoami';
+    ? 'cortex & whoami'
+    : 'cortex && whoami';
   const executableName = process.platform === 'win32'
     ? `${commandName}.cmd`
     : commandName;
@@ -163,7 +163,7 @@ test('describeProviderState does not treat substring-matched OpenAI hosts as Ope
     describeProviderState({
       shimEnabled: false,
       env: {
-        CLAUDE_CODE_USE_OPENAI: '1',
+        CORTEX_CODE_USE_OPENAI: '1',
         OPENAI_BASE_URL: 'https://evil.example/path/api.openai.com/v1',
         OPENAI_MODEL: 'gpt-4o',
       },
@@ -182,7 +182,7 @@ test('describeProviderState reports OpenAI when the parsed host is api.openai.co
     describeProviderState({
       shimEnabled: false,
       env: {
-        CLAUDE_CODE_USE_OPENAI: '1',
+        CORTEX_CODE_USE_OPENAI: '1',
         OPENAI_BASE_URL: 'https://api.openai.com/v1',
         OPENAI_MODEL: 'gpt-4o',
       },
@@ -201,7 +201,7 @@ test('describeProviderState reports environment-backed provider details', () => 
     describeProviderState({
       shimEnabled: false,
       env: {
-        CLAUDE_CODE_USE_OPENAI: '1',
+        CORTEX_CODE_USE_OPENAI: '1',
         OPENAI_BASE_URL: 'http://localhost:11434/v1',
         OPENAI_MODEL: 'llama3.2:3b',
       },

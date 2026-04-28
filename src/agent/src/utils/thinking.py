@@ -1,13 +1,13 @@
 # utils/thinking.py
 # Extended Thinking/Reasoning Configuration for Multi-LLM Cortex IDE
-# Supports: OpenAI (o1/o3), Anthropic (Claude), Google (Gemini), xAI (Grok), DeepSeek, Qwen
+# Supports: OpenAI (o1/o3), Anthropic (Cortex), Google (Gemini), xAI (Grok), DeepSeek, Qwen
 
 """
 Extended thinking/reasoning configuration for multi-LLM models.
 
 Different LLM providers call this feature by different names:
 - OpenAI: "Extended Thinking" (o1, o3 models)
-- Anthropic: "Extended Thinking" (Claude 4+)
+- Anthropic: "Extended Thinking" (Cortex 4+)
 - Google: "Thinking Budget" (Gemini 2.0 Flash Thinking)
 - xAI: N/A (Grok doesn't support thinking)
 - DeepSeek: "Reasoning" (DeepSeek-R1)
@@ -60,7 +60,7 @@ class ThinkingConfig:
                 "reasoning_effort": "high" if self.type == "enabled" else "medium"
             }
         
-        # Anthropic Claude 4+
+        # Anthropic Cortex 4+
         elif provider == "anthropic":
             return {
                 "thinking": {
@@ -108,13 +108,13 @@ THINKING_SUPPORTED_MODELS = {
         "o4-mini",
     },
     
-    # Anthropic - Claude 4+ models
+    # Anthropic - Cortex 4+ models
     "anthropic": {
-        "claude-sonnet-4", "claude-sonnet-4-20250514",
-        "claude-opus-4", "claude-opus-4-20250514",
-        "claude-haiku-4-5", "claude-haiku-4-5-20250514",
-        # Claude 4.6+ with adaptive thinking
-        "claude-sonnet-4-6", "claude-opus-4-6",
+        "cortex-sonnet-4", "cortex-sonnet-4-20250514",
+        "cortex-opus-4", "cortex-opus-4-20250514",
+        "cortex-haiku-4-5", "cortex-haiku-4-5-20250514",
+        # Cortex 4.6+ with adaptive thinking
+        "cortex-sonnet-4-6", "cortex-opus-4-6",
     },
     
     # Google - Gemini 2.0 Flash Thinking
@@ -145,10 +145,10 @@ ADAPTIVE_THINKING_MODELS = {
     # OpenAI - o3+ models
     "openai": {"o3", "o3-mini", "o4-mini"},
     
-    # Anthropic - Claude 4.6+
+    # Anthropic - Cortex 4.6+
     "anthropic": {
-        "claude-sonnet-4-6",
-        "claude-opus-4-6",
+        "cortex-sonnet-4-6",
+        "cortex-opus-4-6",
     },
     
     # Google - Gemini 2.0 Flash Thinking (adaptive by default)
@@ -178,7 +178,7 @@ def model_supports_thinking(provider: str, model_name: str) -> bool:
     
     Args:
         provider: LLM provider (openai, anthropic, google, xai, deepseek, qwen)
-        model_name: Model identifier (e.g., "gpt-4", "claude-sonnet-4")
+        model_name: Model identifier (e.g., "gpt-4", "cortex-sonnet-4")
     
     Returns:
         True if model supports extended thinking
@@ -186,7 +186,7 @@ def model_supports_thinking(provider: str, model_name: str) -> bool:
     Examples:
         >>> model_supports_thinking("openai", "o3-mini")
         True
-        >>> model_supports_thinking("anthropic", "claude-sonnet-4")
+        >>> model_supports_thinking("anthropic", "cortex-sonnet-4")
         True
         >>> model_supports_thinking("xai", "grok-2")
         False
@@ -223,10 +223,10 @@ def model_supports_adaptive_thinking(provider: str, model_name: str) -> bool:
         True if model supports adaptive thinking
     
     Examples:
-        >>> model_supports_adaptive_thinking("anthropic", "claude-opus-4-6")
+        >>> model_supports_adaptive_thinking("anthropic", "cortex-opus-4-6")
         True
-        >>> model_supports_adaptive_thinking("anthropic", "claude-sonnet-4")
-        False  # Claude 4.0 requires explicit thinking enable/disable
+        >>> model_supports_adaptive_thinking("anthropic", "cortex-sonnet-4")
+        False  # Cortex 4.0 requires explicit thinking enable/disable
     """
     provider = provider.lower()
     model_name = model_name.lower()
@@ -315,9 +315,9 @@ def get_provider_thinking_info(provider: str) -> dict:
             "feature_name": "Extended Thinking",
             "supports_thinking": True,
             "supports_adaptive": True,
-            "models": ["claude-sonnet-4", "claude-opus-4", "claude-haiku-4-5"],
+            "models": ["cortex-sonnet-4", "cortex-opus-4", "cortex-haiku-4-5"],
             "config_param": "thinking.budget_tokens",
-            "description": "Claude 4+ models with chain-of-thought reasoning",
+            "description": "Cortex 4+ models with chain-of-thought reasoning",
         },
         "google": {
             "feature_name": "Thinking Budget",
@@ -366,7 +366,7 @@ def list_thinking_supported_models() -> Dict[str, list]:
         >>> models = list_thinking_supported_models()
         >>> "o3-mini" in models["openai"]
         True
-        >>> "claude-sonnet-4" in models["anthropic"]
+        >>> "cortex-sonnet-4" in models["anthropic"]
         True
     """
     return {

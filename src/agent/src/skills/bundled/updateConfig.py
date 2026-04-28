@@ -124,7 +124,7 @@ Set `commit` or `pr` to empty string `""` to hide that attribution.
   }
 }
 ```
-Plugin syntax: `plugin-name@source` where source is `claude-code-marketplace`, `claude-plugins-official`, or `builtin`.
+Plugin syntax: `plugin-name@source` where source is `cortex-code-marketplace`, `cortex-plugins-official`, or `builtin`.
 
 ### Other Settings
 - `language`: Preferred response language (e.g., "japanese")
@@ -148,7 +148,7 @@ Plugin syntax: `plugin-name@source` where source is `claude-code-marketplace`, `
 
 HOOKS_DOCS = """## Hooks Configuration
 
-Hooks run commands at specific points in Claude Code's lifecycle.
+Hooks run commands at specific points in Cortex Code's lifecycle.
 
 ### Hook Structure
 ```json
@@ -180,7 +180,7 @@ Hooks run commands at specific points in Claude Code's lifecycle.
 | PostToolUse | Tool name | Run after successful tool |
 | PostToolUseFailure | Tool name | Run after tool fails |
 | Notification | Notification type | Run on notifications |
-| Stop | - | Run when Claude stops (including clear, resume, compact) |
+| Stop | - | Run when Cortex stops (including clear, resume, compact) |
 | PreCompact | "manual"/"auto" | Before compaction |
 | PostCompact | "manual"/"auto" | After compaction (receives summary) |
 | UserPromptSubmit | - | When user submits |
@@ -339,7 +339,7 @@ Given an event, matcher, target file, and desired behavior, follow this flow. Ea
 
 6. **Prove the hook fires** — only for `Pre|PostToolUse` on a matcher you can trigger in-turn (`Write|Edit` via Edit, `Bash` via Bash). `Stop`/`UserPromptSubmit`/`SessionStart` fire outside this turn — skip to step 7.
 
-   For a **formatter** on `PostToolUse`/`Write|Edit`: introduce a detectable violation via Edit (two consecutive blank lines, bad indentation, missing semicolon — something this formatter corrects; NOT trailing whitespace, Edit strips that before writing), re-read, confirm the hook **fixed** it. For **anything else**: temporarily prefix the command in settings.json with `echo "$(date) hook fired" >> /tmp/claude-hook-check.txt; `, trigger the matching tool (Edit for `Write|Edit`, a harmless `true` for `Bash`), read the sentinel file.
+   For a **formatter** on `PostToolUse`/`Write|Edit`: introduce a detectable violation via Edit (two consecutive blank lines, bad indentation, missing semicolon — something this formatter corrects; NOT trailing whitespace, Edit strips that before writing), re-read, confirm the hook **fixed** it. For **anything else**: temporarily prefix the command in settings.json with `echo "$(date) hook fired" >> /tmp/cortex-hook-check.txt; `, trigger the matching tool (Edit for `Write|Edit`, a harmless `true` for `Bash`), read the sentinel file.
 
    **Always clean up** — revert the violation, strip the sentinel prefix — whether the proof passed or failed.
 
@@ -355,7 +355,7 @@ Given an event, matcher, target file, and desired behavior, follow this flow. Ea
 
 UPDATE_CONFIG_PROMPT = f"""# Update Config Skill
 
-Modify Claude Code configuration by updating settings.json files.
+Modify Cortex Code configuration by updating settings.json files.
 
 ## When Hooks Are Required (Not Memory)
 
@@ -434,7 +434,7 @@ When adding to permission arrays or hook arrays, **merge with existing**, don't 
 
 ### Adding a Hook
 
-User: "Format my code after Claude writes it"
+User: "Format my code after Cortex writes it"
 
 1. **Clarify**: Which formatter? (prettier, gofmt, etc.)
 2. **Read**: `.cortex/settings.json` (or create if missing)
@@ -488,7 +488,7 @@ If a hook isn't running:
 3. **Check the matcher** - Does it match the tool name? (e.g., "Bash", "Write", "Edit")
 4. **Check hook type** - Is it "command", "prompt", or "agent"?
 5. **Test the command** - Run the hook command manually to see if it works
-6. **Use --debug** - Run `claude --debug` to see hook execution logs
+6. **Use --debug** - Run `cortex --debug` to see hook execution logs
 """
 
 
@@ -497,13 +497,13 @@ If a hook isn't running:
 # =============================================================================
 
 UPDATE_CONFIG_SKILL_DESCRIPTION = (
-    "Use this skill to configure the Claude Code harness via settings.json. "
+    "Use this skill to configure the Cortex Code harness via settings.json. "
     "Automated behaviors (\"from now on when X\", \"each time X\", \"whenever X\", \"before/after X\") "
-    "require hooks configured in settings.json - the harness executes these, not Claude, "
+    "require hooks configured in settings.json - the harness executes these, not Cortex, "
     "so memory/preferences cannot fulfill them. Also use for: permissions (\"allow X\", \"add permission\", "
     "\"move permission to\"), env vars (\"set X=Y\"), hook troubleshooting, or any changes to "
     "settings.json/settings.local.json files. Examples: \"allow npm commands\", \"add bq permission "
-    "to global settings\", \"move permission to user settings\", \"set DEBUG=true\", \"when claude "
+    "to global settings\", \"move permission to user settings\", \"set DEBUG=true\", \"when cortex "
     "stops show X\". For simple settings like theme/model, use Config tool."
 )
 

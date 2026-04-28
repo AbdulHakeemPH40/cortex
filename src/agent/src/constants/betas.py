@@ -11,7 +11,7 @@ available.
 """
 
 # Core beta headers
-CLAUDE_CODE_20250219_BETA_HEADER: str = "claude-code-20250219"
+CORTEX_CODE_20250219_BETA_HEADER: str = "cortex-code-20250219"
 INTERLEAVED_THINKING_BETA_HEADER: str = "interleaved-thinking-2025-05-14"
 CONTEXT_1M_BETA_HEADER: str = "context-1m-2025-08-07"
 CONTEXT_MANAGEMENT_BETA_HEADER: str = "context-management-2025-06-27"
@@ -19,7 +19,7 @@ STRUCTURED_OUTPUTS_BETA_HEADER: str = "structured-outputs-2025-12-15"
 WEB_SEARCH_BETA_HEADER: str = "web-search-2025-03-05"
 
 # Tool search beta headers differ by provider:
-# - Claude API / Foundry: advanced-tool-use-2025-11-20
+# - First-party API / Foundry: advanced-tool-use-2025-11-20
 # - Vertex AI / Bedrock: tool-search-tool-2025-10-19
 TOOL_SEARCH_BETA_HEADER_1P: str = "advanced-tool-use-2025-11-20"
 TOOL_SEARCH_BETA_HEADER_3P: str = "tool-search-tool-2025-10-19"
@@ -53,7 +53,7 @@ BEDROCK_EXTRA_PARAMS_HEADERS: frozenset[str] = frozenset({
 # Betas allowed on Vertex countTokens API.
 # Other betas will cause 400 errors.
 VERTEX_COUNT_TOKENS_ALLOWED_BETAS: frozenset[str] = frozenset({
-    CLAUDE_CODE_20250219_BETA_HEADER,
+    CORTEX_CODE_20250219_BETA_HEADER,
     INTERLEAVED_THINKING_BETA_HEADER,
     CONTEXT_MANAGEMENT_BETA_HEADER,
 })

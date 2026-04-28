@@ -96,7 +96,7 @@ class BuiltInAgentDefinition:
     tools: List[str]
     base_dir: str
     model: str
-    omit_claude_md: bool = False
+    omit_cortex_md: bool = False
     get_system_prompt: Any = None
 
 
@@ -119,8 +119,8 @@ PLAN_AGENT = BuiltInAgentDefinition(
     tools=EXPLORE_AGENT.tools,
     base_dir="built-in",
     model="inherit",
-    # Plan is read-only and can Read CLAUDE.md directly if it needs conventions.
+    # Plan is read-only and can Read CORTEX.md directly if it needs conventions.
     # Dropping it from context saves tokens without blocking access.
-    omit_claude_md=True,
+    omit_cortex_md=True,
     get_system_prompt=get_plan_v2_system_prompt,
 )

@@ -18,10 +18,10 @@ FILE_EDIT_TOOL_NAME = "Edit"
 # ============================================================
 
 # Permission pattern for granting session-level access to the project's .cortex/ folder
-CLAUDE_FOLDER_PERMISSION_PATTERN = "/.cortex/**"
+CORTEX_FOLDER_PERMISSION_PATTERN = "/.cortex/**"
 
 # Permission pattern for granting session-level access to the global ~/.cortex/ folder
-GLOBAL_CLAUDE_FOLDER_PERMISSION_PATTERN = "~/.cortex/**"
+GLOBAL_CORTEX_FOLDER_PERMISSION_PATTERN = "~/.cortex/**"
 
 # ============================================================
 # ERROR MESSAGES
@@ -39,7 +39,7 @@ FILE_UNEXPECTEDLY_MODIFIED_ERROR = (
 
 __all__ = [
     "FILE_EDIT_TOOL_NAME",
-    "CLAUDE_FOLDER_PERMISSION_PATTERN",
-    "GLOBAL_CLAUDE_FOLDER_PERMISSION_PATTERN",
+    "CORTEX_FOLDER_PERMISSION_PATTERN",
+    "GLOBAL_CORTEX_FOLDER_PERMISSION_PATTERN",
     "FILE_UNEXPECTEDLY_MODIFIED_ERROR",
 ]

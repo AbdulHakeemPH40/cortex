@@ -103,13 +103,13 @@ def tool_matches_name(tool, name: str) -> bool:
 PROGRESS_THRESHOLD_MS = 2000  # Show background hint after 2 seconds
 
 IS_BACKGROUND_TASKS_DISABLED = is_env_truthy(
-    os.environ.get("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "")
+    os.environ.get("CORTEX_CODE_DISABLE_BACKGROUND_TASKS", "")
 )
 
 
 def get_auto_background_ms() -> int:
     """Auto-background agent tasks after this many ms (0 = disabled)."""
-    if (is_env_truthy(os.environ.get("CLAUDE_AUTO_BACKGROUND_TASKS", "")) or 
+    if (is_env_truthy(os.environ.get("CORTEX_AUTO_BACKGROUND_TASKS", "")) or 
         get_feature_value_cached_may_be_stale("tengu_auto_background_agents", False)):
         return 120_000
     return 0
@@ -231,7 +231,7 @@ async def agent_tool_prompt(
     agents_with_mcp_met = filter_agents_by_mcp_requirements(agents, list(mcp_servers_with_tools))
     filtered_agents = filter_denied_agents(agents_with_mcp_met, tool_permission_context, AGENT_TOOL_NAME)
     
-    is_coordinator = is_env_truthy(os.environ.get("CLAUDE_CODE_COORDINATOR_MODE", "")) if feature('COORDINATOR_MODE') else False
+    is_coordinator = is_env_truthy(os.environ.get("CORTEX_CODE_COORDINATOR_MODE", "")) if feature('COORDINATOR_MODE') else False
     
     return await get_prompt(filtered_agents, is_coordinator, allowed_agent_types)
 
@@ -1184,7 +1184,7 @@ class AgentTool:
         }
         
         # Determine if should run async
-        is_coordinator = is_env_truthy(os.environ.get("CLAUDE_CODE_COORDINATOR_MODE", "")) if feature('COORDINATOR_MODE') else False
+        is_coordinator = is_env_truthy(os.environ.get("CORTEX_CODE_COORDINATOR_MODE", "")) if feature('COORDINATOR_MODE') else False
         force_async = is_fork_subagent_enabled()
         assistant_force_async = feature('KAIROS') and app_state.kairos_enabled
         proactive_active = False  # Placeholder for proactive module

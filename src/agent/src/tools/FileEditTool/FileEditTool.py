@@ -898,7 +898,7 @@ class FileEditTool:
         # Skill discovery (fire-and-forget, non-blocking)
         # --------------------------------------------------------------
         cwd = get_cwd()
-        if not is_env_truthy("CLAUDE_CODE_SIMPLE"):
+        if not is_env_truthy("CORTEX_CODE_SIMPLE"):
             # Placeholder - replace with real skill discovery if needed
             pass
         
@@ -1025,8 +1025,8 @@ class FileEditTool:
         # --------------------------------------------------------------
         # Analytics & logging
         # --------------------------------------------------------------
-        if absolute_file_path.endswith(os.sep + "CLAUDE.md"):
-            log_event("tengu_write_claudemd", {})
+        if absolute_file_path.endswith(os.sep + "CORTEX.md"):
+            log_event("tengu_write_cortexmd", {})
         
         count_lines_changed(patch)
         
@@ -1044,7 +1044,7 @@ class FileEditTool:
         # --------------------------------------------------------------
         git_diff: Optional[Dict[str, Any]] = None
         if (
-            is_env_truthy("CLAUDE_CODE_REMOTE")
+            is_env_truthy("CORTEX_CODE_REMOTE")
             and get_feature_value_cached("tengu_quartz_lantern", False)
         ):
             loop = asyncio.get_running_loop()

@@ -25,7 +25,7 @@ ConfigScope = str  # 'project' | 'user' | 'local' | 'enterprise' | 'dynamic' | '
 @dataclass
 class McpServerConfig:
     """Base MCP server configuration."""
-    type: Optional[str] = None  # 'stdio' | 'sse' | 'http' | 'ws' | 'sdk' | 'claudeai-proxy' | 'sse-ide' | 'ws-ide'
+    type: Optional[str] = None  # 'stdio' | 'sse' | 'http' | 'ws' | 'sdk' | 'cortexai-proxy' | 'sse-ide' | 'ws-ide'
     command: Optional[str] = None
     args: List[str] = field(default_factory=list)
     env: Optional[Dict[str, str]] = None
@@ -209,7 +209,7 @@ def get_mcp_server_signature(config: McpServerConfig) -> Optional[str]:
     Compute a dedup signature for an MCP server config.
     
     Two configs with the same signature are considered "the same server" for
-    plugin deduplication. Ignores env (plugins always inject CLAUDE_PLUGIN_ROOT)
+    plugin deduplication. Ignores env (plugins always inject CORTEX_PLUGIN_ROOT)
     and headers (same URL = same server regardless of auth).
     
     Args:
@@ -296,12 +296,12 @@ def dedup_cloud_ai_mcp_servers(
     log_for_debugging: Optional[Callable[[str], None]] = None,
 ) -> Tuple[Dict[str, ScopedMcpServerConfig], List[Dict[str, str]]]:
     """
-    Filter claude.ai connectors, dropping any whose signature matches an enabled
+    Filter cortex.ai connectors, dropping any whose signature matches an enabled
     manually-configured server. Manual wins: a user who wrote .mcp.json or ran
-    `claude mcp add` expressed higher intent than a connector toggled in the web UI.
+    `cortex mcp add` expressed higher intent than a connector toggled in the web UI.
     
     Args:
-        cloud_ai_servers: Claude.ai server configs
+        cloud_ai_servers: Cortex.ai server configs
         manual_servers: Manual server configs
         is_mcp_server_disabled: Function to check if server is disabled
         log_for_debugging: Optional logging function
@@ -327,7 +327,7 @@ def dedup_cloud_ai_mcp_servers(
         if manual_dup is not None:
             if log_for_debugging:
                 log_for_debugging(
-                    f'Suppressing claude.ai connector "{name}": duplicates manually-configured "{manual_dup}"'
+                    f'Suppressing cortex.ai connector "{name}": duplicates manually-configured "{manual_dup}"'
                 )
             suppressed.append({'name': name, 'duplicateOf': manual_dup})
             continue
@@ -447,7 +447,7 @@ def add_mcp_config(
     save_global_config: Callable[[Callable[[Dict[str, Any]], Dict[str, Any]]], None],
     save_current_project_config: Callable[[Callable[[Dict[str, Any]], Dict[str, Any]]], None],
     write_mcp_json_file_fn: Callable[[McpJsonConfig], None],
-    is_claude_in_chrome_mcp_server: Callable[[str], bool],
+    is_cortex_in_chrome_mcp_server: Callable[[str], bool],
     does_enterprise_mcp_config_exist: Callable[[], bool],
     validate_config_schema: Callable[[Any], Tuple[bool, Any, str]],
     is_mcp_server_denied_fn: Callable[[str, Optional[McpServerConfig]], bool],
@@ -466,7 +466,7 @@ def add_mcp_config(
         save_global_config: Function to save global config
         save_current_project_config: Function to save current project config
         write_mcp_json_file_fn: Function to write MCP JSON file
-        is_claude_in_chrome_mcp_server: Function to check reserved names
+        is_cortex_in_chrome_mcp_server: Function to check reserved names
         does_enterprise_mcp_config_exist: Function to check enterprise config
         validate_config_schema: Function to validate config (returns (success, data, error_msg))
         is_mcp_server_denied_fn: Function to check if server is denied
@@ -481,8 +481,8 @@ def add_mcp_config(
             f'Invalid name {name}. Names can only contain letters, numbers, hyphens, and underscores.'
         )
     
-    # Block reserved server name "claude-in-chrome"
-    if is_claude_in_chrome_mcp_server(name):
+    # Block reserved server name "cortex-in-chrome"
+    if is_cortex_in_chrome_mcp_server(name):
         raise ValueError(f'Cannot add MCP server "{name}": this name is reserved.')
     
     # Block adding servers when enterprise MCP config exists
@@ -526,7 +526,7 @@ def add_mcp_config(
     elif scope == 'enterprise':
         raise ValueError('Cannot add MCP server to scope: enterprise')
     elif scope == 'cloud':
-        raise ValueError('Cannot add MCP server to scope: claudeai')
+        raise ValueError('Cannot add MCP server to scope: cortexai')
     
     # Add based on scope
     if scope == 'project':
@@ -884,7 +884,7 @@ def get_mcp_config_by_name(
 # Phase 4: Main Config Loading & Parse Functions (lines 1061-1579)
 # ============================================================================
 
-async def get_claude_code_mcp_configs(
+async def get_cortex_code_mcp_configs(
     dynamic_servers: Optional[Dict[str, ScopedMcpServerConfig]] = None,
     extra_dedup_targets: Optional[Dict[str, ScopedMcpServerConfig]] = None,
     get_mcp_configs_by_scope_fn: Callable[[str], Tuple[Dict[str, ScopedMcpServerConfig], List[ValidationError]]] = None,
@@ -901,7 +901,7 @@ async def get_claude_code_mcp_configs(
     get_plugin_error_message: Optional[Callable[[PluginError], str]] = None,
 ) -> Tuple[Dict[str, ScopedMcpServerConfig], List[PluginError]]:
     """
-    Get Claude Code MCP configurations (excludes claude.ai servers from the
+    Get Cortex Code MCP configurations (excludes cortex.ai servers from the
     returned set — they're fetched separately and merged by callers).
     This is fast: only local file reads; no awaited network calls on the
     critical path.
@@ -1086,50 +1086,50 @@ async def get_claude_code_mcp_configs(
 
 
 async def get_all_mcp_configs(
-    get_claude_code_mcp_configs_fn: Callable,
+    get_cortex_code_mcp_configs_fn: Callable,
     does_enterprise_mcp_config_exist_fn: Callable[[], bool],
     fetch_cloud_ai_mcp_configs_if_eligible: Callable[[], Dict[str, ScopedMcpServerConfig]],
     filter_mcp_servers_by_policy_fn: Callable[[Dict], Tuple[Dict, List[str]]],
     dedup_cloud_ai_mcp_servers_fn: Callable[[Dict, Dict], Tuple[Dict, List]],
 ) -> Tuple[Dict[str, ScopedMcpServerConfig], List[PluginError]]:
     """
-    Get all MCP configurations across all scopes, including claude.ai servers.
-    This may be slow due to network calls - use getClaudeCodeMcpConfigs() for fast startup.
+    Get all MCP configurations across all scopes, including cortex.ai servers.
+    This may be slow due to network calls - use getCortexCodeMcpConfigs() for fast startup.
     
     Args:
-        get_claude_code_mcp_configs_fn: Function to get Claude Code MCP configs
+        get_cortex_code_mcp_configs_fn: Function to get Cortex Code MCP configs
         does_enterprise_mcp_config_exist_fn: Function to check enterprise config
-        fetch_cloud_ai_mcp_configs_if_eligible: Function to fetch claude.ai configs
+        fetch_cloud_ai_mcp_configs_if_eligible: Function to fetch cortex.ai configs
         filter_mcp_servers_by_policy_fn: Function to filter servers by policy
-        dedup_cloud_ai_mcp_servers_fn: Function to dedup claude.ai servers
+        dedup_cloud_ai_mcp_servers_fn: Function to dedup cortex.ai servers
         
     Returns:
         Tuple of (servers dict, plugin errors)
     """
-    # In enterprise mode, don't load claude.ai servers (enterprise has exclusive control)
+    # In enterprise mode, don't load cortex.ai servers (enterprise has exclusive control)
     if does_enterprise_mcp_config_exist_fn():
-        return await get_claude_code_mcp_configs_fn()
+        return await get_cortex_code_mcp_configs_fn()
     
-    # Kick off the claude.ai fetch before getClaudeCodeMcpConfigs so it overlaps
+    # Kick off the cortex.ai fetch before getCortexCodeMcpConfigs so it overlaps
     # with loadAllPluginsCacheOnly() inside.
-    claudeai_configs = fetch_cloud_ai_mcp_configs_if_eligible()
-    claude_code_servers, errors = await get_claude_code_mcp_configs_fn(
+    cortexai_configs = fetch_cloud_ai_mcp_configs_if_eligible()
+    cortex_code_servers, errors = await get_cortex_code_mcp_configs_fn(
         {},
-        claudeai_configs,
+        cortexai_configs,
     )
     
-    allowed_claudeai, _ = filter_mcp_servers_by_policy_fn(claudeai_configs)
+    allowed_cortexai, _ = filter_mcp_servers_by_policy_fn(cortexai_configs)
     
-    # Suppress claude.ai connectors that duplicate an enabled manual server.
-    # Keys never collide (`slack` vs `claude.ai Slack`) so the merge below
+    # Suppress cortex.ai connectors that duplicate an enabled manual server.
+    # Keys never collide (`slack` vs `cortex.ai Slack`) so the merge below
     # won't catch this — need content-based dedup by URL signature.
-    deduped_claude_ai, _ = dedup_cloud_ai_mcp_servers_fn(
-        allowed_claudeai,
-        claude_code_servers,
+    deduped_cortex_ai, _ = dedup_cloud_ai_mcp_servers_fn(
+        allowed_cortexai,
+        cortex_code_servers,
     )
     
-    # Merge with claude.ai having lowest precedence
-    servers = {**deduped_claude_ai, **claude_code_servers}
+    # Merge with cortex.ai having lowest precedence
+    servers = {**deduped_cortex_ai, **cortex_code_servers}
     
     return servers, errors
 
@@ -1354,7 +1354,7 @@ def are_mcp_configs_allowed_with_enterprise_mcp_config(
     Check if all MCP servers in a config are allowed with enterprise MCP config.
     
     NOTE: While all SDK MCP servers should be safe from a security perspective, we are still discussing
-    what the best way to do this is. In the meantime, we are limiting this to claude-vscode for now to
+    what the best way to do this is. In the meantime, we are limiting this to cortex-vscode for now to
     unbreak the VSCode extension for certain enterprise customers who have enterprise MCP config enabled.
     
     Args:
@@ -1367,7 +1367,7 @@ def are_mcp_configs_allowed_with_enterprise_mcp_config(
         server_type = config.type if hasattr(config, 'type') else config.get('type')
         server_name = config.name if hasattr(config, 'name') else config.get('name')
         
-        if not (server_type == 'sdk' and server_name == 'claude-vscode'):
+        if not (server_type == 'sdk' and server_name == 'cortex-vscode'):
             return False
     
     return True
@@ -1462,7 +1462,7 @@ def filter_mcp_servers_by_policy(
     returned so callers can warn the user.
     
     Intended for user-controlled config entry points that bypass the policy filter
-    in getClaudeCodeMcpConfigs(): --mcp-config (main.tsx) and the mcp_set_servers
+    in getCortexCodeMcpConfigs(): --mcp-config (main.tsx) and the mcp_set_servers
     control message (print.ts, SDK V2 Query.setMcpServers()).
     
     SDK-type servers are exempt — they are SDK-managed transport placeholders,
@@ -1523,7 +1523,7 @@ __all__ = [
     'get_mcp_configs_by_scope',
     'get_mcp_config_by_name',
     # Phase 4: Main config loading
-    'get_claude_code_mcp_configs',
+    'get_cortex_code_mcp_configs',
     'get_all_mcp_configs',
     'parse_mcp_config',
     'parse_mcp_config_from_file_path',

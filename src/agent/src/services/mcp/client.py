@@ -135,9 +135,9 @@ def get_mcp_auth_cache_path() -> str:
     Returns:
         Path to mcp-needs-auth-cache.json
     """
-    # Get Claude config home directory (platform-specific)
+    # Get Cortex config home directory (platform-specific)
     if os.name == 'nt':  # Windows
-        config_home = os.path.join(os.environ.get('APPDATA', ''), 'claude')
+        config_home = os.path.join(os.environ.get('APPDATA', ''), 'cortex')
     else:  # macOS/Linux
         config_home = os.path.join(os.environ.get('HOME', ''), '.cortex')
     
@@ -281,14 +281,14 @@ def handle_remote_auth_failure(
     set_mcp_auth_cache_entry_fn=None,
 ) -> Dict[str, Any]:
     """
-    Shared handler for sse/http/claudeai-proxy auth failures during connect:
+    Shared handler for sse/http/cortexai-proxy auth failures during connect:
     emits tengu_mcp_server_needs_auth, caches the needs-auth entry, and returns
     the needs-auth connection result.
     
     Args:
         name: Server name
         server_ref: Server configuration
-        transport_type: Type of transport ('sse', 'http', 'claudeai-proxy')
+        transport_type: Type of transport ('sse', 'http', 'cortexai-proxy')
         log_event_fn: Analytics logging function
         log_mcp_debug_fn: Debug logging function
         set_mcp_auth_cache_entry_fn: Cache entry function
@@ -323,7 +323,7 @@ def handle_remote_auth_failure(
     label_map = {
         'sse': 'SSE',
         'http': 'HTTP',
-        'claudeai-proxy': 'claude.ai proxy',
+        'cortexai-proxy': 'cortex.ai proxy',
     }
     label = label_map.get(transport_type, transport_type)
     log_mcp_debug_fn(name, f'Authentication required for {label} server')
@@ -364,7 +364,7 @@ def mcp_base_url_analytics(server_ref: ScopedMcpServerConfig) -> Dict[str, Any]:
 
 
 # ============================================================================
-# Phase 3: Claude AI Proxy Fetch & WebSocket
+# Phase 3: Cortex AI Proxy Fetch & WebSocket
 # ============================================================================
 
 # Type alias for fetch-like function
@@ -373,12 +373,12 @@ FetchLike = Any  # Will be properly typed when needed
 
 def create_cloud_ai_proxy_fetch(inner_fetch: FetchLike) -> FetchLike:
     """
-    Fetch wrapper for claude.ai proxy connections. Attaches the OAuth bearer
+    Fetch wrapper for cortex.ai proxy connections. Attaches the OAuth bearer
     token and retries once on 401 via handleOAuth401Error (force-refresh).
 
     The Anthropic API path has this retry (withRetry.ts, grove.ts) to handle
     memoize-cache staleness and clock drift. Without the same here, a single
-    stale token mass-401s every claude.ai connector and sticks them all in the
+    stale token mass-401s every cortex.ai connector and sticks them all in the
     15-min needs-auth cache.
     
     Args:
@@ -402,7 +402,7 @@ def create_cloud_ai_proxy_fetch(inner_fetch: FetchLike) -> FetchLike:
             current_tokens = get_cloud_ai_oauth_tokens()
             
             if not current_tokens:
-                raise RuntimeError('No claude.ai OAuth token available')
+                raise RuntimeError('No cortex.ai OAuth token available')
             
             # Add authorization header
             headers = dict(init.get('headers', {}) if init else {})
@@ -411,7 +411,7 @@ def create_cloud_ai_proxy_fetch(inner_fetch: FetchLike) -> FetchLike:
             # Make the request
             response = await inner_fetch(url, {**(init or {}), 'headers': headers})
             
-            # Return the exact token that was sent. Reading getClaudeAIOAuthTokens()
+            # Return the exact token that was sent. Reading getCortexAIOAuthTokens()
             # again after the request is wrong under concurrent 401s: another
             # connector's handleOAuth401Error clears the memoize cache, so we'd read
             # the NEW token from keychain, pass it to handleOAuth401Error, which
@@ -441,7 +441,7 @@ def create_cloud_ai_proxy_fetch(inner_fetch: FetchLike) -> FetchLike:
         # Log analytics event
         try:
             from ...services.analytics import logEvent
-            logEvent('tengu_mcp_claudeai_proxy_401', {
+            logEvent('tengu_mcp_cortexai_proxy_401', {
                 'tokenChanged': token_changed,
             })
         except ImportError:
@@ -554,7 +554,7 @@ def wrap_fetch_with_timeout(fetch_fn: FetchLike, timeout_ms: int = MCP_REQUEST_T
     present on POSTs. The MCP SDK sets this inside StreamableHTTPClientTransport.send(),
     but it is attached to a Headers instance that passes through an object spread here,
     and some runtimes/agents have been observed dropping it before it reaches the wire.
-    See https://github.com/anthropics/claude-agent-sdk-typescript/issues/202.
+    See upstream SDK issue #202.
     Normalizing here (the last wrapper before fetch()) guarantees it is sent.
     
     Args:
@@ -754,12 +754,12 @@ async def connect_to_server(
             # WebSocket IDE transport
             tls_options = server_ref.get('tlsOptions', {})
             ws_headers = {
-                'User-Agent': 'claude-code',
+                'User-Agent': 'cortex-code',
             }
             
             auth_token = server_ref.get('authToken')
             if auth_token:
-                ws_headers['X-Claude-Code-Ide-Authorization'] = auth_token
+                ws_headers['X-Cortex-Code-Ide-Authorization'] = auth_token
             
             ws_client = await create_node_ws_client(
                 server_ref.get('url'),
@@ -788,7 +788,7 @@ async def connect_to_server(
             
             tls_options = server_ref.get('tlsOptions', {})
             ws_headers = {
-                'User-Agent': 'claude-code',
+                'User-Agent': 'cortex-code',
                 **({'Authorization': f'Bearer {session_ingress_token}'} if session_ingress_token else {}),
                 **combined_headers,
             }
@@ -828,26 +828,26 @@ async def connect_to_server(
                 'headers': server_ref.get('headers', {}),
             }
         
-        elif server_type == 'claudeai-proxy':
-            # Claude AI proxy transport
-            log_mcp_debug(name, f'Initializing claude.ai proxy transport for server {server_ref.get("id")}')
+        elif server_type == 'cortexai-proxy':
+            # Cortex AI proxy transport
+            log_mcp_debug(name, f'Initializing cortex.ai proxy transport for server {server_ref.get("id")}')
             
             try:
                 from services.oauth.cloud_ai_oauth import get_cloud_ai_oauth_tokens, get_oauth_config
                 tokens = get_cloud_ai_oauth_tokens()
                 if not tokens:
-                    raise RuntimeError('No claude.ai OAuth token found')
+                    raise RuntimeError('No cortex.ai OAuth token found')
                 
                 oauth_config = get_oauth_config()
                 proxy_url = f"{oauth_config['MCP_PROXY_URL']}{oauth_config['MCP_PROXY_PATH'].replace('{server_id}', server_ref.get('id'))}"
                 
-                log_mcp_debug(name, f'Using claude.ai proxy at {proxy_url}')
+                log_mcp_debug(name, f'Using cortex.ai proxy at {proxy_url}')
                 
                 # Create fetch with auth
                 import aiohttp
                 async def fetch_with_auth(url, init=None):
                     headers = {
-                        'User-Agent': 'claude-code',
+                        'User-Agent': 'cortex-code',
                         'Authorization': f"Bearer {tokens['accessToken']}",
                         **(init.get('headers', {}) if init else {}),
                     }
@@ -860,13 +860,13 @@ async def connect_to_server(
                             return response
                 
                 transport = {
-                    'type': 'claudeai-proxy',
+                    'type': 'cortexai-proxy',
                     'url': proxy_url,
                     'fetch': fetch_with_auth,
                     'session_id': server_ref.get('sessionId'),
                 }
                 
-                log_mcp_debug(name, 'claude.ai proxy transport created successfully')
+                log_mcp_debug(name, 'cortex.ai proxy transport created successfully')
                 
             except ImportError as e:
                 raise RuntimeError(f'OAuth module not available: {e}')
@@ -876,9 +876,9 @@ async def connect_to_server(
             # These would be implemented as plugins in Python
             
             # Default stdio transport
-            final_command = os.environ.get('CLAUDE_CODE_SHELL_PREFIX') or server_ref.get('command')
+            final_command = os.environ.get('CORTEX_CODE_SHELL_PREFIX') or server_ref.get('command')
             
-            if os.environ.get('CLAUDE_CODE_SHELL_PREFIX'):
+            if os.environ.get('CORTEX_CODE_SHELL_PREFIX'):
                 # Wrap command in shell
                 import shlex
                 command_args = [server_ref.get('command', '')] + server_ref.get('args', [])
@@ -910,11 +910,11 @@ async def connect_to_server(
         
         # Create client metadata
         client_info = {
-            'name': 'claude-code',
-            'title': 'Claude Code',
-            'version': os.environ.get('CLAUDE_CODE_VERSION', 'unknown'),
-            'description': "Anthropic's agentic coding tool",
-            'websiteUrl': 'https://claude.ai/code',
+            'name': 'cortex-code',
+            'title': 'Cortex Code',
+            'version': os.environ.get('CORTEX_CODE_VERSION', 'unknown'),
+            'description': "Cortex's agentic coding tool",
+            'websiteUrl': 'https://cortex.ai/code',
         }
         
         # Capabilities
@@ -1012,14 +1012,14 @@ async def connect_to_server(
                 if '401' in str(error) or 'Unauthorized' in str(error):
                     return handle_remote_auth_failure(name, server_ref, 'http')
             
-            # Claude AI proxy error logging
-            elif server_type == 'claudeai-proxy':
-                log_mcp_debug(name, f'claude.ai proxy connection failed after {elapsed}ms: {str(error)}')
+            # Cortex AI proxy error logging
+            elif server_type == 'cortexai-proxy':
+                log_mcp_debug(name, f'cortex.ai proxy connection failed after {elapsed}ms: {str(error)}')
                 
                 # Check for authentication errors
                 error_code = getattr(error, 'code', None)
                 if error_code == 401:
-                    return handle_remote_auth_failure(name, server_ref, 'claudeai-proxy')
+                    return handle_remote_auth_failure(name, server_ref, 'cortexai-proxy')
             
             # IDE server connection tracking - disabled
             elif server_type in ('sse-ide', 'ws-ide'):
@@ -1226,7 +1226,7 @@ def create_error_handler(
             log_mcp_debug_fn(name, f'Connection error: {error_message}')
         
         # For HTTP transports, detect session expiry (404 + JSON-RPC -32001)
-        if transport_type in ('http', 'claudeai-proxy') and is_mcp_session_expired_error(error):
+        if transport_type in ('http', 'cortexai-proxy') and is_mcp_session_expired_error(error):
             log_mcp_debug_fn(
                 name,
                 'MCP session expired (server returned 404 with session-not-found), triggering reconnection'
@@ -1235,7 +1235,7 @@ def create_error_handler(
             return
         
         # For remote transports, track terminal connection errors
-        if transport_type in ('sse', 'http', 'claudeai-proxy'):
+        if transport_type in ('sse', 'http', 'cortexai-proxy'):
             # Check if SDK exhausted reconnection attempts
             if 'Maximum reconnection attempts' in error_message:
                 close_handler('SSE reconnection exhausted')
@@ -1739,7 +1739,7 @@ async def fetch_tools_for_client(
         server_config = client.get('config', {})
         server_type = server_config.get('type') if isinstance(server_config, dict) else getattr(server_config, 'type', None)
         
-        skip_prefix = server_type == 'sdk' and os.environ.get('CLAUDE_AGENT_SDK_MCP_NO_PREFIX', '').lower() in ('true', '1', 'yes')
+        skip_prefix = server_type == 'sdk' and os.environ.get('CORTEX_AGENT_SDK_MCP_NO_PREFIX', '').lower() in ('true', '1', 'yes')
         
         # Convert MCP tools to our Tool format
         tools = []
@@ -2091,10 +2091,10 @@ async def reconnect_mcp_server_impl(
                 'commands': [],
             }
         
-        # Mark claude.ai proxy as connected (if applicable)
+        # Mark cortex.ai proxy as connected (if applicable)
         server_type = config.get('type') if isinstance(config, dict) else getattr(config, 'type', None)
-        if server_type == 'claudeai-proxy':
-            # In real implementation: markClaudeAiMcpConnected(name)
+        if server_type == 'cortexai-proxy':
+            # In real implementation: markCortexAiMcpConnected(name)
             pass
         
         # Check if server supports resources
@@ -2248,7 +2248,7 @@ async def get_mcp_tools_commands_and_resources(
             # or that we have probed before but hold no token for.
             server_type = config.get('type') if isinstance(config, dict) else getattr(config, 'type', None)
             
-            if server_type in ('claudeai-proxy', 'http', 'sse'):
+            if server_type in ('cortexai-proxy', 'http', 'sse'):
                 # Check if auth is cached
                 # if (await is_mcp_auth_cached(name)) or \
                 #    ((server_type in ('http', 'sse')) and has_mcp_discovery_but_no_token(name, config)):
@@ -2272,8 +2272,8 @@ async def get_mcp_tools_commands_and_resources(
                 # })
                 return
             
-            # Mark claude.ai proxy as connected (if applicable)
-            if server_type == 'claudeai-proxy':
+            # Mark cortex.ai proxy as connected (if applicable)
+            if server_type == 'cortexai-proxy':
                 # mark_cloud_ai_mcp_connected(name)
                 pass
             
@@ -3134,7 +3134,7 @@ async def call_mcp_tool(
         is_connection_closed_on_http = (
             error_code == -32000 and
             'Connection closed' in str(e) and
-            config.get('type') in ('http', 'claudeai-proxy')
+            config.get('type') in ('http', 'cortexai-proxy')
         )
         
         if is_session_expired or is_connection_closed_on_http:
@@ -3289,7 +3289,7 @@ __all__ = [
     'clear_mcp_auth_cache',
     'handle_remote_auth_failure',
     'mcp_base_url_analytics',
-    # Phase 3: Claude AI Proxy & WebSocket
+    # Phase 3: Cortex AI Proxy & WebSocket
     'create_cloud_ai_proxy_fetch',
     'WsClientLike',
     'create_node_ws_client',

@@ -462,7 +462,7 @@ class RecompactionInfo:
 POST_COMPACT_MAX_FILES_TO_RESTORE = 5
 POST_COMPACT_TOKEN_BUDGET = 50_000
 POST_COMPACT_MAX_TOKENS_PER_FILE = 5_000
-# Skills can be large (verify=18.7KB, claude-api=20.1KB). Previously re-injected
+# Skills can be large (verify=18.7KB, cortex-api=20.1KB). Previously re-injected
 # unbounded on every compact → 5-10K tok/compact. Per-skill truncation beats
 # dropping — instructions at the top of a skill file are usually the critical
 # part. Budget sized to hold ~5 skills at the per-skill cap.
@@ -795,7 +795,7 @@ def shouldExcludeFromPostCompactRestore(
 ) -> bool:
     """
     Check if a file should be excluded from post-compact restore.
-    Excludes plan files and memory files (claude.md, etc.).
+    Excludes plan files and memory files (cortex.md, etc.).
     """
     normalizedFilename = expandPath(filename)
     

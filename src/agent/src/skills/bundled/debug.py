@@ -43,10 +43,7 @@ except ImportError:
         }
         return paths.get(source, '~/.cortex/settings.json')
 
-try:
-    from ...tools.AgentTool.built_in.cortexCodeGuideAgent import CLAUDE_CODE_GUIDE_AGENT_TYPE
-except ImportError:
-    CLAUDE_CODE_GUIDE_AGENT_TYPE = "claude-code-guide"
+CORTEX_CODE_GUIDE_AGENT_TYPE = "cortex-code-guide"
 
 
 class ContentBlock(TypedDict):
@@ -95,7 +92,7 @@ def get_debug_log_path() -> str:
         Path to the debug log file
     """
     # Try to get from environment or use default
-    log_path = os.environ.get('CLAUDE_DEBUG_LOG_PATH')
+    log_path = os.environ.get('CORTEX_DEBUG_LOG_PATH')
     if log_path:
         return log_path
     
@@ -112,10 +109,10 @@ def enable_debug_logging() -> bool:
         True if logging was already enabled, False if just enabled
     """
     # Check if debug logging is already active
-    was_already_logging = os.environ.get('CLAUDE_DEBUG_ENABLED') == '1'
+    was_already_logging = os.environ.get('CORTEX_DEBUG_ENABLED') == '1'
     
     # Enable logging
-    os.environ['CLAUDE_DEBUG_ENABLED'] = '1'
+    os.environ['CORTEX_DEBUG_ENABLED'] = '1'
     
     return was_already_logging
 
@@ -214,7 +211,7 @@ async def get_prompt_for_command(args: Optional[str] = None) -> list[ContentBloc
 
 Debug logging was OFF for this session until now. Nothing prior to this /debug invocation was captured.
 
-Tell the user that debug logging is now active at `{debug_log_path}`, ask them to reproduce the issue, then re-read the log. If they can't reproduce, they can also restart with `claude --debug` to capture logs from startup.
+Tell the user that debug logging is now active at `{debug_log_path}`, ask them to reproduce the issue, then re-read the log. If they can't reproduce, they can also restart with `cortex --debug` to capture logs from startup.
 """
         
         # Get settings file paths
@@ -230,7 +227,7 @@ Tell the user that debug logging is now active at `{debug_log_path}`, ask them t
         
         prompt = f"""# Debug Skill
 
-Help the user debug an issue they're encountering in this current Claude Code session.
+Help the user debug an issue they're encountering in this current Cortex Code session.
 {just_enabled_section}
 ## Session Debug Log
 
@@ -255,7 +252,7 @@ Remember that settings are in:
 
 1. Review the user's issue description
 2. The last {DEFAULT_DEBUG_LINES_READ} lines show the debug file format. Look for [ERROR] and [WARN] entries, stack traces, and failure patterns across the file
-3. Consider launching the {CLAUDE_CODE_GUIDE_AGENT_TYPE} subagent to understand the relevant Claude Code features
+3. Consider launching the {CORTEX_CODE_GUIDE_AGENT_TYPE} subagent to understand the relevant Cortex Code features
 4. Explain what you found in plain language
 5. Suggest concrete fixes or next steps
 """
@@ -286,7 +283,7 @@ def get_debug_skill_description() -> str:
     """
     if os.environ.get('USER_TYPE') == 'ant':
         return (
-            "Debug your current Claude Code session by reading the session debug log. "
+            "Debug your current Cortex Code session by reading the session debug log. "
             "Includes all event logging"
         )
     return "Enable debug logging for this session and help diagnose issues"

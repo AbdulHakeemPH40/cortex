@@ -3,7 +3,7 @@
 # Python conversion of QueryEngine.ts (lines 1-1296)
 # 
 # Core query engine class managing conversation lifecycle for multi-LLM support:
-# - Claude (Anthropic), OpenAI, Gemini, DeepSeek, Minimax, Grok
+# - Cortex (Anthropic), OpenAI, Gemini, DeepSeek, Minimax, Grok
 # - Session state management across multiple turns
 # - SDK message formatting and streaming
 # - Permission denial tracking
@@ -256,7 +256,7 @@ try:
     from .utils.model.model import get_main_loop_model, parse_user_specified_model
 except ImportError:
     def get_main_loop_model() -> str:
-        return "claude-3-5-sonnet"
+        return "cortex-3-5-sonnet"
     
     def parse_user_specified_model(model: str) -> str:
         return model
@@ -420,7 +420,7 @@ class QueryEngine:
     persists across turns.
     
     Supports multiple LLM providers:
-    - Claude (Anthropic)
+    - Cortex (Anthropic)
     - OpenAI (GPT-4, GPT-3.5)
     - Google Gemini
     - DeepSeek
@@ -618,9 +618,9 @@ class QueryEngine:
         }
         
         # When an SDK caller provides a custom system prompt AND has set
-        # CLAUDE_COWORK_MEMORY_PATH_OVERRIDE, inject the memory-mechanics prompt.
+        # CORTEX_COWORK_MEMORY_PATH_OVERRIDE, inject the memory-mechanics prompt.
         # The env var is an explicit opt-in signal — the caller has wired up
-        # a memory directory and needs Claude to know how to use it.
+        # a memory directory and needs Cortex to know how to use it.
         memory_mechanics_prompt = (
             await load_memory_prompt()
             if custom_prompt is not None and has_auto_mem_path_override()
@@ -742,8 +742,8 @@ class QueryEngine:
             else:
                 await transcript_promise
                 if (
-                    is_env_truthy(os.environ.get('CLAUDE_CODE_EAGER_FLUSH')) or
-                    is_env_truthy(os.environ.get('CLAUDE_CODE_IS_COWORK'))
+                    is_env_truthy(os.environ.get('CORTEX_CODE_EAGER_FLUSH')) or
+                    is_env_truthy(os.environ.get('CORTEX_CODE_IS_COWORK'))
                 ):
                     await flush_session_storage()
         
@@ -793,8 +793,8 @@ class QueryEngine:
         headless_profiler_checkpoint('before_skills_plugins')
         
         # Cache-only: headless/SDK/CCR startup must not block on network for
-        # ref-tracked plugins. CCR populates the cache via CLAUDE_CODE_SYNC_PLUGIN_INSTALL
-        # (headlessPluginInstall) or CLAUDE_CODE_PLUGIN_SEED_DIR before this runs.
+        # ref-tracked plugins. CCR populates the cache via CORTEX_CODE_SYNC_PLUGIN_INSTALL
+        # (headlessPluginInstall) or CORTEX_CODE_PLUGIN_SEED_DIR before this runs.
         skills, enabled_plugins_data = await asyncio.gather(
             get_slash_command_tool_skills(get_cwd()),
             load_all_plugins_cache_only(),
@@ -869,8 +869,8 @@ class QueryEngine:
             if persist_session:
                 await record_transcript(messages)
                 if (
-                    is_env_truthy(os.environ.get('CLAUDE_CODE_EAGER_FLUSH')) or
-                    is_env_truthy(os.environ.get('CLAUDE_CODE_IS_COWORK'))
+                    is_env_truthy(os.environ.get('CORTEX_CODE_EAGER_FLUSH')) or
+                    is_env_truthy(os.environ.get('CORTEX_CODE_IS_COWORK'))
                 ):
                     await flush_session_storage()
             
@@ -1069,8 +1069,8 @@ class QueryEngine:
                 elif message['attachment'].get('type') == 'max_turns_reached':
                     if persist_session:
                         if (
-                            is_env_truthy(os.environ.get('CLAUDE_CODE_EAGER_FLUSH')) or
-                            is_env_truthy(os.environ.get('CLAUDE_CODE_IS_COWORK'))
+                            is_env_truthy(os.environ.get('CORTEX_CODE_EAGER_FLUSH')) or
+                            is_env_truthy(os.environ.get('CORTEX_CODE_IS_COWORK'))
                         ):
                             await flush_session_storage()
                     
@@ -1182,8 +1182,8 @@ class QueryEngine:
             if max_budget_usd is not None and get_total_cost() >= max_budget_usd:
                 if persist_session:
                     if (
-                        is_env_truthy(os.environ.get('CLAUDE_CODE_EAGER_FLUSH')) or
-                        is_env_truthy(os.environ.get('CLAUDE_CODE_IS_COWORK'))
+                        is_env_truthy(os.environ.get('CORTEX_CODE_EAGER_FLUSH')) or
+                        is_env_truthy(os.environ.get('CORTEX_CODE_IS_COWORK'))
                     ):
                         await flush_session_storage()
                 
@@ -1218,8 +1218,8 @@ class QueryEngine:
                 if calls_this_query >= max_retries:
                     if persist_session:
                         if (
-                            is_env_truthy(os.environ.get('CLAUDE_CODE_EAGER_FLUSH')) or
-                            is_env_truthy(os.environ.get('CLAUDE_CODE_IS_COWORK'))
+                            is_env_truthy(os.environ.get('CORTEX_CODE_EAGER_FLUSH')) or
+                            is_env_truthy(os.environ.get('CORTEX_CODE_IS_COWORK'))
                         ):
                             await flush_session_storage()
                     
@@ -1265,8 +1265,8 @@ class QueryEngine:
         # result message, so any unflushed writes would be lost.
         if persist_session:
             if (
-                is_env_truthy(os.environ.get('CLAUDE_CODE_EAGER_FLUSH')) or
-                is_env_truthy(os.environ.get('CLAUDE_CODE_IS_COWORK'))
+                is_env_truthy(os.environ.get('CORTEX_CODE_EAGER_FLUSH')) or
+                is_env_truthy(os.environ.get('CORTEX_CODE_IS_COWORK'))
             ):
                 await flush_session_storage()
         
@@ -1400,7 +1400,7 @@ async def ask(
     Convenience wrapper around QueryEngine for one-shot usage.
     
     Supports multiple LLM providers:
-    - Claude (Anthropic)
+    - Cortex (Anthropic)
     - OpenAI (GPT-4, GPT-3.5)
     - Google Gemini
     - DeepSeek

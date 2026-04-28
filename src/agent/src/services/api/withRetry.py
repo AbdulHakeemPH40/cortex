@@ -291,7 +291,7 @@ def should_retry_529(query_source: Optional[str]) -> bool:
 def is_persistent_retry_enabled() -> bool:
     return (
         feature("UNATTENDED_RETRY") and
-        is_env_truthy(os.environ.get("CLAUDE_CODE_UNATTENDED_RETRY"))
+        is_env_truthy(os.environ.get("CORTEX_CODE_UNATTENDED_RETRY"))
     )
 
 
@@ -324,7 +324,7 @@ def is_oauth_token_revoked_error(error: Any) -> bool:
 
 
 def is_bedrock_auth_error(error: Any) -> bool:
-    if is_env_truthy(os.environ.get("CLAUDE_CODE_USE_BEDROCK")):
+    if is_env_truthy(os.environ.get("CORTEX_CODE_USE_BEDROCK")):
         if is_aws_credentials_provider_error(error):
             return True
         if isinstance(error, APIError) and error.status == 403:
@@ -352,7 +352,7 @@ def is_google_auth_library_credential_error(error: Any) -> bool:
 
 
 def is_vertex_auth_error(error: Any) -> bool:
-    if is_env_truthy(os.environ.get("CLAUDE_CODE_USE_VERTEX")):
+    if is_env_truthy(os.environ.get("CORTEX_CODE_USE_VERTEX")):
         if is_google_auth_library_credential_error(error):
             return True
         if isinstance(error, APIError) and error.status == 401:
@@ -440,7 +440,7 @@ def get_retry_delay(
 
 
 def get_default_max_retries() -> int:
-    env_val = os.environ.get("CLAUDE_CODE_MAX_RETRIES")
+    env_val = os.environ.get("CORTEX_CODE_MAX_RETRIES")
     if env_val:
         try:
             return int(env_val)
@@ -492,7 +492,7 @@ def should_retry(error: Any) -> bool:
 
     # CCR: auth errors are transient blips
     if (
-        is_env_truthy(os.environ.get("CLAUDE_CODE_REMOTE")) and
+        is_env_truthy(os.environ.get("CORTEX_CODE_REMOTE")) and
         error.status in (401, 403)
     ):
         return True

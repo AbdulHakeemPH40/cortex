@@ -21,7 +21,7 @@ try:
 except ImportError:
     def shouldIncludeFirstPartyOnlyBetas() -> bool:
         """Fallback: Check environment variable for first-party betas."""
-        return os.environ.get('CLAUDE_CODE_INCLUDE_FIRST_PARTY_BETAS', '').lower() in ('1', 'true', 'yes')
+        return os.environ.get('CORTEX_CODE_INCLUDE_FIRST_PARTY_BETAS', '').lower() in ('1', 'true', 'yes')
 
 try:
     from ..utils.envUtils import isEnvTruthy
@@ -111,7 +111,7 @@ def isAdvisorEnabled() -> bool:
         True if advisor is enabled and allowed for this user type
     """
     # Check if explicitly disabled
-    if isEnvTruthy(os.environ.get('CLAUDE_CODE_DISABLE_ADVISOR_TOOL')):
+    if isEnvTruthy(os.environ.get('CORTEX_CODE_DISABLE_ADVISOR_TOOL')):
         return False
     
     # The advisor beta header is first-party only (Bedrock/Vertex 400 on it)

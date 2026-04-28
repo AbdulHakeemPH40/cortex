@@ -41,7 +41,7 @@ try:
     from ...utils.http import get_user_agent
 except ImportError:
     def get_user_agent():
-        return 'claude-code-python'
+        return 'cortex-code-python'
 
 try:
     from ...bootstrap.state import get_session_id, get_is_non_interactive_session
@@ -139,9 +139,9 @@ async def get_anthropic_client(
     
     Supports multiple providers:
     - Direct API (default)
-    - AWS Bedrock (CLAUDE_CODE_USE_BEDROCK=1)
-    - Azure Foundry (CLAUDE_CODE_USE_FOUNDRY=1)
-    - Google Vertex AI (CLAUDE_CODE_USE_VERTEX=1)
+    - AWS Bedrock (CORTEX_CODE_USE_BEDROCK=1)
+    - Azure Foundry (CORTEX_CODE_USE_FOUNDRY=1)
+    - Google Vertex AI (CORTEX_CODE_USE_VERTEX=1)
     
     Returns:
         Anthropic client instance (or provider-specific variant)
@@ -149,23 +149,23 @@ async def get_anthropic_client(
     if Anthropic is None:
         raise ImportError("anthropic package required: pip install anthropic")
     
-    container_id = os.environ.get('CLAUDE_CODE_CONTAINER_ID')
-    remote_session_id = os.environ.get('CLAUDE_CODE_REMOTE_SESSION_ID')
-    client_app = os.environ.get('CLAUDE_AGENT_SDK_CLIENT_APP')
+    container_id = os.environ.get('CORTEX_CODE_CONTAINER_ID')
+    remote_session_id = os.environ.get('CORTEX_CODE_REMOTE_SESSION_ID')
+    client_app = os.environ.get('CORTEX_AGENT_SDK_CLIENT_APP')
     
     # Build default headers
     custom_headers = _get_custom_headers()
     default_headers = {
         'x-app': 'cortex-ide',
         'User-Agent': get_user_agent(),
-        'X-Claude-Code-Session-Id': get_session_id(),
+        'X-Cortex-Code-Session-Id': get_session_id(),
         **custom_headers,
     }
     
     if container_id:
-        default_headers['x-claude-remote-container-id'] = container_id
+        default_headers['x-cortex-remote-container-id'] = container_id
     if remote_session_id:
-        default_headers['x-claude-remote-session-id'] = remote_session_id
+        default_headers['x-cortex-remote-session-id'] = remote_session_id
     if client_app:
         default_headers['x-client-app'] = client_app
     
@@ -176,7 +176,7 @@ async def get_anthropic_client(
     )
     
     # Add additional protection header if enabled
-    if is_env_truthy(os.environ.get('CLAUDE_CODE_ADDITIONAL_PROTECTION')):
+    if is_env_truthy(os.environ.get('CORTEX_CODE_ADDITIONAL_PROTECTION')):
         default_headers['x-anthropic-additional-protection'] = 'true'
     
     # Refresh OAuth token if needed
@@ -197,11 +197,11 @@ async def get_anthropic_client(
     }
     
     # Add debug logger if enabled
-    if os.environ.get('CLAUDE_CODE_DEBUG_TO_STDERR'):
+    if os.environ.get('CORTEX_CODE_DEBUG_TO_STDERR'):
         client_args['logger'] = _create_stderr_logger()
     
     # ---- AWS BEDROCK ----
-    if is_env_truthy(os.environ.get('CLAUDE_CODE_USE_BEDROCK')):
+    if is_env_truthy(os.environ.get('CORTEX_CODE_USE_BEDROCK')):
         try:
             from anthropic_bedrock import AnthropicBedrock
         except ImportError:
@@ -226,7 +226,7 @@ async def get_anthropic_client(
         return AnthropicBedrock(**bedrock_args)
     
     # ---- AZURE FOUNDRY ----
-    if is_env_truthy(os.environ.get('CLAUDE_CODE_USE_FOUNDRY')):
+    if is_env_truthy(os.environ.get('CORTEX_CODE_USE_FOUNDRY')):
         try:
             from anthropic_foundry import AnthropicFoundry
         except ImportError:
@@ -242,7 +242,7 @@ async def get_anthropic_client(
         return AnthropicFoundry(**foundry_args)
     
     # ---- GOOGLE VERTEX AI ----
-    if is_env_truthy(os.environ.get('CLAUDE_CODE_USE_VERTEX')):
+    if is_env_truthy(os.environ.get('CORTEX_CODE_USE_VERTEX')):
         try:
             from anthropic_vertex import AnthropicVertex
         except ImportError:
@@ -264,7 +264,7 @@ async def get_anthropic_client(
         'api_key': None if is_cloud_ai_subscriber() else (api_key or get_anthropic_api_key()),
     }
     
-    # Use OAuth token for Claude.ai subscribers
+    # Use OAuth token for cortex.ai subscribers
     if is_cloud_ai_subscriber():
         oauth_tokens = get_cloud_ai_oauth_tokens()
         if oauth_tokens and oauth_tokens.get('accessToken'):

@@ -558,7 +558,7 @@ def get_next_image_paste_id(messages: List[Message]) -> int:
 McpServerType = Optional[
     Literal[
         "stdio", "sse", "http", "ws", "sdk",
-        "sse-ide", "ws-ide", "claudeai-proxy",
+        "sse-ide", "ws-ide", "cortexai-proxy",
     ]
 ]
 

@@ -7,7 +7,7 @@
 #   get_system_context() - wraps git status into a dict for _build_system_prompt
 #   get_current_date() - simple date string for system prompt
 #
-# The original Claude Code version had cache-breaking, CLAUDE.md loading,
+# The original version had cache-breaking, CORTEX.md loading,
 # and feature-flag plumbing. All of that has been removed because Cortex IDE
 # does not use any of it.
 # ------------------------------------------------------------

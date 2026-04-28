@@ -615,7 +615,7 @@ function renderChatHtml({ nonce, platform }) {
 
   <div class="messages" id="messages">
     <div class="welcome" id="welcomeScreen">
-      <div class="welcome-title">Open<span class="accent">Claude</span></div>
+      <div class="welcome-title">Cortex<span class="accent">Desktop</span></div>
       <div class="welcome-sub">Ask a question, request a code change, or start a new task.</div>
       <div class="welcome-hint">Press <kbd>${escapeHtml(modKey)}+L</kbd> to focus input</div>
     </div>
@@ -636,7 +636,7 @@ function renderChatHtml({ nonce, platform }) {
   </div>
 
   <div class="input-area">
-    <textarea id="chatInput" placeholder="Message OpenClaude..." rows="1"></textarea>
+    <textarea id="chatInput" placeholder="Message Cortex Desktop..." rows="1"></textarea>
     <button class="send-btn" id="sendBtn" title="Send message">&#x27A4;</button>
   </div>
 

@@ -3,7 +3,7 @@
 # Python conversion of projectOnboardingState.ts (lines 1-84)
 # 
 # Project onboarding state management including:
-# - Onboarding step tracking (workspace setup, CLAUDE.md creation)
+# - Onboarding step tracking (workspace setup, CORTEX.md creation)
 # - Completion detection with filesystem checks
 # - Memoized visibility logic to avoid redundant FS calls
 # - Seen count tracking to limit onboarding display frequency
@@ -101,7 +101,7 @@ def get_steps() -> List[Step]:
     
     Checks filesystem for:
     - Whether workspace directory is empty
-    - Whether CLAUDE.md file exists
+    - Whether CORTEX.md file exists
     
     Returns:
         List of Step objects representing onboarding progress
@@ -109,21 +109,21 @@ def get_steps() -> List[Step]:
     fs = get_fs_implementation()
     cwd = get_cwd()
     
-    has_claude_md = fs.exists_sync(os.path.join(cwd, 'CLAUDE.md'))
+    has_cortex_md = fs.exists_sync(os.path.join(cwd, 'CORTEX.md'))
     is_workspace_dir_empty = is_dir_empty(cwd)
     
     return [
         Step(
             key='workspace',
-            text='Ask Claude to create a new app or clone a repository',
+            text='Ask Cortex to create a new app or clone a repository',
             is_complete=False,
             is_completable=True,
             is_enabled=is_workspace_dir_empty,
         ),
         Step(
-            key='claudemd',
-            text='Run /init to create a CLAUDE.md file with instructions for Claude',
-            is_complete=has_claude_md,
+            key='cortexmd',
+            text='Run /init to create a CORTEX.md file with instructions for Cortex',
+            is_complete=has_cortex_md,
             is_completable=True,
             is_enabled=not is_workspace_dir_empty,
         ),

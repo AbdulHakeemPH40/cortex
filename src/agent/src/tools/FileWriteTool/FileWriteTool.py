@@ -644,17 +644,17 @@ class FileWriteTool:
         }
         
         # --------------------------------------------------------------
-        # Log when writing to CLAUDE.md
+        # Log when writing to CORTEX.md
         # --------------------------------------------------------------
-        if full_file_path.endswith(os.sep + "CLAUDE.md"):
-            log_event("tengu_write_claudemd", {})
+        if full_file_path.endswith(os.sep + "CORTEX.md"):
+            log_event("tengu_write_cortexmd", {})
         
         # --------------------------------------------------------------
         # Optional remote git diff (only when the feature flag is on)
         # --------------------------------------------------------------
         git_diff: Optional[GitDiff] = None
         if (
-            is_env_truthy("CLAUDE_CODE_REMOTE")
+            is_env_truthy("CORTEX_CODE_REMOTE")
             and get_feature_value_cached("tengu_quartz_lantern", False)
         ):
             loop = asyncio.get_running_loop()

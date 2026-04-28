@@ -93,7 +93,7 @@ class BuiltInAgentDefinition:
     source: str
     base_dir: str
     model: str
-    omit_claude_md: bool = False
+    omit_cortex_md: bool = False
     get_system_prompt: callable = None
 
 
@@ -113,7 +113,7 @@ EXPLORE_AGENT = BuiltInAgentDefinition(
     # Note: For ants, get_agent_model() checks tengu_explore_agent GrowthBook flag at runtime
     model="inherit" if os.environ.get("USER_TYPE") == "ant" else "haiku",
     # Explore is a fast read-only search agent — it doesn't need commit/PR/lint
-    # rules from CLAUDE.md. The main agent has full context and interprets results.
-    omit_claude_md=True,
+    # rules from CORTEX.md. The main agent has full context and interprets results.
+    omit_cortex_md=True,
     get_system_prompt=get_explore_system_prompt,
 )

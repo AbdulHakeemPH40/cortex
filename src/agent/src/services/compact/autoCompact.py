@@ -226,7 +226,7 @@ def getEffectiveContextWindowSize(model: str) -> int:
     contextWindow = getContextWindowForModel(model, getSdkBetas())
     
     # Apply env override for easier testing
-    autoCompactWindow = os.environ.get('CLAUDE_CODE_AUTO_COMPACT_WINDOW')
+    autoCompactWindow = os.environ.get('CORTEX_CODE_AUTO_COMPACT_WINDOW')
     if autoCompactWindow:
         try:
             parsed = int(autoCompactWindow)
@@ -242,14 +242,14 @@ def getAutoCompactThreshold(model: str) -> int:
     """
     Calculate the token threshold at which auto-compaction should trigger.
     Default: effectiveContextWindow - 13,000 token buffer.
-    Can be overridden with CLAUDE_AUTOCOMPACT_PCT_OVERRIDE (percentage).
+    Can be overridden with CORTEX_AUTOCOMPACT_PCT_OVERRIDE (percentage).
     """
     effectiveContextWindow = getEffectiveContextWindowSize(model)
     
     autocompactThreshold = effectiveContextWindow - AUTOCOMPACT_BUFFER_TOKENS
     
     # Override for easier testing of autocompact
-    envPercent = os.environ.get('CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')
+    envPercent = os.environ.get('CORTEX_AUTOCOMPACT_PCT_OVERRIDE')
     if envPercent:
         try:
             parsed = float(envPercent)
@@ -298,7 +298,7 @@ def calculateTokenWarningState(
     defaultBlockingLimit = actualContextWindow - MANUAL_COMPACT_BUFFER_TOKENS
     
     # Allow override for testing
-    blockingLimitOverride = os.environ.get('CLAUDE_CODE_BLOCKING_LIMIT_OVERRIDE')
+    blockingLimitOverride = os.environ.get('CORTEX_CODE_BLOCKING_LIMIT_OVERRIDE')
     parsedOverride = None
     if blockingLimitOverride:
         try:
@@ -405,7 +405,7 @@ async def shouldAutoCompact(
     # sessionMemory + manual /compact working.
     #
     # Consult isContextCollapseEnabled (not the raw gate) so the
-    # CLAUDE_CONTEXT_COLLAPSE env override is honored here too. require()
+    # CORTEX_CONTEXT_COLLAPSE env override is honored here too. require()
     # inside the block breaks the init-time cycle (this file exports
     # getEffectiveContextWindowSize which collapse's index imports).
     if feature('CONTEXT_COLLAPSE'):

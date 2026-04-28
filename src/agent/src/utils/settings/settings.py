@@ -386,7 +386,7 @@ def getUserSettingsFilePath() -> str:
         def isEnvTruthy(v):
             return v.lower() in ('1', 'true', 'yes') if v else False
     
-    if getUseCoworkPlugins() or isEnvTruthy(os.environ.get('CLAUDE_CODE_USE_COWORK_PLUGINS')):
+    if getUseCoworkPlugins() or isEnvTruthy(os.environ.get('CORTEX_CODE_USE_COWORK_PLUGINS')):
         return 'cowork_settings.json'
     return 'settings.json'
 

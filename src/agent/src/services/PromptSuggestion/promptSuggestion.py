@@ -150,7 +150,7 @@ def should_enable_prompt_suggestion() -> bool:
     Checks env vars, feature flags, session mode, and user settings.
     """
     # Env var overrides everything (for testing)
-    env_override = os.environ.get('CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION')
+    env_override = os.environ.get('CORTEX_CODE_ENABLE_PROMPT_SUGGESTION')
     
     if is_env_defined_falsy(env_override):
         log_event('tengu_prompt_suggestion_init', {
@@ -369,7 +369,7 @@ def get_parent_cache_suppress_reason(last_assistant_message: Optional[Message]) 
 
 
 # Suggestion prompt for AI
-SUGGESTION_PROMPT = """[SUGGESTION MODE: Suggest what the user might naturally type next into Claude Code.]
+SUGGESTION_PROMPT = """[SUGGESTION MODE: Suggest what the user might naturally type next into Cortex Code.]
 
 FIRST: Look at the user's recent messages and original request.
 
@@ -380,8 +380,8 @@ THE TEST: Would they think "I was just about to type that"?
 EXAMPLES:
 User asked "fix the bug and run tests", bug is fixed → "run the tests"
 After code written → "try it out"
-Claude offers options → suggest the one the user would likely pick, based on conversation
-Claude asks to continue → "yes" or "go ahead"
+Cortex offers options → suggest the one the user would likely pick, based on conversation
+Cortex asks to continue → "yes" or "go ahead"
 Task complete, obvious follow-up → "commit this" or "push it"
 After error or misunderstanding → silence (let them assess/correct)
 
@@ -390,7 +390,7 @@ Be specific: "run the tests" beats "continue".
 NEVER SUGGEST:
 - Evaluative ("looks good", "thanks")
 - Questions ("what about...?")
-- Claude-voice ("Let me...", "I'll...", "Here's...")
+- Assistant-voice ("Let me...", "I'll...", "Here's...")
 - New ideas they didn't ask about
 - Multiple sentences
 
@@ -554,7 +554,7 @@ def should_filter_suggestion(
             )),
         ),
         (
-            'claude_voice',
+            'assistant_voice',
             lambda: bool(re.match(
                 r'^(let me|i\'ll|i\'ve|i\'m|i can|i would|i think|i notice|here\'s|here is|here are|that\'s|this is|this will|you can|you should|you could|sure,|of course|certainly)',
                 suggestion,

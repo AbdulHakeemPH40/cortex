@@ -199,7 +199,7 @@ DEFAULT_PARSE_TIMEOUT_MS = 5_000
 def getParseTimeoutMs() -> int:
     """Get PowerShell parse timeout from environment or default."""
     import os
-    env = os.environ.get('CLAUDE_CODE_PWSH_PARSE_TIMEOUT_MS')
+    env = os.environ.get('CORTEX_CODE_PWSH_PARSE_TIMEOUT_MS')
     if env:
         try:
             parsed = int(env)

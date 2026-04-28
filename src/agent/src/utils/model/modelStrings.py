@@ -53,8 +53,8 @@ def getBuiltinModelStrings(provider: APIProvider) -> ModelStrings:
     Example:
         getBuiltinModelStrings('anthropic')
         → {
-            'opus46': 'claude-opus-4-6',
-            'sonnet40': 'claude-sonnet-4-20250514',
+            'opus46': 'cortex-opus-4-6',
+            'sonnet40': 'cortex-sonnet-4-20250514',
             'gpt4o': 'gpt-4o',
             ...
           }
@@ -82,7 +82,7 @@ def applyModelOverrides(
     Apply user-configured model overrides on top of provider model strings.
 
     Overrides are keyed by canonical first-party model ID (e.g.,
-    "claude-opus-4-6") and map to arbitrary provider-specific strings
+    "cortex-opus-4-6") and map to arbitrary provider-specific strings
     (typically Bedrock inference profile ARNs).
 
     Args:
@@ -94,8 +94,8 @@ def applyModelOverrides(
 
     Example:
         applyModelOverrides(
-            {'opus46': 'claude-opus-4-6'},
-            {'claude-opus-4-6': 'arn:aws:bedrock:us-east-1:123456:inference-profile/my-opus'}
+            {'opus46': 'cortex-opus-4-6'},
+            {'cortex-opus-4-6': 'arn:aws:bedrock:us-east-1:123456:inference-profile/my-opus'}
         )
         → {
             'opus46': 'arn:aws:bedrock:us-east-1:123456:inference-profile/my-opus'
@@ -132,12 +132,12 @@ def resolveOverriddenModel(
     Example:
         resolveOverriddenModel(
             'arn:aws:bedrock:us-east-1:123456:inference-profile/my-opus',
-            {'claude-opus-4-6': 'arn:aws:bedrock:us-east-1:123456:inference-profile/my-opus'}
+            {'cortex-opus-4-6': 'arn:aws:bedrock:us-east-1:123456:inference-profile/my-opus'}
         )
-        → 'claude-opus-4-6'
+        → 'cortex-opus-4-6'
 
-        resolveOverriddenModel('claude-opus-4-6')
-        → 'claude-opus-4-6'  # No override, returns as-is
+        resolveOverriddenModel('cortex-opus-4-6')
+        → 'cortex-opus-4-6'  # No override, returns as-is
     """
     if not overrides:
         return modelId
@@ -167,14 +167,14 @@ def getModelStrings(
     Example:
         getModelStrings('anthropic')
         → {
-            'opus46': 'claude-opus-4-6',
-            'sonnet40': 'claude-sonnet-4-20250514',
-            'haiku35': 'claude-3-5-haiku-20241022',
+            'opus46': 'cortex-opus-4-6',
+            'sonnet40': 'cortex-sonnet-4-20250514',
+            'haiku35': 'cortex-3-5-haiku-20241022',
             ...
           }
 
         getModelStrings('bedrock', overrides={
-            'claude-opus-4-6': 'arn:aws:bedrock:us-east-1:123456:inference-profile/my-opus'
+            'cortex-opus-4-6': 'arn:aws:bedrock:us-east-1:123456:inference-profile/my-opus'
         })
         → {
             'opus46': 'arn:aws:bedrock:us-east-1:123456:inference-profile/my-opus',
@@ -207,7 +207,7 @@ def getModelId(
 
     Example:
         getModelId('opus46', 'anthropic')
-        → 'claude-opus-4-6'
+        → 'cortex-opus-4-6'
 
         getModelId('gpt4o', 'openai')
         → 'gpt-4o'

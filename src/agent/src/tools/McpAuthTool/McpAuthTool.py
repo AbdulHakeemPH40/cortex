@@ -100,14 +100,14 @@ def createMcpAuthTool(server_name: str, config: Dict[str, Any]) -> Dict[str, Any
         return {'behavior': 'allow', 'updatedInput': input_data}
     
     async def call(input_data, context):
-        # claude.ai connectors use a separate auth flow (handleClaudeAIAuth in
+        # cortex.ai connectors use a separate auth flow (handleCortexAIAuth in
         # MCPRemoteServerMenu) that we don't invoke programmatically here —
         # just point the user at /mcp.
-        if config.get('type') == 'claudeai-proxy':
+        if config.get('type') == 'cortexai-proxy':
             return {
                 'data': {
                     'status': 'unsupported',
-                    'message': f'This is a claude.ai MCP connector. Ask the user to run /mcp and select "{server_name}" to authenticate.',
+                    'message': f'This is a cortex.ai MCP connector. Ask the user to run /mcp and select "{server_name}" to authenticate.',
                 },
             }
         

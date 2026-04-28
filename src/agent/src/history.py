@@ -603,7 +603,7 @@ def add_to_history(command: Union[HistoryEntry, str]) -> None:
     """
     Public API to add a command to history.
     
-    Skips history when running in a tmux session spawned by Claude Code's
+    Skips history when running in a tmux session spawned by Cortex Code's
     Tungsten tool. This prevents verification/test sessions from polluting
     the user's real command history.
     

@@ -66,7 +66,7 @@ class BaseAgentDefinition:
     memory: Optional[AgentMemoryScope] = None
     isolation: Optional[Literal['worktree', 'remote']] = None
     pendingSnapshotUpdate: Optional[Dict[str, str]] = None
-    omitClaudeMd: Optional[bool] = None
+    omitCortexMd: Optional[bool] = None
 
 
 # Built-in agents - dynamic prompts only
@@ -267,7 +267,7 @@ async def get_agent_definitions_with_overrides(cwd: str) -> AgentDefinitionsResu
         AgentDefinitionsResult with active/all agents and any errors
     """
     # Simple mode: skip custom agents, only return built-ins
-    if is_env_truthy(os.environ.get('CLAUDE_CODE_SIMPLE')):
+    if is_env_truthy(os.environ.get('CORTEX_CODE_SIMPLE')):
         built_ins = get_built_in_agents()
         return AgentDefinitionsResult(
             activeAgents=built_ins,

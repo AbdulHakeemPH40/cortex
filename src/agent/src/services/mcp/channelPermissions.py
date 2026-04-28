@@ -58,11 +58,11 @@ class ChannelPermissionCallbacks:
     """
     Callbacks for channel permission handling.
     
-    The pending Map is closed over — NOT module-level (per src/CLAUDE.md),
+    The pending Map is closed over — NOT module-level (per src/CORTEX.md),
     NOT in AppState (functions-in-state causes issues with equality/serialization).
     
     resolve() is called from the dedicated notification handler
-    (notifications/claude/channel/permission) with the structured payload.
+    (notifications/cortex/channel/permission) with the structured payload.
     The server already parsed "yes tbxkq" → {request_id, behavior}; we just
     match against the pending map.
     """
@@ -260,10 +260,10 @@ def filter_permission_relay_clients(
         capabilities = c.get('capabilities', {})
         experimental = capabilities.get('experimental', {})
         
-        if experimental.get('claude/channel') is None:
+        if experimental.get('cortex/channel') is None:
             continue
         
-        if experimental.get('claude/channel/permission') is None:
+        if experimental.get('cortex/channel/permission') is None:
             continue
         
         result.append(c)

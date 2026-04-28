@@ -1,6 +1,6 @@
 # prompt.py
 """
-Agent tool prompt generation for Cortex IDE.
+Agent tool prompt generation for Cortex AI Agent.
 
 Generates dynamic prompts for agent spawning with support for:
 - Fork subagents vs fresh agents
@@ -91,12 +91,12 @@ def should_inject_agent_list_in_messages() -> bool:
     MCP async connect, /reload-plugins, or permission-mode changes mutate
     the list → description changes → full tool-schema cache bust.
     
-    Override with CLAUDE_CODE_AGENT_LIST_IN_MESSAGES=true/false for testing.
+    Override with CORTEX_CODE_AGENT_LIST_IN_MESSAGES=true/false for testing.
     
     Returns:
         True if agent list should be in messages, False otherwise
     """
-    env_var = os.environ.get('CLAUDE_CODE_AGENT_LIST_IN_MESSAGES')
+    env_var = os.environ.get('CORTEX_CODE_AGENT_LIST_IN_MESSAGES')
     
     if is_env_truthy(env_var):
         return True
@@ -309,7 +309,7 @@ When NOT to use the {AGENT_TOOL_NAME} tool:
 - Launch multiple agents concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses"""
     
     # Background tasks note
-    disable_background = is_env_truthy(os.environ.get('CLAUDE_CODE_DISABLE_BACKGROUND_TASKS'))
+    disable_background = is_env_truthy(os.environ.get('CORTEX_CODE_DISABLE_BACKGROUND_TASKS'))
     in_process = is_in_process_teammate()
     
     background_note = ''

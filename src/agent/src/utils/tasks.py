@@ -53,8 +53,8 @@ def is_todo_v2_enabled() -> bool:
     Currently gated by environment variable.
     """
     from .env_utils import is_env_truthy
-    return is_env_truthy(os.environ.get('CLAUDE_CODE_TODO_V2')) or \
-           is_env_truthy(os.environ.get('CLAUDE_CODE_ENABLE_TASKS'))
+    return is_env_truthy(os.environ.get('CORTEX_CODE_TODO_V2')) or \
+           is_env_truthy(os.environ.get('CORTEX_CODE_ENABLE_TASKS'))
 
 
 def set_leader_team_name(team_name: str) -> None:
