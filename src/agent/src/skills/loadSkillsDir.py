@@ -1,4 +1,4 @@
-# pyright: reportUnknownMemberType=information, reportUnknownVariableType=information, reportUnknownArgumentType=information
+# pyright: reportUnknownMemberType=information, reportUnknownVariableType=information, reportUnknownArgumentType=information, reportRedeclaration=information
 # ------------------------------------------------------------
 # loadSkillsDir.py
 # Python conversion of loadSkillsDir.ts (1087 lines)
@@ -26,6 +26,14 @@ from typing import Any, Callable, Dict, List, Optional, Set
 # PHASE 1: Core imports, type definitions, utility functions
 # ============================================================
 
+# Zod-like Result type for schema validation
+@dataclass
+class ZodSafeParseResult:
+    """Result from schema validation (like Zod's safeParse)."""
+    success: bool
+    data: Any = None
+    error: Optional[Exception] = None
+
 # Try to import from src, fallback to stubs
 try:
     from ..bootstrap.state import getAdditionalDirectoriesForCortexMd, getSessionId
@@ -38,14 +46,13 @@ try:
     from ..utils.frontmatterParser import (
         coerceDescriptionToString,
         FrontmatterData,
-        FrontmatterShell,
         parseBooleanFrontmatter,
         parseFrontmatter,
         parseShellFrontmatter,
         splitPathInFrontmatter,
     )
-    from ..utils.fsOperations import getFsImplementation
-    from ..utils.git.gitignore import isPathGitignored  # noqa: F401
+    from ..utils.fsOperations import FsOperations, getFsImplementation
+    from ..utils.git.gitignore import isPathGitignored
     from ..utils.log import logError
     from ..utils.markdownConfigLoader import (
         extractDescriptionFromMarkdown,
@@ -83,33 +90,40 @@ except ImportError:
     def getCortexConfigHomeDir(): return os.path.expanduser("~/.cortex")
     def isBareMode(): return False
     def isEnvTruthy(val): return False
-    def isENOENT(e): return False
-    def isFsInaccessible(e): return False
+    def isENOENT(e: Any) -> bool: return False
+    def isFsInaccessible(e: Any) -> bool: return False
     def coerceDescriptionToString(desc, name): return desc
     def parseBooleanFrontmatter(val): return bool(val)
     def parseFrontmatter(content: str, file_path: str = ''): return {'frontmatter': {}, 'content': content}
     def parseShellFrontmatter(shell, name): return None
     def splitPathInFrontmatter(paths): return paths if isinstance(paths, list) else []
-    def getFsImplementation(): return None
-    def isPathGitignored(filePath: str, cwd: str): return False
+    def getFsImplementation() -> FsOperations:
+        from ..utils.fsOperations import FsOperations as FsOps
+        class MockFs(FsOps):
+            async def readdir(self, path: str) -> List[Any]: return []
+            async def read_file(self, path: str, options: Dict[str, str]) -> str: return ''
+            async def stat(self, path: str) -> Any: pass
+        return MockFs()
+    def isPathGitignored(filePath: str, cwd: str) -> bool: return False
     def logError(error): pass
     def extractDescriptionFromMarkdown(content: str, defaultDescription: str = 'Custom item'): return defaultDescription
     def getProjectDirsUpToHome(subdir: str, cwd: str): return []
-    def loadMarkdownFilesForSubdir(subdir: str, cwd: str): return []
+    async def loadMarkdownFilesForSubdir(subdir: str, cwd: str) -> List[MarkdownFile]: return []
     def parseSlashCommandToolsFromFrontmatter(toolsValue): return []
-    def parseUserSpecifiedModel(model_str: str): return model_str
+    def parseUserSpecifiedModel(model_str: str) -> Optional[str]: return model_str
     async def executeShellCommandsInPrompt(text: str, context, slashCommandName: str, shell = None): return text
     def isSettingSourceEnabled(source): return True
     def getManagedFilePath(): return os.path.expanduser("~/.cortex")
-    def isRestrictedToPluginOnly(surface): return False
+    def isRestrictedToPluginOnly(surface: str) -> bool: return False
     def HooksSchema(): 
         class Schema:
-            def safeParse(self, data): return type('Result', (), {'success': True, 'data': data})()
+            def safeParse(self, data: Any) -> ZodSafeParseResult:
+                return ZodSafeParseResult(success=True, data=data)
         return Schema()
     def createSignal():
         class Signal:
-            def subscribe(self, cb): return lambda: None
-            def emit(self): pass
+            def subscribe(self, cb: Callable[[], None]) -> Callable[[], None]: return lambda: None
+            def emit(self) -> None: pass
         return Signal()
 
 
@@ -311,8 +325,8 @@ def createSkillCommand(
     execution_context: Optional[str],  # 'inline' | 'fork'
     agent: Optional[str],
     paths: Optional[List[str]],
-    effort: Optional[EffortValue],
-    shell: Optional[FrontmatterShell],
+    effort: Optional[Any],  # EffortValue
+    shell: Optional[Any],  # FrontmatterShell
 ) -> Command:
     """
     Creates a skill command from parsed data
@@ -440,7 +454,7 @@ async def loadSkillsFromSkillsDir(
             skill_file_path = os.path.join(skill_dir_path, 'SKILL.md')
 
             try:
-                content = await fs.read_file(skill_file_path, encoding='utf-8')
+                content = await fs.read_file(skill_file_path, {'encoding': 'utf-8'})
             except Exception as e:
                 # SKILL.md doesn't exist, skip this entry. Log non-ENOENT errors
                 # (EACCES/EPERM/EIO) so permission/IO problems are diagnosable.
@@ -502,13 +516,13 @@ def isSkillFile(file_path: str) -> bool:
     return os.path.basename(file_path).lower() == 'skill.md'
 
 
-def transformSkillFiles(files: List[MarkdownFile]) -> List[MarkdownFile]:
+def transformSkillFiles(files: List[Any]) -> List[Any]:
     """
     Transforms markdown files to handle "skill" commands in legacy /commands/ folder.
     When a SKILL.md file exists in a directory, only that file is loaded
     and it takes the name of its parent directory.
     """
-    files_by_dir: Dict[str, List[MarkdownFile]] = {}
+    files_by_dir: Dict[str, List[Any]] = {}
 
     for file in files:
         dir_name = os.path.dirname(file.file_path if hasattr(file, 'file_path') else file['file_path'])
@@ -564,7 +578,7 @@ def getRegularCommandName(file_path: str, base_dir: str) -> str:
     return f"{namespace}:{command_base_name}" if namespace else command_base_name
 
 
-def getCommandName(file: MarkdownFile) -> str:
+def getCommandName(file: Any) -> str:
     """Get command name based on whether it's a skill file or regular file"""
     file_path = file.file_path if hasattr(file, 'file_path') else file['file_path']
     is_skill = isSkillFile(file_path)
@@ -583,18 +597,18 @@ async def loadSkillsFromCommandsDir(cwd: str) -> List[SkillWithPath]:
     Commands from /commands/ default to user-invocable: true
     """
     try:
-        markdown_files = await loadMarkdownFilesForSubdir('commands', cwd)
-        processed_files = transformSkillFiles(markdown_files)
+        markdown_files: List[MarkdownFile] = await loadMarkdownFilesForSubdir('commands', cwd)
+        processed_files: List[MarkdownFile] = transformSkillFiles(markdown_files)
 
-        skills = []
+        skills: List[SkillWithPath] = []
 
         for file in processed_files:
             try:
-                base_dir = file.base_dir if hasattr(file, 'base_dir') else file['base_dir']
-                file_path = file.file_path if hasattr(file, 'file_path') else file['file_path']
-                frontmatter = file.frontmatter if hasattr(file, 'frontmatter') else file['frontmatter']
-                content = file.content if hasattr(file, 'content') else file['content']
-                source = file.source if hasattr(file, 'source') else file['source']
+                base_dir: str = file.base_dir if hasattr(file, 'base_dir') else str(file['base_dir'])
+                file_path: str = file.file_path if hasattr(file, 'file_path') else str(file['file_path'])
+                frontmatter: Dict[str, Any] = file.frontmatter if hasattr(file, 'frontmatter') else file['frontmatter']
+                content: str = file.content if hasattr(file, 'content') else file['content']
+                source: str = file.source if hasattr(file, 'source') else file['source']
 
                 is_skill_format = isSkillFile(file_path)
                 skill_directory = os.path.dirname(file_path) if is_skill_format else None
@@ -667,7 +681,7 @@ async def getSkillDirCommands(cwd: str) -> List[Command]:
 
     user_skills_dir = os.path.join(getCortexConfigHomeDir(), 'skills')
     managed_skills_dir = os.path.join(getManagedFilePath(), '.cortex', 'skills')
-    project_skills_dirs = getProjectDirsUpToHome('skills', cwd)
+    project_skills_dirs: List[str] = getProjectDirsUpToHome('skills', cwd)
 
     logForDebugging(
         f"Loading skills from: managed={managed_skills_dir}, user={user_skills_dir}, project=[{', '.join(project_skills_dirs)}]"
@@ -703,28 +717,32 @@ async def getSkillDirCommands(cwd: str) -> List[Command]:
     # Load from /skills/ directories, additional dirs, and legacy /commands/ in parallel
     # (all independent — different directories, no shared state)
     
-    managed_skills_task = (
-        asyncio.ensure_future(asyncio.coroutine(lambda: [])())
+    # Helper to create empty list coroutine
+    async def empty_list() -> List[Any]:
+        return []
+    
+    managed_skills_task: asyncio.Future = (
+        asyncio.ensure_future(empty_list())
         if isEnvTruthy(os.environ.get('CORTEX_CODE_DISABLE_POLICY_SKILLS', ''))
         else asyncio.ensure_future(loadSkillsFromSkillsDir(managed_skills_dir, 'policySettings'))
     )
     
-    user_skills_task = (
+    user_skills_task: asyncio.Future = (
         asyncio.ensure_future(loadSkillsFromSkillsDir(user_skills_dir, 'userSettings'))
         if isSettingSourceEnabled('userSettings') and not skills_locked
-        else asyncio.ensure_future(asyncio.coroutine(lambda: [])())
+        else asyncio.ensure_future(empty_list())
     )
     
-    project_skills_task = (
+    project_skills_task: asyncio.Future = (
         asyncio.gather(*[
             loadSkillsFromSkillsDir(dir, 'projectSettings')
             for dir in project_skills_dirs
         ])
         if project_settings_enabled
-        else asyncio.ensure_future(asyncio.coroutine(lambda: [])())
+        else asyncio.ensure_future(empty_list())
     )
     
-    additional_skills_task = (
+    additional_skills_task: asyncio.Future = (
         asyncio.gather(*[
             loadSkillsFromSkillsDir(
                 os.path.join(dir, '.cortex', 'skills'),
@@ -733,11 +751,11 @@ async def getSkillDirCommands(cwd: str) -> List[Command]:
             for dir in additional_dirs
         ])
         if project_settings_enabled
-        else asyncio.ensure_future(asyncio.coroutine(lambda: [])())
+        else asyncio.ensure_future(empty_list())
     )
     
-    legacy_commands_task = (
-        asyncio.ensure_future(asyncio.coroutine(lambda: [])())
+    legacy_commands_task: asyncio.Future = (
+        asyncio.ensure_future(empty_list())
         if skills_locked
         else asyncio.ensure_future(loadSkillsFromCommandsDir(cwd))
     )
@@ -762,8 +780,12 @@ async def getSkillDirCommands(cwd: str) -> List[Command]:
     # Deduplicate by resolved path (handles symlinks and duplicate parent directories)
     # Pre-compute file identities in parallel (realpath calls are independent),
     # then dedup synchronously (order-dependent first-wins)
+    # Helper to create None coroutine
+    async def none_coro() -> None:
+        return None
+    
     file_ids = await asyncio.gather(*[
-        getFileIdentity(entry.file_path) if entry.skill.get('type') == 'prompt' else asyncio.coroutine(lambda: None)()
+        getFileIdentity(entry.file_path) if entry.skill.get('type') == 'prompt' else none_coro()
         for entry in all_skills_with_paths
     ])
 
@@ -914,7 +936,7 @@ async def discoverSkillDirsForPaths(
                     # .git/info/exclude, and global gitignore. Fails open outside a
                     # git repo (exit 128 → false); the invocation-time trust dialog
                     # is the actual security boundary.
-                    if await isPathGitignored(current_dir, resolved_cwd):
+                    if isPathGitignored(current_dir, resolved_cwd):
                         logForDebugging(
                             f"[skills] Skipped gitignored skills dir: {skill_dir}"
                         )
