@@ -2,9 +2,11 @@
 # Cortex IDE Usage Tracking Module
 # Tracks API usage, token consumption, and reporting
 
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
+
 from typing import Any, Dict, Optional, List
 from dataclasses import dataclass, field
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from collections import defaultdict
 
 
@@ -21,7 +23,7 @@ class UsageRecord:
     input_tokens: int = 0
     output_tokens: int = 0
     request_count: int = 1
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: Dict[str, str] = field(default_factory=dict)
     
     @property
     def total_tokens(self) -> int:
@@ -186,10 +188,6 @@ def get_usage_info() -> Dict[str, Any]:
     """Get current API usage information."""
     tracker = get_usage_tracker()
     return tracker.get_usage_summary()
-
-
-# Need to import timedelta for clear_old_usage
-from datetime import timedelta
 
 
 __all__ = [
