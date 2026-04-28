@@ -29,7 +29,7 @@ class PlanLimits:
     max_requests_per_day: int = 100
     max_tokens_per_month: int = 100000
     max_concurrent_sessions: int = 1
-    features: List[str] = None
+    features: Optional[List[str]] = None
     
     def __post_init__(self):
         if self.features is None:
