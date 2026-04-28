@@ -350,10 +350,10 @@ def createSkillCommand(
         if loaded_from != 'mcp':
             # Create a modified tool_use_context with updated getAppState
             class ModifiedContext:
-                def __init__(self, ctx):
+                def __init__(self, ctx: Any) -> None:
                     self._ctx = ctx
                 
-                def getAppState(self):
+                def getAppState(self) -> Dict[str, Any]:
                     app_state = self._ctx.getAppState()
                     return {
                         **app_state,
@@ -366,7 +366,7 @@ def createSkillCommand(
                         },
                     }
                 
-                def __getattr__(self, name):
+                def __getattr__(self, name: str) -> Any:
                     return getattr(self._ctx, name)
             
             final_content = await executeShellCommandsInPrompt(
