@@ -37,6 +37,8 @@ class PlanLimits:
     
     def allows_feature(self, feature: str) -> bool:
         """Check if a feature is allowed."""
+        if self.features is None:
+            return False
         return feature in self.features
     
     @classmethod
