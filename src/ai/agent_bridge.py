@@ -1751,7 +1751,7 @@ class AgentWorker(QThread):
     async def _handle_chat(self, msg: Dict):
         self.thinking_started.emit()
         try:
-            response = await self.bridge._call_llm(
+            response = await self.bridge.call_llm(
                 msg.get("content", ""),
                 msg.get("context", {}),
                 msg.get("images", []),
@@ -1760,7 +1760,7 @@ class AgentWorker(QThread):
             # on_complete → onComplete() → _onGenerationComplete() always fires
             # in JS, which drains the message queue and un-sticks any 'Continue'
             # message that was enqueued while _isGenerating was still True.
-            if not self.bridge._stop_requested:
+            if not self.bridge.stop_requested:
                 self.response_ready.emit(response or "")
         except asyncio.CancelledError:
             # Task was cancelled via asyncio.Task.cancel() from stop_session_task().
@@ -1768,7 +1768,7 @@ class AgentWorker(QThread):
             log.info("[WORKER] Chat task cancelled (CancelledError) — stop was requested")
             raise  # Re-raise so asyncio correctly marks the task as cancelled
         except Exception as exc:
-            if not self.bridge._stop_requested:
+            if not self.bridge.stop_requested:
                 log.error(f"[WORKER] Chat error: {exc}")
                 self.error_occurred.emit(str(exc))
             else:
@@ -2889,8 +2889,7 @@ Use Markdown tables for structured data comparison:
                     if _usage_pct > 0.75:
                         if not _compacted_once:
                             log.warning(
-                                f"[BRIDGE] Pre-overflow: {_est_tokens:,} tokens estimated "
-                                f"({_usage_pct:.0%} of {_budget:,} budget) — compacting proactively"
+                                f"[BRIDGE] Pre-overflow: {_est_tokens:,} tokens estimated ({_usage_pct:.0%} of {_budget:,} budget) — compacting proactively"
                             )
                             self._safe_emit(
                                 self.agent_status_update,
@@ -2902,8 +2901,7 @@ Use Markdown tables for structured data comparison:
                         elif _usage_pct > 0.85:
                             # Already compacted once and STILL over 85% — aggressive trim
                             log.warning(
-                                f"[BRIDGE] Post-compact overflow: {_est_tokens:,} tokens "
-                                f"({_usage_pct:.0%}) — aggressive trim"
+                                f"[BRIDGE] Post-compact overflow: {_est_tokens:,} tokens ({_usage_pct:.0%}) — aggressive trim"
                             )
                             messages = self._compact_messages(messages, PCM)
 
@@ -2954,15 +2952,12 @@ Use Markdown tables for structured data comparison:
                                 # APIs enforce strict max_output_tokens limits
                                 if calculated_tokens > max_tokens:
                                     log.warning(
-                                        f"[BRIDGE] Token multiplier {token_multiplier}x would exceed "
-                                        f"model limit ({calculated_tokens} > {max_tokens}). "
-                                        f"Capping at {max_tokens}"
+                                        f"[BRIDGE] Token multiplier {token_multiplier}x would exceed model limit ({calculated_tokens} > {max_tokens}). Capping at {max_tokens}"
                                     )
                                     calculated_tokens = max_tokens
                                 
                                 max_tokens = calculated_tokens
-                                log.info(f"[BRIDGE] Applied performance token_multiplier: {token_multiplier}x, "
-                                        f"max_tokens: {_limits.max_output_tokens} -> {max_tokens}")
+                                log.info(f"[BRIDGE] Applied performance token_multiplier: {token_multiplier}x, max_tokens: {_limits.max_output_tokens} -> {max_tokens}")
                         except Exception as _mult_err:
                             pass  # Use base max_tokens if multiplier not available
                         
@@ -3020,8 +3015,7 @@ Use Markdown tables for structured data comparison:
                         _is_timeout_err = any(kw in _err_lower for kw in _TIMEOUT_KEYWORDS)
                         if _is_ctx_err and _compact_attempt < 2:
                             log.warning(
-                                f"[BRIDGE] Context limit on turn {turn + 1} "
-                                f"(compact attempt {_compact_attempt + 1}/2): {_stream_exc}"
+                                f"[BRIDGE] Context limit on turn {turn + 1} (compact attempt {_compact_attempt + 1}/2): {_stream_exc}"
                             )
                             self._safe_emit(
                                 self.agent_status_update,
@@ -3323,9 +3317,7 @@ Use Markdown tables for structured data comparison:
 
                     if self._continue_cycle_count >= self._MAX_STALE_CYCLES:
                         log.warning(
-                            f'[BRIDGE] Stale continue detected: same {len(_pending_todos)} '
-                            f'todo(s) pending for {self._continue_cycle_count} cycles — '
-                            f'auto-cancelling to prevent infinite loop'
+                            f'[BRIDGE] Stale continue detected: same {len(_pending_todos)} todo(s) pending for {self._continue_cycle_count} cycles — auto-cancelling to prevent infinite loop'
                         )
                         # Auto-cancel the stuck todos
                         for t in self._current_todos:
@@ -3337,15 +3329,11 @@ Use Markdown tables for structured data comparison:
                         # Emit a final note to the user
                         self._safe_emit(
                             self.response_chunk,
-                            '\n\n---\n*Remaining tasks were auto-cancelled after '
-                            'repeated attempts without progress. You can start a '
-                            'new request if needed.*\n'
+                            f'\n\n---\n*Remaining tasks were auto-cancelled after repeated attempts without progress. You can start a new request if needed.*\n'
                         )
                     else:
                         log.info(
-                            f'[BRIDGE] {len(_pending_todos)} todos still pending after '
-                            f'turn loop (cycle {self._continue_cycle_count}/{self._MAX_STALE_CYCLES}) '
-                            f'— emitting turn_limit_hit'
+                            f'[BRIDGE] {len(_pending_todos)} todos still pending after turn loop (cycle {self._continue_cycle_count}/{self._MAX_STALE_CYCLES}) — emitting turn_limit_hit'
                         )
                         self._safe_emit(self.turn_limit_hit, _pending_todos)
                 else:
@@ -3358,6 +3346,18 @@ Use Markdown tables for structured data comparison:
         except Exception as exc:
             log.error(f"[BRIDGE] _call_llm failed: {exc}", exc_info=True)
             raise  # Let _handle_chat route this through error_occurred → onError in JS
+
+    async def call_llm(
+        self,
+        message: str,
+        context: Optional[Dict] = None,
+        images: Optional[List[str]] = None,
+    ) -> Optional[str]:
+        """
+        Public wrapper for _call_llm.
+        Provides controlled access for inner classes (AgentWorker).
+        """
+        return await self._call_llm(message, context, images)
 
     def _safe_emit(self, signal, *args):
         """Emit a PyQt signal only if the C++ object is still alive."""
