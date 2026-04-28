@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional, Protocol, TypedDict
+from typing import Any, Callable, Dict, Optional
 
 # Type definitions for MCP skill builders
 MCPSkillBuilders = Dict[str, Callable[..., Any]]
