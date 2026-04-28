@@ -1,11 +1,12 @@
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
 import asyncio
 import os
 import sys
 import json
 import uuid as _uuid
+import threading
 from typing import Any, Dict, List, Optional, Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from PyQt6.QtCore import QObject, pyqtSignal, QThread
 
@@ -20,15 +21,16 @@ for _path in (_AGENT_PARENT, _AGENT_SRC):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-from src.utils.logger import get_logger
-from src.ai.streaming import get_streaming_emitter
-from src.ai.session_task import (
+from src.utils.logger import get_logger  # type: ignore[import-not-found]
+from src.ai.streaming import get_streaming_emitter  # type: ignore[import-not-found]
+from src.ai.session_task import (  # type: ignore[import-not-found]
     SessionTaskRegistry,
     SessionTaskState,
     StopTaskError,
     generate_session_task_id,
     stop_session_task,
 )
+from src.ai.model_limits import ModelLimits  # type: ignore[import-not-found]
 
 log = get_logger("agent_bridge")
 
@@ -52,17 +54,17 @@ def _get_default_read_chunk_lines() -> int:
 # ============================================================
 # IMPORT REAL AGENT STATE (bootstrap/state.py)
 # ============================================================
+_HAS_AGENT_STATE = False  # Initialized before try block
 try:
-    from agent.src.bootstrap.state import (
-        set_original_cwd,
-        set_project_root as _agent_set_project_root,
-        get_session_id,
-        get_project_root as _agent_get_project_root,
+    from agent.src.bootstrap.state import (  # type: ignore[import-not-found]
+        set_original_cwd,  # pyright: ignore[reportAttributeAccessIssue]
+        set_project_root as _agent_set_project_root,  # pyright: ignore[reportAttributeAccessIssue]
+        get_session_id,  # pyright: ignore[reportAttributeAccessIssue]
+        get_project_root as _agent_get_project_root,  # pyright: ignore[reportAttributeAccessIssue, reportUnusedImport]
     )
-    _HAS_AGENT_STATE = True
+    _HAS_AGENT_STATE = True  # pyright: ignore[reportConstantRedefinition]
     log.info("[BRIDGE] Real agent bootstrap/state loaded")
 except ImportError as _e:
-    _HAS_AGENT_STATE = False
     log.warning(f"[BRIDGE] agent bootstrap/state not available: {_e}")
 
     def set_original_cwd(cwd: str) -> None: pass
@@ -130,14 +132,14 @@ _REAL_GREP_TOOL       = _load_agent_tool("agent.src.tools.GrepTool.GrepTool",   
 # Used to signal running tools when the user presses Stop.
 # ============================================================
 try:
-    from agent.src.utils.abortController import (
-        AbortController  as _AgentAbortController,
-        create_abort_controller as _create_abort_controller,
+    from agent.src.utils.abortController import (  # type: ignore[import-not-found]
+        AbortController  as _AgentAbortController,  # pyright: ignore[reportAttributeAccessIssue]
+        create_abort_controller as _create_abort_controller,  # pyright: ignore[reportAttributeAccessIssue]
     )
-    _HAS_REAL_ABORT = True
+    _HAS_REAL_ABORT = True  # pyright: ignore[reportConstantRedefinition]
+    
     log.info("[BRIDGE] Real AbortController loaded from utils.abortController")
 except ImportError as _e:
-    _HAS_REAL_ABORT = False
     log.warning(f"[BRIDGE] Real AbortController not available: {_e}")
 
     class _AgentAbortController:  # type: ignore[no-redef]
@@ -284,7 +286,7 @@ class _AuthHookManager:
         self._bridge = bridge
         self._pending_auth: Dict[str, Any] = {}
     
-    def request_auth(self, service: str, scopes: List[str] = None) -> str:
+    def request_auth(self, service: str, scopes: Optional[List[str]] = None) -> str:
         """Request authentication for a service. Returns auth request ID."""
         import uuid
         request_id = f"auth-{uuid.uuid4().hex[:8]}"
@@ -344,7 +346,7 @@ class _ContextBudgetTracker:
     Tracks context budget usage across tool calls.
     Prevents context overflow by monitoring cumulative token usage.
     """
-    def __init__(self, model_limits: Optional['ModelLimits'] = None):
+    def __init__(self, model_limits: Optional[ModelLimits] = None):
         self._model_limits = model_limits
         self._hard_context_cap_tokens = self._get_hard_context_cap_tokens()
         self._files_in_context: Dict[str, int] = {}  # path -> estimated tokens
@@ -367,7 +369,7 @@ class _ContextBudgetTracker:
             return min(self._model_limits.context_budget, self._hard_context_cap_tokens)
         return self._hard_context_cap_tokens
     
-    def set_model_limits(self, limits: 'ModelLimits') -> None:
+    def set_model_limits(self, limits: ModelLimits) -> None:
         self._model_limits = limits
     
     def add_file(self, path: str, char_count: int) -> int:
@@ -483,9 +485,11 @@ class CortexToolContext:
     def _init_model_limits(self, model_id: str) -> None:
         """Initialize model-aware file reading limits."""
         try:
-            from src.ai.model_limits import get_model_limits
+            from src.ai.model_limits import get_model_limits  # type: ignore[import-not-found]
             self._model_limits = get_model_limits(model_id)
             self._budget_tracker.set_model_limits(self._model_limits)
+            # _model_limits is guaranteed to be set here by get_model_limits()
+            assert self._model_limits is not None  # Ensure type checker knows it's not None
             self.file_reading_limits = {
                 "maxSizeBytes": self._model_limits.max_file_read_bytes,
                 "maxTokens": self._model_limits.max_file_read_chars // 4,
@@ -587,7 +591,7 @@ class CortexToolContext:
     def get_content_replacement_state(self):
         """Get or create the per-conversation content replacement state."""
         if self._content_replacement_state is None:
-            from src.ai.tool_result_storage import ContentReplacementState
+            from src.ai.tool_result_storage import ContentReplacementState  # type: ignore[import-not-found]
             self._content_replacement_state = ContentReplacementState()
         return self._content_replacement_state
 
@@ -629,7 +633,7 @@ class CortexToolContext:
         return await self._mcp_hooks.trigger(event, *args, **kwargs)
 
     # Auth hooks
-    def request_auth(self, service: str, scopes: List[str] = None) -> str:
+    def request_auth(self, service: str, scopes: Optional[List[str]] = None) -> str:
         return self._auth_hooks.request_auth(service, scopes)
     
     def complete_auth(self, request_id: str, result: Any) -> None:
@@ -697,7 +701,7 @@ _STUB_PARENT_MESSAGE = type("_Msg", (), {"uuid": None})()
 def _get_destructive_warning(command: str) -> 'Optional[str]':
     """Return a human-readable warning if the command is destructive, else None."""
     try:
-        from src.agent.src.tools.BashTool.destructiveCommandWarning import get_destructive_command_warning
+        from src.agent.src.tools.BashTool.destructiveCommandWarning import get_destructive_command_warning  # type: ignore[import-not-found]
         return get_destructive_command_warning(command)
     except Exception:
         pass
@@ -784,33 +788,32 @@ class BridgeBashTool:
         self._bridge = bridge
 
     async def execute(self, args: Dict) -> ToolResult:
-        import subprocess as _sp
         import threading as _threading
         command = args.get("command", "")
         timeout = int(args.get("timeout", 30))
-        cwd = self._bridge._project_root or os.getcwd()
+        cwd = self._bridge.project_root or os.getcwd()
 
         # ── Dangerous-command permission gate ────────────────────────────────
         warning = _get_destructive_warning(command)
-        if warning and self._bridge._always_allowed:
+        if warning and self._bridge.always_allowed:
             log.info(
                 "[BRIDGE] Permission gate bypassed (always_allow=True): %s",
                 command[:180].replace("\n", " "),
             )
-        if warning and not self._bridge._stop_requested and not self._bridge._always_allowed:
+        if warning and not self._bridge.stop_requested and not self._bridge.always_allowed:
             affected = _extract_affected_paths(command)
             import json as _json
             # Create a fresh event for this request
             evt = _threading.Event()
-            self._bridge._permission_event  = evt
-            self._bridge._permission_granted = False
+            self._bridge.permission_event = evt
+            self._bridge.permission_granted = False
             self._bridge.permission_requested.emit(
                 command, warning, _json.dumps(affected)
             )
             # Wait without blocking the event loop
             granted = await asyncio.to_thread(evt.wait, 60.0)  # 60 s timeout
-            self._bridge._permission_event = None
-            if not granted or not self._bridge._permission_granted:
+            self._bridge.permission_event = None
+            if not granted or not self._bridge.permission_granted:
                 return ToolResult(
                     tool_id="", result=None, success=False,
                     error="User rejected the command — not executed."
@@ -819,28 +822,21 @@ class BridgeBashTool:
 
         proc = None
         try:
-            if os.name == 'nt':
-                # Windows: use PowerShell so .ps1 scripts execute correctly
-                # (cmd.exe triggers Windows file-association dialog for .ps1).
-                # asyncio.create_subprocess_exec keeps the event loop responsive
-                # so stop/cancel requests are delivered immediately.
-                proc = await asyncio.create_subprocess_exec(
-                    'powershell.exe',
-                    '-ExecutionPolicy', 'Bypass',
-                    '-NonInteractive',
-                    '-Command', command,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd=cwd,
-                    creationflags=_sp.CREATE_NO_WINDOW,
-                )
-            else:
-                proc = await asyncio.create_subprocess_shell(
-                    command,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd=cwd,
-                )
+            # Windows: use PowerShell so .ps1 scripts execute correctly
+            # (cmd.exe triggers Windows file-association dialog for .ps1).
+            # asyncio.create_subprocess_exec keeps the event loop responsive
+            # so stop/cancel requests are delivered immediately.
+            import subprocess as _sp
+            proc = await asyncio.create_subprocess_exec(
+                'powershell.exe',
+                '-ExecutionPolicy', 'Bypass',
+                '-NonInteractive',
+                '-Command', command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=cwd,
+                creationflags=_sp.CREATE_NO_WINDOW,
+            )
 
             try:
                 stdout_b, stderr_b = await asyncio.wait_for(
@@ -906,8 +902,8 @@ class BridgeLSTool:
 
     async def execute(self, args: Dict) -> ToolResult:
         dirpath = args.get("path", ".")
-        if not os.path.isabs(dirpath) and self._bridge._project_root:
-            dirpath = os.path.join(self._bridge._project_root, dirpath)
+        if not os.path.isabs(dirpath) and self._bridge.project_root:
+            dirpath = os.path.join(self._bridge.project_root, dirpath)
         try:
             entries = []
             for entry in sorted(os.scandir(dirpath), key=lambda e: (not e.is_dir(), e.name)):
@@ -1437,7 +1433,7 @@ _TOOL_SCHEMAS: List[Dict] = [
 ]
 
 
-def _convert_tool_to_schema(tool) -> Optional[Dict]:
+def _convert_tool_to_schema(tool) -> Optional[Dict[str, Any]]:
     """
     Convert a Tool object from tool_registry to OpenAI-compatible schema.
     
@@ -1457,10 +1453,10 @@ def _convert_tool_to_schema(tool) -> Optional[Dict]:
             return None
         
         # Get input schema
-        input_schema = getattr(tool, 'input_schema', {})
+        input_schema: Dict[str, Any] = getattr(tool, 'input_schema', {})
         
         # Build OpenAI-compatible schema
-        return {
+        schema: Dict[str, Any] = {
             "type": "function",
             "function": {
                 "name": name,
@@ -1471,6 +1467,7 @@ def _convert_tool_to_schema(tool) -> Optional[Dict]:
                 },
             },
         }
+        return schema
     except Exception as e:
         log.warning(f"[BRIDGE] Failed to convert tool {getattr(tool, 'name', 'unknown')}: {e}")
         return None
@@ -1486,7 +1483,7 @@ def _get_tool_definitions_from_registry() -> List[Dict]:
     schemas = []
     
     try:
-        from tool_registry import get_all_base_tools
+        from tool_registry import get_all_base_tools  # type: ignore[import-not-found]
         tools = get_all_base_tools()
         
         for tool in tools:
@@ -1708,8 +1705,7 @@ class AgentWorker(QThread):
 
                     if next_msg.get("type") == "stop":
                         log.info(
-                            "[WORKER] Stop message received while running — "
-                            "cancelling chat task"
+                            "[WORKER] Stop message received while running — cancelling chat task"
                         )
                         await self._cancel_active_task()
                         break
@@ -1719,8 +1715,7 @@ class AgentWorker(QThread):
                         # Cancel old, then re-queue the new message so the
                         # outer loop starts it fresh.
                         log.info(
-                            "[WORKER] New chat arrived while running — "
-                            "cancelling old task and re-queuing new one"
+                            "[WORKER] New chat arrived while running — cancelling old task and re-queuing new one"
                         )
                         await self._cancel_active_task()
                         await self._queue.put(next_msg)
@@ -1864,7 +1859,7 @@ class CortexAgentBridge(QObject):
         # Persistent memory dir — computed once per project root
         self._memory_dir: Optional[str] = None
         # Permission gate — used by BridgeBashTool to pause until user accepts/rejects
-        self._permission_event: 'threading.Event' = None   # lazily created
+        self._permission_event: Optional[threading.Event] = None   # lazily created
         self._permission_granted: bool = False
         # Session task registry — converted from AppStateStore.ts tasks map.
         # Tracks the active asyncio.Task for proper cancellation on stop.
@@ -1881,7 +1876,12 @@ class CortexAgentBridge(QObject):
         self._init_agent_state()
 
         # Build tool context for real agent tools (use model from settings if available)
-        _initial_model = getattr(settings, 'model_id', 'mistral-large-latest') if 'settings' in dir() else 'mistral-large-latest'
+        try:
+            from src.config.settings import get_settings  # type: ignore[import-not-found]
+            _settings = get_settings()
+            _initial_model = _settings.get('ai', 'model', default='mistral-large-latest')
+        except Exception:
+            _initial_model = 'mistral-large-latest'
         self._tool_ctx = CortexToolContext(self, _initial_model)
         self._current_model_id = _initial_model
 
@@ -1923,6 +1923,44 @@ class CortexAgentBridge(QObject):
         # Initialize file_edit_notification signal for WebChannel
         self.file_edit_notification = pyqtSignal(str, str, str)  # filePath, editType, status
         log.info("[BRIDGE] file_edit_notification signal initialized")
+
+    # ── Public property accessors for protected attributes ─────────────────
+    # These provide controlled access to internal state from tool classes
+    
+    @property
+    def project_root(self) -> Optional[str]:
+        """Get the project root path."""
+        return self._project_root
+    
+    @property
+    def always_allowed(self) -> bool:
+        """Check if tools are always allowed without permission."""
+        return self._always_allowed
+    
+    @property
+    def stop_requested(self) -> bool:
+        """Check if stop has been requested."""
+        return self._stop_requested
+    
+    @property
+    def permission_event(self) -> Optional[threading.Event]:
+        """Get the current permission event."""
+        return self._permission_event
+    
+    @permission_event.setter
+    def permission_event(self, value: Optional[threading.Event]) -> None:
+        """Set the permission event."""
+        self._permission_event = value
+    
+    @property
+    def permission_granted(self) -> bool:
+        """Check if permission was granted."""
+        return self._permission_granted
+    
+    @permission_granted.setter
+    def permission_granted(self, value: bool) -> None:
+        """Set permission granted status."""
+        self._permission_granted = value
 
     # ── Initialisation helpers ─────────────────────────────────
 
@@ -2585,8 +2623,7 @@ Use Markdown tables for structured data comparison:
         )
         compacted = [system_msg, summary] + tail
         log.info(
-            f'[BRIDGE] Context compacted: {len(messages)} \u2192 {len(compacted)} messages '
-            f'(dropped {dropped_count} middle messages, summary saved to MEMORY.md)'
+            f'[BRIDGE] Context compacted: {len(messages)} \u2192 {len(compacted)} messages (dropped {dropped_count} middle messages, summary saved to MEMORY.md)'
         )
 
         # ── Emit completion status ───────────────────────────────────────
@@ -2606,7 +2643,7 @@ Use Markdown tables for structured data comparison:
     # ============================================================
 
     # Failover priority chain: Mistral only
-    _FAILOVER_CHAIN = None  # lazily built
+    _failover_chain = None  # lazily built
 
     def _get_failover_provider(self, current_type, registry):
         """
@@ -2614,9 +2651,9 @@ Use Markdown tables for structured data comparison:
         Skips providers that don't have a valid API key.
         Max 2 failover hops to avoid infinite cycling.
         """
-        from src.ai.providers import ProviderType
-        if self._FAILOVER_CHAIN is None:
-            self._FAILOVER_CHAIN = [
+        from src.ai.providers import ProviderType  # type: ignore[import-not-found]
+        if self._failover_chain is None:
+            self._failover_chain = [
                 ProviderType.MISTRAL,
             ]
 
@@ -2627,7 +2664,7 @@ Use Markdown tables for structured data comparison:
         if len(_attempted) >= 3:  # max 2 hops
             return None
 
-        for pt in self._FAILOVER_CHAIN:
+        for pt in self._failover_chain:
             if pt in _attempted:
                 continue
             # Check if provider is registered and has a key
@@ -2662,8 +2699,8 @@ Use Markdown tables for structured data comparison:
     async def _call_llm(
         self,
         message: str,
-        context: Dict = None,
-        images: List[str] = None,
+        context: Optional[Dict] = None,
+        images: Optional[List[str]] = None,
     ) -> Optional[str]:
         """
         Multi-turn agentic loop:
@@ -2744,7 +2781,7 @@ Use Markdown tables for structured data comparison:
                 ]
                 tool_defs = []
                 log.info("[BRIDGE] Simple-query fast path: skipping tools + history + project prompt")
-                MAX_TURNS = 1
+                max_turns = 1
             else:
                 system_prompt = merged.get("system_prompt") or self._build_system_prompt(context)
                 messages = [PCM(role="system", content=system_prompt)]
@@ -2784,7 +2821,7 @@ Use Markdown tables for structured data comparison:
 
                 tool_defs = _get_tool_definitions()
                 log.info(f"[BRIDGE] Total tools after merge: {len(tool_defs)}")
-                MAX_TURNS = _limits.max_turns
+                max_turns = _limits.max_turns
 
             full_response = ""
 
@@ -2819,8 +2856,8 @@ Use Markdown tables for structured data comparison:
             except ImportError:
                 pass
 
-            for turn in range(MAX_TURNS):
-                log.info(f"[BRIDGE] === Agentic turn {turn + 1}/{MAX_TURNS} ===")
+            for turn in range(max_turns):
+                log.info(f"[BRIDGE] === Agentic turn {turn + 1}/{max_turns} ===")
 
                 # ── Micro-compact: clear old tool results (cheap, no LLM) ────
                 # Ported from Claude Code's microCompact.ts. Runs every turn
