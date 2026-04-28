@@ -3,7 +3,7 @@ Auto-converted from deps.ts
 TODO: Review and refine type annotations
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from dataclasses import dataclass, field
 
 

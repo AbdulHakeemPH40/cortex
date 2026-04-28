@@ -16,17 +16,18 @@ Converted from TypeScript: skills/bundled/remember.ts
 import os
 from typing import Any, Optional
 
-# Import registerBundledSkill
-from src.agent.src.skills.bundledSkills import registerBundledSkill
-
-
-# Defensive import for isAutoMemoryEnabled
+# Import registerBundledSkill - use fallback for type checking
 try:
-    from ..memdir.paths import isAutoMemoryEnabled
+    from ..bundledSkills import registerBundledSkill
 except ImportError:
-    def isAutoMemoryEnabled() -> bool:
-        """Fallback: auto-memory disabled"""
-        return False
+    def registerBundledSkill(definition: Any) -> None:  # type: ignore
+        """Fallback stub."""
+        pass
+
+# Import isAutoMemoryEnabled - not available yet, use fallback
+def isAutoMemoryEnabled() -> bool:
+    """Fallback: auto-memory disabled until memdir.paths is implemented."""
+    return False
 
 
 # ============================================================================

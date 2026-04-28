@@ -5,7 +5,7 @@ Provides utilities to build worker tool context and agent configuration
 for AutoGen/OpenHands integration in Cortex IDE.
 """
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Optional
 
 
 # Default tools available to all workers
@@ -66,9 +66,9 @@ def get_worker_tool_context(
 
 def format_worker_prompt(
     task_description: str,
-    purpose: str = None,
+    purpose: Optional[str] = None,
     file_paths: Optional[List[str]] = None,
-    expected_output: str = None
+    expected_output: Optional[str] = None
 ) -> str:
     """
     Format a well-structured worker prompt following best practices.
@@ -107,7 +107,7 @@ def format_worker_prompt(
 
 def create_research_prompt(
     topic: str,
-    scope: str = None,
+    scope: Optional[str] = None,
     deliverable: str = "Report findings — do not modify files"
 ) -> str:
     """
@@ -160,7 +160,7 @@ def create_implementation_prompt(
 
 def create_verification_prompt(
     change_description: str,
-    test_focus: str = None,
+    test_focus: Optional[str] = None,
     edge_cases: Optional[List[str]] = None
 ) -> str:
     """
