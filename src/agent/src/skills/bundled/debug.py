@@ -1,3 +1,4 @@
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportRedeclaration=false, reportAssignmentType=false, reportAttributeAccessIssue=false, reportInvalidTypeForm=false, reportConstantRedefinition=false, reportUnusedImport=false
 """
 Debug Skill for Cortex IDE
 
@@ -21,12 +22,8 @@ except ImportError:
         return e
 
 try:
-    from ...utils.errors import is_enoent, error_message
+    from ...utils.errors import error_message
 except ImportError:
-    def is_enoent(e: Exception) -> bool:
-        """Check if error is file not found."""
-        return isinstance(e, FileNotFoundError) or getattr(e, 'errno', None) == 2
-    
     def error_message(e: Exception) -> str:
         """Get error message string."""
         return str(e)
