@@ -40,17 +40,17 @@ class Signal:
         
         return unsubscribe
     
-    def emit(self, *args: Any, **kwargs: Any) -> None:
+    def emit(self, *args: Any, **_kwargs: Any) -> None:
         """
         Call all subscribed listeners with the given arguments.
         
         Args:
             *args: Positional arguments to pass to listeners
-            **kwargs: Keyword arguments to pass to listeners
+            **_kwargs: Keyword arguments (reserved for future use)
         """
         for listener in self._listeners:
             try:
-                listener(*args, **kwargs)
+                listener(*args)
             except Exception:
                 # Silently ignore listener errors to prevent breaking other listeners
                 pass

@@ -1,4 +1,4 @@
-# pyright: reportUnknownMemberType=information, reportUnknownVariableType=information, reportUnknownArgumentType=information, reportRedeclaration=information
+# pyright: reportUnknownMemberType=information, reportUnknownVariableType=information, reportUnknownArgumentType=information, reportRedeclaration=information, reportAssignmentType=information
 # ------------------------------------------------------------
 # loadSkillsDir.py
 # Python conversion of loadSkillsDir.ts (1087 lines)
@@ -58,7 +58,6 @@ try:
         extractDescriptionFromMarkdown,
         getProjectDirsUpToHome,
         loadMarkdownFilesForSubdir,
-        MarkdownFile,
         parseSlashCommandToolsFromFrontmatter,
     )
     from ..utils.model.model import parseUserSpecifiedModel
@@ -104,11 +103,11 @@ except ImportError:
             async def read_file(self, path: str, options: Dict[str, str]) -> str: return ''
             async def stat(self, path: str) -> Any: pass
         return MockFs()
-    def isPathGitignored(filePath: str, cwd: str) -> bool: return False
+    async def isPathGitignored(filePath: str, cwd: str) -> bool: return False
     def logError(error): pass
     def extractDescriptionFromMarkdown(content: str, defaultDescription: str = 'Custom item'): return defaultDescription
     def getProjectDirsUpToHome(subdir: str, cwd: str): return []
-    async def loadMarkdownFilesForSubdir(subdir: str, cwd: str) -> List[MarkdownFile]: return []
+    async def loadMarkdownFilesForSubdir(subdir: str, cwd: str) -> List[Any]: return []
     def parseSlashCommandToolsFromFrontmatter(toolsValue): return []
     def parseUserSpecifiedModel(model_str: str) -> Optional[str]: return model_str
     async def executeShellCommandsInPrompt(text: str, context, slashCommandName: str, shell = None): return text
@@ -522,7 +521,7 @@ def transformSkillFiles(files: List[Any]) -> List[Any]:
     When a SKILL.md file exists in a directory, only that file is loaded
     and it takes the name of its parent directory.
     """
-    files_by_dir: Dict[str, List[Any]] = {}
+    files_by_dir: Dict[str, Any] = {}
 
     for file in files:
         dir_name = os.path.dirname(file.file_path if hasattr(file, 'file_path') else file['file_path'])
@@ -597,18 +596,18 @@ async def loadSkillsFromCommandsDir(cwd: str) -> List[SkillWithPath]:
     Commands from /commands/ default to user-invocable: true
     """
     try:
-        markdown_files: List[MarkdownFile] = await loadMarkdownFilesForSubdir('commands', cwd)
-        processed_files: List[MarkdownFile] = transformSkillFiles(markdown_files)
+        markdown_files: List[Any] = await loadMarkdownFilesForSubdir('commands', cwd)
+        processed_files: List[Any] = transformSkillFiles(markdown_files)
 
         skills: List[SkillWithPath] = []
 
         for file in processed_files:
             try:
-                base_dir: str = file.base_dir if hasattr(file, 'base_dir') else str(file['base_dir'])
-                file_path: str = file.file_path if hasattr(file, 'file_path') else str(file['file_path'])
-                frontmatter: Dict[str, Any] = file.frontmatter if hasattr(file, 'frontmatter') else file['frontmatter']
-                content: str = file.content if hasattr(file, 'content') else file['content']
-                source: str = file.source if hasattr(file, 'source') else file['source']
+                base_dir: str = file.base_dir if hasattr(file, 'base_dir') else str(file.get('base_dir', ''))
+                file_path: str = file.file_path if hasattr(file, 'file_path') else str(file.get('file_path', ''))
+                frontmatter: Dict[str, Any] = file.frontmatter if hasattr(file, 'frontmatter') else file.get('frontmatter', {})
+                content: str = file.content if hasattr(file, 'content') else str(file.get('content', ''))
+                source: str = file.source if hasattr(file, 'source') else str(file.get('source', ''))
 
                 is_skill_format = isSkillFile(file_path)
                 skill_directory = os.path.dirname(file_path) if is_skill_format else None
@@ -936,7 +935,7 @@ async def discoverSkillDirsForPaths(
                     # .git/info/exclude, and global gitignore. Fails open outside a
                     # git repo (exit 128 → false); the invocation-time trust dialog
                     # is the actual security boundary.
-                    if isPathGitignored(current_dir, resolved_cwd):
+                    if await isPathGitignored(current_dir, resolved_cwd):
                         logForDebugging(
                             f"[skills] Skipped gitignored skills dir: {skill_dir}"
                         )
