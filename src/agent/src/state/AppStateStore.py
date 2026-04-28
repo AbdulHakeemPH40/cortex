@@ -3,8 +3,8 @@ Auto-converted from AppStateStore.ts
 TODO: Review and refine type annotations
 """
 
-from typing import Any, Dict, Optional
-from dataclasses import dataclass, field
+from typing import Dict, Optional
+from dataclasses import dataclass
 
 
 @dataclass
@@ -12,7 +12,12 @@ class AppState:
     """Application state."""
     is_running: bool = False
     current_project: Optional[str] = None
-    settings: Dict[str, Any] = field(default_factory=dict)
+    settings: Dict[str, str] = None  # type: ignore
+
+    def __post_init__(self):
+        """Initialize mutable defaults."""
+        if self.settings is None:
+            self.settings = {}
 
 
 def getDefaultAppState() -> AppState:
