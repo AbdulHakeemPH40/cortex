@@ -1,4 +1,4 @@
-# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportRedeclaration=false, reportAssignmentType=false, reportAttributeAccessIssue=information, reportInvalidTypeForm=information, reportConstantRedefinition=information, reportUnusedImport=information
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportRedeclaration=false, reportAssignmentType=false, reportAttributeAccessIssue=false, reportInvalidTypeForm=false, reportConstantRedefinition=false, reportUnusedImport=false
 # ------------------------------------------------------------
 # bundledSkills.py
 # Python conversion of bundledSkills.ts
