@@ -3,10 +3,7 @@ Auto-converted from oauth.ts
 TODO: Review and refine type annotations
 """
 
-from typing import Any, Dict, List, Optional
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import TypedDict
+from typing import List, Optional, TypedDict
 
 
 class OauthConfig(TypedDict):
@@ -17,14 +14,19 @@ class OauthConfig(TypedDict):
     scopes: List[str]
 
 
-def fileSuffixForOauthConfig(self) -> str:
-    """TODO: Implement fileSuffixForOauthConfig"""
-    pass
+def fileSuffixForOauthConfig() -> str:
+    """Get file suffix for OAuth config."""
+    return ".oauth"
 
 
-def getOauthConfig(self) -> OauthConfig:
-    """TODO: Implement getOauthConfig"""
-    pass
+def getOauthConfig() -> OauthConfig:
+    """Get OAuth configuration."""
+    return OauthConfig(
+        client_id="",
+        client_secret="",
+        redirect_uri=None,
+        scopes=[]
+    )
 
 
 

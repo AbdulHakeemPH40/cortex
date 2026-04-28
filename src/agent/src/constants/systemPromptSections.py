@@ -3,9 +3,8 @@ Auto-converted from systemPromptSections.ts
 TODO: Review and refine type annotations
 """
 
-from typing import Any, Dict, List, Optional, Callable
-from dataclasses import dataclass, field
-from enum import Enum
+from typing import Any, List, Callable
+from dataclasses import dataclass
 
 
 # Type definitions
@@ -20,23 +19,23 @@ class SystemPromptSection:
     cached: bool = True
 
 
-def systemPromptSection(self, name: str, compute: ComputeFn) -> SystemPromptSection:
-    """TODO: Implement systemPromptSection"""
-    pass
+def systemPromptSection(name: str, compute: ComputeFn) -> SystemPromptSection:
+    """Create a system prompt section."""
+    return SystemPromptSection(name=name, compute=compute, cached=True)
 
 
-def DANGEROUS_uncachedSystemPromptSection(self, name: str, compute: ComputeFn, _reason: str) -> SystemPromptSection:
-    """TODO: Implement DANGEROUS_uncachedSystemPromptSection"""
-    pass
+def DANGEROUS_uncachedSystemPromptSection(name: str, compute: ComputeFn, _reason: str) -> SystemPromptSection:
+    """Create an uncached system prompt section (use with caution)."""
+    return SystemPromptSection(name=name, compute=compute, cached=False)
 
 
-def resolveSystemPromptSections(self, sections: List[SystemPromptSection]) -> List[Any]:
-    """TODO: Implement resolveSystemPromptSections"""
-    pass
+def resolveSystemPromptSections(sections: List[SystemPromptSection]) -> List[Any]:
+    """Resolve all system prompt sections."""
+    return [section.compute() for section in sections]
 
 
-def clearSystemPromptSections(self) -> None:
-    """TODO: Implement clearSystemPromptSections"""
+def clearSystemPromptSections() -> None:
+    """Clear all system prompt sections."""
     pass
 
 
