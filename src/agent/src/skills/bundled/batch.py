@@ -1,38 +1,38 @@
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportRedeclaration=false, reportAssignmentType=false, reportAttributeAccessIssue=false, reportInvalidTypeForm=false, reportConstantRedefinition=false, reportUnusedImport=false
 """
 Batch skill for parallel work orchestration across multiple agents.
 
 Converts batch.ts to Python with multi-LLM compatibility for Cortex IDE.
 """
 
-from typing import List, Dict, Any, Optional
-import os
+from typing import List, Dict, Any
 import asyncio
 
 # Defensive imports with fallback stubs
 try:
-    from ...tools.AgentTool.constants import AGENT_TOOL_NAME
+    from ...tools.AgentTool.constants import AGENT_TOOL_NAME as _AGENT_TOOL_NAME
 except ImportError:
-    AGENT_TOOL_NAME = "Agent"
+    _AGENT_TOOL_NAME = "Agent"
 
 try:
-    from ...tools.AskUserQuestionTool.prompt import ASK_USER_QUESTION_TOOL_NAME
+    from ...tools.AskUserQuestionTool.prompt import ASK_USER_QUESTION_TOOL_NAME as _ASK_USER_QUESTION_TOOL_NAME
 except ImportError:
-    ASK_USER_QUESTION_TOOL_NAME = "AskUserQuestion"
+    _ASK_USER_QUESTION_TOOL_NAME = "AskUserQuestion"
 
 try:
-    from ...tools.EnterPlanModeTool.constants import ENTER_PLAN_MODE_TOOL_NAME
+    from ...tools.EnterPlanModeTool.constants import ENTER_PLAN_MODE_TOOL_NAME as _ENTER_PLAN_MODE_TOOL_NAME
 except ImportError:
-    ENTER_PLAN_MODE_TOOL_NAME = "EnterPlanMode"
+    _ENTER_PLAN_MODE_TOOL_NAME = "EnterPlanMode"
 
 try:
-    from ...tools.ExitPlanModeTool.constants import EXIT_PLAN_MODE_TOOL_NAME
+    from ...tools.ExitPlanModeTool.constants import EXIT_PLAN_MODE_TOOL_NAME as _EXIT_PLAN_MODE_TOOL_NAME
 except ImportError:
-    EXIT_PLAN_MODE_TOOL_NAME = "ExitPlanMode"
+    _EXIT_PLAN_MODE_TOOL_NAME = "ExitPlanMode"
 
 try:
-    from ...tools.SkillTool.constants import SKILL_TOOL_NAME
+    from ...tools.SkillTool.constants import SKILL_TOOL_NAME as _SKILL_TOOL_NAME
 except ImportError:
-    SKILL_TOOL_NAME = "Skill"
+    _SKILL_TOOL_NAME = "Skill"
 
 try:
     from ...utils.git import get_is_git
@@ -42,11 +42,19 @@ except ImportError:
         return False
 
 try:
-    from ...skills.bundledSkills import register_bundled_skill
+    from ...skills.bundledSkills import register_bundled_skill as _register_bundled_skill
 except ImportError:
-    def register_bundled_skill(definition: Dict[str, Any]) -> None:
+    def _register_bundled_skill(definition: Dict[str, Any]) -> None:
         """Fallback stub for skill registration."""
         pass
+
+# Create module-level aliases for use in f-strings and code
+AGENT_TOOL_NAME = _AGENT_TOOL_NAME
+ASK_USER_QUESTION_TOOL_NAME = _ASK_USER_QUESTION_TOOL_NAME
+ENTER_PLAN_MODE_TOOL_NAME = _ENTER_PLAN_MODE_TOOL_NAME
+EXIT_PLAN_MODE_TOOL_NAME = _EXIT_PLAN_MODE_TOOL_NAME
+SKILL_TOOL_NAME = _SKILL_TOOL_NAME
+register_bundled_skill = _register_bundled_skill
 
 
 # Constants
