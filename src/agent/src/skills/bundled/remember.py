@@ -16,6 +16,9 @@ Converted from TypeScript: skills/bundled/remember.ts
 import os
 from typing import Any, Optional
 
+# Import registerBundledSkill
+from src.agent.src.skills.bundledSkills import registerBundledSkill
+
 
 # Defensive import for isAutoMemoryEnabled
 try:

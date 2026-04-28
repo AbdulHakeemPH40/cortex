@@ -11,3 +11,7 @@ Remove-Item -Recurse -Force build, dist
 
 cd dist\Cortex
 .\Cortex.exe
+
+
+
+python pyright_audit.py --json-out pyright_report.json

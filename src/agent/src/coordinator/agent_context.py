@@ -5,7 +5,7 @@ Provides utilities to build worker tool context and agent configuration
 for AutoGen/OpenHands integration in Cortex IDE.
 """
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 
 # Default tools available to all workers
