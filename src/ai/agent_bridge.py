@@ -4,7 +4,7 @@ import sys
 import json
 import uuid as _uuid
 import threading
-from typing import Any, Dict, List, Optional, Callable
+from typing import Any, Dict, List, Optional, Callable, cast
 from dataclasses import dataclass
 
 from PyQt6.QtCore import QObject, pyqtSignal, QThread
@@ -120,12 +120,16 @@ class ToolResult:
     error: Optional[str] = None
 
 
+WorkerMessage = Dict[str, Any]
+
+
 # ============================================================
 # IMPORT REAL AGENT TOOLS from src/agent/src/tools/
 # These are the robust, production-quality implementations.
 # ============================================================
 
 import importlib as _importlib
+import importlib.util as _importlib_util
 
 def _load_agent_tool(module_path: str, class_name: str) -> type | None:
     """Dynamically import a real agent tool class. Returns None on failure."""
@@ -1468,123 +1472,15 @@ _TOOL_SCHEMAS: List[Dict[str, Any]] = [
 ]
 
 
-def _convert_tool_to_schema(tool: object) -> Optional[Dict[str, Any]]:
-    """
-    Convert a Tool object from tool_registry to OpenAI-compatible schema.
-    
-    Args:
-        tool: Tool object with name, input_schema, and description method
-    
-    Returns:
-        OpenAI-compatible tool schema dict or None if conversion fails
-    """
-    if tool is None:
-        return None
-    
-    try:
-        # Get tool name
-        name = getattr(tool, 'name', None)
-        if not name:
-            return None
-        
-        # Get input schema
-        input_schema: Dict[str, Any] = getattr(tool, 'input_schema', {})
-        
-        # Build OpenAI-compatible schema
-        schema: Dict[str, Any] = {
-            "type": "function",
-            "function": {
-                "name": name,
-                "description": f"Tool: {name}",  # Default description
-                "parameters": input_schema if input_schema else {
-                    "type": "object",
-                    "properties": {},
-                },
-            },
-        }
-        return schema
-    except Exception as e:
-        log.warning(f"[BRIDGE] Failed to convert tool {getattr(tool, 'name', 'unknown')}: {e}")
-        return None
-
-
-def _get_tool_definitions_from_registry() -> List[Dict[str, Any]]:
-    """
-    Get tool definitions from tool_registry.py if available.
-    
-    Returns:
-        List of OpenAI-compatible tool schemas from tool_registry
-    """
-    schemas: List[Dict[str, Any]] = []
-    
-    try:
-        from tool_registry import get_all_base_tools 
-        tools: Any = get_all_base_tools()  
-        
-        for tool in tools:  
-            if tool is None:
-                continue
-            schema = _convert_tool_to_schema(tool)  
-            if schema:
-                schemas.append(schema)
-        
-        log.info(f"[BRIDGE] Loaded {len(schemas)} tools from tool_registry")
-    except ImportError:
-        log.debug("[BRIDGE] tool_registry not available, using built-in schemas")
-    except Exception as e:
-        log.warning(f"[BRIDGE] Failed to load tools from registry: {e}")
-    
-    return schemas
-
-
-def _merge_tool_schemas(builtin_schemas: List[Dict[str, Any]], registry_schemas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Merge built-in schemas with registry schemas.
-    Built-in schemas take precedence (they have richer descriptions).
-    
-    Args:
-        builtin_schemas: Hand-crafted schemas with detailed descriptions
-        registry_schemas: Schemas generated from tool_registry
-    
-    Returns:
-        Merged list with no duplicates
-    """
-    # Build name -> schema map from builtin (higher priority)
-    by_name: Dict[str, Dict[str, Any]] = {}
-    for schema in builtin_schemas:
-        name: str = schema.get("function", {}).get("name", "")
-        if name:
-            by_name[name] = schema
-    
-    # Add registry schemas for tools not in builtin
-    for schema in registry_schemas:
-        name = schema.get("function", {}).get("name", "")
-        if name and name not in by_name:
-            by_name[name] = schema
-    
-    return list(by_name.values())
-
-
 def _get_tool_definitions() -> List[Dict[str, Any]]:
     """
     Return OpenAI-compatible tool definitions.
-    
-    Merges built-in schemas (with rich descriptions) with tools from
-    tool_registry.py. Built-in schemas take precedence for tools that
-    exist in both sources.
-    
-    Returns:
-        List of OpenAI-compatible tool definition dicts
+
+    Returns built-in schemas directly.  The tool_registry.py stub does not
+    provide a functional get_all_base_tools, so registry-based loading is
+    skipped to avoid false warnings.
     """
-    # Get registry tools
-    registry_schemas = _get_tool_definitions_from_registry()
-    
-    # If no registry tools, just return built-in
-    if not registry_schemas:
-        return list(_TOOL_SCHEMAS)
-    
-    # Merge: built-in takes precedence for descriptions
-    return _merge_tool_schemas(list(_TOOL_SCHEMAS), registry_schemas)
+    return list(_TOOL_SCHEMAS)
 
 
 # ============================================================
@@ -1639,12 +1535,12 @@ class AgentWorker(QThread):
         self.bridge = bridge
         self._is_running  = False
         self._stop_req    = False
-        self._queue: Optional[asyncio.Queue] = None
+        self._queue: Optional[asyncio.Queue[WorkerMessage]] = None
         self._loop:  Optional[asyncio.AbstractEventLoop] = None
         # Tracks the asyncio.Task currently running _handle_chat.
         # Assigned right after asyncio.create_task(); used by stop_generation()
         # (via stop_session_task) to cancel mid-execution.
-        self._current_chat_task: Optional[asyncio.Task] = None
+        self._current_chat_task: Optional[asyncio.Task[Any]] = None
 
     # ── QThread entry ──────────────────────────────────────────
 
@@ -1676,12 +1572,12 @@ class AgentWorker(QThread):
             including mid-tool-execution.
           - Only _is_running=False (set by AgentWorker.stop()) exits the outer loop.
         """
-        self._queue = asyncio.Queue()
+        self._queue = asyncio.Queue[WorkerMessage]()
 
         while self._is_running:
             # ── Phase 1: Wait for the next queued message ─────────────────────
             try:
-                msg = await asyncio.wait_for(self._queue.get(), timeout=0.1)
+                msg: WorkerMessage = await asyncio.wait_for(self._queue.get(), timeout=0.1)
             except asyncio.TimeoutError:
                 continue
             except Exception as exc:
@@ -1705,17 +1601,16 @@ class AgentWorker(QThread):
 
             # Register the asyncio.Task in the session registry so that
             # stop_session_task() (called from the Qt main thread) can cancel it.
-            task_id = msg.get("task_id")
-            if task_id:
-                ts = self.bridge._task_registry.get(task_id)
-                if ts:
-                    ts.asyncio_task = self._current_chat_task
+            task_id_raw = msg.get("task_id")
+            task_id = task_id_raw if isinstance(task_id_raw, str) and task_id_raw else None
+            if task_id and self._current_chat_task is not None:
+                self.bridge.link_worker_task(task_id, self._current_chat_task)
 
             # ── Phase 3: Concurrently watch task + queue ──────────────────────
             # Mirrors the TS pattern: the running query holds an AbortSignal;
             # a stop command triggers abort() → CancelledError here.
             while self._is_running and not self._current_chat_task.done():
-                get_fut: asyncio.Task = asyncio.ensure_future(self._queue.get())
+                get_fut: asyncio.Task[WorkerMessage] = asyncio.ensure_future(self._queue.get())
                 try:
                     done, _ = await asyncio.wait(
                         {get_fut, self._current_chat_task},
@@ -1734,7 +1629,7 @@ class AgentWorker(QThread):
                 # ── New queue message arrived while task running ───────────
                 if get_fut in done:
                     try:
-                        next_msg = get_fut.result()
+                        next_msg: WorkerMessage = get_fut.result()
                     except Exception:
                         continue
 
@@ -1783,7 +1678,7 @@ class AgentWorker(QThread):
         self._current_chat_task = None
         log.info("[WORKER] Active chat task cancelled")
 
-    async def _handle_chat(self, msg: Dict):
+    async def _handle_chat(self, msg: WorkerMessage):
         self.thinking_started.emit()
         try:
             response = await self.bridge.call_llm(
@@ -1811,7 +1706,7 @@ class AgentWorker(QThread):
         finally:
             self.thinking_stopped.emit()
 
-    def queue_message(self, msg: Dict):
+    def queue_message(self, msg: WorkerMessage):
         if self._queue and self._loop:
             asyncio.run_coroutine_threadsafe(self._queue.put(msg), self._loop)
 
@@ -1915,14 +1810,23 @@ class CortexAgentBridge(QObject):
         self._init_agent_state()
 
         # Build tool context for real agent tools (use model from settings if available)
+        _initial_model: str = 'mistral-large-latest'
         try:
-            from src.config.settings import get_settings  
-            _settings = get_settings()
-            _initial_model = _settings.get('ai', 'model', default='mistral-large-latest')
+            from src.config.settings import get_settings
+            _raw_settings: Any = get_settings()
+            _raw_ai: Any = _raw_settings.get('ai')
+            _raw_model: Optional[str] = None
+            if isinstance(_raw_ai, dict):
+                _ai_map = cast(Dict[str, Any], _raw_ai)
+                _candidate = _ai_map.get('model')
+                if isinstance(_candidate, str) and _candidate:
+                    _raw_model = _candidate
+            if _raw_model:
+                _initial_model = _raw_model
         except Exception:
-            _initial_model = 'mistral-large-latest'
-        self._tool_ctx = CortexToolContext(self, str(_initial_model))
-        self._current_model_id = _initial_model
+            pass
+        self._tool_ctx = CortexToolContext(self, _initial_model)
+        self._current_model_id: str = _initial_model
 
         # Instantiate real FileReadTool (needs instance for file-state cache)
         self._real_read_tool = None
@@ -1942,11 +1846,11 @@ class CortexAgentBridge(QObject):
 
         # Start background worker
         self._worker = AgentWorker(self)
-        self._worker.response_ready.connect(self._on_response_ready)
-        self._worker.chunk_ready.connect(self._on_chunk_ready)
-        self._worker.error_occurred.connect(self._on_error)
-        self._worker.thinking_started.connect(self.thinking_started.emit)
-        self._worker.thinking_stopped.connect(self.thinking_stopped.emit)
+        self._connect_qt_signal(self._worker.response_ready, self._on_response_ready)
+        self._connect_qt_signal(self._worker.chunk_ready, self._on_chunk_ready)
+        self._connect_qt_signal(self._worker.error_occurred, self._on_error)
+        self._connect_qt_signal(self._worker.thinking_started, self.thinking_started.emit)
+        self._connect_qt_signal(self._worker.thinking_stopped, self.thinking_stopped.emit)
         self._worker.start()
 
         log.info("[BRIDGE] Agent bridge ready")
@@ -1962,6 +1866,17 @@ class CortexAgentBridge(QObject):
         # Initialize file_edit_notification signal for WebChannel
         self.file_edit_notification = pyqtSignal(str, str, str)  # filePath, editType, status
         log.info("[BRIDGE] file_edit_notification signal initialized")
+
+    @staticmethod
+    def _connect_qt_signal(signal: Any, slot: Callable[..., Any]) -> None:
+        """Typed wrapper for Qt signal connections (PyQt stubs expose partial Unknown here)."""
+        signal.connect(slot)
+
+    def link_worker_task(self, task_id: str, task: asyncio.Task[Any]) -> None:
+        """Link worker-created asyncio task to the registered session task state."""
+        ts = self._task_registry.get(task_id)
+        if ts is not None:
+            ts.asyncio_task = task
 
     # ── Public property accessors for protected attributes ─────────────────
     # These provide controlled access to internal state from tool classes
@@ -2027,7 +1942,7 @@ class CortexAgentBridge(QObject):
 
     # ── System prompt builder ──────────────────────────────────
 
-    def _build_system_prompt(self, context: Dict) -> str:
+    def _build_system_prompt(self, context: Dict[str, Any]) -> str:
         project_root = self._project_root or os.getcwd()
         active_file  = self._active_file or ""
 
@@ -2236,17 +2151,19 @@ Use Markdown tables for structured data comparison:
         parts: List[str] = []
 
         # --- Layer 1: Instructions + MEMORY.md index ---
-        try:
-            from memdir.memdir import buildMemoryPrompt
-            prompt = buildMemoryPrompt({
-                'displayName': 'Cortex Memory',
-                'memoryDir': memory_dir,
-            })
-            if prompt:
-                parts.append(prompt)
-        except Exception as exc:
-            log.debug('[BRIDGE] buildMemoryPrompt failed (%s); using fallback', exc)
-            # Minimal fallback: instructions + MEMORY.md content
+        if _importlib_util.find_spec("agent.src.memdir.memdir"):
+            try:
+                from agent.src.memdir.memdir import buildMemoryPrompt
+                prompt = buildMemoryPrompt({
+                    'displayName': 'Cortex Memory',
+                    'memoryDir': memory_dir,
+                })
+                if prompt:
+                    parts.append(prompt)
+            except Exception as exc:
+                log.debug('[BRIDGE] buildMemoryPrompt failed (%s); using fallback', exc)
+        else:
+            log.debug('[BRIDGE] memdir.memdir not available; using fallback')
             fallback_lines = [
                 '# Cortex Memory',
                 '',
@@ -2288,11 +2205,15 @@ Use Markdown tables for structured data comparison:
             parts.append('\n'.join(fallback_lines))
 
         # --- Layer 2: Recent individual memory files ---
-        try:
-            from memdir.memoryAge import memoryFreshnessNote
-        except Exception:
-            def memoryFreshnessNote(mtime_ms):
-                return ''
+        def memoryFreshnessNote(mtime_ms: float) -> str:
+            return ""
+
+        if _importlib_util.find_spec("agent.src.memdir.memoryAge"):
+            try:
+                from agent.src.memdir.memoryAge import memoryFreshnessNote as _mf
+                memoryFreshnessNote = _mf
+            except Exception:
+                pass
 
         try:
             mem_files = []
@@ -3024,7 +2945,7 @@ Use Markdown tables for structured data comparison:
                         except Exception as _mult_err:
                             pass  # Use base max_tokens if multiplier not available
                         
-                        _chat_kwargs = {
+                        _chat_kwargs: Dict[str, Any] = {
                             "retry_callback": _retry_notify
                         }
                         if provider_type == ProviderType.MISTRAL and tool_defs:
@@ -3237,6 +3158,7 @@ Use Markdown tables for structured data comparison:
                     }
                     for tc in pending
                 ]
+                turn_reasoning = ""  # guaranteed by for-loop initialization on all paths
                 messages.append(
                     PCM(
                         role="assistant",
@@ -3398,7 +3320,7 @@ Use Markdown tables for structured data comparison:
                 ]
                 if _pending_todos:
                     # Use content-based fingerprint instead of IDs
-                    _cur_fingerprint = frozenset(
+                    _cur_fingerprint = set(
                         str(t.get('content', t.get('description', ''))).strip().lower()[:80]
                         for t in _pending_todos
                     )
@@ -4785,33 +4707,29 @@ Use Markdown tables for structured data comparison:
                               error="WebFetch requires 'url' parameter")
 
         # Try to import and use the real WebFetchTool
-        try:
-            from ..agent.src.tools.WebFetchTool.utils import get_url_markdown_content
-            content = await get_url_markdown_content(url)
-            return ToolResult(tool_id=tool_id, result={
-                "url": url,
-                "content": content[:50000] if content else "",  # Limit content size
-                "query": query,
-            })
-        except ImportError:
-            pass
-        except Exception as exc:
-            log.warning(f"[WebFetch] Failed to fetch {url}: {exc}")
+        if _importlib_util.find_spec("agent.src.tools.WebFetchTool.utils"):
+            try:
+                from agent.src.tools.WebFetchTool.utils import get_url_markdown_content
+                content = await get_url_markdown_content(url)
+                return ToolResult(tool_id=tool_id, result={
+                    "url": url,
+                    "content": content[:50000] if content else "",
+                    "query": query,
+                })
+            except Exception as exc:
+                log.warning(f"[WebFetch] Failed to fetch {url}: {exc}")
 
-        # Fallback: use fetch_content tool if available
+        # Fallback: use stdlib urllib (always available)
+        import re
+        text = ""
         try:
-            # Use the fetch_content tool from the bridge
-            import urllib.request
-            import urllib.error
-            
             req = urllib.request.Request(url, headers={
                 'User-Agent': 'Mozilla/5.0 (compatible; Cortex IDE AI Agent)'
             })
             with urllib.request.urlopen(req, timeout=30) as response:
                 html = response.read().decode('utf-8', errors='replace')
-            
+
             # Simple text extraction (remove HTML tags)
-            import re
             text = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
             text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
             text = re.sub(r'<[^>]+>', ' ', text)
