@@ -7,8 +7,9 @@ import json
 import os
 import sys
 import platform
+import uuid as _uuid
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional, cast
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSplitter,
     QTabWidget, QLabel, QPushButton, QStatusBar, QFileDialog,
@@ -766,7 +767,7 @@ class CortexMainWindow(QMainWindow):
         self._project_manager = ProjectManager()
         self._file_manager = FileManager()
         self._session_manager = SessionManager()
-        self._live_server: Optional[LiveServer] = None  # built-in HTML Live Server
+        self._live_server: Optional[Any] = None  # built-in HTML Live Server (disabled in AI-first mode)
         # Git manager for source control integration
         self._git_manager = GitManager()
         self._git_manager.status_changed.connect(self._update_git_summary)
@@ -1197,13 +1198,6 @@ class CortexMainWindow(QMainWindow):
         self._settings.theme = theme
         self._apply_initial_theme()
     
-    def _toggle_theme(self):
-        """Toggle between dark and light theme"""
-        current_theme = self._settings.theme
-        new_theme = "light" if current_theme == "dark" else "dark"
-        self._settings.theme = new_theme
-        self._apply_initial_theme()
-        log.info(f"Theme toggled to: {new_theme}")
     def _build_ui(self):
         """Build AI-First UI Layout - Codex-style with 2-panel and 4-panel states."""
         self.setWindowTitle("Cortex AI Agent")
@@ -1316,13 +1310,14 @@ class CortexMainWindow(QMainWindow):
         self._update_welcome_project_info()
 
         # Initialize Git summary after UI is built
-        QTimer.singleShot(500, self._update_git_summary)
+        QTimer.singleShot(500, cast(Any, self._update_git_summary))
         
         # Auto-refresh git status every 30 seconds to detect push/commit from terminal
         self._git_refresh_timer = QTimer(self)
         self._git_refresh_timer.setInterval(30000)  # 30 seconds
-        self._git_refresh_timer.timeout.connect(self._update_git_summary)
-        self._git_refresh_timer.start()
+        cast(Any, self._git_refresh_timer.timeout).connect(self._update_git_summary)
+        # Start only when a valid git repository is detected.
+        self._git_repo_known_state = None  # type: Optional[bool]
         self._git_worker = None          # guard: only one worker at a time
         self._gh_version_cache = None    # cache gh --version across session
 
@@ -2037,9 +2032,20 @@ class CortexMainWindow(QMainWindow):
                 log.info(f"[GIT] Refreshed repository path for panel: {project_path} (ok={repo_ok})")
 
         if not self._git_manager.is_repo():
-            log.info("[GIT] No repository set")
+            if self._git_repo_known_state is not False:
+                log.info("[GIT] No repository set")
+            self._git_repo_known_state = False
+            if hasattr(self, "_git_refresh_timer") and self._git_refresh_timer.isActive():
+                self._git_refresh_timer.stop()
             self._set_no_git_status()
             return
+
+        # Repository is available: ensure refresh timer is active.
+        if self._git_repo_known_state is not True:
+            log.info("[GIT] Repository detected - enabling periodic refresh")
+        self._git_repo_known_state = True
+        if hasattr(self, "_git_refresh_timer") and not self._git_refresh_timer.isActive():
+            self._git_refresh_timer.start()
 
         # Guard: skip if a worker is already running
         if self._git_worker is not None and self._git_worker.isRunning():
@@ -3812,6 +3818,11 @@ class CortexMainWindow(QMainWindow):
 
     def _on_file_edited_diff_for_js(self, file_path: str, original: str, new_content: str):
         """Store diff data in Python dict for the Qt dialog viewer."""
+        # Ignore no-op edits to prevent false "modified" cards/files in UI.
+        if (original or "") == (new_content or ""):
+            log.info(f"[Diff] No-op edit ignored for: {file_path}")
+            return
+
         if not hasattr(self, '_diff_data_store'):
             self._diff_data_store = {}
         norm_path = os.path.normcase(os.path.normpath(file_path))
@@ -3896,8 +3907,20 @@ class CortexMainWindow(QMainWindow):
                 self._ai_chat.complete_file_creating_card(real_card_id, file_path, content)
             else:
                 original = ""
-                if hasattr(self, '_diff_data_store') and file_path in self._diff_data_store:
-                    original, _ = self._diff_data_store[file_path]
+                if hasattr(self, '_diff_data_store'):
+                    if file_path in self._diff_data_store:
+                        original, _ = self._diff_data_store[file_path]
+                    else:
+                        norm_path = os.path.normcase(os.path.normpath(file_path))
+                        if norm_path in self._diff_data_store:
+                            original, _ = self._diff_data_store[norm_path]
+                # If edit produced no textual change, dismiss stale card instead of
+                # showing a misleading "modified" file entry.
+                if (original or "") == (content or ""):
+                    self._ai_chat.dismiss_file_op_card(real_card_id)
+                    self._file_op_cards.pop(file_path, None)
+                    log.info(f"[FileOp] Suppressed no-op edit card for: {file_path}")
+                    return
                 self._ai_chat.complete_file_editing_card(real_card_id, file_path, original, content)
             # Clean up stored card_id
             self._file_op_cards.pop(file_path, None)

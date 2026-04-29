@@ -123,15 +123,15 @@ class ModelLimits:
 # ---------------------------------------------------------------------------
 
 def _deepseek_max_output_tokens() -> int:
-    """Configurable DeepSeek output cap (default: conservative 8192)."""
-    raw = os.environ.get("CORTEX_DEEPSEEK_MAX_OUTPUT_TOKENS", "8192")
+    """Configurable DeepSeek output cap (default: 16384, override via env)."""
+    raw = os.environ.get("CORTEX_DEEPSEEK_MAX_OUTPUT_TOKENS", "16384")
     try:
         parsed = int(raw)
         if parsed > 0:
             return parsed
     except Exception:
         pass
-    return 8_192
+    return 16_384
 
 
 _DEEPSEEK_MAX_OUTPUT_TOKENS = _deepseek_max_output_tokens()
@@ -140,13 +140,13 @@ _DEEPSEEK_MAX_OUTPUT_TOKENS = _deepseek_max_output_tokens()
 _REGISTRY: List[Tuple[str, int, int]] = [
 
     # ── DeepSeek V4 / legacy aliases ─────────────────────────────────────────
-    # DeepSeek V4 supports 1M context. Keep output cap conservative unless
-    # provider-side limits are expanded in a verified way.
-    ("deepseek-v4-pro",     1_000_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),
-    ("deepseek-v4-flash",   1_000_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),
-    ("deepseek-chat",       1_000_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),  # currently routed to V4
-    ("deepseek-reasoner",   1_000_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),  # currently routed to V4
-    ("deepseek",            1_000_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),  # generic DeepSeek fallback
+    # DeepSeek V4 supports 1M context. We apply tiered caps by model power:
+    # Pro/Reasoner get larger windows, Flash stays tighter for responsiveness.
+    ("deepseek-v4-pro",       400_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),
+    ("deepseek-v4-flash",     220_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),
+    ("deepseek-chat",         300_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),  # currently routed to V4 tier
+    ("deepseek-reasoner",     420_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),  # currently routed to V4 tier
+    ("deepseek",              260_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),  # generic DeepSeek fallback
 
     # ── OpenAI GPT-5.x Series (Frontier) ───────────────────────────────────
     ("gpt-5.4-nano",         400_000, 128_000),

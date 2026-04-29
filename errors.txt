@@ -1,57 +1,6 @@
-DeepSeek API request failed: 400 Client Error: Bad Request for url:  | response: {"error":{"message":"The reasoning_content in the thinking mode must be passed back to the API.","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}[17:50:40] INFO agent_bridge: [BRIDGE] provider=deepseek model=deepseek-v4-pro
-[17:50:40] INFO agent_bridge: [BRIDGE] Total tools after merge: 20
-[17:50:40] INFO agent_bridge: [BRIDGE] === Agentic turn 1/40 ===
-[17:50:40] WARNING agent_bridge: [BRIDGE] Token multiplier 1.099853515625x would exceed model limit (9010 > 8192). Capping at 8192
-[17:50:40] INFO agent_bridge: [BRIDGE] Applied performance token_multiplier: 1.099853515625x, max_tokens: 8192 -> 8192
-[17:50:40] INFO deepseek_provider: [DeepSeek] Using model: deepseek-v4-pro
-[17:50:40] INFO deepseek_provider: [DEEPSEEK DEBUG] Sending 20 tools to API
-[JS INFO] [CHAT] Storage key for path "C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex" (normalized: "c:/users/hakeem1/onedrive/desktop/cortex_ai_agent/cortex") = cortex_chats_40582b0a
-[17:50:40] INFO ai_chat: JS Save finished signal received from bridge: OK
-[17:50:49] INFO main_window: [GIT] Updating git summary (background)...
-[17:50:50] INFO agent_bridge: [BRIDGE] 1 tool call(s) on turn 1: TodoWrite
-[17:50:50] INFO agent_bridge: [TODO] TodoWrite dispatched: 3 items, all_done=False
-[17:50:50] INFO agent_bridge: [BRIDGE] Tool results sent — continuing to turn 2
-[17:50:50] INFO agent_bridge: [BRIDGE] === Agentic turn 2/40 ===
-[17:50:50] WARNING agent_bridge: [BRIDGE] Token multiplier 1.099853515625x would exceed model limit (9010 > 8192). Capping at 8192
-[17:50:50] INFO agent_bridge: [BRIDGE] Applied performance token_multiplier: 1.099853515625x, max_tokens: 8192 -> 8192
-[17:50:50] INFO deepseek_provider: [DeepSeek] Using model: deepseek-v4-pro
-[17:50:50] INFO deepseek_provider: [DEEPSEEK DEBUG] Sending 20 tools to API
-[17:50:50] ERROR deepseek_provider: [DeepSeek] API error response: {
-  "error": {
-    "message": "The `reasoning_content` in the thinking mode must be passed back to the API.",
-    "type": "invalid_request_error",
-    "param": null,
-    "code": "invalid_request_error"
-  }
-}
-[17:50:50] ERROR deepseek_provider: DeepSeek API error: 400 Client Error: Bad Request for url: 
-[17:50:50] ERROR agent_bridge: [BRIDGE] _call_llm failed: DeepSeek API request failed: 400 Client Error: Bad Request for url:  | response: {"error":{"message":"The `reasoning_content` in the thinking mode must be passed back to the API.","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}
-Traceback (most recent call last):
-  File "C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\providers\deepseek_provider.py", line 305, in _chat_raw
-    response.raise_for_status()
-    ~~~~~~~~~~~~~~~~~~~~~~~~~^^
-  File "C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\venv\Lib\site-packages\requests\models.py", line 1026, in raise_for_status
-    raise HTTPError(http_error_msg, response=self)
-requests.exceptions.HTTPError: 400 Client Error: Bad Request for url: 
+Type of "_queue" is partially unknown
+  Type of "_queue" is "Queue[Unknown]"
 
-During handling of the above exception, another exception occurred:
+Type of "get" is unknown
 
-Traceback (most recent call last):
-  File "C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py", line 3018, in _call_llm
-    for chunk in provider.chat_stream(
-                 ~~~~~~~~~~~~~~~~~~~~^
-        messages, model=model, max_tokens=stream_max_tokens, tools=tool_defs, **_chat_kwargs 
-        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ 
-    ):
-    ^
-  File "C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\providers\deepseek_provider.py", line 494, in chat_stream
-    yield from self._chat_raw(
-    ...<7 lines>...
-    )
-  File "C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\providers\deepseek_provider.py", line 398, in _chat_raw
-    raise Exception(f"DeepSeek API request failed: {str(e)} | response: {detail}")
-Exception: DeepSeek API request failed: 400 Client Error: Bad Request for url:  | response: {"error":{"message":"The `reasoning_content` in the thinking mode must be passed back to the API.","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}
-[17:50:50] ERROR agent_bridge: [WORKER] Chat error: DeepSeek API request failed: 400 Client Error: Bad Request for url:  | response: {"error":{"message":"The `reasoning_content` in the thinking mode must be passed back to the API.","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}
-[JS ERROR] [CHAT] onError: DeepSeek API request failed: 400 Client Error: Bad Request for url:  | response: {"error":{"message":"The `reasoning_content` in the thinking mode must be passed back to the API.","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}
-[JS INFO] [CHAT] Storage key for path "C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex" (normalized: "c:/users/hakeem1/onedrive/desktop/cortex_ai_agent/cortex") = cortex_chats_40582b0a
-[17:50:51] INFO ai_chat: JS Save finished signal received from bridge: OK
+Type of "get" is unknown

@@ -160,6 +160,7 @@ class DeepSeekProvider(BaseProvider):
             content = msg.get("content", "")
             tool_calls = msg.get("tool_calls")
             tool_call_id = msg.get("tool_call_id")
+            reasoning_content = msg.get("reasoning_content")
             name = msg.get("name")
 
             if isinstance(content, list):
@@ -184,6 +185,8 @@ class DeepSeekProvider(BaseProvider):
                 out["tool_calls"] = tool_calls
             if tool_call_id:
                 out["tool_call_id"] = tool_call_id
+            if isinstance(reasoning_content, str) and reasoning_content:
+                out["reasoning_content"] = reasoning_content
             normalized.append(out)
 
         return normalized
@@ -342,6 +345,7 @@ class DeepSeekProvider(BaseProvider):
                                         reasoning = re.sub(r'[\ufffd\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]', '', reasoning)
                                         if reasoning:
                                             log.debug("[DeepSeek] Received reasoning_content chunk (%d chars)", len(reasoning))
+                                            yield f"__REASONING_DELTA__:{reasoning}"
                                     
                                     # Handle tool calls
                                     if tool_calls:
@@ -446,6 +450,9 @@ class DeepSeekProvider(BaseProvider):
                 if chunk.startswith("__TOOL_CALL_DELTA__:"):
                     # Parse tool call data
                     tool_calls = json.loads(chunk.replace("__TOOL_CALL_DELTA__:", ""))
+                elif chunk.startswith("__REASONING_DELTA__:"):
+                    # Internal metadata for follow-up turns; don't mix into visible answer text.
+                    continue
                 else:
                     content_parts.append(chunk)
             

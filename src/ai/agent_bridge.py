@@ -96,6 +96,7 @@ class ChatMessage:
     images: Optional[List[str]] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_call_id: Optional[str] = None
+    reasoning_content: Optional[str] = None
     
     def __post_init__(self):
         if self.images is None:
@@ -1515,13 +1516,13 @@ def _get_tool_definitions_from_registry() -> List[Dict[str, Any]]:
     schemas: List[Dict[str, Any]] = []
     
     try:
-        from tool_registry import get_all_base_tools  # type: ignore[import-not-found]
-        tools: Any = get_all_base_tools()  # pyright: ignore[reportUnknownVariableType]
+        from tool_registry import get_all_base_tools 
+        tools: Any = get_all_base_tools()  
         
-        for tool in tools:  # pyright: ignore[reportUnknownVariableType]
+        for tool in tools:  
             if tool is None:
                 continue
-            schema = _convert_tool_to_schema(tool)  # pyright: ignore[reportUnknownArgumentType]
+            schema = _convert_tool_to_schema(tool)  
             if schema:
                 schemas.append(schema)
         
@@ -1877,7 +1878,7 @@ class CortexAgentBridge(QObject):
         self._always_allowed: bool = False
         self._interaction_mode: str = "default"
         self._conversation_history: List[ChatMessage] = []
-        self._enhancement_data: Dict = {}
+        self._enhancement_data: Dict[str, Any] = {}
         self._streaming      = None
         self._current_todos: List[Dict[str, Any]] = []   # Persisted todo list for TodoWrite
         self._pending_questions: Dict = {}  # Pending AskUserQuestion items
@@ -1887,6 +1888,9 @@ class CortexAgentBridge(QObject):
         self._continue_cycle_count: int = 0
         self._last_pending_ids: set = set()
         self._MAX_STALE_CYCLES: int = 1
+        # Guard against "plan-only" loops where TodoWrite repeats without real action.
+        self._todo_write_streak: int = 0
+        self._last_todo_signature: str = ""
         self._stop_requested: bool = False  # Set to interrupt the streaming loop
         # Persistent memory dir — computed once per project root
         self._memory_dir: Optional[str] = None
@@ -1899,7 +1903,7 @@ class CortexAgentBridge(QObject):
 
         # ── Persistent tool safety counters (survive across _call_llm calls) ──
         self._tool_fail_counts: Dict[str, int] = {}   # tool_name -> consecutive failures
-        self._disabled_tools:   set            = set() # tools disabled by circuit breaker
+        self._disabled_tools:   set[str]       = set() # tools disabled by circuit breaker
         self._tool_total_calls: Dict[str, int] = {}    # tool_name -> total calls per session
 
         log.info("[BRIDGE] Initialising Cortex Agent Bridge")
@@ -1914,7 +1918,7 @@ class CortexAgentBridge(QObject):
             _initial_model = _settings.get('ai', 'model', default='mistral-large-latest')
         except Exception:
             _initial_model = 'mistral-large-latest'
-        self._tool_ctx = CortexToolContext(self, _initial_model)
+        self._tool_ctx = CortexToolContext(self, str(_initial_model))
         self._current_model_id = _initial_model
 
         # Instantiate real FileReadTool (needs instance for file-state cache)
@@ -2731,7 +2735,7 @@ Use Markdown tables for structured data comparison:
     async def _call_llm(
         self,
         message: str,
-        context: Optional[Dict] = None,
+        context: Optional[Dict[str, Any]] = None,
         images: Optional[List[str]] = None,
     ) -> Optional[str]:
         """
@@ -2848,6 +2852,8 @@ Use Markdown tables for structured data comparison:
                                 + f"\n... [context trimmed: {len(hist_msg.content) - _MAX_HIST_CONTENT} chars omitted]"
                             )
                         cm = PCM(role=hist_msg.role, content=hist_content)
+                        if getattr(hist_msg, "reasoning_content", None):
+                            cm.reasoning_content = hist_msg.reasoning_content
                         if has_tool_calls:
                             cm.tool_calls = hist_msg.tool_calls
                         messages.append(cm)
@@ -2866,6 +2872,14 @@ Use Markdown tables for structured data comparison:
                 tool_defs = _get_tool_definitions()
                 log.info(f"[BRIDGE] Total tools after merge: {len(tool_defs)}")
                 max_turns = _limits.max_turns
+                # Keep agent loops bounded for responsiveness. Can be overridden.
+                try:
+                    # Lower default improves first-action latency for typical IDE tasks.
+                    _max_turns_env = int(os.environ.get("CORTEX_MAX_AGENT_TURNS", "10"))
+                    if _max_turns_env > 0:
+                        max_turns = min(max_turns, _max_turns_env)
+                except Exception:
+                    pass
 
             full_response = ""
 
@@ -2880,7 +2894,7 @@ Use Markdown tables for structured data comparison:
             if not hasattr(self, '_tool_total_calls'):
                 self._tool_total_calls = {}
             _tool_total_calls = self._tool_total_calls
-            _REPETITIVE_CALL_LIMIT = 6  # Prevent wasteful loops (Grep/Read cycling)
+            _REPETITIVE_CALL_LIMIT = 4  # Prevent wasteful loops (Grep/Read/Todo cycles)
 
             # ── Consecutive same-tool detector ─────────────────────────────────
             # If the model calls the SAME read-only tool 3+ turns in a row without
@@ -2979,6 +2993,7 @@ Use Markdown tables for structured data comparison:
                 for _compact_attempt in range(3):  # attempt 0, 1, 2
                     tool_acc  = {}
                     turn_text = ""
+                    turn_reasoning = ""
                     try:
                         # Get max_tokens from model_limits
                         max_tokens = _limits.max_output_tokens
@@ -2987,7 +3002,8 @@ Use Markdown tables for structured data comparison:
                         try:
                             from src.config.settings import get_settings
                             settings = get_settings()
-                            token_multiplier = float(settings.get("ai", "token_multiplier", default=1.0) or 1.0)
+                            _raw_mult = settings.get("ai", "token_multiplier", default=1.0)
+                            token_multiplier = float(_raw_mult) if isinstance(_raw_mult, (int, float, str)) else 1.0
                             if token_multiplier != 1.0:
                                 # Calculate with multiplier
                                 calculated_tokens = int(max_tokens * token_multiplier)
@@ -3011,9 +3027,32 @@ Use Markdown tables for structured data comparison:
                         if provider_type == ProviderType.MISTRAL and tool_defs:
                             _chat_kwargs["max_retries"] = 3
 
-                        # Tool-planning turns generally don't need very high output caps.
-                        # Keeping this lower reduces first-token latency on Mistral.
-                        stream_max_tokens = min(max_tokens, 1200) if tool_defs else max_tokens
+                        # Adaptive output budget:
+                        # - keep tool turns intentionally lean for fast iteration
+                        # - allow larger answers when no tools are needed
+                        # Always respect model cap (max_tokens) and remaining context budget.
+                        if tool_defs:
+                            prompt_chars = len(message)
+                            tool_count = len(tool_defs)
+                            remaining_ctx = max(0, int(_budget - _est_tokens))
+                            budget_cap = min(max_tokens, max(800, remaining_ctx // 4))
+
+                            # Complexity hint grows with prompt size, number of tools, and later turns.
+                            complexity_hint = prompt_chars + (tool_count * 120) + (turn * 300)
+                            # Keep tool turns lean for lower latency.
+                            tool_turn_upper_cap = min(max_tokens, 1_600)
+                            tool_turn_mid_cap = min(max_tokens, 900)
+                            if complexity_hint < 900:
+                                stream_max_tokens = min(max_tokens, 500)
+                            elif complexity_hint < 2400:
+                                stream_max_tokens = min(budget_cap, max(700, tool_turn_mid_cap))
+                            else:
+                                stream_max_tokens = min(budget_cap, max(1_000, tool_turn_upper_cap))
+                        else:
+                            # Final answer / no-tool turns can be larger, but keep bounded.
+                            stream_max_tokens = min(max_tokens, 8_192)
+
+                        log.debug(f"[BRIDGE] Adaptive stream cap: {stream_max_tokens} (tool_turn={bool(tool_defs)}, est={_est_tokens}, budget={_budget}, base_max={max_tokens})")
 
                         for chunk in provider.chat_stream(
                             messages, model=model, max_tokens=stream_max_tokens, tools=tool_defs, **_chat_kwargs
@@ -3037,6 +3076,19 @@ Use Markdown tables for structured data comparison:
                                         tool_acc[idx]["name"] = td["function"]["name"]
                                     if td.get("function", {}).get("arguments"):
                                         tool_acc[idx]["arguments"] += td["function"]["arguments"]
+                            elif isinstance(chunk, str) and chunk.startswith("__REASONING_DELTA__:"):
+                                _reason_chunk = chunk[len("__REASONING_DELTA__:"):]
+                                turn_reasoning += _reason_chunk
+                                # Stream reasoning/thought updates to UI activity pane in real time.
+                                try:
+                                    self._safe_emit(
+                                        self.tool_activity,
+                                        "thinking",
+                                        json.dumps({"text": _reason_chunk}),
+                                        "running",
+                                    )
+                                except Exception:
+                                    pass
                             else:
                                 turn_text    += chunk
                                 full_response += chunk
@@ -3187,6 +3239,7 @@ Use Markdown tables for structured data comparison:
                         role="assistant",
                         content=turn_text or "",
                         tool_calls=assistant_tool_calls,
+                        reasoning_content=turn_reasoning or None,
                     )
                 )
 
@@ -3369,7 +3422,7 @@ Use Markdown tables for structured data comparison:
                                 t['status'] = 'cancelled'
                         self._current_todos = []
                         self._continue_cycle_count = 0
-                        self._last_pending_ids = set()
+                        self._last_pending_ids: set[str] = set()
                         # Emit a final note to the user
                         self._safe_emit(
                             self.response_chunk,
@@ -3383,7 +3436,7 @@ Use Markdown tables for structured data comparison:
                 else:
                     # All done — reset stale tracking
                     self._continue_cycle_count = 0
-                    self._last_pending_ids = set()
+                    self._last_pending_ids: set[str] = set()
 
             return full_response
 
@@ -3394,7 +3447,7 @@ Use Markdown tables for structured data comparison:
     async def call_llm(
         self,
         message: str,
-        context: Optional[Dict] = None,
+        context: Optional[Dict[str, Any]] = None,
         images: Optional[List[str]] = None,
     ) -> Optional[str]:
         """
@@ -3403,7 +3456,7 @@ Use Markdown tables for structured data comparison:
         """
         return await self._call_llm(message, context, images)
 
-    def _safe_emit(self, signal, *args):
+    def _safe_emit(self, signal: Any, *args: Any) -> None:
         """Emit a PyQt signal only if the C++ object is still alive."""
         try:
             from PyQt6.sip import isdeleted
@@ -3417,7 +3470,7 @@ Use Markdown tables for structured data comparison:
             pass  # C++ object deleted during emit
 
     def _build_activity_info(
-        self, activity: str, tool_name: str, args: Dict,
+        self, activity: str, tool_name: str, args: Dict[str, Any],
         result_str: str | None, status: str,
     ) -> str:
         """Build structured JSON info for tool_activity signal.
@@ -3427,7 +3480,10 @@ Use Markdown tables for structured data comparison:
         """
         info: Dict[str, Any] = {}
         try:
-            fp = args.get("file_path", "") or args.get("path", "")
+            fp_raw = args.get("file_path")
+            if not isinstance(fp_raw, str) or not fp_raw:
+                fp_raw = args.get("path")
+            fp = fp_raw if isinstance(fp_raw, str) else ""
             # Make paths relative to project root for compact display
             if fp and self._project_root:
                 try:
@@ -3439,8 +3495,18 @@ Use Markdown tables for structured data comparison:
 
             if activity == "read_file":
                 info["file_path"] = fp
-                requested_offset = args.get("offset", 1)
-                requested_limit = args.get("limit") or _get_default_read_chunk_lines()
+                requested_offset_raw = args.get("offset", 1)
+                requested_limit_raw = args.get("limit")
+                requested_offset = (
+                    requested_offset_raw
+                    if isinstance(requested_offset_raw, int) and requested_offset_raw >= 1
+                    else 1
+                )
+                requested_limit = (
+                    requested_limit_raw
+                    if isinstance(requested_limit_raw, int) and requested_limit_raw > 0
+                    else _get_default_read_chunk_lines()
+                )
                 info["offset"] = requested_offset
                 info["limit"] = requested_limit
                 info["requested_offset"] = requested_offset
@@ -3720,6 +3786,12 @@ Use Markdown tables for structured data comparison:
             LS    → BridgeLSTool.execute()
         """
         try:
+            # Track TodoWrite streaks so we can short-circuit planning loops.
+            if tool_name == "TodoWrite":
+                self._todo_write_streak += 1
+            else:
+                self._todo_write_streak = 0
+
             # ---- Real Agent Tools ----
             if tool_name == "Read":
                 return await self._dispatch_read(tool_id, args)
@@ -4094,6 +4166,13 @@ Use Markdown tables for structured data comparison:
             args = {**args, "file_path": os.path.join(self._project_root, path)}
         full_path = args["file_path"]
         is_new = not os.path.exists(full_path)
+        original_content: Optional[str] = None
+        if not is_new:
+            try:
+                with open(full_path, "r", encoding="utf-8") as f:
+                    original_content = f.read()
+            except Exception:
+                original_content = None
 
         # ── SAFETY: Prevent catastrophic overwrite of large files ──
         # If the existing file is significantly larger than the new content,
@@ -4142,6 +4221,8 @@ Use Markdown tables for structured data comparison:
                 op_type = data.get("type", "create" if is_new else "update")
                 # Emit UI signals
                 self.file_generated.emit(full_path, content)
+                if (not is_new) and (original_content is not None) and (original_content != content):
+                    self.file_edited_diff.emit(full_path, original_content, content)
                 # Emit completion signal for card animation
                 if card_id:
                     self.file_operation_completed.emit(card_id, full_path, content, ui_op_type)
@@ -4160,6 +4241,8 @@ Use Markdown tables for structured data comparison:
             with open(full_path, "w", encoding="utf-8") as f:
                 f.write(content)
             self.file_generated.emit(full_path, content)
+            if (not is_new) and (original_content is not None) and (original_content != content):
+                self.file_edited_diff.emit(full_path, original_content, content)
             # Emit completion signal for card animation
             if card_id:
                 self.file_operation_completed.emit(card_id, full_path, content, ui_op_type)
@@ -4408,13 +4491,72 @@ Use Markdown tables for structured data comparison:
         """
         todos = args.get("todos", [])
 
+        def _normalize_status(raw: Any) -> str:
+            s = str(raw or "").strip().lower().replace("-", "_").replace(" ", "_")
+            if s in ("complete", "completed", "done"):
+                return "COMPLETE"
+            if s in ("in_progress", "inprogress", "running", "active"):
+                return "IN_PROGRESS"
+            if s in ("cancelled", "canceled"):
+                return "CANCELLED"
+            return "PENDING"
+
+        normalized_todos: List[Dict[str, Any]] = []
+        for t in (todos if isinstance(todos, list) else []):
+            if not isinstance(t, dict):
+                continue
+            td = dict(t)
+            td["status"] = _normalize_status(td.get("status"))
+            normalized_todos.append(td)
+
+        if self._todo_write_streak >= 3:
+            return ToolResult(
+                tool_id=tool_id,
+                result=None,
+                success=False,
+                error=(
+                    "TodoWrite loop detected (3+ consecutive TodoWrite calls). "
+                    "Do not call TodoWrite again right now; run real tools "
+                    "(Read/Edit/Write/Bash) and update todos only after progress."
+                ),
+            )
+
         # If every item is completed/cancelled, treat the list as cleared
-        all_done = bool(todos) and all(
-            t.get("status") in ("completed", "cancelled") for t in todos
+        all_done = bool(normalized_todos) and all(
+            t.get("status") in ("COMPLETE", "CANCELLED") for t in normalized_todos
         )
 
         old_todos = list(self._current_todos)
-        new_todos = todos  # keep full list so UI shows completed state briefly
+        new_todos = normalized_todos  # keep full list so UI shows completed state briefly
+
+        # Block no-op TodoWrite calls (same ids/status/content repeatedly).
+        try:
+            _todo_sig = json.dumps(
+                [
+                    {
+                        "id": str(t.get("id", "")),
+                        "status": str(t.get("status", "")),
+                        "content": str(t.get("content", "")),
+                        "activeForm": str(t.get("activeForm", "")),
+                    }
+                    for t in new_todos
+                ],
+                sort_keys=True,
+            )
+        except Exception:
+            _todo_sig = ""
+
+        if _todo_sig and _todo_sig == self._last_todo_signature:
+            return ToolResult(
+                tool_id=tool_id,
+                result=None,
+                success=False,
+                error=(
+                    "TodoWrite made no changes compared to previous call. "
+                    "Skip TodoWrite and continue with actual implementation actions."
+                ),
+            )
+        self._last_todo_signature = _todo_sig
 
         self._current_todos = [] if all_done else list(new_todos)
 
@@ -4580,7 +4722,7 @@ Use Markdown tables for structured data comparison:
 
         # Try to use the LSP manager if available
         lsp_result = None
-        if self._lsp_manager:
+        if hasattr(self, '_lsp_manager') and self._lsp_manager:
             try:
                 # LSP operations are synchronous in the manager
                 if operation == "goToDefinition":
@@ -4741,7 +4883,7 @@ Use Markdown tables for structured data comparison:
 
         # Add to session task list
         if not hasattr(self, '_session_tasks'):
-            self._session_tasks = {}
+            self._session_tasks: Dict[str, Any] = {}
         self._session_tasks[task_id] = task
 
         log.info(f"[TASK] Created task {task_id}: {subject}")
@@ -4799,7 +4941,7 @@ Use Markdown tables for structured data comparison:
         status_filter = args.get("status", "all")
 
         if not hasattr(self, '_session_tasks'):
-            self._session_tasks = {}
+            self._session_tasks: Dict[str, Any] = {}
 
         tasks = list(self._session_tasks.values())
 
@@ -4879,11 +5021,10 @@ Use Markdown tables for structured data comparison:
             return ToolResult(tool_id=tool_id, result=None, success=False,
                               error="MCP requires 'toolName' parameter")
 
-        # Try to use real MCP client if available
+        # Try to use real MCP client if available (lazy import)
         try:
-            from ..agent.src.services.mcp.client import connect_to_mcp_server
-            # This would connect to the MCP server and execute the tool
-            # For now, return guidance
+            from ..agent.src.services.mcp.client import connect_to_mcp_server  # noqa: F401
+            del connect_to_mcp_server  # not yet implemented; keep import alive
         except ImportError:
             pass
 
@@ -5080,7 +5221,7 @@ Use Markdown tables for structured data comparison:
     # PUBLIC INTERFACE (matching StubAIAgent so ai_chat.py works)
     # ============================================================
 
-    def process_message(self, message: str, images: List[str] = None):
+    def process_message(self, message: str, images: Optional[List[str]] = None):
         """Entry point: called by ai_chat.py when the user sends a message."""
         self._stop_requested = False  # Clear any previous stop before handling new request
         # Fresh AbortController so tools from the previous (aborted) request can't
@@ -5091,7 +5232,7 @@ Use Markdown tables for structured data comparison:
         _is_continue = message.strip().startswith('Continue the task.')
         if not _is_continue:
             self._continue_cycle_count = 0
-            self._last_pending_ids = set()
+            self._last_pending_ids: set[str] = set()
         # Always reset tool counters — even on Continue — so tools
         # aren't still disabled from the previous cycle's limits.
         self._tool_fail_counts.clear()
@@ -5158,7 +5299,6 @@ Use Markdown tables for structured data comparison:
         """Called when user clicks Accept or Reject on a permission card.
         decision: 'accept' or 'reject'
         """
-        import threading as _threading
         log.info(f"[BRIDGE] Permission response: {decision}")
         self._permission_granted = (decision == 'accept')
         if self._permission_event is not None:
@@ -5192,7 +5332,7 @@ Use Markdown tables for structured data comparison:
     def set_terminal(self, terminal):
         self._terminal = terminal
 
-    def set_active_file(self, filepath: str, cursor_pos: int = None):
+    def set_active_file(self, filepath: str, cursor_pos: Optional[int] = None):
         self._active_file = filepath
         self._cursor_pos  = cursor_pos
 
@@ -5220,9 +5360,9 @@ Use Markdown tables for structured data comparison:
     def chat_with_enhancement(
         self,
         message: str,
-        intent: str = None,
-        route: str = None,
-        tools: List[str] = None,
+        intent: Optional[str] = None,
+        route: Optional[str] = None,
+        tools: Optional[List[str]] = None,
         code_context: str = "",
     ):
         self._enhancement_data.update(
@@ -5240,7 +5380,7 @@ Use Markdown tables for structured data comparison:
             title += "…"
         return title
 
-    def get_last_enhancement_data(self) -> Dict:
+    def get_last_enhancement_data(self) -> Dict[str, Any]:
         return self._enhancement_data.copy()
 
     def stop(self):

@@ -41,6 +41,7 @@ class ChatMessage:
     name: Optional[str] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_call_id: Optional[str] = None
+    reasoning_content: Optional[str] = None
 
 
 @dataclass
@@ -125,6 +126,8 @@ class BaseProvider(ABC):
                     m["content"] = None
             if msg.tool_call_id:
                 m["tool_call_id"] = msg.tool_call_id
+            if hasattr(msg, "reasoning_content") and getattr(msg, "reasoning_content"):
+                m["reasoning_content"] = getattr(msg, "reasoning_content")
             formatted.append(m)
         return formatted
 

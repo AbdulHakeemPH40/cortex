@@ -4105,6 +4105,85 @@ body.loaded #loading-overlay {
     opacity: 0;
 }
 
+.ta-group-sections {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+.ta-section {
+    border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.ta-section:first-child {
+    border-top: none;
+}
+
+.ta-section-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px 6px 10px;
+    cursor: pointer;
+    user-select: none;
+    background: rgba(255, 255, 255, 0.015);
+}
+
+.ta-section-header:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.ta-section-chevron {
+    width: 12px;
+    height: 12px;
+    color: var(--text-muted, #6b7280);
+    transition: transform 0.2s ease;
+    flex-shrink: 0;
+}
+
+.ta-section.collapsed .ta-section-chevron {
+    transform: rotate(-90deg);
+}
+
+.ta-section-icon {
+    font-size: 11px;
+    opacity: 0.7;
+}
+
+.ta-section-title {
+    font-size: 11px;
+    color: var(--text-secondary, #d1d5db);
+    font-weight: 600;
+    letter-spacing: 0.1px;
+}
+
+.ta-section-count {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--text-muted, #6b7280);
+    font-family: var(--font-mono, 'Cascadia Code', monospace);
+}
+
+.ta-section-live {
+    min-width: 58px;
+    text-align: right;
+    font-size: 10px;
+    color: #60a5fa;
+    font-family: var(--font-mono, 'Cascadia Code', monospace);
+}
+
+.ta-section-items {
+    overflow: hidden;
+    max-height: 2000px;
+    transition: max-height 0.25s ease, opacity 0.2s ease;
+    opacity: 1;
+}
+
+.ta-section.collapsed .ta-section-items {
+    max-height: 0;
+    opacity: 0;
+}
+
 /* Individual Activity Item */
 .ta-item {
     border-top: 1px solid rgba(255, 255, 255, 0.04);
@@ -4163,6 +4242,20 @@ body.loaded #loading-overlay {
 .ta-item-label .ta-muted {
     color: var(--text-muted, #6b7280);
     font-size: 10.5px;
+}
+
+.ta-thought-stream {
+    margin: 0 14px 8px 48px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.02);
+    color: var(--text-muted, #9ca3af);
+    font-size: 11px;
+    line-height: 1.4;
+    font-family: var(--font-mono, 'Cascadia Code', monospace);
+    white-space: pre-wrap;
+    word-break: break-word;
+    border: 1px solid rgba(255, 255, 255, 0.04);
 }
 
 .ta-item-status {
