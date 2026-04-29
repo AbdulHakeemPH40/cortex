@@ -1,6 +1,563 @@
-Type of "_queue" is partially unknown
-  Type of "_queue" is "Queue[Unknown]"
-
-Type of "get" is unknown
-
-Type of "get" is unknown
+formation: Argument type is partially unknown
+    Argument corresponds to parameter "path" in function "mark_file_read"
+    Argument type is "str | Unknown" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4090:56 - information: Argument type is partially unknown
+    Argument corresponds to parameter "path" in function "track_file_read"
+    Argument type is "str | Unknown" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4106:33 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4106:33 - information: Argument type is unknown
+    Argument corresponds to parameter "x" in function "__new__" (reportUnknownArgumentType)  
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4107:25 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4107:25 - information: Argument type is unknown
+    Argument corresponds to parameter "x" in function "__new__" (reportUnknownArgumentType)  
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4112:17 - information: Type of "_basename" is partially unknown
+    Type of "_basename" is "str | Unknown" (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4112:46 - information: Argument type is partially unknown
+    Argument corresponds to parameter "p" in function "basename"
+    Argument type is "str | Unknown" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4123:43 - information: Argument type is partially unknown
+    Argument corresponds to parameter "path" in function "mark_file_read"
+    Argument type is "str | Unknown" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4124:44 - information: Argument type is partially unknown
+    Argument corresponds to parameter "path" in function "track_file_read"
+    Argument type is "str | Unknown" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4133:17 - information: Type of "_norm" is partially unknown
+    Type of "_norm" is "str | Unknown" (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4133:41 - information: Argument type is partially unknown
+    Argument corresponds to parameter "path" in function "abspath"
+    Argument type is "str | Unknown" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4134:17 - information: Type of "_off_raw" is partially unknown
+    Type of "_off_raw" is "Unknown | None" (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4134:28 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4135:17 - information: Type of "_lim_raw" is partially unknown
+    Type of "_lim_raw" is "Unknown | None" (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4135:28 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4136:43 - information: Argument type is partially unknown
+    Argument corresponds to parameter "filename" in function "getmtime"
+    Argument type is "str | Unknown" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4140:35 - information: Argument type is unknown
+    Argument corresponds to parameter "x" in function "__new__" (reportUnknownArgumentType)  
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4141:34 - information: Argument type is unknown
+    Argument corresponds to parameter "x" in function "__new__" (reportUnknownArgumentType)  
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4145:21 - information: Argument type is partially unknown
+    Argument corresponds to parameter "norm_path" in function "file_cache_put"
+    Argument type is "str | Unknown" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4146:25 - information: Argument type is unknown
+    Argument corresponds to parameter "x" in function "__new__" (reportUnknownArgumentType)  
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4147:25 - information: Argument type is unknown
+    Argument corresponds to parameter "x" in function "__new__" (reportUnknownArgumentType)  
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4161:51 - information: Type of parameter "args" is partially unknown
+    Parameter type is "Dict[Unknown, Unknown]" (reportUnknownParameterType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4163:9 - information: Type of "path" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4163:16 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4164:9 - information: Type of "content" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4164:19 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4165:30 - information: Argument type is unknown
+    Argument corresponds to parameter "s" in function "isabs" (reportUnknownArgumentType)    
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4166:13 - information: Type of "args" is partially unknown
+    Type of "args" is "dict[Unknown, Unknown]" (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4166:75 - information: Argument type is unknown
+    Argument corresponds to parameter "paths" in function "join" (reportUnknownArgumentType) 
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4167:9 - information: Type of "full_path" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4168:37 - information: Argument type is unknown
+    Argument corresponds to parameter "path" in function "exists" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4172:27 - information: Argument type is unknown
+    Argument corresponds to parameter "file" in function "open" (reportUnknownArgumentType)  
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4183:49 - information: Argument type is unknown
+    Argument corresponds to parameter "filename" in function "getsize" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4184:32 - information: Type of "encode" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4184:32 - information: Argument type is unknown
+    Argument corresponds to parameter "obj" in function "len" (reportUnknownArgumentType)    
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4191:79 - information: Argument type is unknown
+    Argument corresponds to parameter "p" in function "basename" (reportUnknownArgumentType) 
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4217:17 - information: Type of "raw" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4217:29 - information: Type of "call" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4220:17 - information: Type of "data" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4220:24 - information: Type of "get" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4221:17 - information: Type of "op_type" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4221:27 - information: Type of "get" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4229:51 - information: Argument type is unknown
+    Argument corresponds to parameter "path" in function "mark_file_modified" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4238:13 - information: Type of "parent" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4238:38 - information: Argument type is unknown
+    Argument corresponds to parameter "p" in function "dirname" (reportUnknownArgumentType)  
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4240:29 - information: Argument type is unknown
+    Argument corresponds to parameter "name" in function "makedirs" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4241:23 - information: Argument type is unknown
+    Argument corresponds to parameter "file" in function "open" (reportUnknownArgumentType)  
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4242:25 - information: Argument type is unknown
+    Argument corresponds to parameter "s" in function "write" (reportUnknownArgumentType)    
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4249:47 - information: Argument type is unknown
+    Argument corresponds to parameter "path" in function "mark_file_modified" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4256:50 - information: Type of parameter "args" is partially unknown
+    Parameter type is "Dict[Unknown, Unknown]" (reportUnknownParameterType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4258:9 - information: Type of "path" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4258:16 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4259:9 - information: Type of "old_string" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4259:22 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4260:9 - information: Type of "new_string" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4260:22 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4261:30 - information: Argument type is unknown
+    Argument corresponds to parameter "s" in function "isabs" (reportUnknownArgumentType)    
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4262:13 - information: Type of "args" is partially unknown
+    Type of "args" is "dict[Unknown, Unknown]" (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4262:75 - information: Argument type is unknown
+    Argument corresponds to parameter "paths" in function "join" (reportUnknownArgumentType) 
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4263:9 - information: Type of "full_path" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4280:27 - information: Argument type is unknown
+    Argument corresponds to parameter "file" in function "open" (reportUnknownArgumentType)  
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4290:17 - information: Type of "raw" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4290:29 - information: Type of "call" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4293:17 - information: Type of "data" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4293:24 - information: Type of "get" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4294:17 - information: Type of "actual_old" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4294:30 - information: Type of "get" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4295:17 - information: Type of "actual_new" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4295:30 - information: Type of "get" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4300:57 - information: Argument type is unknown
+    Argument corresponds to parameter "old" in function "replace" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4300:69 - information: Argument type is unknown
+    Argument corresponds to parameter "new" in function "replace" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4303:35 - information: Argument type is unknown
+    Argument corresponds to parameter "file" in function "open" (reportUnknownArgumentType)  
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4306:25 - information: Type of "full_new" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4307:21 - information: Type of "original_content" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4312:51 - information: Argument type is unknown
+    Argument corresponds to parameter "path" in function "mark_file_modified" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4316:52 - information: Argument type is unknown
+    Argument corresponds to parameter "file_path" in function "_refresh_git_diff_stats" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4325:23 - information: Argument type is unknown
+    Argument corresponds to parameter "file" in function "open" (reportUnknownArgumentType)  
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4330:48 - information: Argument type is unknown
+    Argument corresponds to parameter "old" in function "replace" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4330:60 - information: Argument type is unknown
+    Argument corresponds to parameter "new" in function "replace" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4331:23 - information: Argument type is unknown
+    Argument corresponds to parameter "file" in function "open" (reportUnknownArgumentType)  
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4335:17 - information: Type of "_norm" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4335:41 - information: Argument type is unknown
+    Argument corresponds to parameter "path" in function "abspath" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4338:51 - information: Argument type is unknown
+    Argument corresponds to parameter "filename" in function "getmtime" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4350:47 - information: Argument type is unknown
+    Argument corresponds to parameter "path" in function "mark_file_modified" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4354:48 - information: Argument type is unknown
+    Argument corresponds to parameter "file_path" in function "_refresh_git_diff_stats" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4371:17 - information: Type of "git_path" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4371:17 - information: Variable "git_path" is not accessed (reportUnusedVariable)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4371:27 - information: Type of "file_diff" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4371:27 - information: Variable "file_diff" is not accessed (reportUnusedVariable)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4371:40 - information: Type of "get" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4373:17 - information: Type of "diff_file" is partially unknown
+    Type of "diff_file" is "Any | Unknown" (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4374:17 - information: Type of "git_norm" is partially unknown
+    Type of "git_norm" is "Any | Unknown" (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4374:45 - information: Type of "path" is partially unknown
+    Type of "path" is "Any | Unknown" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4374:45 - information: Argument type is partially unknown
+    Argument corresponds to parameter "path" in function "normpath"
+    Argument type is "Any | Unknown" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4375:57 - information: Argument type is partially unknown
+    Argument corresponds to parameter "p" in function "basename"
+    Argument type is "Any | Unknown" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4377:25 - information: Implicit string concatenation not allowed (reportImplicitStringConcatenation)    
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4377:56 - information: Type of "path" is partially unknown
+    Type of "path" is "Any | Unknown" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4378:29 - information: Type of "lines_added" is partially unknown
+    Type of "lines_added" is "Any | Unknown" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4378:54 - information: Type of "lines_removed" is partially unknown
+    Type of "lines_removed" is "Any | Unknown" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4379:43 - information: Type of "is_binary" is partially unknown
+    Type of "is_binary" is "Any | Unknown" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4380:42 - information: Type of "is_large_file" is partially unknown
+    Type of "is_large_file" is "Any | Unknown" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4386:50 - information: Type of parameter "args" is partially unknown
+    Parameter type is "Dict[Unknown, Unknown]" (reportUnknownParameterType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4390:17 - information: Type of "raw" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4390:29 - information: Type of "call" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4391:17 - information: Type of "data" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4391:24 - information: Type of "get" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4392:17 - information: Type of "filenames" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4392:29 - information: Type of "get" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4394:32 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4396:33 - information: Type of "get" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4396:58 - information: Argument type is unknown
+    Argument corresponds to parameter "obj" in function "len" (reportUnknownArgumentType)    
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4397:34 - information: Type of "get" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4404:9 - information: Type of "pattern" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4404:19 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4405:9 - information: Type of "search_dir" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4405:22 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4407:45 - information: Argument type is unknown
+    Argument corresponds to parameter "s" in function "isabs" (reportUnknownArgumentType)    
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4408:59 - information: Argument type is unknown
+    Argument corresponds to parameter "paths" in function "join" (reportUnknownArgumentType) 
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4409:9 - information: Type of "full_pattern" is partially unknown
+    Type of "full_pattern" is "str | Unknown" (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4409:37 - information: Argument type is partially unknown
+    Argument corresponds to parameter "path" in function "join"
+    Argument type is "str | Unknown" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4409:49 - information: Argument type is unknown
+    Argument corresponds to parameter "paths" in function "join" (reportUnknownArgumentType) 
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4409:79 - information: Argument type is unknown
+    Argument corresponds to parameter "s" in function "isabs" (reportUnknownArgumentType)    
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4411:13 - information: Type of "files" is partially unknown
+    Type of "files" is "list[str | Unknown]" (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4411:28 - information: Argument type is partially unknown
+    Argument corresponds to parameter "iterable" in function "sorted"
+    Argument type is "list[str | Unknown]" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4411:39 - information: Argument type is partially unknown
+    Argument corresponds to parameter "pathname" in function "glob"
+    Argument type is "str | Unknown" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4416:50 - information: Type of parameter "args" is partially unknown
+    Parameter type is "Dict[Unknown, Unknown]" (reportUnknownParameterType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4420:17 - information: Type of "raw" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4420:29 - information: Type of "call" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4421:17 - information: Type of "data" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4421:24 - information: Type of "get" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4424:21 - information: Type of "block" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4424:29 - information: Type of "map_tool_result_to_block" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4426:36 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4427:36 - information: Type of "get" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4427:61 - information: Argument type is unknown
+    Argument corresponds to parameter "object" in function "__new__" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4437:9 - information: Type of "pattern" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4437:20 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4438:9 - information: Type of "search_path" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4438:23 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4439:30 - information: Argument type is unknown
+    Argument corresponds to parameter "s" in function "isabs" (reportUnknownArgumentType)    
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4440:60 - information: Argument type is unknown
+    Argument corresponds to parameter "paths" in function "join" (reportUnknownArgumentType) 
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4441:9 - information: Type of "include_glob" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4441:24 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4441:41 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4441:41 - information: Argument type is unknown
+    Argument corresponds to parameter "default" in function "get" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4442:9 - information: Type of "case_insensitive" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4442:28 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4446:13 - information: Type of "compiled" is partially unknown
+    Type of "compiled" is "Pattern[Unknown]" (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4446:36 - information: Argument type is unknown
+    Argument corresponds to parameter "pattern" in function "compile" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4448:13 - information: Type of "walk_target" is partially unknown
+    Type of "walk_target" is "str | Unknown" (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4448:56 - information: Argument type is partially unknown
+    Argument corresponds to parameter "s" in function "isdir"
+    Argument type is "str | Unknown" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4448:90 - information: Argument type is partially unknown
+    Argument corresponds to parameter "p" in function "dirname"
+    Argument type is "str | Unknown" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4449:31 - information: Argument type is partially unknown
+    Argument corresponds to parameter "path" in function "isfile"
+    Argument type is "str | Unknown" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4451:17 - information: Type of "files_to_scan" is partially unknown
+    Type of "files_to_scan" is "list[str | Unknown]" (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4454:50 - information: Argument type is partially unknown
+    Argument corresponds to parameter "top" in function "walk"
+    Argument type is "str | Unknown" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4457:73 - information: Argument type is unknown
+    Argument corresponds to parameter "pat" in function "fnmatch" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4459:25 - information: Type of "append" is partially unknown
+    Type of "append" is "(object: Unknown, /) -> None" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4460:17 - information: Type of "fpath" is partially unknown
+    Type of "fpath" is "str | Unknown" (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4462:31 - information: Argument type is partially unknown
+    Argument corresponds to parameter "file" in function "open"
+    Argument type is "str | Unknown" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4464:32 - information: Type of "search" is partially unknown
+    Type of "search" is "Overload[(string: str, pos: int = 0, endpos: int = sys.maxsize) -> (Match[str] | None), (string: Buffer, pos: int = 0, endpos: int = sys.maxsize) -> (Match[bytes] | None), (string: Unknown, pos: int = 0, endpos: int = sys.maxsize) -> (Match[Unknown] | None)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4465:33 - information: Type of "append" is partially unknown
+    Type of "append" is "(object: Unknown, /) -> None" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4466:40 - information: Argument type is partially unknown
+    Argument corresponds to parameter "obj" in function "len"
+    Argument type is "list[Unknown]" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4470:24 - information: Argument type is partially unknown
+    Argument corresponds to parameter "obj" in function "len"
+    Argument type is "list[Unknown]" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4472:20 - information: Argument type is partially unknown
+    Argument corresponds to parameter "obj" in function "len"
+    Argument type is "list[Unknown]" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4473:36 - information: Argument type is partially unknown
+    Argument corresponds to parameter "iterable" in function "join"
+    Argument type is "list[Unknown]" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4475:36 - information: Argument type is partially unknown
+    Argument corresponds to parameter "iterable" in function "join"
+    Argument type is "list[Unknown]" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4485:56 - information: Type of parameter "args" is partially unknown
+    Parameter type is "Dict[Unknown, Unknown]" (reportUnknownParameterType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4492:9 - information: Type of "todos" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4492:17 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4505:13 - information: Type of "t" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4508:13 - information: Type of "td" is partially unknown
+    Type of "td" is "dict[Unknown, Unknown]" (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4508:23 - information: Argument type is partially unknown
+    Argument corresponds to parameter "map" in function "__init__"
+    Argument type is "dict[Unknown, Unknown]" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4509:46 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4510:37 - information: Argument type is partially unknown
+    Argument corresponds to parameter "object" in function "append"
+    Argument type is "dict[Unknown, Unknown]" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4598:41 - information: Type of parameter "pending_question" is partially unknown
+    Parameter type is "Dict[Unknown, Unknown]" (reportUnknownParameterType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4604:21 - information: Implicit string concatenation not allowed (reportImplicitStringConcatenation)    
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4607:63 - information: Type of parameter "args" is partially unknown
+    Parameter type is "Dict[Unknown, Unknown]" (reportUnknownParameterType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4615:9 - information: Type of "questions" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4615:21 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4622:16 - information: Type of "q" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4622:31 - information: Argument type is unknown
+    Argument corresponds to parameter "iterable" in function "__new__" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4623:20 - information: Type of "get" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4626:20 - information: Type of "get" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4629:20 - information: Type of "get" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4634:9 - information: Type of "first_q" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4635:9 - information: Type of "question_text" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4635:25 - information: Type of "get" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4636:9 - information: Type of "options" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4636:19 - information: Type of "get" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4637:9 - information: Type of "question_id" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4637:23 - information: Type of "get" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4658:21 - information: Type of "get" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4660:24 - information: Type of "get" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4661:24 - information: Type of "get" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4662:22 - information: Type of "get" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4671:13 - information: Type of "answer" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4671:45 - information: Argument type is partially unknown
+    Argument corresponds to parameter "fut" in function "wait_for"
+    Argument type is "Future[Unknown]" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4673:41 - information: Argument type is unknown
+    Argument corresponds to parameter "key" in function "pop" (reportUnknownArgumentType)    
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4682:41 - information: Argument type is unknown
+    Argument corresponds to parameter "key" in function "pop" (reportUnknownArgumentType)    
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4686:37 - information: Argument type is unknown
+    Argument corresponds to parameter "key" in function "pop" (reportUnknownArgumentType)    
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4699:49 - information: Type of parameter "args" is partially unknown
+    Parameter type is "Dict[Unknown, Unknown]" (reportUnknownParameterType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4707:9 - information: Type of "operation" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4707:21 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4708:9 - information: Type of "file_path" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4708:21 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4709:9 - information: Type of "line" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4709:16 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4710:9 - information: Type of "character" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4710:21 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4720:30 - information: Argument type is unknown
+    Argument corresponds to parameter "s" in function "isabs" (reportUnknownArgumentType)    
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4721:58 - information: Argument type is unknown
+    Argument corresponds to parameter "paths" in function "join" (reportUnknownArgumentType) 
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4725:46 - information: Type of "_lsp_manager" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4725:51 - warning: Cannot access attribute "_lsp_manager" for class "CortexAgentBridge*"
+    Attribute "_lsp_manager" is unknown (reportAttributeAccessIssue)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4729:21 - information: Type of "lsp_result" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4729:34 - information: Type of "_lsp_manager" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4729:34 - information: Type of "go_to_definition" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4729:39 - warning: Cannot access attribute "_lsp_manager" for class "CortexAgentBridge*"
+    Attribute "_lsp_manager" is unknown (reportAttributeAccessIssue)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4731:21 - information: Type of "lsp_result" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4731:34 - information: Type of "_lsp_manager" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4731:34 - information: Type of "find_references" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4731:39 - warning: Cannot access attribute "_lsp_manager" for class "CortexAgentBridge*"
+    Attribute "_lsp_manager" is unknown (reportAttributeAccessIssue)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4733:21 - information: Type of "lsp_result" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4733:34 - information: Type of "_lsp_manager" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4733:34 - information: Type of "get_hover" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4733:39 - warning: Cannot access attribute "_lsp_manager" for class "CortexAgentBridge*"
+    Attribute "_lsp_manager" is unknown (reportAttributeAccessIssue)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4735:21 - information: Type of "lsp_result" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4735:34 - information: Type of "_lsp_manager" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4735:34 - information: Type of "get_document_symbols" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4735:39 - warning: Cannot access attribute "_lsp_manager" for class "CortexAgentBridge*"
+    Attribute "_lsp_manager" is unknown (reportAttributeAccessIssue)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4737:21 - information: Type of "lsp_result" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4737:34 - information: Type of "_lsp_manager" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4737:34 - information: Type of "get_workspace_symbols" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4737:39 - warning: Cannot access attribute "_lsp_manager" for class "CortexAgentBridge*"
+    Attribute "_lsp_manager" is unknown (reportAttributeAccessIssue)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4737:74 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4739:21 - information: Type of "lsp_result" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4739:34 - information: Type of "_lsp_manager" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4739:34 - information: Type of "go_to_implementation" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4739:39 - warning: Cannot access attribute "_lsp_manager" for class "CortexAgentBridge*"
+    Attribute "_lsp_manager" is unknown (reportAttributeAccessIssue)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4765:55 - information: Type of parameter "args" is partially unknown
+    Parameter type is "Dict[Unknown, Unknown]" (reportUnknownParameterType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4771:9 - information: Type of "url" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4771:15 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4772:9 - information: Type of "query" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4772:17 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4780:62 - warning: "get_url_markdown_content" is unknown import symbol (reportAttributeAccessIssue)     
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4780:62 - information: Type of "get_url_markdown_content" is unknown (reportUnknownVariableType)        
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4781:13 - information: Type of "content" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4798:42 - information: Argument type is unknown
+    Argument corresponds to parameter "url" in function "__init__" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4816:16 - warning: "urllib" is possibly unbound (reportPossiblyUnboundVariable)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4823:56 - information: Type of parameter "args" is partially unknown
+    Parameter type is "Dict[Unknown, Unknown]" (reportUnknownParameterType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4829:9 - information: Type of "query" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4829:17 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4852:57 - information: Type of parameter "args" is partially unknown
+    Parameter type is "Dict[Unknown, Unknown]" (reportUnknownParameterType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4856:9 - information: Type of "subject" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4856:19 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4857:9 - information: Type of "description" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4857:23 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4858:9 - information: Type of "active_form" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4858:23 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4872:9 - information: Type of "task" is partially unknown
+    Type of "task" is "dict[str, Unknown]" (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4897:57 - information: Type of parameter "args" is partially unknown
+    Parameter type is "Dict[Unknown, Unknown]" (reportUnknownParameterType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4901:9 - information: Type of "task_id" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4901:19 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4902:9 - information: Type of "status" is partially unknown
+    Type of "status" is "Unknown | None" (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4902:18 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4903:9 - information: Type of "owner" is partially unknown
+    Type of "owner" is "Unknown | None" (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4903:17 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4904:9 - information: Type of "blocks" is partially unknown
+    Type of "blocks" is "Unknown | None" (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4904:18 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4905:9 - information: Type of "blocked_by" is partially unknown
+    Type of "blocked_by" is "Unknown | None" (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4905:22 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4937:55 - information: Type of parameter "args" is partially unknown
+    Parameter type is "Dict[Unknown, Unknown]" (reportUnknownParameterType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4941:9 - information: Type of "status_filter" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4941:25 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4959:54 - information: Type of parameter "args" is partially unknown
+    Parameter type is "Dict[Unknown, Unknown]" (reportUnknownParameterType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4963:9 - information: Type of "task_id" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4963:19 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4979:55 - information: Type of parameter "args" is partially unknown
+    Parameter type is "Dict[Unknown, Unknown]" (reportUnknownParameterType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4983:9 - information: Type of "task_id" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:4983:19 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5009:49 - information: Type of parameter "args" is partially unknown
+    Parameter type is "Dict[Unknown, Unknown]" (reportUnknownParameterType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5013:9 - information: Type of "server_name" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5013:23 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5014:9 - information: Type of "tool_name" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5014:21 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5015:9 - information: Type of "arguments" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5015:21 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5026:57 - warning: "connect_to_mcp_server" is unknown import symbol (reportAttributeAccessIssue)        
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5026:57 - information: Type of "connect_to_mcp_server" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5049:57 - information: Type of parameter "args" is partially unknown
+    Parameter type is "Dict[Unknown, Unknown]" (reportUnknownParameterType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5053:9 - information: Type of "name" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5053:16 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5054:9 - information: Type of "description" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5054:23 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5055:9 - information: Type of "teammates" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5055:21 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5066:9 - information: Type of "team" is partially unknown
+    Type of "team" is "dict[str, Unknown]" (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5076:16 - information: Type of "tm" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5076:32 - information: Argument type is unknown
+    Argument corresponds to parameter "iterable" in function "__new__" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5078:13 - information: Type of "append" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5080:25 - information: Type of "get" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5081:25 - information: Type of "get" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5088:9 - information: Type of "_teams" is partially unknown
+    Type of "_teams" is "dict[Unknown, Unknown]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5090:68 - information: Argument type is unknown
+    Argument corresponds to parameter "obj" in function "len" (reportUnknownArgumentType)    
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5095:58 - information: Argument type is unknown
+    Argument corresponds to parameter "obj" in function "len" (reportUnknownArgumentType)    
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5098:57 - information: Type of parameter "args" is partially unknown
+    Parameter type is "Dict[Unknown, Unknown]" (reportUnknownParameterType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5102:9 - information: Type of "team_name" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5102:21 - information: Type of "get" is partially unknown
+    Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5110:17 - information: Type of "tid" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5110:22 - information: Type of "team" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5110:35 - information: Type of "_teams" is partially unknown
+    Type of "_teams" is "dict[Unknown, Unknown]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5110:35 - information: Argument type is partially unknown
+    Argument corresponds to parameter "iterable" in function "__init__"
+    Argument type is "dict_items[Unknown, Unknown]" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5111:20 - information: Type of "get" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5112:25 - information: Type of "_teams" is partially unknown
+    Type of "_teams" is "dict[Unknown, Unknown]" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5262:9 - information: Type of "queue_message" is partially unknown
+    Type of "queue_message" is "(msg: Dict[Unknown, Unknown]) -> None" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5296:9 - information: Type of "queue_message" is partially unknown
+    Type of "queue_message" is "(msg: Dict[Unknown, Unknown]) -> None" (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5319:35 - information: Type of parameter "context" is unknown (reportUnknownParameterType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5320:20 - information: Argument type is unknown
+    Argument corresponds to parameter "obj" in function "hasattr" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5321:43 - information: Type of "to_dict" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5321:43 - information: Argument type is unknown
+    Argument corresponds to parameter "m" in function "update" (reportUnknownArgumentType)   
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5322:22 - information: Argument type is unknown
+    Argument corresponds to parameter "obj" in function "hasattr" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5324:27 - information: Type of "k" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5324:30 - information: Type of "v" is unknown (reportUnknownVariableType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5324:35 - information: Type of "items" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5324:40 - information: Argument type is unknown
+    Argument corresponds to parameter "object" in function "vars" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5324:64 - information: Type of "startswith" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5327:43 - information: Argument type is partially unknown
+    Argument corresponds to parameter "m" in function "update"
+    Argument type is "dict[Unknown, Unknown]" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5329:33 - information: Type of parameter "kwargs" is unknown (reportUnknownParameterType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5330:39 - information: Argument type is partially unknown
+    Argument corresponds to parameter "m" in function "update"
+    Argument type is "dict[str, Unknown]" (reportUnknownArgumentType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5332:28 - information: Type of parameter "terminal" is unknown (reportUnknownParameterType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5333:9 - information: Type of "_terminal" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5349:29 - information: Type of parameter "parent" is unknown (reportUnknownParameterType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5350:9 - information: Type of "_ui_parent" is unknown (reportUnknownMemberType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5402:24 - information: Type of parameter "kwargs" is unknown (reportUnknownParameterType)
+  c:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ai\agent_bridge.py:5404:32 - information: Argument type is unknown
+    Argument corresponds to parameter "kwargs" in function "__init__" (reportUnknownArgumentType)
+0 errors, 18 warnings, 751 informations
+(venv) PS C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex> 

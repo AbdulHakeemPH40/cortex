@@ -29,7 +29,9 @@ from src.ai.session_task import (
     generate_session_task_id,
     stop_session_task,
 )
-from src.ai.model_limits import ModelLimits  
+from src.ai.model_limits import ModelLimits
+import urllib.error
+import urllib.request
 
 log = get_logger("agent_bridge")
 
@@ -1875,18 +1877,19 @@ class CortexAgentBridge(QObject):
         self._cursor_pos:   Optional[int] = None
         self._terminal      = None
         self._ui_parent     = None
+        self._lsp_manager   = None
         self._always_allowed: bool = False
         self._interaction_mode: str = "default"
         self._conversation_history: List[ChatMessage] = []
         self._enhancement_data: Dict[str, Any] = {}
         self._streaming      = None
         self._current_todos: List[Dict[str, Any]] = []   # Persisted todo list for TodoWrite
-        self._pending_questions: Dict = {}  # Pending AskUserQuestion items
+        self._pending_questions: Dict[str, Any] = {}  # Pending AskUserQuestion items
         # ── Stale-continue detection ──────────────────────────────────
         # Track how many times the same set of todos survived a Continue cycle
         # without any progress.  After _MAX_STALE_CYCLES, auto-cancel them.
         self._continue_cycle_count: int = 0
-        self._last_pending_ids: set = set()
+        self._last_pending_ids: set[str] = set()
         self._MAX_STALE_CYCLES: int = 1
         # Guard against "plan-only" loops where TodoWrite repeats without real action.
         self._todo_write_streak: int = 0
@@ -2328,7 +2331,7 @@ Use Markdown tables for structured data comparison:
 
         return '\n\n'.join(parts)
 
-    def _get_project_summary(self, project_root: str) -> str:
+    def _get_project_summary(self, project_root: str) -> Optional[str]:
         """Auto-discover project structure for the system prompt (cached per session)."""
         if hasattr(self, '_cached_project_summary'):
             return self._cached_project_summary
@@ -3422,7 +3425,7 @@ Use Markdown tables for structured data comparison:
                                 t['status'] = 'cancelled'
                         self._current_todos = []
                         self._continue_cycle_count = 0
-                        self._last_pending_ids: set[str] = set()
+                        self._last_pending_ids = set()
                         # Emit a final note to the user
                         self._safe_emit(
                             self.response_chunk,
@@ -3436,7 +3439,7 @@ Use Markdown tables for structured data comparison:
                 else:
                     # All done — reset stale tracking
                     self._continue_cycle_count = 0
-                    self._last_pending_ids: set[str] = set()
+                    self._last_pending_ids = set()
 
             return full_response
 
@@ -4373,11 +4376,15 @@ Use Markdown tables for structured data comparison:
             for diff_file in (diff_data.files or []):
                 git_norm = os.path.normpath(diff_file.path)
                 if git_norm == norm or os.path.basename(git_norm) == os.path.basename(norm):
+                    _added   = getattr(diff_file, 'lines_added', 0) or 0
+                    _removed = getattr(diff_file, 'lines_removed', 0) or 0
+                    _binary  = getattr(diff_file, 'is_binary', False) or False
+                    _large   = getattr(diff_file, 'is_large_file', False) or False
                     log.info(
                         f"[BRIDGE] Git diff stats for {diff_file.path}: "
-                        f"+{diff_file.lines_added} -{diff_file.lines_removed}"
-                        f"{' [binary]' if diff_file.is_binary else ''}"
-                        f"{' [large]' if diff_file.is_large_file else ''}"
+                        f"+{_added} -{_removed}"
+                        f"{' [binary]' if _binary else ''}"
+                        f"{' [large]' if _large else ''}"
                     )
                     break
         except Exception as exc:
@@ -4601,8 +4608,10 @@ Use Markdown tables for structured data comparison:
         _dispatch_ask_user_question / on_answer_question.
         Kept here only to avoid AttributeError if referenced elsewhere.
         """
-        log.warning("[ASK] _resume_agent_with_answer called — this is a no-op; "
-                    "use on_answer_question instead.")
+        log.warning(
+            "[ASK] _resume_agent_with_answer called — this is a no-op; "
+            "use on_answer_question instead."
+        )
 
     async def _dispatch_ask_user_question(self, tool_id: str, args: Dict) -> ToolResult:
         """
@@ -5021,13 +5030,6 @@ Use Markdown tables for structured data comparison:
             return ToolResult(tool_id=tool_id, result=None, success=False,
                               error="MCP requires 'toolName' parameter")
 
-        # Try to use real MCP client if available (lazy import)
-        try:
-            from ..agent.src.services.mcp.client import connect_to_mcp_server  # noqa: F401
-            del connect_to_mcp_server  # not yet implemented; keep import alive
-        except ImportError:
-            pass
-
         log.info(f"[MCP] Tool call: {server_name}.{tool_name}")
 
         return ToolResult(tool_id=tool_id, result={
@@ -5370,8 +5372,8 @@ Use Markdown tables for structured data comparison:
         )
         self.process_message(message)
 
-    def chat_with_testing(self, *args, **kwargs):
-        self.process_message(args[0] if args else "")
+    def chat_with_testing(self, message: str = "", **kwargs: Any):
+        self.process_message(message)
 
     def generate_chat_title(self, message: str, conv_id: str) -> str:
         words = message.split()[:6]
