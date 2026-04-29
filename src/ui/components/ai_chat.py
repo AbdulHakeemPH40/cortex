@@ -8,6 +8,7 @@ import difflib
 import hashlib
 import threading
 import time
+import uuid as _uuid
 import requests
 import asyncio
 from datetime import datetime
@@ -162,8 +163,7 @@ def calculate_max_tokens_for_mode(model_id: str, config: PerformanceConfig) -> i
         # Apply performance mode multiplier
         adjusted_tokens = int(base_tokens * config.token_multiplier)
         
-        log.debug(f"[AIChat] Token calculation: {model_id} base={base_tokens}, "
-                  f"multiplier={config.token_multiplier}, adjusted={adjusted_tokens}")
+        log.debug(f"[AIChat] Token calculation: {model_id} base={base_tokens}, multiplier={config.token_multiplier}, adjusted={adjusted_tokens}")
         
         return adjusted_tokens
         
@@ -409,14 +409,7 @@ def _write_chat_summary_memory(project_root: str, conversation_id: str, title: s
             log.warning("[MEMORY] LLM response missing frontmatter, adding fallback")
             now = datetime.utcnow().strftime("%Y-%m-%d")
             safe_title = (title or conversation_id[:8]).replace('"', "'")
-            content = (
-                "---\n"
-                f"name: \"Chat Summary: {safe_title}\"\n"
-                f"description: \"chat,summary,{now}\"\n"
-                "type: \"project\"\n"
-                "---\n\n"
-                + content
-            )
+            content = "---\n" + f"name: \"Chat Summary: {safe_title}\"\n" + f"description: \"chat,summary,{now}\"\n" + "type: \"project\"\n" + "---\n\n" + content
 
         # Save to memory directory with error handling
         try:
@@ -1363,7 +1356,7 @@ class ConsolePage(QWebEnginePage):
         level_names = {0: 'INFO', 1: 'WARN', 2: 'ERROR'}
         level_name = level_names.get(level_val, 'LOG')
         # Show [CHAT] tagged messages or errors - these are important for debugging
-        if '[CHAT]' in message or level_val >= 2:
+        if message is not None and ('[CHAT]' in message or level_val >= 2):
             # Use bright colors for [CHAT] messages to make them visible
             try:
                 if '[CHAT]' in message:
@@ -1828,6 +1821,26 @@ class AIChatWidget(QWidget):
         perf_mode_str = self._get_performance_mode_from_settings()
         perf_mode = get_performance_mode(perf_mode_str)
         config = get_mode_config(perf_mode)
+        
+        # CRITICAL FIX: Check if user selected a non-Mistral model (e.g., DeepSeek)
+        # If so, bypass performance mode and use agent_bridge directly
+        # This respects user's explicit model selection from dropdown
+        try:
+            from src.config.settings import get_settings
+            settings = get_settings()
+            # Check if there's a user-selected model in settings
+            user_model = settings.get("ai", "model_id", default="")
+            if user_model and not user_model.startswith("mistral") and not user_model.startswith("codestral"):
+                # User selected a non-Mistral model (e.g., deepseek-v4-pro)
+                # Bypass performance mode and use agent_bridge directly
+                log.info(f"[AIChat] User selected non-Mistral model: {user_model}, bypassing performance mode")
+                context = ""
+                if self._get_code_context:
+                    context = self._get_code_context()
+                self.message_sent.emit(text, context)
+                return
+        except Exception as e:
+            log.warning(f"[AIChat] Failed to check user model selection: {e}")
         
         # If performance mode is not 'auto' or has special model selection, route through performance system
         if perf_mode != PerformanceMode.AUTO or config.main_agent_model or config.vision_model:
@@ -3680,14 +3693,3 @@ class AIChatWidget(QWidget):
         if self._terminal_process:
             self._terminal_process.terminate()
         super().closeEvent(event)
-
-
-
-
-
-
-
-
-
-
-

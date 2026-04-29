@@ -2782,11 +2782,23 @@ Use Markdown tables for structured data comparison:
             # Models requiring Responses API (removed - no longer supported)
             # needs_responses = any(x in model_lower for x in ["codex", "gpt-5", "o1", "o3"])
             
-            provider_type = ProviderType.MISTRAL
+            # Determine provider type based on model ID
+            provider_type = ProviderType.MISTRAL  # Default
+            
+            if model_lower.startswith("deepseek"):
+                # DeepSeek models (V4-Pro, V4-Flash, etc.)
+                provider_type = ProviderType.DEEPSEEK
+            elif model_lower.startswith("mistral") or model_lower.startswith("codestral"):
+                # Mistral models
+                provider_type = ProviderType.MISTRAL
+            elif model_lower.startswith("qwen") or "siliconflow" in model_lower:
+                # SiliconFlow/Qwen vision models
+                provider_type = ProviderType.SILICONFLOW
+            
             provider = registry.get_provider(provider_type)
             model    = model_id
 
-            log.info(f"[BRIDGE] provider={provider_name} model={model}")
+            log.info(f"[BRIDGE] provider={provider_type.value} model={model}")
 
             # ── Build initial message list ─────────────────────
             # Fast-path: for very simple messages (e.g. greetings), skip the heavy

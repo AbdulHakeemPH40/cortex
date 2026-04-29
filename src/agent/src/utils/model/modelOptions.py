@@ -55,9 +55,13 @@ MODEL_PRICING = {
     # Gemini
     'gemini-2.0-flash': {'input': 0.10, 'output': 0.40, 'currency': 'USD'},
     'gemini-2.0-flash-lite': {'input': 0.075, 'output': 0.30, 'currency': 'USD'},
-    # DeepSeek
+    # DeepSeek V4 Models (NEW)
+    'deepseek-v4-pro': {'input': 0.50, 'output': 2.00, 'cache': 0.10, 'currency': 'USD'},
+    'deepseek-v4-flash': {'input': 0.10, 'output': 0.50, 'cache': 0.02, 'currency': 'USD'},
+    # DeepSeek Legacy (deprecated Jul 24, 2026)
     'deepseek-chat': {'input': 0.27, 'output': 1.10, 'currency': 'USD'},
     'deepseek-coder': {'input': 0.27, 'output': 1.10, 'currency': 'USD'},
+    'deepseek-reasoner': {'input': 0.55, 'output': 2.19, 'currency': 'USD'},
     # Mistral
     'mistral-large-latest': {'input': 2.0, 'output': 6.0, 'currency': 'USD'},
     'codestral-latest': {'input': 0.30, 'output': 0.90, 'currency': 'USD'},
@@ -199,12 +203,34 @@ def getGemini2FlashOption() -> ModelOption:
 
 
 def getDeepSeekChatOption() -> ModelOption:
-    """Get DeepSeek Chat option."""
+    """Get DeepSeek Chat option (Legacy)."""
     pricing = formatPricing('deepseek-chat')
     return {
         'value': 'deepseekchat',
-        'label': 'DeepSeek Chat',
-        'description': f'Cost-effective general model{f" · {pricing}" if pricing else ""}',
+        'label': 'DeepSeek Chat V3 (Legacy)',
+        'description': f'Cost-effective general model (deprecated Jul 2026){f" · {pricing}" if pricing else ""}',
+        'category': 'budget',
+    }
+
+
+def getDeepSeekV4ProOption() -> ModelOption:
+    """Get DeepSeek V4 Pro option - World-class performance."""
+    pricing = formatPricing('deepseek-v4-pro')
+    return {
+        'value': 'deepseekv4pro',
+        'label': 'DeepSeek V4 Pro',
+        'description': f'1.6T params, 1M context, world-class performance{f" · {pricing}" if pricing else ""}',
+        'category': 'recommended',
+    }
+
+
+def getDeepSeekV4FlashOption() -> ModelOption:
+    """Get DeepSeek V4 Flash option - Fast and cost-effective."""
+    pricing = formatPricing('deepseek-v4-flash')
+    return {
+        'value': 'deepseekv4flash',
+        'label': 'DeepSeek V4 Flash',
+        'description': f'284B params, 1M context, fast & efficient{f" · {pricing}" if pricing else ""}',
         'category': 'budget',
     }
 
@@ -298,6 +324,10 @@ def getModelOptions(
         getOpusOption(),
         getGPT4oOption(),
         getGemini2FlashOption(),
+        
+        # ── DeepSeek V4 Models (NEW) ─────────────────────────────────
+        getDeepSeekV4ProOption(),
+        getDeepSeekV4FlashOption(),
 
         # ── Advanced reasoning ────────────────────────────────────────
         getO3Option(),

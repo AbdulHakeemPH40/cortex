@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtSlot, QTimer, QRect, QProcessEnvironment, QSignalBlocker, QEventLoop, QDir, QModelIndex, QThread
 from PyQt6.QtWebChannel import QWebChannel
-from PyQt6.QtGui import QFileSystemModel, QAction, QKeySequence, QIcon, QFont, QPainter, QColor, QMouseEvent, QCloseEvent, QPixmap
+from PyQt6.QtGui import QFileSystemModel, QAction, QKeySequence, QIcon, QFont, QPainter, QColor, QMouseEvent, QCloseEvent, QPixmap, QTextDocument
 from PyQt6.QtWebChannel import QWebChannel
 from PyQt6.QtWebEngineCore import QWebEnginePage
 
@@ -473,10 +473,11 @@ class EditorTabWidget(QTabWidget):
         rem_fg = '#f85149'              if is_dark else '#cf222e'
         info_fg = '#8b949e'             if is_dark else '#6e7781'
 
-        def esc(t): return t.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+        def esc(t: str) -> str:
+            return t.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
-        parts = [f"<div style='background:{bg};color:{fg};white-space:pre;"
-                 f"font-family:\"Cascadia Code\",Consolas,monospace;font-size:13px;line-height:1.5;padding:10px;'>"]
+        parts: list[str] = [f"<div style='background:{bg};color:{fg};white-space:pre;"
+                            f"font-family:\"Cascadia Code\",Consolas,monospace;font-size:13px;line-height:1.5;padding:10px;'>"]
 
         if not diff_lines:
             parts.append(f"<div style='color:{info_fg};padding:20px;'>No changes detected.</div>")
@@ -4759,15 +4760,19 @@ class CortexMainWindow(QMainWindow):
         """Zoom in (Ctrl+=)."""
         editor = self._editor_tabs.current_editor()
         if editor:
-            zoom = editor.zoomIn() + 1
-            editor.setZoom(zoom)
+            current_zoom = editor.zoomIn()
+            if current_zoom is not None:
+                zoom = current_zoom + 1
+                editor.setZoom(zoom)
 
     def _zoom_out(self):
         """Zoom out (Ctrl+-)."""
         editor = self._editor_tabs.current_editor()
         if editor:
-            zoom = max(0, editor.zoomIn() - 1)
-            editor.setZoom(zoom)
+            current_zoom = editor.zoomIn()
+            if current_zoom is not None:
+                zoom = max(0, current_zoom - 1)
+                editor.setZoom(zoom)
 
     def _zoom_reset(self):
         """Reset zoom (Ctrl+0)."""
@@ -4891,6 +4896,7 @@ class CortexMainWindow(QMainWindow):
 
     def _rename_file(self):
         """Rename file (F2)."""
+        from pathlib import Path as LocalPath
         # Check if right-side Explore tree is focused
         if hasattr(self, '_file_tree') and self._file_tree.hasFocus():
             index = self._file_tree.currentIndex()
@@ -4900,7 +4906,7 @@ class CortexMainWindow(QMainWindow):
                     # Prevent renaming the project root
                     if hasattr(self, '_project_manager') and self._project_manager.root:
                         try:
-                            if Path(file_path).resolve() == Path(str(self._project_manager.root)).resolve():
+                            if LocalPath(file_path).resolve() == LocalPath(str(self._project_manager.root)).resolve():
                                 return
                         except Exception:
                             pass
@@ -5420,7 +5426,6 @@ class CortexMainWindow(QMainWindow):
             flags |= 0x00010  # QTextDocument.FindFlag.FindCaseSensitively
         
         # Perform search
-        from PyQt6.QtGui import QTextDocument
         find_flags = QTextDocument.FindFlag(flags)
         
         if search_forward:
@@ -5700,6 +5705,9 @@ class CortexMainWindow(QMainWindow):
         if model_id.startswith("mistral-") or model_id.startswith("codestral-"):
             # Mistral AI models (primary provider)
             provider = "mistral"
+        elif model_id.startswith("deepseek"):
+            # DeepSeek V4 models (V4-Pro, V4-Flash)
+            provider = "deepseek"
         elif model_id.startswith(("gpt-", "o1", "o3")):
             # OpenAI models - determine which API to use
             # Chat Completions: gpt-4o, gpt-4.1-*
