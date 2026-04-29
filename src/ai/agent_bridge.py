@@ -4,7 +4,7 @@ import sys
 import json
 import uuid as _uuid
 import threading
-from typing import Any, Dict, List, Optional, Callable, cast
+from typing import Any, Dict, List, Optional, Callable, Tuple, Type, Set, Protocol, cast
 from dataclasses import dataclass
 
 from PyQt6.QtCore import QObject, pyqtSignal, QThread
@@ -121,6 +121,11 @@ class ToolResult:
 
 
 WorkerMessage = Dict[str, Any]
+ParsedToolCall = Tuple[str, str, Any]
+
+
+class _ToolLimitsLike(Protocol):
+    max_tool_result_chars: int
 
 
 # ============================================================
@@ -719,6 +724,12 @@ class CortexToolContext:
         for p in list(self._files_modified)[-10:]:
             lines.append(f"  [modified] {p}")
         return "\n".join(lines) if lines else "(none yet)"
+
+    def get_recent_read_files(self, limit: int = 10) -> List[str]:
+        return list(self._files_read.keys())[-limit:]
+
+    def get_recent_modified_files(self, limit: int = 10) -> List[str]:
+        return list(self._files_modified.keys())[-limit:]
 
 
 def _always_allow_tool(*_args: Any, **_kwargs: Any) -> bool:
@@ -1765,7 +1776,7 @@ class CortexAgentBridge(QObject):
     context_budget_update = pyqtSignal(int, int, str)
 
     # ── Internal state ──────────────────────────────────────────
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any):
         super().__init__()
         self._project_root: Optional[str] = None
         self._active_file:  Optional[str] = None
@@ -1803,6 +1814,8 @@ class CortexAgentBridge(QObject):
         self._tool_fail_counts: Dict[str, int] = {}   # tool_name -> consecutive failures
         self._disabled_tools:   set[str]       = set() # tools disabled by circuit breaker
         self._tool_total_calls: Dict[str, int] = {}    # tool_name -> total calls per session
+        self._session_tasks: Dict[str, Dict[str, Any]] = {}  # task_id -> task payload
+        self._teams: Dict[str, Dict[str, Any]] = {}  # team_id -> team payload
 
         log.info("[BRIDGE] Initialising Cortex Agent Bridge")
 
@@ -1933,8 +1946,8 @@ class CortexAgentBridge(QObject):
     def _connect_streaming(self):
         try:
             self._streaming = get_streaming_emitter()
-            self._streaming.llm_token.connect(self.response_chunk.emit)
-            self._streaming.error.connect(self.request_error.emit)
+            self._connect_qt_signal(self._streaming.llm_token, self.response_chunk.emit)
+            self._connect_qt_signal(self._streaming.error, self.request_error.emit)
             log.info("[BRIDGE] Streaming emitter connected")
         except Exception as exc:
             log.warning(f"[BRIDGE] Streaming not available: {exc}")
@@ -1954,11 +1967,18 @@ class CortexAgentBridge(QObject):
 
         # ── Persistent memory (project-scoped, loaded once per session) ──
         memory_section = ''
+        _mem_enabled: bool = True
         try:
             from src.config.settings import get_settings
-            _mem_enabled = get_settings().get('memory', 'enabled', default=True)
+            _raw_settings: Any = get_settings()
+            _raw_memory: Any = _raw_settings.get('memory')
+            if isinstance(_raw_memory, dict):
+                _memory_map = cast(Dict[str, Any], _raw_memory)
+                _candidate = _memory_map.get('enabled')
+                if isinstance(_candidate, bool):
+                    _mem_enabled = _candidate
         except Exception:
-            _mem_enabled = True
+            pass
         if _mem_enabled:
             memory_dir = self._get_memory_dir()
             self._ensure_memory_dir(memory_dir)
@@ -2205,18 +2225,17 @@ Use Markdown tables for structured data comparison:
             parts.append('\n'.join(fallback_lines))
 
         # --- Layer 2: Recent individual memory files ---
-        def memoryFreshnessNote(mtime_ms: float) -> str:
-            return ""
+        memoryFreshnessNote: Callable[[float], str] = lambda mtime_ms: ""
 
         if _importlib_util.find_spec("agent.src.memdir.memoryAge"):
             try:
                 from agent.src.memdir.memoryAge import memoryFreshnessNote as _mf
-                memoryFreshnessNote = _mf
+                memoryFreshnessNote = cast(Callable[[float], str], _mf)
             except Exception:
                 pass
 
         try:
-            mem_files = []
+            mem_files: List[Tuple[float, str]] = []
             for dirpath, _dirs, fnames in os.walk(memory_dir):
                 for fname in fnames:
                     if fname.endswith('.md') and fname != 'MEMORY.md':
@@ -2256,7 +2275,7 @@ Use Markdown tables for structured data comparison:
         """Auto-discover project structure for the system prompt (cached per session)."""
         if hasattr(self, '_cached_project_summary'):
             return self._cached_project_summary
-        lines = []
+        lines: List[str] = []
         try:
             # Detect project type from marker files
             markers = {
@@ -2268,7 +2287,7 @@ Use Markdown tables for structured data comparison:
                 'build.gradle': 'Java/Gradle',
                 '.csproj': 'C#/.NET',
             }
-            detected = []
+            detected: List[str] = []
             for marker, lang in markers.items():
                 if os.path.exists(os.path.join(project_root, marker)):
                     detected.append(lang)
@@ -2278,7 +2297,7 @@ Use Markdown tables for structured data comparison:
             # Show top-level directory structure
             try:
                 entries = sorted(os.scandir(project_root), key=lambda e: (not e.is_dir(), e.name))
-                top_level = []
+                top_level: List[str] = []
                 for e in entries[:20]:
                     if e.name.startswith('.') and e.name not in ('.env', '.gitignore'):
                         continue
@@ -2299,7 +2318,7 @@ Use Markdown tables for structured data comparison:
     # CONTEXT CHECKPOINT & COMPACTION
     # ============================================================
 
-    def _create_context_checkpoint(self, messages: list, user_message: str = "") -> str:
+    def _create_context_checkpoint(self, messages: List[Any], user_message: str = "") -> str:
         """
         Create a structured checkpoint of the current conversation state
         and persist it to MEMORY.md for cross-session recovery.
@@ -2320,7 +2339,7 @@ Use Markdown tables for structured data comparison:
         import time as _time
         from datetime import datetime as _dt
 
-        parts = []
+        parts: List[str] = []
 
         # 1. Current user request (first user message or most recent)
         _user_msg = user_message
@@ -2336,7 +2355,7 @@ Use Markdown tables for structured data comparison:
 
         # 2. Todo items
         if self._current_todos:
-            todo_lines = []
+            todo_lines: List[str] = []
             for t in self._current_todos:
                 status = str(t.get('status', 'pending')).upper()
                 content = t.get('content', t.get('activeForm', ''))
@@ -2345,15 +2364,15 @@ Use Markdown tables for structured data comparison:
             parts.append("**Todo Progress:**\n" + "\n".join(todo_lines))
 
         # 3. Files read / modified
-        _read_files = list(self._tool_ctx._files_read.keys())[-10:]  # last 10
-        _mod_files  = list(self._tool_ctx._files_modified.keys())[-10:]
+        _read_files = self._tool_ctx.get_recent_read_files(10)
+        _mod_files = self._tool_ctx.get_recent_modified_files(10)
         if _read_files:
             parts.append("**Files Read:** " + ", ".join(os.path.basename(f) for f in _read_files))
         if _mod_files:
             parts.append("**Files Modified:** " + ", ".join(os.path.basename(f) for f in _mod_files))
 
         # 4. Key assistant decisions (last 3 assistant messages, truncated)
-        _decisions = []
+        _decisions: List[str] = []
         for msg in reversed(messages):
             if getattr(msg, 'role', None) == 'assistant':
                 _content = getattr(msg, 'content', '') or ''
@@ -2365,7 +2384,7 @@ Use Markdown tables for structured data comparison:
             parts.append("**Key Decisions:**\n" + "\n".join(f"- {d}" for d in reversed(_decisions)))
 
         # 5. Conversation summary digest (collect all user+assistant exchanges)
-        _summary_lines = []
+        _summary_lines: List[str] = []
         _msg_count = 0
         for msg in messages:
             _role = getattr(msg, 'role', None)
@@ -2432,7 +2451,7 @@ Use Markdown tables for structured data comparison:
         
         # Build the new MEMORY.md content
         # Keep existing non-checkpoint entries, replace/append the latest summary
-        existing_entries = []
+        existing_entries: List[str] = []
         try:
             with open(memory_md_path, 'r', encoding='utf-8') as fh:
                 content = fh.read()
@@ -2447,7 +2466,7 @@ Use Markdown tables for structured data comparison:
             pass
 
         # Build updated MEMORY.md
-        lines = [
+        lines: List[str] = [
             '# Cortex Memory Index',
             '',
             '## Conversation Summary (auto-updated on compaction)',
@@ -2458,9 +2477,9 @@ Use Markdown tables for structured data comparison:
         
         # Add the summary section directly in MEMORY.md
         # This is what gets loaded into the system prompt on next session
-        _summary_lines = checkpoint_text.split('\n')
+        _summary_lines: List[str] = checkpoint_text.split('\n')
         # Truncate to ~2000 chars to keep MEMORY.md lean
-        _truncated = []
+        _truncated: List[str] = []
         _total = 0
         for sl in _summary_lines:
             if _total + len(sl) > 2000:
@@ -2492,7 +2511,7 @@ Use Markdown tables for structured data comparison:
     def _cleanup_old_checkpoints(self, memory_dir: str, keep: int = 3):
         """Remove old checkpoint files, keeping only the most recent N."""
         try:
-            checkpoints = []
+            checkpoints: List[Tuple[float, str]] = []
             for fname in os.listdir(memory_dir):
                 if fname.startswith('checkpoint_') and fname.endswith('.md'):
                     fpath = os.path.join(memory_dir, fname)
@@ -2507,21 +2526,23 @@ Use Markdown tables for structured data comparison:
         except Exception:
             pass
 
-    def _estimate_message_tokens(self, messages: list) -> int:
+    def _estimate_message_tokens(self, messages: List[Any]) -> int:
         """
         Estimate total token count of message list.
         Uses ~4 chars per token approximation.
         """
         total_chars = 0
         for msg in messages:
-            content = getattr(msg, 'content', '') or ''
+            content_raw = getattr(msg, 'content', '')
+            content = content_raw if isinstance(content_raw, str) else ''
             total_chars += len(content)
             # Tool calls add ~100 tokens each for metadata
-            if getattr(msg, 'tool_calls', None):
-                total_chars += len(msg.tool_calls) * 400
+            tool_calls = getattr(msg, 'tool_calls', None)
+            if isinstance(tool_calls, list) and tool_calls:
+                total_chars += len(cast(List[Any], tool_calls)) * 400
         return total_chars // 4
 
-    def _compact_messages(self, messages: list, PCM: type) -> list:
+    def _compact_messages(self, messages: List[Any], PCM: Type[Any]) -> List[Any]:
         """
         Trim conversation history so the next API call fits in the context window.
         Saves the conversation summary to MEMORY.md for cross-session recovery.
@@ -2551,13 +2572,13 @@ Use Markdown tables for structured data comparison:
         if len(messages) <= KEEP_TAIL + 2:
             return messages  # nothing meaningful to drop
 
-        system_msg = messages[0]
-        rest       = messages[1:]          # everything after the system prompt
+        system_msg: Any = messages[0]
+        rest: List[Any] = messages[1:]          # everything after the system prompt
 
         if len(rest) <= KEEP_TAIL:
             return messages
 
-        tail          = rest[-KEEP_TAIL:]
+        tail: List[Any] = rest[-KEEP_TAIL:]
         dropped_count = len(rest) - len(tail)
 
         # Advance `tail` to the first safe role boundary so we never start
@@ -2570,7 +2591,7 @@ Use Markdown tables for structured data comparison:
         # Create checkpoint with rich context + persist to MEMORY.md
         checkpoint_text = self._create_context_checkpoint(messages)
 
-        summary = PCM(
+        summary: Any = PCM(
             role='user',
             content=(
                 f'[Context Recovery: {dropped_count} earlier messages were compacted. '
@@ -2581,7 +2602,7 @@ Use Markdown tables for structured data comparison:
                 f'remaining messages below. Do NOT re-read files you already read.]'
             )
         )
-        compacted = [system_msg, summary] + tail
+        compacted: List[Any] = [system_msg, summary] + tail
         log.info(
             f'[BRIDGE] Context compacted: {len(messages)} \u2192 {len(compacted)} messages (dropped {dropped_count} middle messages, summary saved to MEMORY.md)'
         )
@@ -2605,20 +2626,23 @@ Use Markdown tables for structured data comparison:
     # Failover priority chain: Mistral only
     _failover_chain = None  # lazily built
 
-    def _get_failover_provider(self, current_type, registry):
+    def _get_failover_provider(self, current_type: Any, registry: Any) -> Optional[Any]:
         """
         Return the next provider in the failover chain, or None if exhausted.
         Skips providers that don't have a valid API key.
         Max 2 failover hops to avoid infinite cycling.
         """
-        from src.ai.providers import ProviderType  
+        from src.ai.providers import ProviderType, ProviderRegistry  
+        current_provider = cast(ProviderType, current_type)
+        provider_registry = cast(ProviderRegistry, registry)
         if self._failover_chain is None:
             self._failover_chain = [
                 ProviderType.MISTRAL,
             ]
 
-        _attempted = getattr(self, '_failover_attempted', set())
-        _attempted.add(current_type)
+        _attempted_raw = getattr(self, '_failover_attempted', None)
+        _attempted: Set[Any] = cast(Set[Any], _attempted_raw) if isinstance(_attempted_raw, set) else set()
+        _attempted.add(current_provider)
         self._failover_attempted = _attempted
 
         if len(_attempted) >= 3:  # max 2 hops
@@ -2628,9 +2652,9 @@ Use Markdown tables for structured data comparison:
             if pt in _attempted:
                 continue
             # Check if provider is registered and has a key
-            _prov = registry._providers.get(pt)
-            if _prov is None:
+            if pt not in provider_registry.list_providers():
                 continue
+            _prov = provider_registry.get_provider(pt)
             try:
                 if _prov.validate_api_key():
                     return pt
@@ -2638,19 +2662,20 @@ Use Markdown tables for structured data comparison:
                 continue
         return None
 
-    def _get_default_model_for_provider(self, provider_type, original_model: str) -> str:
+    def _get_default_model_for_provider(self, provider_type: Any, original_model: str) -> str:
         """
         Map a provider type to a sensible default model when failing over.
         Tries to keep the same "tier" (e.g. small -> small).
         """
         from src.ai.providers import ProviderType
+        provider_enum = cast(ProviderType, provider_type)
         _model_lower = original_model.lower() if original_model else ""
         _is_small = any(x in _model_lower for x in ['mini', 'nano', 'small', 'lite'])
 
         _defaults = {
             ProviderType.MISTRAL: 'mistral-small-latest' if _is_small else 'mistral-medium-latest',
         }
-        return _defaults.get(provider_type, original_model)
+        return _defaults.get(provider_enum, original_model)
 
     # ============================================================
     # MULTI-TURN AGENTIC LOOP  (the core of the bridge)
@@ -2673,7 +2698,7 @@ Use Markdown tables for structured data comparison:
         images  = images  or []
 
         # Reset failover state for this call
-        self._failover_attempted = set()
+        self._failover_attempted: Set[Any] = set()
         self._failover_exhausted = False
 
         merged = {**self._enhancement_data, **context}
@@ -2682,7 +2707,6 @@ Use Markdown tables for structured data comparison:
             from src.ai.providers import get_provider_registry, ProviderType, ChatMessage as PCM
 
             registry      = get_provider_registry()
-            provider_name = merged.get("provider", "mistral")
             
             # Determine provider type based on model
             model_id = merged.get("model_id", merged.get("model", "mistral-large-latest"))
@@ -2741,13 +2765,14 @@ Use Markdown tables for structured data comparison:
             except Exception:
                 _simple_query = False
 
+            messages: List[Any]
             if _simple_query:
                 system_prompt = (
                     "You are Cortex AI Chat inside a coding IDE. "
                     "Answer the user directly and concisely. "
                     "Do not mention internal tools or system details."
                 )
-                messages: List[PCM] = [
+                messages = [
                     PCM(role="system", content=system_prompt),
                     PCM(role="user", content=message),
                 ]
@@ -2888,7 +2913,7 @@ Use Markdown tables for structured data comparison:
                             messages = self._compact_messages(messages, PCM)
 
                 # ── Stream LLM response (with context-compaction retry) ────
-                tool_acc:  Dict[int, Dict] = {}   # idx → {id, name, arguments}
+                tool_acc: Dict[int, Dict[str, Any]] = {}   # idx -> {id, name, arguments}
                 turn_text  = ""
 
                 # Context-length errors are retried up to 2 times per turn by
@@ -2904,7 +2929,7 @@ Use Markdown tables for structured data comparison:
                 # Callback passed to the provider so we get notified before each
                 # internal retry (timeout / rate-limit) and can show the user a
                 # status note without waiting for the retry to succeed or fail.
-                def _retry_notify(attempt_num, max_att, err_type):
+                def _retry_notify(attempt_num: int, max_att: int, err_type: str) -> None:
                     if err_type == 'timeout':
                         msg = 'API timeout - retrying (%d/%d)...' % (attempt_num, max_att)
                     elif err_type == 'rate_limit':
@@ -2925,8 +2950,12 @@ Use Markdown tables for structured data comparison:
                         # Apply performance mode token multiplier if set
                         try:
                             from src.config.settings import get_settings
-                            settings = get_settings()
-                            _raw_mult = settings.get("ai", "token_multiplier", default=1.0)
+                            settings_any: Any = get_settings()
+                            _raw_mult: Any = 1.0
+                            _raw_ai = settings_any.get("ai")
+                            if isinstance(_raw_ai, dict):
+                                _ai_map = cast(Dict[str, Any], _raw_ai)
+                                _raw_mult = _ai_map.get("token_multiplier", 1.0)
                             token_multiplier = float(_raw_mult) if isinstance(_raw_mult, (int, float, str)) else 1.0
                             if token_multiplier != 1.0:
                                 # Calculate with multiplier
@@ -3096,7 +3125,7 @@ Use Markdown tables for structured data comparison:
                     break
 
                 # Assemble pending tool calls
-                pending = []
+                pending: List[Dict[str, Any]] = []
                 for idx in sorted(tool_acc):
                     tc = tool_acc[idx]
                     if tc["name"]:
@@ -3147,7 +3176,7 @@ Use Markdown tables for structured data comparison:
                     _consecutive_same_tool = 0
 
                 # ── Append assistant turn with tool_calls ──────
-                assistant_tool_calls = [
+                assistant_tool_calls: List[Dict[str, Any]] = [
                     {
                         "id":   tc["id"],
                         "type": "function",
@@ -3170,15 +3199,15 @@ Use Markdown tables for structured data comparison:
 
                 # ── Execute tools, append results ──────────────
                 # Separate independent and dependent tool calls for parallel execution
-                parsed_calls = []
+                parsed_calls: List[ParsedToolCall] = []
                 for tc in pending:
-                    tool_name = tc["function"]["name"]
-                    tool_id   = tc["id"]
+                    tool_name: str = str(tc["function"]["name"])
+                    tool_id: str = str(tc["id"])
                     try:
                         raw_args = tc["function"]["arguments"]
-                        args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+                        args: Any = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
                     except json.JSONDecodeError:
-                        args = {}
+                        args = cast(Dict[str, Any], {})
                     parsed_calls.append((tool_name, tool_id, args))
 
                 # Classify: read-only tools can run in parallel, mutating tools run sequentially
@@ -3186,8 +3215,8 @@ Use Markdown tables for structured data comparison:
 
                 # Group into batches: consecutive read-only tools form a parallel batch,
                 # each mutating tool is its own sequential batch.
-                batches: list = []  # Each batch is list of (tool_name, tool_id, args)
-                current_parallel: list = []
+                batches: List[List[ParsedToolCall]] = []  # Each batch is list of (tool_name, tool_id, args)
+                current_parallel: List[ParsedToolCall] = []
                 for call in parsed_calls:
                     if call[0] in _READ_ONLY_TOOLS:
                         current_parallel.append(call)
@@ -3207,7 +3236,7 @@ Use Markdown tables for structured data comparison:
                         break
 
                     # ── Circuit breaker: skip disabled tools ──────────
-                    filtered_batch = []
+                    filtered_batch: List[ParsedToolCall] = []
                     for call in batch:
                         t_name, t_id, t_args = call
                         # Read should never stay blocked across loop retries.
@@ -3291,9 +3320,10 @@ Use Markdown tables for structured data comparison:
                 # Caps total tool results per turn to prevent N parallel tools
                 # from collectively blowing up context.
                 try:
-                    from src.ai.tool_result_storage import enforce_tool_result_budget
+                    from src.ai.tool_result_storage import enforce_tool_result_budget as _enforce_tool_result_budget
+                    enforce_budget = cast(Callable[[List[Any], Any], List[Any]], _enforce_tool_result_budget)
                     _rep_state = self._tool_ctx.get_content_replacement_state()
-                    messages = enforce_tool_result_budget(messages, _rep_state)
+                    messages = enforce_budget(messages, _rep_state)
                 except Exception as _budget_err:
                     log.debug(f"[BRIDGE] Budget enforcement skipped: {_budget_err}")
 
@@ -3443,9 +3473,10 @@ Use Markdown tables for structured data comparison:
                         parsed = None
 
                     if isinstance(parsed, dict):
-                        start_line = parsed.get("start_line")
-                        num_lines = parsed.get("num_lines")
-                        total_lines = parsed.get("total_lines")
+                        parsed_map = cast(Dict[str, Any], parsed)
+                        start_line = parsed_map.get("start_line")
+                        num_lines = parsed_map.get("num_lines")
+                        total_lines = parsed_map.get("total_lines")
 
                         if isinstance(start_line, int) and start_line >= 1:
                             info["offset"] = start_line
@@ -3463,8 +3494,9 @@ Use Markdown tables for structured data comparison:
                                     info["remaining_lines"] = total_lines - end_line
                                     info["remaining_range"] = str(end_line + 1) + "-" + str(total_lines)
 
-                        if "lines_read" not in info and isinstance(parsed.get("content"), str):
-                            _content = parsed.get("content", "")
+                        _parsed_content = parsed_map.get("content")
+                        if "lines_read" not in info and isinstance(_parsed_content, str):
+                            _content: str = _parsed_content
                             info["lines_read"] = _content.count('\n') + (1 if _content else 0)
                     else:
                         info["lines_read"] = result_str.count('\n') + (1 if result_str else 0)
@@ -3496,7 +3528,7 @@ Use Markdown tables for structured data comparison:
                 info["glob"] = args.get("glob", "")
                 info["include"] = args.get("glob", args.get("include", ""))
                 if status == "complete" and result_str:
-                    matches = self._parse_grep_matches(result_str)
+                    matches: List[Dict[str, Any]] = self._parse_grep_matches(result_str)
                     info["match_count"] = len(matches)
                     info["matches"] = matches[:15]  # limit for UI
 
@@ -3538,8 +3570,9 @@ Use Markdown tables for structured data comparison:
                     try:
                         parsed = json.loads(result_str)
                         if isinstance(parsed, dict):
-                            info["team_id"] = parsed.get("teamId", "")
-                            info["message"] = parsed.get("message", "")
+                            parsed_map = cast(Dict[str, Any], parsed)
+                            info["team_id"] = parsed_map.get("teamId", "")
+                            info["message"] = parsed_map.get("message", "")
                     except Exception:
                         pass
 
@@ -3550,8 +3583,9 @@ Use Markdown tables for structured data comparison:
                     try:
                         parsed = json.loads(result_str)
                         if isinstance(parsed, dict):
-                            info["message"] = parsed.get("message", "")
-                            info["task_id"] = parsed.get("taskId", info["task_id"])
+                            parsed_map = cast(Dict[str, Any], parsed)
+                            info["message"] = parsed_map.get("message", "")
+                            info["task_id"] = parsed_map.get("taskId", info["task_id"])
                     except Exception:
                         pass
 
@@ -3568,9 +3602,9 @@ Use Markdown tables for structured data comparison:
 
         return json.dumps(info)
 
-    def _parse_grep_matches(self, result_str: str) -> list:
+    def _parse_grep_matches(self, result_str: str) -> List[Dict[str, Any]]:
         """Parse grep/search result into structured match list for UI."""
-        matches = []
+        matches: List[Dict[str, Any]] = []
         try:
             # Try JSON parse first (real Grep tool returns structured results)
             data = json.loads(result_str)
@@ -3591,14 +3625,21 @@ Use Markdown tables for structured data comparison:
                         fname = fpath.split('/')[-1].split('\\')[-1]
                         matches.append({"file": fname, "line": lineno, "path": fpath})
             elif isinstance(data, list):
-                for item in data[:15]:
+                data_list: List[Any] = cast(List[Any], data)
+                for item in data_list[:15]:
                     if isinstance(item, str):
                         fname = item.split('/')[-1].split('\\')[-1]
                         matches.append({"file": fname, "line": 0, "path": item})
             elif isinstance(data, dict):
                 # Possible {files: [...]} or {matches: [...]}
-                items = data.get('files', data.get('matches', data.get('results', [])))
-                if isinstance(items, list):
+                data_map = cast(Dict[str, Any], data)
+                items_any = data_map.get('files')
+                if not isinstance(items_any, list):
+                    items_any = data_map.get('matches')
+                if not isinstance(items_any, list):
+                    items_any = data_map.get('results')
+                items: List[Any] = cast(List[Any], items_any) if isinstance(items_any, list) else []
+                if items:
                     for item in items[:15]:
                         if isinstance(item, str):
                             fname = item.split('/')[-1].split('\\')[-1]
@@ -3623,9 +3664,14 @@ Use Markdown tables for structured data comparison:
         return matches
 
     async def _execute_single_tool(
-        self, tool_name: str, tool_id: str, args: Dict,
-        messages: list, PCM: type, _limits=None,
-    ):
+        self,
+        tool_name: str,
+        tool_id: str,
+        args: Dict[str, Any],
+        messages: List[Any],
+        PCM: Type[Any],
+        _limits: Optional[_ToolLimitsLike] = None,
+    ) -> None:
         """Execute one tool call: emit running → dispatch → emit result → append to messages."""
         activity = _TOOL_TO_ACTIVITY_NAME.get(tool_name, tool_name.lower())
 
@@ -3642,14 +3688,16 @@ Use Markdown tables for structured data comparison:
             running_info = self._build_activity_info(activity, tool_name, args, None, "running")
             self._safe_emit(self.tool_activity, activity, running_info, "running")
 
-        result = await self._dispatch_tool(tool_name, tool_id, args)
+        result: ToolResult = cast(ToolResult, await self._dispatch_tool(tool_name, tool_id, args))
 
         if result.success:
-            result_str = (
-                json.dumps(result.result)
-                if isinstance(result.result, (dict, list))
-                else str(result.result)
-            )
+            result_payload: Any = result.result
+            if isinstance(result_payload, dict):
+                result_str = json.dumps(cast(Dict[str, Any], result_payload))
+            elif isinstance(result_payload, list):
+                result_str = json.dumps(cast(List[Any], result_payload))
+            else:
+                result_str = str(result_payload)
             if not _silent:
                 complete_info = self._build_activity_info(activity, tool_name, args, result_str, "complete")
                 self._safe_emit(self.tool_activity, activity, complete_info, "complete")
@@ -3694,7 +3742,7 @@ Use Markdown tables for structured data comparison:
     # ── Tool dispatch ──────────────────────────────────────────
 
     async def _dispatch_tool(
-        self, tool_name: str, tool_id: str, args: Dict
+        self, tool_name: str, tool_id: str, args: Dict[str, Any]
     ) -> ToolResult:
         """
         Dispatch a tool call to the real agent tool or bridge-native fallback.
@@ -3775,7 +3823,7 @@ Use Markdown tables for structured data comparison:
 
     # ---- Real tool dispatchers ----------------------------------------
 
-    async def _dispatch_read(self, tool_id: str, args: Dict) -> ToolResult:
+    async def _dispatch_read(self, tool_id: str, args: Dict[str, Any]) -> ToolResult:
         """Dispatch to real FileReadTool or bridge-native fallback."""
         path = args.get("file_path", "")
         if not os.path.isabs(path) and self._project_root:
@@ -3816,27 +3864,46 @@ Use Markdown tables for structured data comparison:
                     args, self._tool_ctx, _always_allow_tool, _STUB_PARENT_MESSAGE
                 )
                 data = raw.get("data")
-                start_line = None
-                num_lines = None
-                total_lines = None
+                start_line: Optional[int] = None
+                num_lines: Optional[int] = None
+                total_lines: Optional[int] = None
+                content: str = ""
 
                 # Extract text content for LLM from the FileReadOutput
                 if hasattr(data, "file") and hasattr(data.file, "content"):
-                    content = data.file.content
-                    start_line = getattr(data.file, "start_line", None)
-                    num_lines = getattr(data.file, "num_lines", None)
-                    total_lines = getattr(data.file, "total_lines", None)
-                elif isinstance(data, dict) and "content" in data:
-                    content = data["content"]
-                    start_line = data.get("start_line")
-                    num_lines = data.get("num_lines")
-                    total_lines = data.get("total_lines")
-                elif isinstance(data, dict) and isinstance(data.get("file"), dict):
-                    file_obj = data.get("file", {})
-                    content = file_obj.get("content", "")
-                    start_line = file_obj.get("start_line")
-                    num_lines = file_obj.get("num_lines")
-                    total_lines = file_obj.get("total_lines")
+                    content_raw = getattr(data.file, "content", "")
+                    content = content_raw if isinstance(content_raw, str) else str(content_raw)
+                    start_raw = getattr(data.file, "start_line", None)
+                    num_raw = getattr(data.file, "num_lines", None)
+                    total_raw = getattr(data.file, "total_lines", None)
+                    start_line = start_raw if isinstance(start_raw, int) else None
+                    num_lines = num_raw if isinstance(num_raw, int) else None
+                    total_lines = total_raw if isinstance(total_raw, int) else None
+                elif isinstance(data, dict):
+                    data_map = cast(Dict[str, Any], data)
+                    if "content" in data_map:
+                        content_raw = data_map.get("content", "")
+                        content = content_raw if isinstance(content_raw, str) else str(content_raw)
+                        start_raw = data_map.get("start_line")
+                        num_raw = data_map.get("num_lines")
+                        total_raw = data_map.get("total_lines")
+                        start_line = start_raw if isinstance(start_raw, int) else None
+                        num_lines = num_raw if isinstance(num_raw, int) else None
+                        total_lines = total_raw if isinstance(total_raw, int) else None
+                    else:
+                        file_any = data_map.get("file")
+                        if isinstance(file_any, dict):
+                            file_obj = cast(Dict[str, Any], file_any)
+                            content_raw = file_obj.get("content", "")
+                            content = content_raw if isinstance(content_raw, str) else str(content_raw)
+                            start_raw = file_obj.get("start_line")
+                            num_raw = file_obj.get("num_lines")
+                            total_raw = file_obj.get("total_lines")
+                            start_line = start_raw if isinstance(start_raw, int) else None
+                            num_lines = num_raw if isinstance(num_raw, int) else None
+                            total_lines = total_raw if isinstance(total_raw, int) else None
+                        else:
+                            content = str(data_map)
                 else:
                     content = str(data)
                 if start_line is None:
@@ -3877,7 +3944,7 @@ Use Markdown tables for structured data comparison:
                     )
                 except Exception:
                     pass
-                result_payload = {
+                result_payload: Dict[str, Any] = {
                     "path": args["file_path"],
                     "content": content,
                     "start_line": start_line,
@@ -4083,7 +4150,7 @@ Use Markdown tables for structured data comparison:
         except Exception as e:
             return ToolResult(tool_id=tool_id, result=None, success=False, error=str(e))
 
-    async def _dispatch_write(self, tool_id: str, args: Dict) -> ToolResult:
+    async def _dispatch_write(self, tool_id: str, args: Dict[str, Any]) -> ToolResult:
         """Dispatch to real FileWriteTool or bridge-native fallback."""
         path = args.get("file_path", "")
         content = args.get("content", "")
@@ -4139,11 +4206,15 @@ Use Markdown tables for structured data comparison:
 
         if _REAL_FILE_WRITE_TOOL is not None:
             try:
-                raw = await _REAL_FILE_WRITE_TOOL.call(
+                real_write_tool = cast(Any, _REAL_FILE_WRITE_TOOL)
+                raw_any: Any = await real_write_tool.call(
                     args, self._tool_ctx, _always_allow_tool, _STUB_PARENT_MESSAGE
                 )
-                data = raw.get("data", {})
-                op_type = data.get("type", "create" if is_new else "update")
+                raw_map = cast(Dict[str, Any], raw_any) if isinstance(raw_any, dict) else {}
+                data_any = raw_map.get("data", {})
+                data_map = cast(Dict[str, Any], data_any) if isinstance(data_any, dict) else {}
+                op_raw = data_map.get("type", "create" if is_new else "update")
+                op_type: str = op_raw if isinstance(op_raw, str) else ("create" if is_new else "update")
                 # Emit UI signals
                 self.file_generated.emit(full_path, content)
                 if (not is_new) and (original_content is not None) and (original_content != content):
@@ -4178,7 +4249,7 @@ Use Markdown tables for structured data comparison:
         except Exception as e:
             return ToolResult(tool_id=tool_id, result=None, success=False, error=str(e))
 
-    async def _dispatch_edit(self, tool_id: str, args: Dict) -> ToolResult:
+    async def _dispatch_edit(self, tool_id: str, args: Dict[str, Any]) -> ToolResult:
         """Dispatch to real FileEditTool or bridge-native fallback."""
         path = args.get("file_path", "")
         old_string = args.get("old_string", "")
@@ -4212,12 +4283,17 @@ Use Markdown tables for structured data comparison:
 
         if _REAL_FILE_EDIT_TOOL is not None:
             try:
-                raw = await _REAL_FILE_EDIT_TOOL.call(
+                real_edit_tool = cast(Any, _REAL_FILE_EDIT_TOOL)
+                raw_any: Any = await real_edit_tool.call(
                     args, self._tool_ctx, _always_allow_tool, _STUB_PARENT_MESSAGE
                 )
-                data = raw.get("data", {})
-                actual_old = data.get("oldString", old_string)
-                actual_new = data.get("newString", new_string)
+                raw_map = cast(Dict[str, Any], raw_any) if isinstance(raw_any, dict) else {}
+                data_any = raw_map.get("data", {})
+                data_map = cast(Dict[str, Any], data_any) if isinstance(data_any, dict) else {}
+                old_raw = data_map.get("oldString", old_string)
+                new_raw = data_map.get("newString", new_string)
+                actual_old = old_raw if isinstance(old_raw, str) else old_string
+                actual_new = new_raw if isinstance(new_raw, str) else new_string
                 # Compute full file content for diff/cache: original → new
                 # If we have original content, apply the replacement;
                 # otherwise re-read the file from disk (the real tool already wrote it)
@@ -4293,37 +4369,44 @@ Use Markdown tables for structured data comparison:
             diff_data = await _DIFF_SERVICE.fetch_diff_data()
             norm = os.path.normpath(file_path)
             # Find this file in the git diff results (match by basename or full path)
-            for git_path, file_diff in vars(diff_data).get('files', []) or []:
-                pass  # diff_data.files is a list of DiffFile objects
-            for diff_file in (diff_data.files or []):
-                git_norm = os.path.normpath(diff_file.path)
+            diff_files_any = getattr(diff_data, "files", None)
+            diff_files: List[Any] = cast(List[Any], diff_files_any) if isinstance(diff_files_any, list) else []
+            for diff_file in diff_files:
+                diff_path = getattr(diff_file, "path", "")
+                if not isinstance(diff_path, str) or not diff_path:
+                    continue
+                git_norm = os.path.normpath(diff_path)
                 if git_norm == norm or os.path.basename(git_norm) == os.path.basename(norm):
                     _added   = getattr(diff_file, 'lines_added', 0) or 0
                     _removed = getattr(diff_file, 'lines_removed', 0) or 0
                     _binary  = getattr(diff_file, 'is_binary', False) or False
                     _large   = getattr(diff_file, 'is_large_file', False) or False
+                    _flags = (" [binary]" if _binary else "") + (" [large]" if _large else "")
                     log.info(
-                        f"[BRIDGE] Git diff stats for {diff_file.path}: "
-                        f"+{_added} -{_removed}"
-                        f"{' [binary]' if _binary else ''}"
-                        f"{' [large]' if _large else ''}"
+                        f"[BRIDGE] Git diff stats for {diff_path}: +{_added} -{_removed}{_flags}"
                     )
                     break
         except Exception as exc:
             log.debug(f"[BRIDGE] _refresh_git_diff_stats failed: {exc}")
 
-    async def _dispatch_glob(self, tool_id: str, args: Dict) -> ToolResult:
+    async def _dispatch_glob(self, tool_id: str, args: Dict[str, Any]) -> ToolResult:
         """Dispatch to real GlobTool or bridge-native fallback."""
         if _REAL_GLOB_TOOL is not None:
             try:
-                raw = await _REAL_GLOB_TOOL.call(args, self._tool_ctx)
-                data = raw.get("data", {})
-                filenames = data.get("filenames", [])
+                real_glob_tool = cast(Any, _REAL_GLOB_TOOL)
+                raw_any: Any = await real_glob_tool.call(args, self._tool_ctx)
+                raw_map = cast(Dict[str, Any], raw_any) if isinstance(raw_any, dict) else {}
+                data_any = raw_map.get("data", {})
+                data_map = cast(Dict[str, Any], data_any) if isinstance(data_any, dict) else {}
+                filenames_raw = data_map.get("filenames", [])
+                filenames: List[str] = [
+                    f for f in cast(List[Any], filenames_raw) if isinstance(f, str)
+                ] if isinstance(filenames_raw, list) else []
                 return ToolResult(tool_id=tool_id, result={
                     "pattern": args.get("pattern", ""),
                     "files": filenames,
-                    "numFiles": data.get("numFiles", len(filenames)),
-                    "truncated": data.get("truncated", False),
+                    "numFiles": data_map.get("numFiles", len(filenames)),
+                    "truncated": data_map.get("truncated", False),
                 })
             except Exception as exc:
                 log.warning(f"[BRIDGE] Real GlobTool failed, using fallback: {exc}")
@@ -4342,15 +4425,20 @@ Use Markdown tables for structured data comparison:
         except Exception as e:
             return ToolResult(tool_id=tool_id, result=None, success=False, error=str(e))
 
-    async def _dispatch_grep(self, tool_id: str, args: Dict) -> ToolResult:
+    async def _dispatch_grep(self, tool_id: str, args: Dict[str, Any]) -> ToolResult:
         """Dispatch to real GrepTool or bridge-native fallback."""
         if _REAL_GREP_TOOL is not None:
             try:
-                raw = await _REAL_GREP_TOOL.call(args, self._tool_ctx)
-                data = raw.get("data", {})
+                real_grep_tool = cast(Any, _REAL_GREP_TOOL)
+                raw_any: Any = await real_grep_tool.call(args, self._tool_ctx)
+                raw_map = cast(Dict[str, Any], raw_any) if isinstance(raw_any, dict) else {}
+                data_any = raw_map.get("data", {})
+                data = cast(Dict[str, Any], data_any) if isinstance(data_any, dict) else {}
                 # Use map_tool_result_to_block for LLM-friendly output
-                if hasattr(_REAL_GREP_TOOL, "map_tool_result_to_block"):
-                    block = _REAL_GREP_TOOL.map_tool_result_to_block(data, tool_id)
+                map_to_block = getattr(real_grep_tool, "map_tool_result_to_block", None)
+                if callable(map_to_block):
+                    map_to_block_fn = cast(Callable[[Dict[str, Any], str], Dict[str, Any]], map_to_block)
+                    block = map_to_block_fn(data, tool_id)
                     return ToolResult(tool_id=tool_id, result={
                         "pattern": args.get("pattern", ""),
                         "matches": block.get("content", str(data)),
@@ -4373,11 +4461,11 @@ Use Markdown tables for structured data comparison:
         try:
             flags = _re.IGNORECASE if case_insensitive else 0
             compiled = _re.compile(pattern, flags)
-            results = []
+            results: List[str] = []
             walk_target = search_path if os.path.isdir(search_path) else os.path.dirname(search_path)
             if os.path.isfile(search_path):
                 # Single-file search
-                files_to_scan = [search_path]
+                files_to_scan: List[str] = [search_path]
             else:
                 files_to_scan = []
                 for root, dirs, files in os.walk(walk_target):
@@ -4411,7 +4499,7 @@ Use Markdown tables for structured data comparison:
         except Exception as exc:
             return ToolResult(tool_id=tool_id, result=None, success=False, error=str(exc))
 
-    async def _dispatch_todo_write(self, tool_id: str, args: Dict) -> ToolResult:
+    async def _dispatch_todo_write(self, tool_id: str, args: Dict[str, Any]) -> ToolResult:
         """
         Handle the TodoWrite agent tool.
 
@@ -4431,10 +4519,12 @@ Use Markdown tables for structured data comparison:
             return "PENDING"
 
         normalized_todos: List[Dict[str, Any]] = []
-        for t in (todos if isinstance(todos, list) else []):
+        todo_items: List[Any] = cast(List[Any], todos) if isinstance(todos, list) else []
+        for t in todo_items:
             if not isinstance(t, dict):
                 continue
-            td = dict(t)
+            t_map = cast(Dict[str, Any], t)
+            td: Dict[str, Any] = dict(t_map)
             td["status"] = _normalize_status(td.get("status"))
             normalized_todos.append(td)
 
@@ -4508,8 +4598,13 @@ Use Markdown tables for structured data comparison:
         """
         pending = self._pending_questions.get(question_id)
         if pending:
-            future = pending.get("future")
-            if future and not future.done():
+            future_obj = pending.get("future")
+            future: Optional[asyncio.Future[str]] = (
+                cast(Optional[asyncio.Future[str]], future_obj)
+                if isinstance(future_obj, asyncio.Future)
+                else None
+            )
+            if future is not None and not future.done():
                 # Resolve the future from the Qt main thread using
                 # call_soon_threadsafe so the worker's asyncio loop picks it up
                 # safely without any thread-safety violations.
@@ -4524,18 +4619,18 @@ Use Markdown tables for structured data comparison:
         else:
             log.warning(f"[ASK] Received answer for unknown question ID: {question_id}")
 
-    def _resume_agent_with_answer(self, pending_question: Dict) -> None:
+    def _resume_agent_with_answer(self, _pending_question: Dict[str, Any]) -> None:
         """
         Legacy stub — superseded by the asyncio.Future approach in
         _dispatch_ask_user_question / on_answer_question.
         Kept here only to avoid AttributeError if referenced elsewhere.
         """
+        question_id = _pending_question.get("id")
         log.warning(
-            "[ASK] _resume_agent_with_answer called — this is a no-op; "
-            "use on_answer_question instead."
+            f"[ASK] _resume_agent_with_answer called for question_id={question_id!r} — this is a no-op; use on_answer_question instead."
         )
 
-    async def _dispatch_ask_user_question(self, tool_id: str, args: Dict) -> ToolResult:
+    async def _dispatch_ask_user_question(self, tool_id: str, args: Dict[str, Any]) -> ToolResult:
         """
         Handle the AskUserQuestion agent tool.
 
@@ -4570,7 +4665,7 @@ Use Markdown tables for structured data comparison:
         # Create a Future on the current event loop that will be resolved
         # by on_answer_question() when the user submits their answer.
         loop = asyncio.get_running_loop()
-        answer_future: asyncio.Future = loop.create_future()
+        answer_future: asyncio.Future[str] = loop.create_future()
 
         # Store pending question state including the future
         self._pending_questions[question_id] = {
@@ -4599,7 +4694,7 @@ Use Markdown tables for structured data comparison:
         # Await the future — this suspends the agent turn loop until the user
         # answers (or the task is cancelled / times out after 5 minutes).
         try:
-            answer = await asyncio.wait_for(answer_future, timeout=300.0)
+            answer: str = await asyncio.wait_for(answer_future, timeout=300.0)
         except asyncio.TimeoutError:
             self._pending_questions.pop(question_id, None)
             log.warning(f"[ASK] Question {question_id} timed out after 5 min")
@@ -4627,7 +4722,7 @@ Use Markdown tables for structured data comparison:
             success=True
         )
 
-    async def _dispatch_lsp(self, tool_id: str, args: Dict) -> ToolResult:
+    async def _dispatch_lsp(self, tool_id: str, args: Dict[str, Any]) -> ToolResult:
         """
         Handle the LSP tool.
 
@@ -4693,7 +4788,7 @@ Use Markdown tables for structured data comparison:
             ),
         })
 
-    async def _dispatch_web_fetch(self, tool_id: str, args: Dict) -> ToolResult:
+    async def _dispatch_web_fetch(self, tool_id: str, args: Dict[str, Any]) -> ToolResult:
         """
         Handle the WebFetch tool.
 
@@ -4747,7 +4842,7 @@ Use Markdown tables for structured data comparison:
             return ToolResult(tool_id=tool_id, result=None, success=False,
                               error=f"WebFetch error: {exc}")
 
-    async def _dispatch_web_search(self, tool_id: str, args: Dict) -> ToolResult:
+    async def _dispatch_web_search(self, tool_id: str, args: Dict[str, Any]) -> ToolResult:
         """
         Handle the WebSearch tool.
 
@@ -4776,7 +4871,7 @@ Use Markdown tables for structured data comparison:
     # TASK V2 DISPATCHERS
     # ============================================================
 
-    async def _dispatch_task_create(self, tool_id: str, args: Dict) -> ToolResult:
+    async def _dispatch_task_create(self, tool_id: str, args: Dict[str, Any]) -> ToolResult:
         """
         Handle TaskCreate tool - create a new structured task.
         """
@@ -4796,7 +4891,7 @@ Use Markdown tables for structured data comparison:
         task_id = f"task-{uuid.uuid4().hex[:8]}"
 
         # Store task in session
-        task = {
+        task: Dict[str, Any] = {
             "id": task_id,
             "subject": subject,
             "description": description,
@@ -4809,8 +4904,6 @@ Use Markdown tables for structured data comparison:
         }
 
         # Add to session task list
-        if not hasattr(self, '_session_tasks'):
-            self._session_tasks: Dict[str, Any] = {}
         self._session_tasks[task_id] = task
 
         log.info(f"[TASK] Created task {task_id}: {subject}")
@@ -4821,7 +4914,7 @@ Use Markdown tables for structured data comparison:
             "message": f"Task '{subject}' created with ID {task_id}"
         })
 
-    async def _dispatch_task_update(self, tool_id: str, args: Dict) -> ToolResult:
+    async def _dispatch_task_update(self, tool_id: str, args: Dict[str, Any]) -> ToolResult:
         """
         Handle TaskUpdate tool - update task status, owner, or dependencies.
         """
@@ -4836,7 +4929,7 @@ Use Markdown tables for structured data comparison:
                               error="TaskUpdate requires 'taskId' parameter")
 
         # Get task from session
-        if not hasattr(self, '_session_tasks') or task_id not in self._session_tasks:
+        if task_id not in self._session_tasks:
             return ToolResult(tool_id=tool_id, result=None, success=False,
                               error=f"Task {task_id} not found")
 
@@ -4861,14 +4954,11 @@ Use Markdown tables for structured data comparison:
             "message": f"Task {task_id} updated"
         })
 
-    async def _dispatch_task_list(self, tool_id: str, args: Dict) -> ToolResult:
+    async def _dispatch_task_list(self, tool_id: str, args: Dict[str, Any]) -> ToolResult:
         """
         Handle TaskList tool - list all tasks in session.
         """
         status_filter = args.get("status", "all")
-
-        if not hasattr(self, '_session_tasks'):
-            self._session_tasks: Dict[str, Any] = {}
 
         tasks = list(self._session_tasks.values())
 
@@ -4883,7 +4973,7 @@ Use Markdown tables for structured data comparison:
             "filter": status_filter
         })
 
-    async def _dispatch_task_get(self, tool_id: str, args: Dict) -> ToolResult:
+    async def _dispatch_task_get(self, tool_id: str, args: Dict[str, Any]) -> ToolResult:
         """
         Handle TaskGet tool - get details of a specific task.
         """
@@ -4893,7 +4983,7 @@ Use Markdown tables for structured data comparison:
             return ToolResult(tool_id=tool_id, result=None, success=False,
                               error="TaskGet requires 'taskId' parameter")
 
-        if not hasattr(self, '_session_tasks') or task_id not in self._session_tasks:
+        if task_id not in self._session_tasks:
             return ToolResult(tool_id=tool_id, result=None, success=False,
                               error=f"Task {task_id} not found")
 
@@ -4903,7 +4993,7 @@ Use Markdown tables for structured data comparison:
             "task": task
         })
 
-    async def _dispatch_task_stop(self, tool_id: str, args: Dict) -> ToolResult:
+    async def _dispatch_task_stop(self, tool_id: str, args: Dict[str, Any]) -> ToolResult:
         """
         Handle TaskStop tool - stop a running task.
         """
@@ -4913,7 +5003,7 @@ Use Markdown tables for structured data comparison:
             return ToolResult(tool_id=tool_id, result=None, success=False,
                               error="TaskStop requires 'taskId' parameter")
 
-        if not hasattr(self, '_session_tasks') or task_id not in self._session_tasks:
+        if task_id not in self._session_tasks:
             return ToolResult(tool_id=tool_id, result=None, success=False,
                               error=f"Task {task_id} not found")
 
@@ -4933,7 +5023,7 @@ Use Markdown tables for structured data comparison:
     # MCP DISPATCHER
     # ============================================================
 
-    async def _dispatch_mcp(self, tool_id: str, args: Dict) -> ToolResult:
+    async def _dispatch_mcp(self, tool_id: str, args: Dict[str, Any]) -> ToolResult:
         """
         Handle MCP tool - execute a tool from an MCP server.
         """
@@ -4966,7 +5056,7 @@ Use Markdown tables for structured data comparison:
     # TEAM/SWARM DISPATCHERS
     # ============================================================
 
-    async def _dispatch_team_create(self, tool_id: str, args: Dict) -> ToolResult:
+    async def _dispatch_team_create(self, tool_id: str, args: Dict[str, Any]) -> ToolResult:
         """
         Handle TeamCreate tool - create a multi-agent team.
         """
@@ -4983,7 +5073,7 @@ Use Markdown tables for structured data comparison:
         team_id = f"team-{uuid.uuid4().hex[:8]}"
 
         # Create team structure
-        team = {
+        team: Dict[str, Any] = {
             "id": team_id,
             "name": name,
             "description": description,
@@ -5003,8 +5093,6 @@ Use Markdown tables for structured data comparison:
             })
 
         # Store team
-        if not hasattr(self, '_teams'):
-            self._teams = {}
         self._teams[team_id] = team
 
         log.info(f"[TEAM] Created team {team_id}: {name} with {len(teammates)} teammates")
@@ -5015,7 +5103,7 @@ Use Markdown tables for structured data comparison:
             "message": f"Team '{name}' created with {len(teammates)} agents"
         })
 
-    async def _dispatch_team_delete(self, tool_id: str, args: Dict) -> ToolResult:
+    async def _dispatch_team_delete(self, tool_id: str, args: Dict[str, Any]) -> ToolResult:
         """
         Handle TeamDelete tool - delete a team.
         """
@@ -5026,15 +5114,14 @@ Use Markdown tables for structured data comparison:
                               error="TeamDelete requires 'teamName' parameter")
 
         # Find team by name
-        if hasattr(self, '_teams'):
-            for tid, team in list(self._teams.items()):
-                if team.get("name") == team_name:
-                    del self._teams[tid]
-                    log.info(f"[TEAM] Deleted team {tid}: {team_name}")
-                    return ToolResult(tool_id=tool_id, result={
-                        "teamId": tid,
-                        "message": f"Team '{team_name}' deleted"
-                    })
+        for tid, team in list(self._teams.items()):
+            if team.get("name") == team_name:
+                del self._teams[tid]
+                log.info(f"[TEAM] Deleted team {tid}: {team_name}")
+                return ToolResult(tool_id=tool_id, result={
+                    "teamId": tid,
+                    "message": f"Team '{team_name}' deleted"
+                })
 
         return ToolResult(tool_id=tool_id, result=None, success=False,
                           error=f"Team '{team_name}' not found")
@@ -5152,7 +5239,7 @@ Use Markdown tables for structured data comparison:
         _is_continue = message.strip().startswith('Continue the task.')
         if not _is_continue:
             self._continue_cycle_count = 0
-            self._last_pending_ids: set[str] = set()
+            self._last_pending_ids = set()
         # Always reset tool counters — even on Continue — so tools
         # aren't still disabled from the previous cycle's limits.
         self._tool_fail_counts.clear()
@@ -5319,7 +5406,7 @@ Use Markdown tables for structured data comparison:
 # FACTORY
 # ============================================================
 
-def get_agent_bridge(**kwargs) -> CortexAgentBridge:
+def get_agent_bridge(**kwargs: Any) -> CortexAgentBridge:
     """Factory function — returns a ready CortexAgentBridge instance."""
     return CortexAgentBridge(**kwargs)
 

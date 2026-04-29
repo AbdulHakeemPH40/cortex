@@ -15,7 +15,7 @@ import os
 import logging
 import time
 import uuid
-from typing import Optional, Dict, Set, Tuple
+from typing import Optional, Dict, Set, Tuple, List, Any
 
 log = logging.getLogger("cortex.tool_result_storage")
 
@@ -201,10 +201,10 @@ class ContentReplacementState:
 
 
 def enforce_tool_result_budget(
-    messages: list,
+    messages: List[Any],
     state: ContentReplacementState,
     budget: int = MAX_TOOL_RESULTS_PER_MESSAGE_CHARS,
-) -> list:
+) -> List[Any]:
     """
     Walk messages and enforce per-message aggregate budget on tool results.
     
