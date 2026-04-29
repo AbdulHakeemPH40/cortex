@@ -73,14 +73,23 @@ class _GitStatusWorker(QThread):
         total_add, total_del = 0, 0
         try:
             # FIX: Prevent console window popup
-            kwargs = dict(cwd=self._repo_path, capture_output=True, text=True, timeout=5)
             if sys.platform == 'win32':
-                kwargs['creationflags'] = _subprocess.CREATE_NO_WINDOW
-            
-            r = _subprocess.run(
-                ["git", "diff", "--numstat", "--", file_path],
-                **kwargs
-            )
+                r = _subprocess.run(
+                    ["git", "diff", "--numstat", "--", file_path],
+                    cwd=self._repo_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    creationflags=_subprocess.CREATE_NO_WINDOW,
+                )
+            else:
+                r = _subprocess.run(
+                    ["git", "diff", "--numstat", "--", file_path],
+                    cwd=self._repo_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
             if r.returncode == 0 and r.stdout.strip():
                 a, d = self._parse_numstat(r.stdout)
                 total_add += a; total_del += d
@@ -88,14 +97,23 @@ class _GitStatusWorker(QThread):
             pass
         try:
             # FIX: Prevent console window popup
-            kwargs = dict(cwd=self._repo_path, capture_output=True, text=True, timeout=5)
             if sys.platform == 'win32':
-                kwargs['creationflags'] = _subprocess.CREATE_NO_WINDOW
-            
-            r = _subprocess.run(
-                ["git", "diff", "--cached", "--numstat", "--", file_path],
-                **kwargs
-            )
+                r = _subprocess.run(
+                    ["git", "diff", "--cached", "--numstat", "--", file_path],
+                    cwd=self._repo_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    creationflags=_subprocess.CREATE_NO_WINDOW,
+                )
+            else:
+                r = _subprocess.run(
+                    ["git", "diff", "--cached", "--numstat", "--", file_path],
+                    cwd=self._repo_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
             if r.returncode == 0 and r.stdout.strip():
                 a, d = self._parse_numstat(r.stdout)
                 total_add += a; total_del += d
@@ -109,14 +127,23 @@ class _GitStatusWorker(QThread):
         # 1) branch name
         try:
             # FIX: Prevent console window popup
-            kwargs = dict(cwd=self._repo_path, capture_output=True, text=True, timeout=5)
             if sys.platform == 'win32':
-                kwargs['creationflags'] = _subprocess.CREATE_NO_WINDOW
-            
-            r = _subprocess.run(
-                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                **kwargs
-            )
+                r = _subprocess.run(
+                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                    cwd=self._repo_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    creationflags=_subprocess.CREATE_NO_WINDOW,
+                )
+            else:
+                r = _subprocess.run(
+                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                    cwd=self._repo_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
             data['branch'] = r.stdout.strip() if r.returncode == 0 else None
         except Exception:
             data['branch'] = None
@@ -138,14 +165,21 @@ class _GitStatusWorker(QThread):
         else:
             try:
                 # FIX: Prevent console window popup
-                kwargs = dict(capture_output=True, text=True, timeout=5)
                 if sys.platform == 'win32':
-                    kwargs['creationflags'] = _subprocess.CREATE_NO_WINDOW
-                
-                r = _subprocess.run(
-                    ["gh", "--version"],
-                    **kwargs
-                )
+                    r = _subprocess.run(
+                        ["gh", "--version"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                        creationflags=_subprocess.CREATE_NO_WINDOW,
+                    )
+                else:
+                    r = _subprocess.run(
+                        ["gh", "--version"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
                 if r.returncode == 0:
                     data['gh'] = r.stdout.strip().split('\n')[0]
                 else:
@@ -476,8 +510,9 @@ class EditorTabWidget(QTabWidget):
         def esc(t: str) -> str:
             return t.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
-        parts: list[str] = [f"<div style='background:{bg};color:{fg};white-space:pre;"
-                            f"font-family:\"Cascadia Code\",Consolas,monospace;font-size:13px;line-height:1.5;padding:10px;'>"]
+        parts: list[str] = [
+            f"<div style='background:{bg};color:{fg};white-space:pre;font-family:\"Cascadia Code\",Consolas,monospace;font-size:13px;line-height:1.5;padding:10px;'>"
+        ]
 
         if not diff_lines:
             parts.append(f"<div style='color:{info_fg};padding:20px;'>No changes detected.</div>")

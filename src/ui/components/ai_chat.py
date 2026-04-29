@@ -311,6 +311,7 @@ def _write_chat_summary_memory(project_root: str, conversation_id: str, title: s
 
         provider_map = {
             "mistral": ProviderType.MISTRAL,
+            "deepseek": ProviderType.DEEPSEEK,
             "siliconflow": ProviderType.SILICONFLOW,
         }
         provider_type = provider_map.get(provider_name, ProviderType.MISTRAL)
@@ -2128,10 +2129,12 @@ class AIChatWidget(QWidget):
             content = data.get('choices', [{}])[0].get('message', {}).get('content', '')
             # Mistral can return content as list of blocks for multimodal
             if isinstance(content, list):
-                content = ''.join(
+                # Explicitly type the generator to avoid "partially unknown" error
+                text_parts: list[str] = [
                     c.get('text', '') if isinstance(c, dict) else str(c)
                     for c in content
-                )
+                ]
+                content = ''.join(text_parts)
             return content or ''
         else:
             return f"Mistral API error {response.status_code}: {response.text[:200]}"

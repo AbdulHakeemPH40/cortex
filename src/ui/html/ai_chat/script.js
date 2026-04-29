@@ -5467,6 +5467,8 @@ function updateStreamingUI() {
             .replace(/<tasklist>[\s\S]*?<\/tasklist>/g, '')
             .replace(/<plan>[\s\S]*?<\/plan>/g, '')
             .replace(/<permission>[\s\S]*?<\/permission>/g, '')
+            .replace(/<THINK>[\s\S]*?<\/THINK>/gi, '')  // Strip DeepSeek thinking tags (case-insensitive)
+            .replace(/<think>[\s\S]*?<\/think>/gi, '')    // Strip DeepSeek think tags (case-insensitive)
             .replace(/[\u2299\u229a\u25ce\u29bf\u2609]Thought\s*[\u00B7\u00b7\.\xB7]\s*\d+s\s*/g, '') // strip DeepSeek ⊙Thought · Xs
             .trim();
 

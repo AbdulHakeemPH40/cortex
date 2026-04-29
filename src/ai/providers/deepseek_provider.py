@@ -145,6 +145,87 @@ class DeepSeekProvider(BaseProvider):
             "total_cost": total_cost,
             "currency": "USD"
         }
+
+    def _sanitize_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Normalize messages for strict OpenAI-compatible DeepSeek payload parsing."""
+        normalized: List[Dict[str, Any]] = []
+        for msg in messages or []:
+            if not isinstance(msg, dict):
+                continue
+
+            role = str(msg.get("role", "")).strip()
+            if not role:
+                continue
+
+            content = msg.get("content", "")
+            tool_calls = msg.get("tool_calls")
+            tool_call_id = msg.get("tool_call_id")
+            name = msg.get("name")
+
+            if isinstance(content, list):
+                parts: List[str] = []
+                for block in content:
+                    if isinstance(block, dict):
+                        text_val = block.get("text", "")
+                        parts.append(text_val if isinstance(text_val, str) else str(text_val))
+                    else:
+                        parts.append(str(block))
+                content = "".join(parts)
+            elif content is None:
+                # For compatibility, avoid null content in strict parsers.
+                content = ""
+            elif not isinstance(content, str):
+                content = str(content)
+
+            out: Dict[str, Any] = {"role": role, "content": content}
+            if name:
+                out["name"] = name
+            if tool_calls:
+                out["tool_calls"] = tool_calls
+            if tool_call_id:
+                out["tool_call_id"] = tool_call_id
+            normalized.append(out)
+
+        return normalized
+
+    def _sanitize_tools(self, tools: Optional[List[Any]]) -> Optional[List[Dict[str, Any]]]:
+        """Convert tool schema into strict OpenAI tool shape and drop invalid entries."""
+        if not tools:
+            return None
+
+        sanitized: List[Dict[str, Any]] = []
+        for tool in tools:
+            if not isinstance(tool, dict):
+                continue
+
+            fn = tool.get("function", {})
+            if not isinstance(fn, dict):
+                continue
+
+            name = fn.get("name")
+            if not name:
+                continue
+
+            params = fn.get("parameters")
+            if not isinstance(params, dict):
+                params = {}
+            if params.get("type") != "object":
+                params["type"] = "object"
+            if "properties" not in params or not isinstance(params["properties"], dict):
+                params["properties"] = {}
+
+            sanitized.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": str(name),
+                        "description": str(fn.get("description", "")),
+                        "parameters": params,
+                    },
+                }
+            )
+
+        return sanitized or None
     
     def _chat_raw(self, messages: List[Dict[str, str]], model: str = "deepseek-v4-flash",
                   stream: bool = True, **kwargs: Any) -> Generator[str, None, None]:
@@ -176,12 +257,32 @@ class DeepSeekProvider(BaseProvider):
             "Content-Type": "application/json"
         }
         
+        # Filter out non-API and empty optional parameters before payload build.
+        api_params = {
+            k: v for k, v in kwargs.items()
+            if k not in ("retry_callback", "max_retries", "retry_notify")
+        }
+        sanitized_messages = self._sanitize_messages(messages)
+        sanitized_tools = self._sanitize_tools(api_params.get("tools"))
+        tool_choice = api_params.get("tool_choice")
+
         payload: Dict[str, Any] = {
             "model": model,
-            "messages": messages,
+            "messages": sanitized_messages,
             "stream": stream,
-            **kwargs
         }
+
+        for k, v in api_params.items():
+            if k in ("tools", "tool_choice"):
+                continue
+            if v is None:
+                continue
+            payload[k] = v
+
+        if sanitized_tools:
+            payload["tools"] = sanitized_tools
+            if tool_choice is not None:
+                payload["tool_choice"] = tool_choice
         
         # DEBUG: Log if tools are present
         if 'tools' in kwargs and kwargs['tools']:
@@ -196,6 +297,11 @@ class DeepSeekProvider(BaseProvider):
         try:
             if stream:
                 response = requests.post(url, headers=headers, json=payload, stream=True, timeout=120)
+                if not response.ok:
+                    try:
+                        log.error("[DeepSeek] API error response: %s", json.dumps(response.json(), indent=2))
+                    except Exception:
+                        log.error("[DeepSeek] API error response (text): %s", response.text[:1000])
                 response.raise_for_status()
                 
                 for line in response.iter_lines():
@@ -226,14 +332,16 @@ class DeepSeekProvider(BaseProvider):
                                         # Filter out corrupted/non-printable characters
                                         # Remove replacement chars and control chars, BUT preserve \n (0x0a) and \t (0x09)
                                         content = re.sub(r'[\ufffd\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]', '', content)
-                                        if content.strip():
+                                        # Preserve whitespace-only chunks to avoid breaking token spacing.
+                                        if content:
                                             yield content
-                                    # Yield reasoning content separately (prefix with [THINK])
+                                    # Consume reasoning chunks internally so they are not rendered as
+                                    # visible "[THINK]" text in the main assistant output stream.
                                     elif reasoning:
-                                        # Also filter reasoning content
+                                        # Also sanitize reasoning content for safety/debug visibility.
                                         reasoning = re.sub(r'[\ufffd\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]', '', reasoning)
-                                        if reasoning.strip():
-                                            yield f"[THINK] {reasoning}"
+                                        if reasoning:
+                                            log.debug("[DeepSeek] Received reasoning_content chunk (%d chars)", len(reasoning))
                                     
                                     # Handle tool calls
                                     if tool_calls:
@@ -261,6 +369,11 @@ class DeepSeekProvider(BaseProvider):
                                 
             else:
                 response = requests.post(url, headers=headers, json=payload, timeout=120)
+                if not response.ok:
+                    try:
+                        log.error("[DeepSeek] API error response: %s", json.dumps(response.json(), indent=2))
+                    except Exception:
+                        log.error("[DeepSeek] API error response (text): %s", response.text[:1000])
                 response.raise_for_status()
                 
                 result = response.json()
@@ -274,7 +387,15 @@ class DeepSeekProvider(BaseProvider):
                 yield content
                 
         except requests.exceptions.RequestException as e:
+            detail = ""
+            try:
+                if e.response is not None:
+                    detail = (e.response.text or "")[:1000]
+            except Exception:
+                detail = ""
             log.error(f"DeepSeek API error: {e}")
+            if detail:
+                raise Exception(f"DeepSeek API request failed: {str(e)} | response: {detail}")
             raise Exception(f"DeepSeek API request failed: {str(e)}")
         except Exception as e:
             log.error(f"Unexpected error: {e}")

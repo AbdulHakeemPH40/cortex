@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import os
 import sys
 import json
@@ -383,14 +383,17 @@ class _ContextBudgetTracker:
 
     @staticmethod
     def _get_hard_context_cap_tokens() -> int:
-        raw = os.environ.get("CORTEX_MAX_CONTEXT_TOKENS_PER_TURN", "200000")
+        # Global safety ceiling for per-turn context usage.
+        # Default raised to 1M so high-context models (e.g., DeepSeek V4) are
+        # not artificially constrained unless user overrides via env.
+        raw = os.environ.get("CORTEX_MAX_CONTEXT_TOKENS_PER_TURN", "1000000")
         try:
             parsed = int(raw)
             if parsed > 0:
                 return parsed
         except Exception:
             pass
-        return 200_000
+        return 1_000_000
 
     def _effective_budget_tokens(self) -> int:
         if self._model_limits:

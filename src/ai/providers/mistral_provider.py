@@ -503,11 +503,17 @@ class MistralProvider(BaseProvider):
             formatted_tools = self._format_tools_for_mistral(kwargs['tools'])
             kwargs['tools'] = formatted_tools
         
+        # Filter out non-API parameters (like retry_callback) before building payload
+        api_params = {
+            k: v for k, v in kwargs.items()
+            if k not in ('retry_callback', 'max_retries', 'retry_notify')  # Exclude internal params
+        }
+        
         payload = {
             "model": model,
             "messages": messages,
             "stream": stream,
-            **kwargs
+            **api_params  # Use filtered params instead of **kwargs
         }
         
         # Validate tools if present

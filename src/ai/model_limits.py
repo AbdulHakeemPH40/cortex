@@ -21,6 +21,7 @@ Supported families (auto-detected by model_id substring matching):
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Tuple
+import os
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -121,8 +122,31 @@ class ModelLimits:
 # Patterns are tested in order; first match wins.
 # ---------------------------------------------------------------------------
 
+def _deepseek_max_output_tokens() -> int:
+    """Configurable DeepSeek output cap (default: conservative 8192)."""
+    raw = os.environ.get("CORTEX_DEEPSEEK_MAX_OUTPUT_TOKENS", "8192")
+    try:
+        parsed = int(raw)
+        if parsed > 0:
+            return parsed
+    except Exception:
+        pass
+    return 8_192
+
+
+_DEEPSEEK_MAX_OUTPUT_TOKENS = _deepseek_max_output_tokens()
+
 # fmt: off
 _REGISTRY: List[Tuple[str, int, int]] = [
+
+    # ── DeepSeek V4 / legacy aliases ─────────────────────────────────────────
+    # DeepSeek V4 supports 1M context. Keep output cap conservative unless
+    # provider-side limits are expanded in a verified way.
+    ("deepseek-v4-pro",     1_000_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),
+    ("deepseek-v4-flash",   1_000_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),
+    ("deepseek-chat",       1_000_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),  # currently routed to V4
+    ("deepseek-reasoner",   1_000_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),  # currently routed to V4
+    ("deepseek",            1_000_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),  # generic DeepSeek fallback
 
     # ── OpenAI GPT-5.x Series (Frontier) ───────────────────────────────────
     ("gpt-5.4-nano",         400_000, 128_000),
