@@ -342,9 +342,9 @@ class _SessionStateManager:
     Manager for session-level state that tools can read/write.
     Provides a key-value store for tool communication.
     """
-    def __init__(self):
+    def __init__(self) -> None:
         self._state: Dict[str, Any] = {}
-        self._listeners: Dict[str, List[Callable]] = {}
+        self._listeners: Dict[str, List[Callable[[str, Any, Any], None]]] = {}
     
     def get(self, key: str, default: Any = None) -> Any:
         return self._state.get(key, default)
@@ -359,12 +359,12 @@ class _SessionStateManager:
             except Exception as e:
                 log.warning(f"[State] Listener for {key} failed: {e}")
     
-    def subscribe(self, key: str, callback: Callable) -> None:
+    def subscribe(self, key: str, callback: Callable[[str, Any, Any], None]) -> None:
         if key not in self._listeners:
             self._listeners[key] = []
         self._listeners[key].append(callback)
     
-    def unsubscribe(self, key: str, callback: Callable) -> None:
+    def unsubscribe(self, key: str, callback: Callable[[str, Any, Any], None]) -> None:
         if key in self._listeners and callback in self._listeners[key]:
             self._listeners[key].remove(callback)
 
@@ -480,7 +480,7 @@ class CortexToolContext:
         # content, saving massive context. Uses OrderedDict for LRU eviction.
         # Ported from Claude Code's FileStateCache (fileStateCache.ts)
         from collections import OrderedDict
-        self._file_cache: OrderedDict = OrderedDict()  # norm_path → {content, timestamp, offset, limit, size}
+        self._file_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()  # norm_path → {content, timestamp, offset, limit, size}
         self._file_cache_total_size: int = 0
         
         self.glob_limits = _GlobLimits()
@@ -548,13 +548,13 @@ class CortexToolContext:
     # ── LRU File Read Dedup Cache methods ─────────────────────────────────
     # Ported from Claude Code's FileStateCache (fileStateCache.ts)
 
-    def file_cache_get(self, norm_path: str, offset=None, limit=None):
+    def file_cache_get(self, norm_path: str, offset: Optional[int] = None, limit: Optional[int] = None) -> Optional[str]:
         """
         Check if a file read can be served from cache.
         Returns FILE_UNCHANGED_STUB if cached content matches current disk mtime
         and same offset/limit. Returns None if cache miss.
         """
-        entry = self._file_cache.get(norm_path)
+        entry: Optional[Dict[str, Any]] = self._file_cache.get(norm_path)
         if entry is None:
             return None
         
@@ -578,7 +578,7 @@ class CortexToolContext:
         log.info(f"[CTX] File cache HIT: {os.path.basename(norm_path)} (saved {entry['size']:,} chars)")
         return self._FILE_UNCHANGED_STUB
 
-    def file_cache_put(self, norm_path: str, content: str, mtime: float, offset=None, limit=None):
+    def file_cache_put(self, norm_path: str, content: str, mtime: float, offset: Optional[int] = None, limit: Optional[int] = None) -> None:
         """Store a file read result in the LRU cache."""
         content_size = len(content.encode('utf-8', errors='replace'))
         
@@ -589,7 +589,7 @@ class CortexToolContext:
         # Evict LRU entries until under size limit
         while (self._file_cache_total_size + content_size > self._FILE_CACHE_MAX_SIZE_BYTES
                and self._file_cache):
-            oldest_key = next(iter(self._file_cache))
+            oldest_key: str = next(iter(self._file_cache))
             self._file_cache_evict(oldest_key)
         
         # Evict if too many entries
@@ -606,7 +606,7 @@ class CortexToolContext:
         }
         self._file_cache_total_size += content_size
 
-    def _file_cache_evict(self, norm_path: str):
+    def _file_cache_evict(self, norm_path: str) -> None:
         """Remove an entry from the file cache."""
         entry = self._file_cache.pop(norm_path, None)
         if entry:
@@ -651,13 +651,13 @@ class CortexToolContext:
         return self._wait_resume.is_waiting()
 
     # MCP hooks
-    def register_mcp_hook(self, event: str, callback: Callable) -> None:
+    def register_mcp_hook(self, event: str, callback: Callable[..., Any]) -> None:
         self._mcp_hooks.register(event, callback)
     
-    def unregister_mcp_hook(self, event: str, callback: Callable) -> None:
+    def unregister_mcp_hook(self, event: str, callback: Callable[..., Any]) -> None:
         self._mcp_hooks.unregister(event, callback)
     
-    async def trigger_mcp_hook(self, event: str, *args, **kwargs) -> List[Any]:
+    async def trigger_mcp_hook(self, event: str, *args: Any, **kwargs: Any) -> List[Any]:
         return await self._mcp_hooks.trigger(event, *args, **kwargs)
 
     # Auth hooks
@@ -676,11 +676,11 @@ class CortexToolContext:
     
     def set_session_state(self, key: str, value: Any) -> None:
         self._session_state.set(key, value)
-    
-    def subscribe_session_state(self, key: str, callback: Callable) -> None:
+      
+    def subscribe_session_state(self, key: str, callback: Callable[[str, Any, Any], None]) -> None:
         self._session_state.subscribe(key, callback)
     
-    def unsubscribe_session_state(self, key: str, callback: Callable) -> None:
+    def unsubscribe_session_state(self, key: str, callback: Callable[[str, Any, Any], None]) -> None:
         self._session_state.unsubscribe(key, callback)
 
     # Permission context
@@ -703,7 +703,7 @@ class CortexToolContext:
         return norm in self._files_read
 
     def get_known_files_summary(self) -> str:
-        lines = []
+        lines: List[str] = []
         for p in list(self._files_read)[-10:]:
             lines.append(f"  [read] {p}")
         for p in list(self._files_modified)[-10:]:
@@ -711,7 +711,7 @@ class CortexToolContext:
         return "\n".join(lines) if lines else "(none yet)"
 
 
-def _always_allow_tool(*_args, **_kwargs):
+def _always_allow_tool(*_args: Any, **_kwargs: Any) -> bool:
     """Stub can_use_tool function — always allows."""
     return True
 
@@ -755,7 +755,7 @@ def _get_destructive_warning(command: str) -> 'Optional[str]':
     return None
 
 
-def _extract_affected_paths(command: str) -> list:
+def _extract_affected_paths(command: str) -> List[str]:
     """Extract up to 5 path-like arguments from a shell command for display."""
     import shlex as _shlex
     import re as _re
@@ -770,7 +770,7 @@ def _extract_affected_paths(command: str) -> list:
         'DROP', 'TRUNCATE', 'DELETE', 'FROM', 'TABLE', 'powershell.exe',
         'powershell', 'cmd', 'cmd.exe',
     }
-    paths = []
+    paths: List[str] = []
     for p in parts:
         if p.startswith('-') or p in SKIP:
             continue
@@ -800,7 +800,7 @@ class BridgeBashTool:
         "Execute a shell / PowerShell command and return its output. "
         "Commands run in the project root by default."
     )
-    parameters = {
+    parameters: Dict[str, Any] = {
         "type": "object",
         "properties": {
             "command": {"type": "string", "description": "Command to run"},
@@ -816,10 +816,10 @@ class BridgeBashTool:
     def __init__(self, bridge: 'CortexAgentBridge'):
         self._bridge = bridge
 
-    async def execute(self, args: Dict) -> ToolResult:
+    async def execute(self, args: Dict[str, Any]) -> ToolResult:
         import threading as _threading
-        command = args.get("command", "")
-        timeout = int(args.get("timeout", 30))
+        command: str = args.get("command", "")
+        timeout: int = int(args.get("timeout", 30))
         cwd = self._bridge.project_root or os.getcwd()
 
         # ── Dangerous-command permission gate ────────────────────────────────
