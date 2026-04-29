@@ -78,6 +78,31 @@
   "executionEnvironments": [
     {
       "root": "src",
+      "extraPaths": [
+        ".",
+        "../src/agent",
+        "../src/agent/src"
+      ],
+      "pythonVersion": "3.10",
+      "pythonPlatform": "Windows"
+    },
+    {
+      "root": "src/agent",
+      "extraPaths": [
+        "../src",
+        ".",
+        "src"
+      ],
+      "pythonVersion": "3.10",
+      "pythonPlatform": "Windows"
+    },
+    {
+      "root": "src/agent/src",
+      "extraPaths": [
+        "../../src",
+        "../",
+        "."
+      ],
       "pythonVersion": "3.10",
       "pythonPlatform": "Windows"
     }

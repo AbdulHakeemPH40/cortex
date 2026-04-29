@@ -1,0 +1,18 @@
+Type of parameter "callback" is partially unknown
+  Parameter type is "(...) -> Unknown"
+
+Type of "_hooks" is partially unknown
+  Type of "_hooks" is "Dict[str, List[(...) -> Unknown]]"
+
+Type of "append" is partially unknown
+  Type of "append" is "(object: (...) -> Unknown, /) -> None"
+
+
+Type of parameter "callback" is partially unknown
+  Parameter type is "(...) -> Unknown"
+
+Type of "_hooks" is partially unknown
+  Type of "_hooks" is "Dict[str, List[(...) -> Unknown]]"
+
+Type of "_hooks" is partially unknown
+  Type of "_hooks" is "Dict[str, List[(...) -> Unknown]]"

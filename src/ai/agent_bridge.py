@@ -5,7 +5,7 @@ import json
 import uuid as _uuid
 import threading
 from typing import Any, Dict, List, Optional, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from PyQt6.QtCore import QObject, pyqtSignal, QThread
 
@@ -53,23 +53,35 @@ def _get_default_read_chunk_lines() -> int:
 # ============================================================
 # IMPORT REAL AGENT STATE (bootstrap/state.py)
 # ============================================================
-_HAS_AGENT_STATE = False  # Initialized before try block
+_has_agent_state = False  # Internal flag (lowercase to avoid constant redefinition warning)
 try:
     from agent.src.bootstrap.state import ( 
         set_original_cwd,  
         set_project_root as _agent_set_project_root,  
-        get_session_id, 
-        get_project_root as _agent_get_project_root, 
+        getSessionId as _get_session_id,
+        get_project_root as _agent_get_project_root,
     )
-    _HAS_AGENT_STATE = True  
+    _has_agent_state = True
     log.info("[BRIDGE] Real agent bootstrap/state loaded")
 except ImportError as _e:
     log.warning(f"[BRIDGE] agent bootstrap/state not available: {_e}")
 
     def set_original_cwd(cwd: str) -> None: pass
     def _agent_set_project_root(path: str) -> None: pass
-    def get_session_id() -> str: return "default"
+    def _get_session_id() -> str: return "default"
     def _agent_get_project_root() -> str: return os.getcwd()
+
+# Public wrapper functions
+def get_session_id() -> str:
+    """Get current session ID."""
+    return _get_session_id()
+
+def get_project_root() -> str:
+    """Get project root directory."""
+    return _agent_get_project_root()
+
+# Backwards compatibility alias
+_HAS_AGENT_STATE = _has_agent_state
 
 
 # ============================================================
@@ -81,9 +93,13 @@ class ChatMessage:
     """Internal chat message used by the bridge."""
     role: str                           # system / user / assistant / tool
     content: str
-    images: List[str] = field(default_factory=list)
-    tool_calls: Optional[List[Dict]] = None
+    images: Optional[List[str]] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_call_id: Optional[str] = None
+    
+    def __post_init__(self):
+        if self.images is None:
+            self.images = []
 
 
 @dataclass
@@ -130,30 +146,44 @@ _REAL_GREP_TOOL       = _load_agent_tool("agent.src.tools.GrepTool.GrepTool",   
 # IMPORT REAL AbortController from src/agent/src/utils
 # Used to signal running tools when the user presses Stop.
 # ============================================================
+_has_real_abort = False  # Internal flag (lowercase to avoid constant redefinition warning)
+
+# Define fallback implementation first
+class _FallbackAbortController:
+    """Fallback stub AbortController."""
+    def __init__(self) -> None:
+        class _Signal:
+            aborted: bool = False
+            reason: Optional[str] = None
+        self.signal: _Signal = _Signal()
+    
+    def abort(self, reason: str = "AbortError") -> None:
+        self.signal.aborted = True
+        self.signal.reason = reason
+
+
+def _fallback_create_abort_controller(max_listeners: int = 50) -> _FallbackAbortController:
+    """Fallback stub create_abort_controller."""
+    return _FallbackAbortController()
+
+
 try:
     from agent.src.utils.abortController import ( 
-        AbortController  as _AgentAbortController, 
-        create_abort_controller as _create_abort_controller, 
+        AbortController as _RealAbortController, 
+        create_abort_controller as _real_create_abort_controller,
     )
-    _HAS_REAL_ABORT = True  
-    
+    _has_real_abort = True
     log.info("[BRIDGE] Real AbortController loaded from utils.abortController")
+    
+    # Use real implementations
+    AbortController = _RealAbortController
+    create_abort_controller = _real_create_abort_controller
 except ImportError as _e:
-    log.warning(f"[BRIDGE] Real AbortController not available: {_e}")
-
-    class _AgentAbortController:  
-        """Minimal fallback — no-op abort."""
-        class signal:
-            aborted = False
-            reason  = None
-            @staticmethod
-            def addEventListener(*a, **kw): pass
-            @staticmethod
-            def removeEventListener(*a, **kw): pass
-        def abort(self, reason=None): pass
-
-    def _create_abort_controller(max_listeners: int = 50) -> "_AgentAbortController": 
-        return _AgentAbortController()
+    log.warning(f"[BRIDGE] utils.abortController not available: {_e}")
+    
+    # Use fallback implementations
+    AbortController = _FallbackAbortController
+    create_abort_controller = _fallback_create_abort_controller
 
 
 # ============================================================
@@ -250,24 +280,23 @@ class _MCPHookManager:
     Manager for MCP (Model Context Protocol) hooks.
     Allows registration and execution of MCP server hooks.
     """
-    def __init__(self):
-        self._hooks: Dict[str, List[Callable]] = {}
+    def __init__(self) -> None:
+        self._hooks: Dict[str, List[Callable[..., Any]]] = {}
     
-    def register(self, event: str, callback: Callable) -> None:
+    def register(self, event: str, callback: Callable[..., Any]) -> None:
         if event not in self._hooks:
             self._hooks[event] = []
         self._hooks[event].append(callback)
     
-    def unregister(self, event: str, callback: Callable) -> None:
+    def unregister(self, event: str, callback: Callable[..., Any]) -> None:
         if event in self._hooks and callback in self._hooks[event]:
             self._hooks[event].remove(callback)
     
-    async def trigger(self, event: str, *args, **kwargs) -> List[Any]:
-        results = []
+    async def trigger(self, event: str, *args: Any, **kwargs: Any) -> List[Any]:
+        results: List[Any] = []
         for callback in self._hooks.get(event, []):
             try:
                 result = callback(*args, **kwargs)
-                import asyncio
                 if asyncio.iscoroutine(result):
                     result = await result
                 results.append(result)
@@ -455,7 +484,7 @@ class CortexToolContext:
         self._file_cache_total_size: int = 0
         
         self.glob_limits = _GlobLimits()
-        self.abort_controller = _create_abort_controller()
+        self.abort_controller = create_abort_controller()
         self.dynamic_skill_dir_triggers: set = set()
         self.nested_memory_attachment_triggers: set = set()
         self.user_modified = False
@@ -1847,7 +1876,7 @@ class CortexAgentBridge(QObject):
         self._conversation_history: List[ChatMessage] = []
         self._enhancement_data: Dict = {}
         self._streaming      = None
-        self._current_todos:  List = []   # Persisted todo list for TodoWrite
+        self._current_todos: List[Dict[str, Any]] = []   # Persisted todo list for TodoWrite
         self._pending_questions: Dict = {}  # Pending AskUserQuestion items
         # ── Stale-continue detection ──────────────────────────────────
         # Track how many times the same set of todos survived a Continue cycle
@@ -3292,14 +3321,14 @@ Use Markdown tables for structured data comparison:
             # pending items — if the count stays the same or increases
             # across cycles, that's a strong stale signal.
             if not self._stop_requested:
-                _pending_todos = [
+                _pending_todos: List[Dict[str, Any]] = [
                     t for t in self._current_todos
                     if str(t.get('status', '')).upper() in ('PENDING', 'IN_PROGRESS')
                 ]
                 if _pending_todos:
                     # Use content-based fingerprint instead of IDs
                     _cur_fingerprint = frozenset(
-                        t.get('content', t.get('description', '')).strip().lower()[:80]
+                        str(t.get('content', t.get('description', ''))).strip().lower()[:80]
                         for t in _pending_todos
                     )
                     _cur_count = len(_pending_todos)
@@ -5041,7 +5070,7 @@ Use Markdown tables for structured data comparison:
         self._stop_requested = False  # Clear any previous stop before handling new request
         # Fresh AbortController so tools from the previous (aborted) request can't
         # accidentally cancel this new one.
-        self._tool_ctx.abort_controller = _create_abort_controller()
+        self._tool_ctx.abort_controller = create_abort_controller()
 
         # Reset tool safety counters for genuinely new requests (not Continue).
         _is_continue = message.strip().startswith('Continue the task.')

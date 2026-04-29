@@ -1,9 +1,12 @@
 """
 Application state management for Cortex CLI.
 
-Manages global state including session ID, additional directories,
-and other runtime configuration.
+Manages global state including session ID, project root, original CWD,
+additional directories, and other runtime configuration.
+
+Converted from TypeScript: openclaude/openclaude/src/bootstrap/state.ts
 """
+import os
 from typing import List, Optional
 from uuid import uuid4
 
@@ -15,11 +18,15 @@ class _AppState:
     def __init__(self) -> None:
         self.session_id: str = str(uuid4())
         self.session_project_dir: Optional[str] = None
+        self.original_cwd: str = os.getcwd()
+        self.project_root: Optional[str] = None
         self.additional_directories_for_cortex_md: List[str] = []
 
 
 STATE = _AppState()
 
+
+# ── Session ID ───────────────────────────────────────────────────────────────
 
 def getSessionId() -> str:
     """
@@ -46,6 +53,52 @@ def regenerateSessionId(set_current_as_parent: bool = False) -> str:
     STATE.session_project_dir = None
     return STATE.session_id
 
+
+# ── Project Root ─────────────────────────────────────────────────────────────
+
+def get_project_root() -> str:
+    """
+    Get the project root directory.
+    
+    Returns:
+        Project root path, or current working directory if not set
+    """
+    return STATE.project_root if STATE.project_root else os.getcwd()
+
+
+def set_project_root(path: str) -> None:
+    """
+    Set the project root directory.
+    
+    Args:
+        path: Absolute path to project root
+    """
+    STATE.project_root = os.path.abspath(path)
+
+
+# ── Original CWD ─────────────────────────────────────────────────────────────
+
+def get_original_cwd() -> str:
+    """
+    Get the original working directory when Cortex started.
+    
+    Returns:
+        Original CWD path
+    """
+    return STATE.original_cwd
+
+
+def set_original_cwd(cwd: str) -> None:
+    """
+    Set the original working directory.
+    
+    Args:
+        cwd: Absolute path to original CWD
+    """
+    STATE.original_cwd = os.path.abspath(cwd)
+
+
+# ── Additional Directories ───────────────────────────────────────────────────
 
 def getAdditionalDirectoriesForCortexMd() -> List[str]:
     """
