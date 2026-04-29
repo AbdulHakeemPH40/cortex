@@ -1,5 +1,4 @@
-﻿# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
-import asyncio
+﻿import asyncio
 import os
 import sys
 import json
@@ -21,16 +20,16 @@ for _path in (_AGENT_PARENT, _AGENT_SRC):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-from src.utils.logger import get_logger  # type: ignore[import-not-found]
-from src.ai.streaming import get_streaming_emitter  # type: ignore[import-not-found]
-from src.ai.session_task import (  # type: ignore[import-not-found]
+from src.utils.logger import get_logger  
+from src.ai.streaming import get_streaming_emitter  
+from src.ai.session_task import (  
     SessionTaskRegistry,
     SessionTaskState,
     StopTaskError,
     generate_session_task_id,
     stop_session_task,
 )
-from src.ai.model_limits import ModelLimits  # type: ignore[import-not-found]
+from src.ai.model_limits import ModelLimits  
 
 log = get_logger("agent_bridge")
 
@@ -56,13 +55,13 @@ def _get_default_read_chunk_lines() -> int:
 # ============================================================
 _HAS_AGENT_STATE = False  # Initialized before try block
 try:
-    from agent.src.bootstrap.state import (  # type: ignore[import-not-found]
-        set_original_cwd,  # pyright: ignore[reportAttributeAccessIssue]
-        set_project_root as _agent_set_project_root,  # pyright: ignore[reportAttributeAccessIssue]
-        get_session_id,  # pyright: ignore[reportAttributeAccessIssue]
-        get_project_root as _agent_get_project_root,  # pyright: ignore[reportAttributeAccessIssue, reportUnusedImport]
+    from agent.src.bootstrap.state import ( 
+        set_original_cwd,  
+        set_project_root as _agent_set_project_root,  
+        get_session_id, 
+        get_project_root as _agent_get_project_root, 
     )
-    _HAS_AGENT_STATE = True  # pyright: ignore[reportConstantRedefinition]
+    _HAS_AGENT_STATE = True  
     log.info("[BRIDGE] Real agent bootstrap/state loaded")
 except ImportError as _e:
     log.warning(f"[BRIDGE] agent bootstrap/state not available: {_e}")
@@ -132,17 +131,17 @@ _REAL_GREP_TOOL       = _load_agent_tool("agent.src.tools.GrepTool.GrepTool",   
 # Used to signal running tools when the user presses Stop.
 # ============================================================
 try:
-    from agent.src.utils.abortController import (  # type: ignore[import-not-found]
-        AbortController  as _AgentAbortController,  # pyright: ignore[reportAttributeAccessIssue]
-        create_abort_controller as _create_abort_controller,  # pyright: ignore[reportAttributeAccessIssue]
+    from agent.src.utils.abortController import ( 
+        AbortController  as _AgentAbortController, 
+        create_abort_controller as _create_abort_controller, 
     )
-    _HAS_REAL_ABORT = True  # pyright: ignore[reportConstantRedefinition]
+    _HAS_REAL_ABORT = True  
     
     log.info("[BRIDGE] Real AbortController loaded from utils.abortController")
 except ImportError as _e:
     log.warning(f"[BRIDGE] Real AbortController not available: {_e}")
 
-    class _AgentAbortController:  # type: ignore[no-redef]
+    class _AgentAbortController:  
         """Minimal fallback — no-op abort."""
         class signal:
             aborted = False
@@ -153,7 +152,7 @@ except ImportError as _e:
             def removeEventListener(*a, **kw): pass
         def abort(self, reason=None): pass
 
-    def _create_abort_controller(max_listeners: int = 50) -> "_AgentAbortController":  # type: ignore[misc]
+    def _create_abort_controller(max_listeners: int = 50) -> "_AgentAbortController": 
         return _AgentAbortController()
 
 
@@ -485,7 +484,7 @@ class CortexToolContext:
     def _init_model_limits(self, model_id: str) -> None:
         """Initialize model-aware file reading limits."""
         try:
-            from src.ai.model_limits import get_model_limits  # type: ignore[import-not-found]
+            from src.ai.model_limits import get_model_limits  
             self._model_limits = get_model_limits(model_id)
             self._budget_tracker.set_model_limits(self._model_limits)
             # _model_limits is guaranteed to be set here by get_model_limits()
@@ -591,7 +590,7 @@ class CortexToolContext:
     def get_content_replacement_state(self):
         """Get or create the per-conversation content replacement state."""
         if self._content_replacement_state is None:
-            from src.ai.tool_result_storage import ContentReplacementState  # type: ignore[import-not-found]
+            from src.ai.tool_result_storage import ContentReplacementState 
             self._content_replacement_state = ContentReplacementState()
         return self._content_replacement_state
 
@@ -701,7 +700,8 @@ _STUB_PARENT_MESSAGE = type("_Msg", (), {"uuid": None})()
 def _get_destructive_warning(command: str) -> 'Optional[str]':
     """Return a human-readable warning if the command is destructive, else None."""
     try:
-        from src.agent.src.tools.BashTool.destructiveCommandWarning import get_destructive_command_warning  # type: ignore[import-not-found]
+        from src.agent.src.tools.BashTool.destructiveCommandWarning import get_destructive_command_warning 
+
         return get_destructive_command_warning(command)
     except Exception:
         pass
@@ -1483,7 +1483,7 @@ def _get_tool_definitions_from_registry() -> List[Dict]:
     schemas = []
     
     try:
-        from tool_registry import get_all_base_tools  # type: ignore[import-not-found]
+        from tool_registry import get_all_base_tools 
         tools = get_all_base_tools()
         
         for tool in tools:
@@ -1877,7 +1877,7 @@ class CortexAgentBridge(QObject):
 
         # Build tool context for real agent tools (use model from settings if available)
         try:
-            from src.config.settings import get_settings  # type: ignore[import-not-found]
+            from src.config.settings import get_settings  
             _settings = get_settings()
             _initial_model = _settings.get('ai', 'model', default='mistral-large-latest')
         except Exception:
@@ -2651,7 +2651,7 @@ Use Markdown tables for structured data comparison:
         Skips providers that don't have a valid API key.
         Max 2 failover hops to avoid infinite cycling.
         """
-        from src.ai.providers import ProviderType  # type: ignore[import-not-found]
+        from src.ai.providers import ProviderType  
         if self._failover_chain is None:
             self._failover_chain = [
                 ProviderType.MISTRAL,
