@@ -1,12 +1,18 @@
-Type of "command" is unknown
+Return type, "List[Dict[Unknown, Unknown]]", is partially unknown
+
+Type of parameter "builtin_schemas" is partially unknown
+  Parameter type is "List[Dict[Unknown, Unknown]]"
+
+Type of parameter "registry_schemas" is partially unknown
+  Parameter type is "List[Dict[Unknown, Unknown]]"
+
+Type of "schema" is partially unknown
+  Type of "schema" is "Dict[Unknown, Unknown]"
+
+Type of "name" is unknown
 
 Type of "get" is partially unknown
   Type of "get" is "Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]"
 
-Argument type is unknown
-  Argument corresponds to parameter "x" in function "__new__"
 
-Type of "replace" is unknown
-
-Argument type is unknown
-  Argument corresponds to parameter "command" in function "_extract_affected_paths"
+Return type, "list[Dict[Unknown, Unknown]]", is partially unknown

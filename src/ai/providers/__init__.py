@@ -4,11 +4,9 @@ Provides unified interface for multiple LLM providers
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Any, Generator, Callable
+from typing import Dict, List, Optional, Any, Generator
 from dataclasses import dataclass
 from enum import Enum
-import time
-import json
 from src.utils.logger import get_logger
 
 log = get_logger("provider_registry")
@@ -18,6 +16,7 @@ class ProviderType(Enum):
     """Supported LLM providers."""
     MISTRAL = "mistral"     # Primary provider for ALL work
     SILICONFLOW = "siliconflow"  # Vision models
+    DEEPSEEK = "deepseek"   # DeepSeek V4 models (Pro & Flash)
 
 
 @dataclass
@@ -114,9 +113,9 @@ class BaseProvider(ABC):
     
     def _format_messages_for_provider(self, messages: List[ChatMessage]) -> List[Dict[str, Any]]:
         """Convert internal messages to provider-specific format."""
-        formatted = []
+        formatted: List[Dict[str, Any]] = []
         for msg in messages:
-            m = {"role": msg.role, "content": msg.content}
+            m: Dict[str, Any] = {"role": msg.role, "content": msg.content}
             if msg.name:
                 m["name"] = msg.name
             if msg.tool_calls:
@@ -155,6 +154,14 @@ class ProviderRegistry:
         except (ImportError, Exception) as e:
             log.warning(f"Could not register SiliconFlowProvider: {e}")
         
+        # Register DeepSeek provider (V4 models with 1M context)
+        try:
+            from src.ai.providers.deepseek_provider import DeepSeekProvider
+            self._register_provider(ProviderType.DEEPSEEK, DeepSeekProvider())
+            log.info("DeepSeekProvider registered with V4 models")
+        except (ImportError, Exception) as e:
+            log.warning(f"Could not register DeepSeekProvider: {e}")
+        
 
             
     def _register_provider(self, provider_type: ProviderType, provider: BaseProvider):
@@ -180,13 +187,13 @@ class ProviderRegistry:
         return list(self._providers.keys())
         
     def get_all_models(self) -> List[ModelInfo]:
-        models = []
+        models: List[ModelInfo] = []
         for provider in self._providers.values():
             models.extend(provider.available_models)
         return models
         
     def validate_all_keys(self) -> Dict[str, bool]:
-        results = {}
+        results: Dict[str, bool] = {}
         for provider_type, provider in self._providers.items():
             results[provider_type.value] = provider.validate_api_key()
         return results

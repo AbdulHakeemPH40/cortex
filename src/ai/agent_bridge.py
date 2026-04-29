@@ -915,7 +915,7 @@ class BridgeLSTool:
     """Bridge-native LS tool — no real agent equivalent."""
     name = "LS"
     description = "List the contents of a directory. Shows files and subdirectories."
-    parameters = {
+    parameters: Dict[str, Any] = {
         "type": "object",
         "properties": {
             "path": {
@@ -929,12 +929,12 @@ class BridgeLSTool:
     def __init__(self, bridge: 'CortexAgentBridge'):
         self._bridge = bridge
 
-    async def execute(self, args: Dict) -> ToolResult:
-        dirpath = args.get("path", ".")
+    async def execute(self, args: Dict[str, Any]) -> ToolResult:
+        dirpath: str = args.get("path", ".")
         if not os.path.isabs(dirpath) and self._bridge.project_root:
             dirpath = os.path.join(self._bridge.project_root, dirpath)
         try:
-            entries = []
+            entries: List[str] = []
             for entry in sorted(os.scandir(dirpath), key=lambda e: (not e.is_dir(), e.name)):
                 marker = "/" if entry.is_dir() else ""
                 entries.append(f"{entry.name}{marker}")
@@ -948,7 +948,7 @@ class BridgeLSTool:
 # TOOL DEFINITIONS  (OpenAI-compatible function schemas)
 # ============================================================
 
-_TOOL_SCHEMAS: List[Dict] = [
+_TOOL_SCHEMAS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
@@ -1462,7 +1462,7 @@ _TOOL_SCHEMAS: List[Dict] = [
 ]
 
 
-def _convert_tool_to_schema(tool) -> Optional[Dict[str, Any]]:
+def _convert_tool_to_schema(tool: object) -> Optional[Dict[str, Any]]:
     """
     Convert a Tool object from tool_registry to OpenAI-compatible schema.
     
@@ -1502,23 +1502,23 @@ def _convert_tool_to_schema(tool) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _get_tool_definitions_from_registry() -> List[Dict]:
+def _get_tool_definitions_from_registry() -> List[Dict[str, Any]]:
     """
     Get tool definitions from tool_registry.py if available.
     
     Returns:
         List of OpenAI-compatible tool schemas from tool_registry
     """
-    schemas = []
+    schemas: List[Dict[str, Any]] = []
     
     try:
-        from tool_registry import get_all_base_tools 
-        tools = get_all_base_tools()
+        from tool_registry import get_all_base_tools  # type: ignore[import-not-found]
+        tools: Any = get_all_base_tools()  # pyright: ignore[reportUnknownVariableType]
         
-        for tool in tools:
+        for tool in tools:  # pyright: ignore[reportUnknownVariableType]
             if tool is None:
                 continue
-            schema = _convert_tool_to_schema(tool)
+            schema = _convert_tool_to_schema(tool)  # pyright: ignore[reportUnknownArgumentType]
             if schema:
                 schemas.append(schema)
         
@@ -1531,7 +1531,7 @@ def _get_tool_definitions_from_registry() -> List[Dict]:
     return schemas
 
 
-def _merge_tool_schemas(builtin_schemas: List[Dict], registry_schemas: List[Dict]) -> List[Dict]:
+def _merge_tool_schemas(builtin_schemas: List[Dict[str, Any]], registry_schemas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Merge built-in schemas with registry schemas.
     Built-in schemas take precedence (they have richer descriptions).
@@ -1544,22 +1544,22 @@ def _merge_tool_schemas(builtin_schemas: List[Dict], registry_schemas: List[Dict
         Merged list with no duplicates
     """
     # Build name -> schema map from builtin (higher priority)
-    by_name = {}
+    by_name: Dict[str, Dict[str, Any]] = {}
     for schema in builtin_schemas:
-        name = schema.get("function", {}).get("name")
+        name: str = schema.get("function", {}).get("name", "")
         if name:
             by_name[name] = schema
     
     # Add registry schemas for tools not in builtin
     for schema in registry_schemas:
-        name = schema.get("function", {}).get("name")
+        name = schema.get("function", {}).get("name", "")
         if name and name not in by_name:
             by_name[name] = schema
     
     return list(by_name.values())
 
 
-def _get_tool_definitions() -> List[Dict]:
+def _get_tool_definitions() -> List[Dict[str, Any]]:
     """
     Return OpenAI-compatible tool definitions.
     
