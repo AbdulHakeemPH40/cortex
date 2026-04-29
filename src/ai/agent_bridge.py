@@ -1,4 +1,4 @@
-# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
+﻿# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
 import asyncio
 import os
 import sys
@@ -5227,4 +5227,3 @@ __all__ = [
     "ToolCall",
     "ToolResult",
 ]
-

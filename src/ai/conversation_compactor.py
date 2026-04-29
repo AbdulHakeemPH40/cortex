@@ -8,10 +8,10 @@ Two-tier compaction system:
 Reference: claude-code-main/src/services/compact/microCompact.ts
            claude-code-main/src/services/compact/autoCompact.ts
 """
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
 import logging
-import time
-from typing import List, Optional, Set, Tuple
+from typing import Any, List, Optional, Set, Tuple
 
 log = logging.getLogger("cortex.conversation_compactor")
 
@@ -44,9 +44,9 @@ MAX_CONSECUTIVE_FAILURES = 3
 # ── Micro-compact ────────────────────────────────────────────────────────────
 
 def microcompact_messages(
-    messages: list,
+    messages: List[Any],
     keep_recent: int = DEFAULT_KEEP_RECENT,
-) -> Tuple[list, int]:
+) -> Tuple[List[Any], int]:
     """
     Clear old tool result contents, keeping the most recent N results.
     
@@ -111,21 +111,22 @@ def microcompact_messages(
         return messages, 0
     
     log.info(
-        f"[MICRO-COMPACT] Cleared {len(clear_set)} old tool results, "
-        f"kept last {len(keep_set)}, saved ~{tokens_saved:,} tokens"
+        "[MICRO-COMPACT] Cleared {} old tool results, kept last {}, saved ~{:,} tokens".format(
+            len(clear_set), len(keep_set), tokens_saved
+        )
     )
     
     return result, tokens_saved
 
 
-def _collect_compactable_tool_ids(messages: list) -> List[str]:
+def _collect_compactable_tool_ids(messages: List[Any]) -> List[str]:
     """
     Walk messages and collect tool_call IDs for compactable tools.
     Returns IDs in encounter order (oldest first).
     
     Ported from collectCompactableToolIds() in microCompact.ts
     """
-    ids = []
+    ids: List[str] = []
     for msg in messages:
         role = getattr(msg, 'role', None)
         tool_calls = getattr(msg, 'tool_calls', None)
@@ -133,9 +134,9 @@ def _collect_compactable_tool_ids(messages: list) -> List[str]:
         if role == 'assistant' and tool_calls:
             for tc in tool_calls:
                 if isinstance(tc, dict):
-                    func = tc.get('function', {})
-                    name = func.get('name', '')
-                    tc_id = tc.get('id', '')
+                    func: dict = tc.get('function', {})
+                    name: str = func.get('name', '')
+                    tc_id: str = tc.get('id', '')
                 elif hasattr(tc, 'function'):
                     name = tc.function.get('name', '') if isinstance(tc.function, dict) else getattr(tc.function, 'name', '')
                     tc_id = getattr(tc, 'id', '')
@@ -207,14 +208,14 @@ def get_auto_compact_threshold(context_budget: int) -> int:
 # ── Combined compaction pass ─────────────────────────────────────────────────
 
 def compact_if_needed(
-    messages: list,
+    messages: List[Any],
     estimated_tokens: int,
     context_budget: int,
-    compact_fn,
+    compact_fn: Any,
     PCM_class: type,
     state: Optional[AutoCompactState] = None,
     keep_recent: int = DEFAULT_KEEP_RECENT,
-) -> Tuple[list, bool]:
+) -> Tuple[List[Any], bool]:
     """
     Run the two-tier compaction pipeline:
     1. Always try micro-compact first (cheap, clears old tool results)
@@ -242,15 +243,19 @@ def compact_if_needed(
         if tokens_saved > 0:
             estimated_tokens -= tokens_saved
             log.info(
-                f"[COMPACT] Micro-compact saved ~{tokens_saved:,} tokens, "
-                f"estimated now: {estimated_tokens:,}/{context_budget:,}"
+                "[COMPACT] Micro-compact saved ~{:,} tokens, estimated now: {:,}/{:,}".format(
+                    tokens_saved, estimated_tokens, context_budget
+                )
             )
     
     # Tier 2: Full compact if still over threshold
     if should_auto_compact(estimated_tokens, context_budget, state):
         log.info(
-            f"[COMPACT] Auto-compact triggered: {estimated_tokens:,} tokens "
-            f"({estimated_tokens / max(context_budget, 1):.0%} of {context_budget:,} budget)"
+            "[COMPACT] Auto-compact triggered: {:,} tokens ({:.0%} of {:,} budget)".format(
+                estimated_tokens,
+                estimated_tokens / max(context_budget, 1),
+                context_budget
+            )
         )
         try:
             messages = compact_fn(messages, PCM_class)
@@ -258,11 +263,14 @@ def compact_if_needed(
             state.turn_counter = 0
             state.consecutive_failures = 0
             return messages, True
-        except Exception as e:
+        except Exception:
+            # Unused variable removed - just log the failure
             state.consecutive_failures += 1
             log.error(
-                f"[COMPACT] Auto-compact failed ({state.consecutive_failures}/"
-                f"{MAX_CONSECUTIVE_FAILURES}): {e}"
+                "[COMPACT] Auto-compact failed ({}/{})".format(
+                    state.consecutive_failures,
+                    MAX_CONSECUTIVE_FAILURES
+                )
             )
             if state.circuit_breaker_tripped:
                 log.warning("[COMPACT] Circuit breaker tripped — no more auto-compact attempts")
