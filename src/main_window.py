@@ -5722,6 +5722,16 @@ class CortexMainWindow(QMainWindow):
         else:
             provider = "mistral"  # Default to Mistral
         
+        # CRITICAL: Save model_id and provider to settings so ai_chat.py can read them
+        try:
+            from src.config.settings import get_settings
+            settings = get_settings()
+            settings.set("ai", "model_id", model_id)
+            settings.set("ai", "provider", provider)
+            log.info(f"[MainWindow] Saved model selection to settings: {model_id} (provider: {provider})")
+        except Exception as e:
+            log.warning(f"[MainWindow] Failed to save model to settings: {e}")
+        
         log.info(f"[MainWindow] Model changed to: {model_id} (provider: {provider})")
         self._ai_agent.update_settings(provider=provider, model_id=model_id)
 

@@ -1889,8 +1889,7 @@ class AIChatWidget(QWidget):
         _text_wants_plan = any(kw in text.lower() for kw in _plan_keywords)
         
         if _is_plan_mode or _text_wants_plan:
-            log.info(f"[AIChat] Plan mode + images: generating .md plan from image analysis "
-                     f"(dropdown={'Plan' if _is_plan_mode else 'Agent'}, text_match={_text_wants_plan})")
+            log.info(f"[AIChat] Plan mode + images: generating .md plan from image analysis (dropdown={'Plan' if _is_plan_mode else 'Agent'}, text_match={_text_wants_plan})")
             self._show_thinking_in_js()
             self._vision_user_text = text
             import threading
@@ -1961,6 +1960,11 @@ class AIChatWidget(QWidget):
             from src.agent.src.tools.VisionAgentTool.vision_agent import VisionAgentTool
             import asyncio
             
+            # Check if VisionAgentTool is actually implemented (not a stub)
+            if not hasattr(VisionAgentTool, 'execute'):
+                log.warning("[AIChat] VisionAgentTool.execute() not implemented, using fallback")
+                return {"success": False, "error": "VisionAgentTool not implemented"}
+            
             # Get current performance mode to determine vision model
             perf_mode_str = self._get_performance_mode_from_settings()
             perf_mode = get_performance_mode(perf_mode_str)
@@ -1979,21 +1983,24 @@ class AIChatWidget(QWidget):
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                result = loop.run_until_complete(
-                    agent.execute(
-                        image_data=image_data,
-                        analysis_type="full",
-                        store_in_memory=True,
-                        session_id=session_id,
-                        vision_model=vision_model  # Pass the model from config
-                    )
+                # Call execute() - it's an async method that returns a dict
+                coro = agent.execute(
+                    image_data=image_data,
+                    analysis_type="full",
+                    store_in_memory=True,
+                    session_id=session_id,
+                    vision_model=vision_model  # Pass the model from config
                 )
+                result = loop.run_until_complete(coro)
             finally:
                 loop.close()
             
             log.info(f"[AIChat] Vision Agent execution complete: success={result.get('success')}, model={vision_model}")
             return result
             
+        except ImportError as e:
+            log.warning(f"[AIChat] VisionAgentTool not available: {e}")
+            return {"success": False, "error": "VisionAgentTool not implemented"}
         except Exception as e:
             log.error(f"[AIChat] Vision Agent execution failed: {e}", exc_info=True)
             return {"success": False, "error": str(e)}
@@ -2043,9 +2050,7 @@ class AIChatWidget(QWidget):
         prompt_parts.append(f"- Confidence: {confidence:.2f}\n")
         
         # Instruction to use context
-        prompt_parts.append("\n**IMPORTANT**: Use the above image analysis to inform your response. "
-                          "Do not ask the user to describe the image - you already have the analysis. "
-                          "Reference specific details from the analysis in your answer.\n")
+        prompt_parts.append("\n**IMPORTANT**: Use the above image analysis to inform your response. Do not ask the user to describe the image - you already have the analysis. Reference specific details from the analysis in your answer.\n")
         
         return "\n".join(prompt_parts)
     
