@@ -1770,10 +1770,10 @@ class AgentWorker(QThread):
             _should_notify = True
             _pending_count = 0
             # Use PERSISTENT session counter, not per-turn counter
-            _mutation_count = self.bridge._session_mutation_count
+            _mutation_count = self.bridge.session_mutation_count
             
             # ── CRITICAL: Check if todos were auto-cancelled (incomplete) ──
-            if getattr(self.bridge, '_todos_auto_cancelled', False):
+            if getattr(self.bridge, 'todos_auto_cancelled', False):
                 _should_notify = False
                 msg_text = (
                     "[WORKER] Notification BLOCKED: Todos were auto-cancelled (not completed). "
@@ -1781,12 +1781,12 @@ class AgentWorker(QThread):
                 )
                 log.warning(msg_text)
                 self.bridge.allow_notification = False
-                self.bridge._todos_auto_cancelled = False  # Reset for next time
+                self.bridge.todos_auto_cancelled = False  # Reset for next time
             
             # Check if there are pending todos
-            elif hasattr(self.bridge, '_current_todos') and self.bridge._current_todos:
+            elif self.bridge.current_todos:
                 _pending_todos = [
-                    t for t in self.bridge._current_todos
+                    t for t in self.bridge.current_todos
                     if t.get("status") not in ("COMPLETE", "CANCELLED")
                 ]
                 _pending_count = len(_pending_todos)
@@ -1963,7 +1963,7 @@ class CortexAgentBridge(QObject):
         self._tool_executor: ToolExecutionEngine = ToolExecutionEngine(self._tool_circuit_breaker)
         # Legacy aliases for backward compatibility
         self._tool_fail_counts: Dict[str, int] = self._tool_circuit_breaker._fail_counts
-        self._disabled_tools: set = self._tool_circuit_breaker._disabled_tools
+        self._disabled_tools: Set[str] = self._tool_circuit_breaker._disabled_tools
         self._tool_total_calls: Dict[str, int] = self._tool_circuit_breaker._total_calls
         self._session_tasks: Dict[str, Dict[str, Any]] = {}  # task_id -> task payload
         self._teams: Dict[str, Dict[str, Any]] = {}  # team_id -> team payload
@@ -2121,6 +2121,26 @@ class CortexAgentBridge(QObject):
     def permission_granted(self, value: bool) -> None:
         """Set permission granted status."""
         self._permission_granted = value
+
+    @property
+    def session_mutation_count(self) -> int:
+        """Get the persistent session mutation counter."""
+        return self._session_mutation_count
+
+    @property
+    def todos_auto_cancelled(self) -> bool:
+        """Check if todos were auto-cancelled (incomplete)."""
+        return self._todos_auto_cancelled
+
+    @todos_auto_cancelled.setter
+    def todos_auto_cancelled(self, value: bool) -> None:
+        """Set whether todos were auto-cancelled."""
+        self._todos_auto_cancelled = value
+
+    @property
+    def current_todos(self) -> List[Dict[str, Any]]:
+        """Get the current todo list."""
+        return self._current_todos
 
     # ── Initialisation helpers ─────────────────────────────────
 
@@ -3105,7 +3125,7 @@ Use Markdown tables for structured data comparison:
             for turn in range(max_turns):
                 log.info(f"[BRIDGE] === Agentic turn {turn + 1}/{max_turns} ===")
                 # Track per-turn tool success so we only count successful mutations
-                self._tool_call_success = {}
+                self._tool_call_success: Dict[str, bool] = {}
 
                 
                 # ── INDUSTRY-STANDARD: Agent Phase Tracking ─────────────────
@@ -3197,7 +3217,7 @@ Use Markdown tables for structured data comparison:
                     expanded_names = core_names | {"WebSearch", "LSP"}
                     active_tool_defs = _filter_tool_definitions(list(tool_defs), expanded_names)
                     log.info(
-                        f"[TOOLS] Expanded to {len(active_tool_defs)} tools "
+                        f"[TOOLS] Expanded to {len(active_tool_defs)} tools " +
                         f"after {self._session_mutation_count} mutations"
                     )
 
@@ -3551,7 +3571,7 @@ Use Markdown tables for structured data comparison:
                     debug_nudge = self._debug_loop.build_nudge_message()
                     if debug_nudge:
                         log.info(
-                            f"[DEBUG LOOP] Injecting debug nudge (cycle "
+                            f"[DEBUG LOOP] Injecting debug nudge (cycle " +
                             f"{self._debug_loop.cycle_count})"
                         )
                         messages.append(PCM(role="user", content=debug_nudge))
@@ -4058,7 +4078,7 @@ Use Markdown tables for structured data comparison:
                 self._mutation_success_count += 1
                 self._session_mutation_count += 1  # Persistent session counter
                 log.debug(
-                    f"[MUTATION] Turn mutation: {self._mutation_success_count}, "
+                    f"[MUTATION] Turn mutation: {self._mutation_success_count}, " +
                     f"Session mutation: {self._session_mutation_count}"
                 )
             result_payload: Any = result.result
@@ -4083,7 +4103,7 @@ Use Markdown tables for structured data comparison:
             try:
                 _raw = result.result if hasattr(result, 'result') else None
                 if isinstance(_raw, dict):
-                    _exit_code = _raw.get("exit_code") or _raw.get("exitCode")
+                    _exit_code = cast(Optional[int], _raw.get("exit_code") or _raw.get("exitCode"))
             except Exception:
                 pass
         self._recent_tool_results.append((tool_name, bool(result.success), result_str[:200], _exit_code))
@@ -4316,7 +4336,7 @@ Use Markdown tables for structured data comparison:
 
     # ── Phase 4: Session restore ──────────────────────────────────
 
-    def _hydrate_from_snapshot(self, snapshot: dict) -> None:
+    def _hydrate_from_snapshot(self, snapshot: Dict[str, Any]) -> None:
         """Restore session state from a previously saved snapshot.
 
         Called during __init__ when a snapshot file is found on disk.
@@ -4383,9 +4403,9 @@ Use Markdown tables for structured data comparison:
                 log.warning(f"[SESSION] Failed to restore debug loop: {e}")
 
         # Inject resume marker into conversation history
-        saved_at = snapshot.get("saved_at", 0)
-        task_count = len(saved_tasks)
-        mutation_count = snapshot.get("session_mutation_count", 0)
+        saved_at: int = snapshot.get("saved_at", 0)
+        task_count: int = len(saved_tasks)
+        mutation_count: int = snapshot.get("session_mutation_count", 0)
         resume_msg = (
             f"[System: Session resumed from {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(saved_at))}. "
             f"{mutation_count} mutations had been made, {task_count} tasks were in progress. "
@@ -5857,8 +5877,8 @@ Use Markdown tables for structured data comparison:
         except Exception:
             pass
 
-        log.info(f"[TASK] Created task {task_id}: {subject}"
-                 f"{' parent=' + parent_id if parent_id else ''}"
+        log.info(f"[TASK] Created task {task_id}: {subject}" +
+                 f"{' parent=' + parent_id if parent_id else ''}" +
                  f"{' deps=' + str(depends_on) if depends_on else ''}")
 
         return ToolResult(tool_id=tool_id, result={
