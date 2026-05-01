@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import os
 import platform
 import re
@@ -21,6 +22,8 @@ from typing import (
     Any, Callable, Dict, List, Optional, Set, Tuple, Union, 
     TYPE_CHECKING, TypedDict, Literal
 )
+
+log = logging.getLogger(__name__)
 
 # ============================================================
 # CONSTANTS
@@ -1849,7 +1852,7 @@ class FileReadTool:
         
         # Set memory file mtime for freshness tracking
         if _is_auto_mem_file(full_file_path):
-            _set_memory_file_mtime(data, mtime_ms)
+            _set_memory_file_mtime(full_file_path, mtime_ms)
         
         log_file_operation(
             operation='read',
@@ -1926,7 +1929,7 @@ class FileReadTool:
             
             if data.file.content:
                 # Memory file freshness prefix
-                mtime_ms = _get_memory_file_mtime(data)
+                mtime_ms = _get_memory_file_mtime(data.file.file_path)
                 if mtime_ms:
                     content += _memory_freshness_note(mtime_ms)
                 

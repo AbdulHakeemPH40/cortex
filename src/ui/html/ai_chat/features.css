@@ -63,20 +63,18 @@
 .card-container {
     background: var(--bg-surface);
     border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    margin: 8px 16px;
+    border-radius: 8px;
+    margin: 8px 0;
     overflow: hidden;
     font-size: 13px;
     transition: all 0.2s ease;
-    max-width: 600px;
-    width: calc(100% - 32px);
-    margin-left: auto;
-    margin-right: auto;
+    width: 100%;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
 }
 
 .card-container:hover {
     border-color: var(--border-light);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
 }
 
 /* Card Header */
@@ -88,7 +86,8 @@
     user-select: none;
     background: rgba(255, 255, 255, 0.02);
     transition: background 0.15s ease;
-    min-height: 28px;
+    min-height: 32px;
+    letter-spacing: 0.1px;
 }
 
 .card-header:hover {
@@ -98,11 +97,11 @@
 /* Chevron Icon */
 .card-chevron,
 .chevron {
-    width: 14px;
-    height: 14px;
-    margin-right: 10px;
+    width: 16px;
+    height: 16px;
+    margin-right: 12px;
     transition: transform 0.2s ease;
-    opacity: 0.4;
+    opacity: 0.5;
     fill: currentColor;
 }
 
@@ -902,10 +901,7 @@
     overflow: hidden;
     font-size: 13px;
     transition: border-color 0.2s ease, box-shadow 0.2s ease;
-    max-width: 600px;
-    width: calc(100% - 32px);
-    margin-left: auto;
-    margin-right: auto;
+    width: 100%;
 }
 
 .term-card:hover {
@@ -913,7 +909,7 @@
 }
 
 .term-header {
-    padding: 5px 14px;
+    padding: 5px 12px;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -1296,6 +1292,7 @@
 .term-output-body {
     background: #050505;
     border-top: 1px solid #1a1a1a;
+    border-radius: 0 0 8px 8px;
     max-height: 220px;
     overflow-y: auto;
 }
@@ -1304,7 +1301,7 @@
 .term-output-text {
     padding: 12px 16px;
     font-family: 'Geist Mono', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
-    font-size: 11px;
+    font-size: 10.5px;
     color: #888;
     line-height: 1.6;
     white-space: pre-wrap;
@@ -1595,482 +1592,6 @@
 /* Applied card green left accent */
 .fec.fec-applied {
     border-left: 2px solid rgba(74, 222, 128, 0.35);
-}
-
-/* FEC cards inside activity section - spacing adjustments */
-.activity-section .fec-cards-container {
-    padding: 8px 12px;
-    border-top: 1px solid rgba(255, 255, 255, 0.05);
-    margin: 0;
-}
-
-.activity-section.collapsed .fec-cards-container {
-    display: none;
-}
-
-.activity-section .fec {
-    margin-bottom: 4px;
-}
-
-.activity-section .fec:last-child {
-    margin-bottom: 0;
-}
-
-/* ================================================
-   ACTIVITY SECTION (Exploration Log)
-   Clean, minimal activity panel
-   ================================================ */
-
-.activity-section {
-    background: #161618;
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    border-radius: 8px;
-    margin: 10px 0;
-    overflow: hidden;
-    font-size: 13px;
-    transition: border-color 0.2s ease;
-}
-
-.activity-section:hover {
-    border-color: rgba(255, 255, 255, 0.12);
-}
-
-.activity-header {
-    padding: 10px 14px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    background: rgba(255, 255, 255, 0.025);
-    cursor: pointer;
-    user-select: none;
-    transition: background 0.15s ease;
-    border-bottom: 1px solid transparent;
-}
-
-.activity-header:hover {
-    background: rgba(255, 255, 255, 0.04);
-}
-
-.activity-section.expanded .activity-header {
-    border-bottom-color: rgba(255, 255, 255, 0.06);
-}
-
-.activity-icon {
-    font-size: 10px;
-    font-weight: 700;
-    text-transform: uppercase;
-    padding: 3px 8px;
-    border-radius: 4px;
-    flex-shrink: 0;
-    letter-spacing: 0.5px;
-}
-
-.activity-icon.running {
-    color: var(--accent-primary);
-    background: rgba(59, 130, 246, 0.15);
-    animation: activityIconPulse 1.5s ease-in-out infinite;
-}
-
-@keyframes activityIconPulse {
-    0%, 100% { opacity: 0.7; transform: scale(1); }
-    50% { opacity: 1; transform: scale(1.05); }
-}
-
-.activity-icon.complete {
-    color: var(--green-bright);
-    background: var(--green-bg);
-    animation: none !important;
-}
-
-/* Hard-stop all spinners when section is collapsed */
-.activity-section.collapsed .activity-icon,
-.activity-section.collapsed .activity-icon.running,
-.activity-section.collapsed .todo-spinner,
-.activity-section.collapsed .activity-spinner,
-.activity-section.collapsed .activity-text-shimmer {
-    animation: none !important;
-    opacity: 0.6;
-}
-
-.activity-title {
-    color: var(--text-main);
-    font-weight: 500;
-    font-size: 13px;
-    flex: 1;
-    letter-spacing: -0.1px;
-}
-
-/* ========================================
-   SILVER SHIMMER TEXT ANIMATION SYSTEM
-   Applies to all running/active text labels
-   ======================================== */
-
-/* Working header shimmer */
-.activity-text-shimmer {
-    display: inline-block;
-    color: #d0d0d8;
-    animation: silverWave 1.8s ease-in-out infinite;
-}
-
-@keyframes silverWave {
-    0%   { opacity: 0.5; color: #909098; }
-    25%  { opacity: 0.85; color: #c8c8d0; }
-    50%  { opacity: 1; color: #f0f0f4; }
-    75%  { opacity: 0.85; color: #c8c8d0; }
-    100% { opacity: 0.5; color: #909098; }
-}
-
-/* Animated dots after Working */
-.activity-text-shimmer::after {
-    content: ' . . .';
-    color: inherit;
-    font-size: 11px;
-    letter-spacing: 2px;
-}
-
-/* Silver shimmer for ALL running activity text */
-.activity-item.running .activity-text,
-.activity-item.thinking .activity-text,
-.activity-item.running .running-label {
-    animation: silverWave 1.8s ease-in-out infinite;
-}
-
-/* Thinking dots pulse */
-.thinking-dots {
-    color: #a0a0a8;
-    font-size: 14px;
-    letter-spacing: 3px;
-    animation: dotsWave 1s ease-in-out infinite;
-}
-
-@keyframes dotsWave {
-    0%, 100% { opacity: 0.25; }
-    50% { opacity: 0.9; }
-}
-
-.activity-toggle {
-    color: var(--text-secondary);
-    opacity: 0.5;
-    transition: transform 0.25s ease;
-    flex-shrink: 0;
-}
-
-.activity-section.expanded .activity-toggle {
-    transform: rotate(90deg);
-    opacity: 0.8;
-}
-
-.activity-list {
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
-    max-height: 350px;
-    overflow-y: auto;
-    background: #111113;
-}
-
-
-.activity-section.collapsed .activity-list {
-    display: none;
-}
-
-/* Summary chip shown in collapsed header: "3 read · 1 explore" */
-.activity-summary-chip {
-    font-size: 10.5px;
-    color: var(--text-dim, #666);
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 4px;
-    padding: 1px 7px;
-    margin-left: 6px;
-    letter-spacing: 0.2px;
-    flex-shrink: 0;
-}
-
-/* Collapsed header: cursor shows it's expandable */
-.activity-section.collapsed .activity-header {
-    opacity: 0.75;
-}
-.activity-section.collapsed .activity-header:hover {
-    opacity: 1;
-}
-
-/* Activity Item - Clean minimal rows */
-.activity-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 14px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
-    font-size: 12px;
-    color: var(--text-secondary);
-    transition: background 0.1s ease;
-    position: relative;
-    min-height: 32px;
-}
-
-.activity-item:last-child {
-    border-bottom: none;
-}
-
-.activity-item:hover {
-    background: rgba(255, 255, 255, 0.025);
-}
-
-.activity-item.running {
-    color: var(--text-main);
-}
-
-/* Running left accent bar - visible pulse */
-.activity-item.running::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 2px;
-    background: var(--accent-primary);
-    animation: barPulse 1.2s ease-in-out infinite;
-}
-
-@keyframes barPulse {
-    0%, 100% { opacity: 0.2; }
-    50% { opacity: 0.8; }
-}
-
-/* Operation badge pills for running items */
-.activity-item.running .activity-op {
-    display: inline-flex;
-    align-items: center;
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-size: 10px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    flex-shrink: 0;
-    animation: badgePulse 1.4s ease-in-out infinite;
-}
-
-@keyframes badgePulse {
-    0%, 100% { opacity: 0.55; filter: brightness(0.85); }
-    50%       { opacity: 1;    filter: brightness(1.3); }
-}
-
-/* THINK - purple */
-.activity-item.thinking .activity-op,
-.activity-item.running[data-type="think"] .activity-op {
-    background: rgba(139, 92, 246, 0.15);
-    color: #a78bfa;
-    border: 1px solid rgba(139, 92, 246, 0.25);
-}
-
-/* READ - blue */
-.activity-item.running[data-type="read_file"] .activity-op {
-    background: rgba(59, 130, 246, 0.15);
-    color: #60a5fa;
-    border: 1px solid rgba(59, 130, 246, 0.25);
-}
-
-/* EDIT / WRITE - amber */
-.activity-item.running[data-type="edit_file"] .activity-op,
-.activity-item.running[data-type="write_file"] .activity-op,
-.activity-item.running[data-type="inject_after"] .activity-op,
-.activity-item.running[data-type="add_import"] .activity-op {
-    background: rgba(234, 179, 8, 0.12);
-    color: #fbbf24;
-    border: 1px solid rgba(234, 179, 8, 0.25);
-}
-
-/* CREATE - green */
-.activity-item.running[data-type="create_file"] .activity-op,
-.activity-item.running[data-type="create_directory"] .activity-op {
-    background: rgba(34, 197, 94, 0.12);
-    color: #4ade80;
-    border: 1px solid rgba(34, 197, 94, 0.25);
-}
-
-/* DELETE - red */
-.activity-item.running[data-type="delete_file"] .activity-op,
-.activity-item.running[data-type="delete_directory"] .activity-op {
-    background: rgba(239, 68, 68, 0.12);
-    color: #f87171;
-    border: 1px solid rgba(239, 68, 68, 0.25);
-}
-
-/* EXPLORE / LIST - green */
-.activity-item.running[data-type="list_directory"] .activity-op {
-    background: rgba(34, 197, 94, 0.12);
-    color: #4ade80;
-    border: 1px solid rgba(34, 197, 94, 0.25);
-}
-
-/* SEARCH / GREP - cyan */
-.activity-item.running[data-type="search"] .activity-op,
-.activity-item.running[data-type="grep_code"] .activity-op,
-.activity-item.running[data-type="search_files"] .activity-op,
-.activity-item.running[data-type="search_codebase"] .activity-op {
-    background: rgba(6, 182, 212, 0.12);
-    color: #22d3ee;
-    border: 1px solid rgba(6, 182, 212, 0.25);
-}
-
-/* RUN COMMAND / TERMINAL - orange */
-.activity-item.running[data-type="run_command"] .activity-op,
-.activity-item.running[data-type^="terminal"] .activity-op {
-    background: rgba(249, 115, 22, 0.12);
-    color: #fb923c;
-    border: 1px solid rgba(249, 115, 22, 0.25);
-}
-
-/* Completed items - static, muted, NO shimmer */
-.activity-item.complete .activity-op {
-    animation: none !important;
-    opacity: 0.45;
-    border-color: rgba(255, 255, 255, 0.06) !important;
-    background: rgba(255, 255, 255, 0.03) !important;
-    color: var(--text-dim) !important;
-}
-
-.activity-item.complete {
-    opacity: 0.55;
-}
-
-.activity-item.complete .activity-text {
-    animation: none !important;
-    color: var(--text-dim) !important;
-}
-
-.activity-item.complete .thinking-dots {
-    animation: none !important;
-    opacity: 0.4 !important;
-}
-
-.activity-item.complete .running-label {
-    animation: none !important;
-    opacity: 0.4 !important;
-}
-
-.activity-item.complete::before {
-    display: none;
-}
-
-/* Activity spinner in header */
-.activity-spinner {
-    animation: spin 0.8s linear infinite;
-    color: var(--text-secondary);
-    flex-shrink: 0;
-    opacity: 0.7;
-}
-
-/* Thinking dots animation */
-.thinking-dots {
-    color: #a0a0a8;
-    font-size: 14px;
-    letter-spacing: 3px;
-    animation: dotsWave 1s ease-in-out infinite;
-}
-
-@keyframes thinkingDotsPulse {
-    0%, 100% { opacity: 0.2; }
-    50% { opacity: 0.9; }
-}
-
-/* Thought timer styling (DeepSeek reasoning output) — hidden from chat display */
-.thought-timer {
-    display: none;
-}
-
-/* Token counter — hidden */
-.token-counter {
-    display: none !important;
-}
-
-.activity-text {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-family: 'Geist Mono', 'Fira Code', monospace;
-    font-size: 12px;
-}
-
-.activity-text .running-label {
-    color: var(--accent-primary);
-    font-weight: 500;
-}
-
-.activity-text code {
-    background: rgba(255, 255, 255, 0.06);
-    padding: 1px 5px;
-    border-radius: 3px;
-    font-size: 11px;
-}
-
-.activity-badge {
-    font-size: 10px;
-    font-weight: 600;
-    padding: 3px 8px;
-    border-radius: 4px;
-    flex-shrink: 0;
-}
-
-.activity-badge.applied {
-    color: var(--green-bright);
-    background: var(--green-bg);
-}
-
-.activity-badge.completed {
-    color: var(--accent-primary);
-    background: rgba(59, 130, 246, 0.1);
-}
-
-/* File icon badges in activity items */
-.file-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 24px;
-    height: 18px;
-    padding: 0 4px;
-    border-radius: 3px;
-    font-size: 9px;
-    font-weight: 700;
-    font-family: 'Fira Code', monospace;
-    flex-shrink: 0;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    background: rgba(144, 164, 174, 0.15);
-    color: #90A4AE;
-}
-
-.file-icon.py { background: rgba(55, 126, 184, 0.2); color: #387EB8; }
-.file-icon.js { background: rgba(247, 223, 30, 0.15); color: #F7DF1E; }
-.file-icon.ts { background: rgba(49, 120, 198, 0.2); color: #3178C6; }
-.file-icon.tsx, .file-icon.jsx { background: rgba(97, 218, 251, 0.15); color: #61DAFB; }
-.file-icon.html { background: rgba(228, 77, 38, 0.15); color: #E44D26; }
-.file-icon.css { background: rgba(21, 114, 182, 0.15); color: #1572B6; }
-.file-icon.json { background: rgba(245, 166, 35, 0.15); color: #F5A623; }
-.file-icon.md { background: rgba(66, 165, 245, 0.15); color: #42A5F5; }
-.file-icon.terminal { background: rgba(78, 201, 176, 0.12); color: #4EC9B0; }
-.file-icon.folder { background: rgba(74, 144, 217, 0.15); color: #4A90D9; }
-.file-icon.delete { background: var(--red-bg); color: var(--red); }
-.file-icon.search { background: rgba(6, 182, 212, 0.15); color: #22D3EE; }
-.file-icon.git { background: rgba(243, 79, 41, 0.15); color: #F34F29; }
-.file-icon.think { background: rgba(139, 92, 246, 0.15); color: #A78BFA; }
-.file-icon.move, .file-icon.rename { background: rgba(234, 179, 8, 0.15); color: var(--yellow); }
-.file-icon.copy { background: rgba(59, 130, 246, 0.1); color: var(--accent-primary); }
-
-/* Diff count display in activity items */
-.diff-count {
-    font-size: 11px;
-    margin-left: 4px;
-}
-
-.diff-count .added {
-    color: var(--green-bright);
-}
-
-.diff-count .removed {
-    color: var(--red);
 }
 
 /* ================================================

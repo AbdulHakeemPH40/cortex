@@ -2241,30 +2241,39 @@ code:not(pre code) {
 }
 
 /* ================================================
-   THINKING INDICATOR
+   THINKING INDICATOR - Clean Minimal
+   Shown while AI is processing user request
    ================================================ */
 
 #thinking-indicator-bar {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 12px 16px;
-    margin-bottom: 16px;
+    gap: 10px;
+    padding: 10px 14px;
+    margin-bottom: 12px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    animation: fadeIn 0.25s ease;
 }
 
 .thinking-avatar {
-    color: var(--accent-primary);
+    color: #60a5fa;
+    display: flex;
+    align-items: center;
+    animation: orbPulse 1.5s ease-in-out infinite;
 }
 
 .thinking-dots-ani {
     display: flex;
     gap: 4px;
+    align-items: center;
 }
 
 .thinking-dots-ani span {
-    width: 6px;
-    height: 6px;
-    background: var(--accent-primary);
+    width: 5px;
+    height: 5px;
+    background: #60a5fa;
     border-radius: 50%;
     animation: thinkingPulse 1.4s infinite;
 }
@@ -2278,13 +2287,14 @@ code:not(pre code) {
 }
 
 @keyframes thinkingPulse {
-    0%, 80%, 100% { opacity: 0.3; }
-    40% { opacity: 1; }
+    0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
+    40% { opacity: 1; transform: scale(1); }
 }
 
 .thinking-label {
     color: var(--text-secondary);
-    font-size: 13px;
+    font-size: 12px;
+    font-weight: 500;
 }
 
 /* ⊙Thought · Xs - DeepSeek reasoning timer shown in message text */
@@ -3504,9 +3514,8 @@ body.loaded #loading-overlay {
     border-radius: var(--radius-lg);
     overflow: hidden;
     transition: transform 0.15s ease, box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease;
-    margin: 8px auto;
-    max-width: 600px;
-    width: calc(100% - 32px);
+    margin: 8px 0;
+    width: 100%;
     box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
@@ -3596,7 +3605,7 @@ body.loaded #loading-overlay {
 }
 
 .tool-operation-card.terminal {
-    max-width: 600px;
+    width: 100%;
 }
 
 .tool-operation-card.diff .tool-card-icon {
@@ -4034,205 +4043,166 @@ body.loaded #loading-overlay {
 }
 
 /* ================================================
-   TOOL ACTIVITY CARDS - Cursor-style Live Preview
+   CORTEX HYBRID ACTIVITY CARDS - Cursor/Windsurf Design
+   Flat card structure: each tool = one card with preview + expandable body
+   Collapsible group wrapper with >^ chevron
    ================================================ */
 
-/* Activity Group (per AI turn) */
-.ta-group {
-    margin: 8px 0 4px 0;
-    border-radius: 10px;
-    background: rgba(18, 18, 18, 0.92);
-    border: 1px solid rgba(255, 255, 255, 0.06);
+/* ── Activity Group Wrapper (per AI turn) ──────────────── */
+.cortex-activity-group {
+    margin: 10px 0 6px 0;
+    border-radius: 8px;
+    background: rgba(18, 18, 18, 0.94);
+    border: 1px solid rgba(255, 255, 255, 0.08);
     overflow: hidden;
-    animation: cardSlideIn 0.25s ease-out;
+    animation: caCardSlideIn 0.25s ease-out;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
 }
 
-.ta-group-header {
+.ca-group-header {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 9px 14px;
+    gap: 10px;
+    padding: 10px 16px;
     cursor: pointer;
     user-select: none;
     transition: background 0.15s;
+    background: rgba(255, 255, 255, 0.018);
 }
-.ta-group-header:hover {
-    background: rgba(255, 255, 255, 0.03);
+.ca-group-header:hover {
+    background: rgba(255, 255, 255, 0.04);
 }
 
-.ta-group-chevron {
+.ca-group-chevron {
     width: 14px;
     height: 14px;
     color: var(--text-muted, #6b7280);
     transition: transform 0.2s ease;
     flex-shrink: 0;
 }
-.ta-group.collapsed .ta-group-chevron {
+.cortex-activity-group.collapsed .ca-group-chevron {
     transform: rotate(-90deg);
 }
 
-.ta-group-icon {
-    width: 16px;
-    height: 16px;
+.ca-group-icon {
+    width: 18px;
+    height: 18px;
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
+    color: #60a5fa;
 }
-.ta-group-icon .todo-spinner {
-    width: 12px;
-    height: 12px;
-}
-.ta-group-icon.complete svg {
+.ca-group-icon.complete {
     color: #4ade80;
 }
+.ca-group-spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(96, 165, 250, 0.2);
+    border-top-color: #60a5fa;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    display: inline-block;
+}
 
-.ta-group-title {
+.ca-group-title {
     font-size: 12px;
     font-weight: 600;
     color: var(--text-secondary, #d1d5db);
+    letter-spacing: 0.1px;
     white-space: nowrap;
 }
 
-.ta-group-stats {
-    font-size: 11px;
+.ca-group-stats {
+    font-size: 10.5px;
     color: var(--text-muted, #6b7280);
     margin-left: auto;
     white-space: nowrap;
+    letter-spacing: 0.1px;
 }
 
-.ta-group-items {
+.ca-group-cards {
     overflow: hidden;
     transition: max-height 0.3s ease, opacity 0.2s ease;
-    max-height: 2000px;
+    max-height: 3000px;
     opacity: 1;
 }
-.ta-group.collapsed .ta-group-items {
+.cortex-activity-group.collapsed .ca-group-cards {
     max-height: 0;
     opacity: 0;
 }
 
-.ta-group-sections {
-    display: flex;
-    flex-direction: column;
-    gap: 0;
+/* ── Individual Card ────────────────────────────────────── */
+.ca-card {
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    overflow: hidden;
+    transition: background 0.15s;
+    position: relative;
 }
-
-.ta-section {
-    border-top: 1px solid rgba(255, 255, 255, 0.04);
-}
-
-.ta-section:first-child {
+.ca-card:first-child {
     border-top: none;
 }
 
-.ta-section-header {
+/* Left accent stripe - per tool type */
+.ca-card::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+.ca-card.thought::before  { background: #a78bfa; }
+.ca-card.read::before    { background: #60a5fa; }
+.ca-card.grep::before   { background: #34d399; }
+.ca-card.glob::before   { background: #a78bfa; }
+.ca-card.explore::before{ background: #f472b6; }
+.ca-card.search::before { background: #34d399; }
+.ca-card.edit::before   { background: #fbbf24; }
+.ca-card.terminal::before{ background: #22d3ee; }
+.ca-card:hover::before,
+.ca-card.expanded::before { opacity: 1; }
+
+/* ── Card Header ────────────────────────────────────────── */
+.ca-card-header {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 6px 14px 6px 10px;
+    gap: 9px;
+    padding: 9px 16px;
     cursor: pointer;
     user-select: none;
-    background: rgba(255, 255, 255, 0.015);
+    min-height: 36px;
+    transition: background 0.12s;
+}
+.ca-card-header:hover {
+    background: rgba(255, 255, 255, 0.025);
 }
 
-.ta-section-header:hover {
-    background: rgba(255, 255, 255, 0.03);
-}
-
-.ta-section-chevron {
+.ca-card-chevron {
     width: 12px;
     height: 12px;
     color: var(--text-muted, #6b7280);
     transition: transform 0.2s ease;
     flex-shrink: 0;
+    opacity: 0.5;
 }
-
-.ta-section.collapsed .ta-section-chevron {
-    transform: rotate(-90deg);
-}
-
-.ta-section-icon {
-    font-size: 11px;
-    opacity: 0.7;
-}
-
-.ta-section-title {
-    font-size: 11px;
-    color: var(--text-secondary, #d1d5db);
-    font-weight: 600;
-    letter-spacing: 0.1px;
-}
-
-.ta-section-count {
-    margin-left: auto;
-    font-size: 10px;
-    color: var(--text-muted, #6b7280);
-    font-family: var(--font-mono, 'Cascadia Code', monospace);
-}
-
-.ta-section-live {
-    min-width: 58px;
-    text-align: right;
-    font-size: 10px;
-    color: #60a5fa;
-    font-family: var(--font-mono, 'Cascadia Code', monospace);
-}
-
-.ta-section-items {
-    overflow: hidden;
-    max-height: 2000px;
-    transition: max-height 0.25s ease, opacity 0.2s ease;
-    opacity: 1;
-}
-
-.ta-section.collapsed .ta-section-items {
-    max-height: 0;
-    opacity: 0;
-}
-
-/* Individual Activity Item */
-.ta-item {
-    border-top: 1px solid rgba(255, 255, 255, 0.04);
-    overflow: hidden;
-}
-.ta-item:first-child {
-    border-top: none;
-}
-
-.ta-item-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 7px 14px 7px 28px;
-    cursor: pointer;
-    user-select: none;
-    transition: background 0.15s;
-    min-height: 32px;
-}
-.ta-item-header:hover {
-    background: rgba(255, 255, 255, 0.025);
-}
-
-.ta-item-chevron {
-    width: 10px;
-    height: 10px;
-    color: var(--text-muted, #6b7280);
-    transition: transform 0.2s ease;
-    flex-shrink: 0;
-    opacity: 0.6;
-}
-.ta-item.expanded .ta-item-chevron {
+.ca-card.expanded .ca-card-chevron {
     transform: rotate(90deg);
+    opacity: 0.8;
 }
 
-.ta-item-icon {
-    font-size: 11px;
+.ca-card-icon {
+    font-size: 13px;
     flex-shrink: 0;
-    opacity: 0.7;
+    opacity: 0.8;
+    width: 18px;
+    text-align: center;
 }
 
-.ta-item-label {
+.ca-card-label {
     font-size: 11.5px;
     color: var(--text-secondary, #d1d5db);
     font-family: var(--font-mono, 'Cascadia Code', monospace);
@@ -4242,102 +4212,200 @@ body.loaded #loading-overlay {
     flex: 1;
     min-width: 0;
 }
-.ta-item-label .ta-highlight {
+.ca-card-label .ca-highlight {
     color: #e5e7eb;
     font-weight: 600;
 }
-.ta-item-label .ta-muted {
+.ca-card-label .ca-muted {
     color: var(--text-muted, #6b7280);
-    font-size: 10.5px;
-}
-
-.ta-thought-stream {
-    margin: 0 14px 8px 48px;
-    padding: 6px 8px;
-    border-radius: 6px;
-    background: rgba(255, 255, 255, 0.02);
-    color: var(--text-muted, #9ca3af);
-    font-size: 11px;
-    line-height: 1.4;
-    font-family: var(--font-mono, 'Cascadia Code', monospace);
-    white-space: pre-wrap;
-    word-break: break-word;
-    border: 1px solid rgba(255, 255, 255, 0.04);
-}
-
-.ta-item.ta-thought.collapsed .ta-thought-stream {
-    display: none;
-}
-
-.ta-item.ta-thought.expanded .ta-thought-stream {
-    display: block;
-}
-
-.ta-item.ta-thought.expanded .ta-item-chevron {
-    transform: rotate(90deg);
-}
-
-.ta-item-status {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-}
-.ta-item-status .ta-spinner {
-    width: 10px;
-    height: 10px;
-    border: 1.5px solid transparent;
-    border-top-color: #60a5fa;
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-    display: inline-block;
-}
-.ta-item-status .ta-ok {
-    color: #4ade80;
-    font-size: 11px;
-    font-weight: 700;
-}
-.ta-item-status .ta-err {
-    color: #ef4444;
     font-size: 10px;
-    font-weight: 600;
 }
 
-/* Expandable details area */
-.ta-item-details {
+/* ── Status Badge ───────────────────────────────────────── */
+.ca-card-badge {
+    font-size: 9.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    line-height: 1;
+}
+.ca-card-badge.running {
+    background: rgba(96, 165, 250, 0.12);
+    color: #60a5fa;
+    animation: caBadgePulse 1.5s ease-in-out infinite;
+}
+.ca-card-badge.complete {
+    background: rgba(34, 197, 94, 0.1);
+    color: #4ade80;
+}
+.ca-card-badge.error {
+    background: rgba(239, 68, 68, 0.1);
+    color: #f87171;
+}
+
+/* ── Card Preview (compact summary line) ────────────────── */
+.ca-card-preview {
+    font-size: 11px;
+    color: var(--text-muted, #6b7280);
+    font-family: var(--font-mono, 'Cascadia Code', monospace);
+    padding: 3px 16px 8px 43px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.3;
+    max-height: 30px;
+    opacity: 1;
+    transition: max-height 0.25s ease, opacity 0.2s ease, padding 0.25s ease;
+}
+/* Collapsed: hide preview line completely */
+.ca-card:not(.expanded) .ca-card-preview {
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    opacity: 0;
+}
+.ca-card.expanded .ca-card-preview {
+    max-height: 30px;
+    padding: 3px 16px 8px 43px;
+    opacity: 1;
+}
+
+/* ── Card Body (expandable content) ─────────────────────── */
+.ca-card-body {
     max-height: 0;
     overflow: hidden;
-    transition: max-height 0.25s ease;
-    background: rgba(0, 0, 0, 0.15);
+    transition: max-height 0.3s ease;
+    background: rgba(0, 0, 0, 0.12);
 }
-.ta-item.expanded .ta-item-details {
-    max-height: 600px;
+.ca-card-body::-webkit-scrollbar {
+    width: 5px;
+}
+.ca-card-body::-webkit-scrollbar-track {
+    background: transparent;
+}
+.ca-card-body::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 3px;
 }
 
-/* Match rows (for grep/search results) */
-.ta-match-row {
+/* ── Card Variant: Thought ───────────────────────────────── */
+.ca-card.thought .ca-card-icon { color: #a78bfa; }
+.ca-card.thought .ca-card-preview {
+    color: rgba(167, 139, 250, 0.7);
+    font-style: italic;
+}
+.ca-card.thought .ca-card-body {
+    padding: 8px 18px 12px 43px;
+    color: rgba(167, 139, 250, 0.65);
+    font-family: var(--font-mono, 'Cascadia Code', monospace);
+    font-size: 11px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* ── Card Variant: Read ──────────────────────────────────── */
+.ca-card.read .ca-card-icon { color: #60a5fa; }
+.ca-card.read .ca-card-body {
+    padding: 0;
+}
+
+/* ── Card Variant: Search ────────────────────────────────── */
+.ca-card.search .ca-card-icon { color: #34d399; }
+
+/* ── Card Variant: Grep ──────────────────────────────────── */
+.ca-card.grep .ca-card-icon { color: #34d399; }
+.ca-card.grep .ca-card-body {
+    padding: 8px 18px 12px 43px;
+    color: rgba(52, 211, 153, 0.65);
+    font-family: var(--font-mono, 'Cascadia Code', monospace);
+    font-size: 11px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* ── Card Variant: Glob ──────────────────────────────────── */
+.ca-card.glob .ca-card-icon { color: #a78bfa; }
+.ca-card.glob .ca-card-body {
+    padding: 8px 18px 12px 43px;
+    color: rgba(167, 139, 250, 0.65);
+    font-family: var(--font-mono, 'Cascadia Code', monospace);
+    font-size: 11px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* ── Card Variant: Explore (ListDir) ─────────────────────── */
+.ca-card.explore .ca-card-icon { color: #f472b6; }
+.ca-card.explore .ca-card-body {
+    padding: 8px 18px 12px 43px;
+    color: rgba(244, 114, 182, 0.65);
+    font-family: var(--font-mono, 'Cascadia Code', monospace);
+    font-size: 11px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* ── Card Variant: Edit/Write ────────────────────────────── */
+.ca-card.edit .ca-card-icon { color: #fbbf24; }
+
+/* ── Card Variant: Terminal ──────────────────────────────── */
+.ca-card.terminal .ca-card-icon { color: #22d3ee; }
+.ca-card.terminal .ca-card-body {
+    background: #000;
+    color: #22d3ee;
+    font-family: var(--font-mono, 'Cascadia Code', monospace);
+    font-size: 12px;
+    padding: 12px 16px;
+    white-space: pre-wrap;
+    line-height: 1.4;
+}
+.ca-card.terminal.expanded .ca-card-body {
+    max-height: 400px;
+}
+
+/* ── Collapse / Expand State Rules (MUST be after all variants) ── */
+.ca-card:not(.expanded) .ca-card-body {
+    max-height: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+}
+.ca-card.expanded .ca-card-body {
+    max-height: 500px;
+    overflow-y: auto;
+}
+
+/* ── Search Match Rows ───────────────────────────────────── */
+.ca-match-row {
     display: grid;
     grid-template-columns: auto 1fr auto;
-    gap: 12px;
-    padding: 3px 14px 3px 52px;
+    gap: 10px;
+    padding: 4px 16px 4px 43px;
     font-family: var(--font-mono, 'Cascadia Code', monospace);
     font-size: 11px;
     line-height: 1.6;
     cursor: pointer;
     transition: background 0.1s;
 }
-.ta-match-row:hover {
+.ca-match-row:hover {
     background: rgba(255, 255, 255, 0.03);
 }
-.ta-match-file {
+.ca-match-file {
     color: #e5e7eb;
     white-space: nowrap;
 }
-.ta-match-lines {
+.ca-match-lines {
     color: var(--text-muted, #6b7280);
     white-space: nowrap;
 }
-.ta-match-path {
-    color: rgba(107, 114, 128, 0.7);
+.ca-match-path {
+    color: rgba(107, 114, 128, 0.6);
     text-align: right;
     white-space: nowrap;
     overflow: hidden;
@@ -4345,29 +4413,36 @@ body.loaded #loading-overlay {
     max-width: 240px;
 }
 
-/* Read item (inline, no expandable details) */
-.ta-item.ta-read .ta-item-header {
-    cursor: default;
+/* ── Error details inside card body ──────────────────────── */
+.ca-card-read-error .ca-card-body {
+    padding: 10px 16px 12px 43px;
 }
 
-.ta-item.ta-read.ta-read-error-item .ta-item-header {
-    cursor: pointer;
+/* ── Animations ──────────────────────────────────────────── */
+@keyframes caCardSlideIn {
+    from { opacity: 0; transform: translateY(-6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes caBadgePulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.45; }
 }
 
-.ta-item.ta-read.ta-read-error-item .ta-item-details {
-    padding: 10px 14px 12px 52px;
+/* ── Light mode adjustments ──────────────────────────────── */
+body.light-mode .cortex-activity-group {
+    background: rgba(255, 255, 255, 0.96);
+    border-color: rgba(0, 0, 0, 0.08);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
 }
-
-/* Scrollbar inside details */
-.ta-item-details::-webkit-scrollbar {
-    width: 5px;
+body.light-mode .ca-card {
+    border-top-color: rgba(0, 0, 0, 0.05);
 }
-.ta-item-details::-webkit-scrollbar-track {
-    background: transparent;
+body.light-mode .ca-card-body {
+    background: rgba(0, 0, 0, 0.03);
 }
-.ta-item-details::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 3px;
+body.light-mode .ca-group-header:hover,
+body.light-mode .ca-card-header:hover {
+    background: rgba(0, 0, 0, 0.03);
 }
 
 /* ================================================

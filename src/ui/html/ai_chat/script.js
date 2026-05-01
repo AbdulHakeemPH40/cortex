@@ -3228,112 +3228,133 @@ var currentPlan = "";
 var currentTasks = "";
 var currentWalkthrough = "";
 
-// Tool Activity Display - Cursor-style Live Preview
+// Cortex Activity Cards - Cursor/Windsurf Hybrid Design
+// Each tool/operation renders as a flat card with compact preview + expandable body
+// All cards live inside a single collapsible .cortex-activity-group per AI turn
 var activityStartTime = null;
 var thinkingInterval = null;
-var currentActivitySection = null; // used by thinking indicator system
-var _taCurrentGroup = null;   // current .ta-group element
-var _taFileCount = 0;
-var _taStats = { reads: 0, edits: 0, searches: 0, thoughts: 0, commands: 0 };
-var _taSeenFileKeys = Object.create(null);
-var _taSections = Object.create(null);
-var _taThoughtFlushTimer = null;
+var currentActivitySection = null; // kept for backward compat, unused by new system
+var _caGroup = null;             // current .cortex-activity-group element
+var _caStats = { reads: 0, edits: 0, searches: 0, thoughts: 0, commands: 0 };
+var _caFileCount = 0;
+var _caSeenFileKeys = Object.create(null);
+var _caThoughtFlushTimer = null;
 
-var _TA_SECTION_META = {
-    thought:  { label: 'Thought',  icon: '&#129504;' },
-    search:   { label: 'Search',   icon: '&#128269;' },
-    read:     { label: 'Read',     icon: '&#128214;' },
-    edit:     { label: 'Edit/Write', icon: '&#9998;' },
-    terminal: { label: 'Terminal', icon: '&#36;' },
-    other:    { label: 'Other',    icon: '&#9881;' }
-};
-
-function _taResolveSection(type) {
-    if (type === 'thinking' || type === 'think') return 'thought';
-    if (type === 'search' || type === 'list_directory') return 'search';
-    if (type === 'read_file') return 'read';
-    if (type === 'edit_file' || type === 'write_file' || type === 'create_file') return 'edit';
-    if (type === 'run_command') return 'terminal';
-    return 'other';
+// ── Helpers ──────────────────────────────────────────────
+function _caFindCard(type, key) {
+    if (!_caGroup || !key) return null;
+    var cards = _caGroup.querySelectorAll('.ca-card');
+    for (var i = 0; i < cards.length; i++) {
+        if (cards[i].dataset.caType === type && cards[i].dataset.caKey === key) {
+            return cards[i];
+        }
+    }
+    return null;
 }
 
-function _taNormalizeFileKey(pathLike) {
+function _caExtBadge(ext) {
+    if (!ext) return '<span style="font-size:9px;padding:1px 4px;border-radius:3px;background:rgba(107,114,128,0.2);color:#9ca3af;font-weight:700;text-transform:uppercase;font-family:var(--font-mono);">FILE</span>';
+    var colors = {
+        'py': '#3b82f6', 'js': '#eab308', 'ts': '#3b82f6', 'tsx': '#3b82f6', 'jsx': '#eab308',
+        'html': '#ef4444', 'css': '#8b5cf6', 'json': '#f59e0b', 'md': '#6b7280',
+        'yaml': '#ec4899', 'yml': '#ec4899', 'toml': '#f97316', 'xml': '#ef4444',
+        'sh': '#22c55e', 'bat': '#22c55e', 'ps1': '#3b82f6', 'sql': '#06b6d4',
+        'rs': '#f97316', 'go': '#06b6d4', 'java': '#ef4444', 'c': '#6b7280', 'cpp': '#6b7280',
+    };
+    var clr = colors[ext] || '#6b7280';
+    return '<span style="font-size:9px;padding:1px 4px;border-radius:3px;background:' + clr + '22;color:' + clr + ';font-weight:700;text-transform:uppercase;font-family:var(--font-mono);">' + ext.toUpperCase() + '</span>';
+}
+
+function _caSetCardBadge(card, nuevaStatus) {
+    var badge = card.querySelector('.ca-card-badge');
+    if (!badge) return;
+    badge.className = 'ca-card-badge ' + nuevaStatus;
+    badge.textContent = nuevaStatus;
+}
+
+function _caNormalizeFileKey(pathLike) {
     var p = String(pathLike || '').trim();
     if (!p) return '';
     return p.replace(/\\/g, '/').toLowerCase();
 }
 
-function _taTrackUniqueFile(pathLike) {
-    var key = _taNormalizeFileKey(pathLike);
+function _caTrackUniqueFile(pathLike) {
+    var key = _caNormalizeFileKey(pathLike);
     if (!key) return;
-    if (_taSeenFileKeys[key]) return;
-    _taSeenFileKeys[key] = true;
-    _taFileCount++;
+    if (_caSeenFileKeys[key]) return;
+    _caSeenFileKeys[key] = true;
+    _caFileCount++;
 }
 
-function _taEnsureGroup(container, forceNew) {
-    // Keep a single reusable activity container instead of creating a new one
-    // for every thought burst/turn.
-    if (!_taCurrentGroup || !document.body.contains(_taCurrentGroup)) {
-        var existingGroups = container ? container.querySelectorAll('.ta-group') : null;
-        if (existingGroups && existingGroups.length > 0) {
-            _taCurrentGroup = existingGroups[existingGroups.length - 1];
+// ── Ensure Activity Group ────────────────────────────────
+function _caEnsureGroup(container) {
+    if (!_caGroup || !document.body.contains(_caGroup)) {
+        _caGroup = null;
+        _caFileCount = 0;
+        _caStats = { reads: 0, edits: 0, searches: 0, thoughts: 0, commands: 0 };
+        _caSeenFileKeys = Object.create(null);
+    }
+    if (!_caGroup) {
+        _caGroup = _caCreateGroup(container);
+    }
+    return _caGroup;
+}
+
+function _caCreateGroup(container) {
+    var group = document.createElement('div');
+    group.className = 'cortex-activity-group';
+    group.innerHTML =
+        '<div class="ca-group-header">' +
+            '<svg class="ca-group-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>' +
+            '<span class="ca-group-icon"><span class="ca-group-spinner"></span></span>' +
+            '<span class="ca-group-title">Agent Activity</span>' +
+            '<span class="ca-group-stats"></span>' +
+        '</div>' +
+        '<div class="ca-group-cards"></div>';
+    group.querySelector('.ca-group-header').onclick = function(e) {
+        e.stopPropagation();
+        group.classList.toggle('collapsed');
+    };
+    container.appendChild(group);
+    return group;
+}
+
+// ── Group Header Update ──────────────────────────────────
+function _caUpdateGroupHeader() {
+    if (!_caGroup) return;
+    var titleEl = _caGroup.querySelector('.ca-group-title');
+    var statsEl = _caGroup.querySelector('.ca-group-stats');
+    var runningCount = _caGroup.querySelectorAll('.ca-card-badge.running').length;
+    if (titleEl) {
+        if (_caFileCount > 0) {
+            titleEl.textContent = 'Explored ' + _caFileCount + ' file' + (_caFileCount !== 1 ? 's' : '');
+        } else {
+            titleEl.textContent = 'Agent Activity';
         }
     }
-
-    if (!_taCurrentGroup || !document.body.contains(_taCurrentGroup)) {
-        _taCurrentGroup = _taCreateGroup(container);
-        _taFileCount = 0;
-        _taStats = { reads: 0, edits: 0, searches: 0, thoughts: 0, commands: 0 };
-        _taSeenFileKeys = Object.create(null);
-        _taSections = Object.create(null);
+    if (statsEl) {
+        var parts = [];
+        if (_caStats.reads > 0) parts.push(_caStats.reads + ' read' + (_caStats.reads > 1 ? 's' : ''));
+        if (_caStats.edits > 0) parts.push(_caStats.edits + ' edit' + (_caStats.edits > 1 ? 's' : ''));
+        if (_caStats.searches > 0) parts.push(_caStats.searches + ' search' + (_caStats.searches > 1 ? 'es' : ''));
+        if (_caStats.thoughts > 0) parts.push(_caStats.thoughts + ' thought' + (_caStats.thoughts > 1 ? 's' : ''));
+        if (_caStats.commands > 0) parts.push(_caStats.commands + ' cmd');
+        if (runningCount > 0) parts.push(runningCount + ' running');
+        statsEl.textContent = parts.length ? parts.join('  ') : '';
     }
-    return _taCurrentGroup;
 }
 
-function _taEnsureSection(sectionKey) {
-    if (!_taCurrentGroup) return null;
-    if (_taSections[sectionKey] && document.body.contains(_taSections[sectionKey])) {
-        return _taSections[sectionKey];
+function _caMarkGroupComplete() {
+    if (!_caGroup) return;
+    var iconEl = _caGroup.querySelector('.ca-group-icon');
+    if (iconEl) {
+        iconEl.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+        iconEl.classList.add('complete');
     }
-    var sectionsHost = _taCurrentGroup.querySelector('.ta-group-sections');
-    if (!sectionsHost) return null;
-    var meta = _TA_SECTION_META[sectionKey] || _TA_SECTION_META.other;
-    var section = document.createElement('div');
-    section.className = 'ta-section';
-    if (sectionKey === 'thought') {
-        section.classList.add('collapsed');
-    }
-    section.dataset.section = sectionKey;
-    section.innerHTML =
-        '<div class="ta-section-header">' +
-            '<svg class="ta-section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>' +
-            '<span class="ta-section-icon">' + meta.icon + '</span>' +
-            '<span class="ta-section-title">' + meta.label + '</span>' +
-            '<span class="ta-section-count">0</span>' +
-            '<span class="ta-section-live"></span>' +
-        '</div>' +
-        '<div class="ta-section-items"></div>';
-    section.querySelector('.ta-section-header').onclick = function(e) {
-        e.stopPropagation();
-        section.classList.toggle('collapsed');
-    };
-    sectionsHost.appendChild(section);
-    _taSections[sectionKey] = section;
-    return section;
 }
 
-function _taGetSectionItems(type) {
-    var sectionKey = _taResolveSection(type);
-    var section = _taEnsureSection(sectionKey);
-    if (!section) return null;
-    return section.querySelector('.ta-section-items');
-}
-
+// ── Main Tool Activity Router ────────────────────────────
 function showToolActivity(type, info, status) {
-    // Handle both calling conventions:
-    // 1. showToolActivity(type, info, status) - legacy
-    // 2. showToolActivity({tool_type, info, status}) - new object format from Python
     if (typeof type === 'object' && type !== null) {
         var obj = type;
         type = obj.tool_type;
@@ -3344,30 +3365,27 @@ function showToolActivity(type, info, status) {
     var container = document.getElementById('chatMessages');
     if (!container) return;
 
-    // When any real tool action starts, freeze/stop the Think indicator
     if (status === 'running' && type !== 'thinking' && type !== 'think') {
         hideThinking();
     }
 
-    // Parse structured info from Python bridge
     var data = {};
     if (info) {
         try { data = JSON.parse(info); } catch(e) {
-            // Legacy fallback: try Python dict conversion
             try { data = JSON.parse(info.replace(/'/g,'"').replace(/True/g,'true').replace(/False/g,'false').replace(/None/g,'null')); } catch(e2) {
                 data = { raw: info };
             }
         }
     }
 
-    // Update thinking status text
+    // Update thinking status text for the old indicator bar
     var statusEl = document.getElementById('thinking-status');
     if (statusEl) {
         var activityText = '';
-        if (type === 'read_file')        activityText = 'Reading: ' + (data.file_path || '');
-        else if (type === 'search')      activityText = 'Searching: ' + (data.pattern || '');
+        if (type === 'read_file') activityText = 'Reading: ' + (data.file_path || '');
+        else if (type === 'search') activityText = 'Searching: ' + (data.pattern || '');
         else if (type === 'list_directory') activityText = 'Exploring: ' + (data.path || '');
-        else if (type === 'edit_file')   activityText = 'Editing: ' + (data.file_path || '');
+        else if (type === 'edit_file') activityText = 'Editing: ' + (data.file_path || '');
         else if (type === 'run_command') activityText = 'Running: ' + (data.command || '').substring(0, 60);
         else if (type === 'team_create') activityText = 'Creating team: ' + (data.team_name || '');
         else if (type === 'team_delete') activityText = 'Deleting team: ' + (data.team_name || '');
@@ -3376,198 +3394,167 @@ function showToolActivity(type, info, status) {
         statusEl.textContent = activityText;
     }
 
-    // -- Ensure activity group exists --
-    _taEnsureGroup(container, false);
-    var itemsEl = _taGetSectionItems(type);
-    if (!itemsEl) return;
+    // Ensure activity group
+    var group = _caEnsureGroup(container);
 
-    // -- Route to item renderer --
+    // Route to card renderer
     if (type === 'thinking' || type === 'think') {
-        _taRenderThought(itemsEl, status, data.text || data.message || '');
+        _caRenderThought(data, status);
     } else if (type === 'read_file') {
-        _taRenderRead(itemsEl, data, status);
+        _caRenderRead(data, status);
     } else if (type === 'edit_file' || type === 'write_file' || type === 'create_file') {
-        _taRenderEdit(itemsEl, data, status, type);
+        _caRenderEdit(data, status, type);
     } else if (type === 'search') {
-        _taRenderSearch(itemsEl, data, status);
+        var searchType = (data.search_type || 'grep').toLowerCase();
+        if (searchType === 'grep') {
+            _caRenderGrep(data, status);
+        } else if (searchType === 'glob') {
+            _caRenderGlob(data, status);
+        } else {
+            _caRenderSearch(data, status);
+        }
     } else if (type === 'list_directory') {
-        _taRenderListDir(itemsEl, data, status);
+        _caRenderListDir(data, status);
     } else if (type === 'team_create' || type === 'team_delete') {
-        _taRenderTeam(itemsEl, data, status, type);
+        _caRenderTeam(data, status, type);
     } else if (type.startsWith('task_')) {
-        _taRenderTask(itemsEl, data, status, type);
+        _caRenderTask(data, status, type);
     } else if (type === 'run_command') {
-        _taRenderTerminalActivity(itemsEl, data, status);
+        _caRenderTerminal(data, status);
         if (typeof window.updateContainerHeaderForCommand === 'function') {
             window.updateContainerHeaderForCommand(data, status);
         }
-        _taHandleTerminal(container, data, status);
+        _caHandleTerminal(container, data, status);
     } else {
-        // Generic fallback
-        _taRenderGeneric(itemsEl, data, status, type);
+        _caRenderGeneric(data, status, type);
     }
 
-    // -- Update group header stats --
-    _taUpdateGroupHeader();
+    _caUpdateGroupHeader();
     smartScroll(container);
 }
 
-// ── Create Activity Group ────────────────────────────────
-function _taCreateGroup(container) {
-    var group = document.createElement('div');
-    group.className = 'ta-group';
-    group.innerHTML =
-        '<div class="ta-group-header">' +
-            '<svg class="ta-group-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>' +
-            '<span class="ta-group-icon"><span class="todo-spinner" style="width:12px;height:12px;"></span></span>' +
-            '<span class="ta-group-title">Agent Activity</span>' +
-            '<span class="ta-group-stats"></span>' +
-        '</div>' +
-        '<div class="ta-group-sections"></div>';
-    group.querySelector('.ta-group-header').onclick = function(e) {
-        e.stopPropagation();
-        group.classList.toggle('collapsed');
-    };
-    container.appendChild(group);
-    return group;
-}
-
-// ── Update Group Header ──────────────────────────────────
-function _taUpdateGroupHeader() {
-    if (!_taCurrentGroup) return;
-    var titleEl = _taCurrentGroup.querySelector('.ta-group-title');
-    var statsEl = _taCurrentGroup.querySelector('.ta-group-stats');
-    var runningCount = _taCurrentGroup.querySelectorAll('.ta-spinner').length;
-    if (titleEl) {
-        titleEl.textContent = 'Explored ' + _taFileCount + ' unique file' + (_taFileCount !== 1 ? 's' : '');
-    }
-    if (statsEl) {
-        var parts = [];
-        if (_taStats.reads > 0) parts.push(_taStats.reads + ' read');
-        if (_taStats.edits > 0) parts.push(_taStats.edits + ' edit' + (_taStats.edits > 1 ? 's' : ''));
-        if (_taStats.searches > 0) parts.push(_taStats.searches + ' search' + (_taStats.searches > 1 ? 'es' : ''));
-        if (_taStats.thoughts > 0) parts.push(_taStats.thoughts + ' thought' + (_taStats.thoughts > 1 ? 's' : ''));
-        if (_taStats.commands > 0) parts.push(_taStats.commands + ' command' + (_taStats.commands > 1 ? 's' : ''));
-        if (runningCount > 0) parts.push(runningCount + ' running');
-        statsEl.textContent = parts.length ? parts.join(', ') : '';
-    }
-    var sections = _taCurrentGroup.querySelectorAll('.ta-section');
-    for (var i = 0; i < sections.length; i++) {
-        var section = sections[i];
-        var countEl = section.querySelector('.ta-section-count');
-        var liveEl = section.querySelector('.ta-section-live');
-        var items = section.querySelectorAll('.ta-item');
-        var sectionRunning = section.querySelectorAll('.ta-spinner').length;
-        if (countEl) countEl.textContent = String(items.length);
-        if (liveEl) liveEl.textContent = sectionRunning > 0 ? (sectionRunning + ' running') : '';
-    }
-}
-
-// ── Mark Group Complete ──────────────────────────────────
-function _taMarkGroupComplete() {
-    if (!_taCurrentGroup) return;
-    var iconEl = _taCurrentGroup.querySelector('.ta-group-icon');
-    if (iconEl) {
-        iconEl.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>';
-        iconEl.classList.add('complete');
-    }
-}
-
 // ── Render: Thought ───────────────────────────────────────
-function _taRenderThought(itemsEl, status, text) {
+function _caRenderThought(data, status) {
+    var group = _caGroup;
+    if (!group) return;
+    var cardsHost = group.querySelector('.ca-group-cards');
+    if (!cardsHost) return;
+
     function mergeThought(existingText, incomingText) {
         var base = existingText || '';
         var incoming = incomingText || '';
         if (!incoming) return base;
         if (!base) return incoming;
-        if (incoming.indexOf(base) === 0) return incoming; // provider sent full snapshot
-        if (base.indexOf(incoming) === (base.length - incoming.length)) return base; // duplicate suffix
+        if (incoming.indexOf(base) === 0) return incoming;
+        if (base.indexOf(incoming) === (base.length - incoming.length)) return base;
         var needsSpace = !/\s$/.test(base) && !/^[\s.,;:!?]/.test(incoming);
         return base + (needsSpace ? ' ' : '') + incoming;
     }
 
-    function applyThoughtUi(item) {
-        if (!item) return;
-        var raw = item.dataset.taThoughtText || '';
-        var normalized = raw.replace(/\s+/g, ' ').trim();
-        var muted = item.querySelector('.ta-muted');
-        if (muted) muted.textContent = normalized ? ' Live stream' : ' Thinking';
-        var stream = item.querySelector('.ta-thought-stream');
-        if (stream) {
-            var visible = normalized;
-            if (visible.length > 1200) visible = '...' + visible.substring(visible.length - 1200);
-            stream.textContent = visible || 'Thinking...';
+    function makePreview(raw) {
+        // Extract first meaningful line/sentence, max 80 chars
+        var text = String(raw || '').replace(/\s+/g, ' ').trim();
+        if (!text) return 'Thinking...';
+        // Take first sentence or first 80 chars
+        var firstSentence = text.split(/[.!?]\s/)[0];
+        if (firstSentence && firstSentence.length > 10) {
+            return firstSentence.length > 80 ? firstSentence.substring(0, 77) + '...' : firstSentence;
+        }
+        return text.length > 80 ? text.substring(0, 77) + '...' : text;
+    }
+
+    function applyThoughtUi(card) {
+        if (!card) return;
+        var raw = card.dataset.caThoughtText || '';
+        var preview = makePreview(raw);
+        var muted = card.querySelector('.ca-muted');
+        if (muted) muted.textContent = raw ? ' Live' : ' Thinking';
+        var stream = card.querySelector('.ca-card-preview');
+        if (stream) stream.textContent = preview;
+        // Update body with full text for expanded view
+        var body = card.querySelector('.ca-card-body');
+        if (body && raw) {
+            body.textContent = raw.replace(/\s+/g, ' ').trim();
         }
     }
 
-    var running = itemsEl.querySelector('.ta-item[data-ta-type="thought"][data-ta-state="running"]');
-    if (running) {
+    var seed = (data.text || data.message || '').toString();
+    // Find running thought card
+    var runningCard = group.querySelector('.ca-card.thought[data-ca-state="running"]');
+    if (runningCard) {
         if (status === 'running') {
-            var rawUpdate = (text && String(text)) ? String(text) : '';
+            var rawUpdate = seed;
             if (rawUpdate) {
-                running.dataset.taThoughtText = mergeThought(running.dataset.taThoughtText || '', rawUpdate);
-                if (_taThoughtFlushTimer) {
-                    clearTimeout(_taThoughtFlushTimer);
-                    _taThoughtFlushTimer = null;
+                runningCard.dataset.caThoughtText = mergeThought(runningCard.dataset.caThoughtText || '', rawUpdate);
+                if (_caThoughtFlushTimer) {
+                    clearTimeout(_caThoughtFlushTimer);
+                    _caThoughtFlushTimer = null;
                 }
-                _taThoughtFlushTimer = setTimeout(function() {
-                    applyThoughtUi(running);
-                    _taThoughtFlushTimer = null;
-                }, 220);
+                _caThoughtFlushTimer = setTimeout(function() {
+                    applyThoughtUi(runningCard);
+                    _caThoughtFlushTimer = null;
+                }, 180);
             }
             return;
         }
         if (status !== 'running') {
-            if (_taThoughtFlushTimer) {
-                clearTimeout(_taThoughtFlushTimer);
-                _taThoughtFlushTimer = null;
+            if (_caThoughtFlushTimer) {
+                clearTimeout(_caThoughtFlushTimer);
+                _caThoughtFlushTimer = null;
             }
-            applyThoughtUi(running);
-            running.dataset.taState = 'complete';
-            var st = running.querySelector('.ta-item-status');
-            if (st) st.innerHTML = '<span class="ta-ok">OK</span>';
-            var muted = running.querySelector('.ta-muted');
+            applyThoughtUi(runningCard);
+            runningCard.dataset.caState = 'complete';
+            _caSetCardBadge(runningCard, 'complete');
+            runningCard.classList.remove('expanded');
+            runningCard.classList.add('collapsed');
+            var muted = runningCard.querySelector('.ca-muted');
             if (muted) muted.textContent = ' Complete';
         }
         return;
     }
     if (status !== 'running') return;
 
-    _taStats.thoughts++;
-    var seed = (text && String(text)) ? String(text) : '';
-    var item = document.createElement('div');
-    item.className = 'ta-item ta-thought collapsed';
-    item.dataset.taType = 'thought';
-    item.dataset.taKey = 'thought-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
-    item.dataset.taState = 'running';
-    item.dataset.taThoughtText = seed;
-    item.innerHTML =
-        '<div class="ta-item-header">' +
-            '<svg class="ta-item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
-                '<polyline points="9 18 15 12 9 6"></polyline>' +
-            '</svg>' +
-            '<span class="ta-item-icon" style="color:#a78bfa;">&#129504;</span>' +
-            '<span class="ta-item-label">' +
-                '<span class="ta-highlight">Thought</span>' +
-                '<span class="ta-muted"> Live stream</span>' +
+    _caStats.thoughts++;
+    var card = document.createElement('div');
+    card.className = 'ca-card thought collapsed';
+    card.dataset.caType = 'thought';
+    card.dataset.caKey = 'thought-' + Date.now();
+    card.dataset.caState = 'running';
+    card.dataset.caThoughtText = seed;
+    var initialPreview = makePreview(seed);
+    card.innerHTML =
+        '<div class="ca-card-header">' +
+            '<svg class="ca-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
+            '<span class="ca-card-icon">&#129504;</span>' +
+            '<span class="ca-card-label">' +
+                '<span class="ca-highlight">Thought</span>' +
+                '<span class="ca-muted"> Thinking</span>' +
             '</span>' +
-            '<span class="ta-item-status"><span class="ta-spinner"></span></span>' +
+            '<span class="ca-card-badge running">running</span>' +
         '</div>' +
-        '<div class="ta-thought-stream">Thinking...</div>';
-    var header = item.querySelector('.ta-item-header');
-    if (header) {
-        header.onclick = function(e) {
-            e.stopPropagation();
-            item.classList.toggle('expanded');
-            item.classList.toggle('collapsed');
-        };
+        '<div class="ca-card-preview">' + escapeHtml(initialPreview) + '</div>' +
+        '<div class="ca-card-body"></div>';
+
+    card.querySelector('.ca-card-header').onclick = function(e) {
+        e.stopPropagation();
+        card.classList.toggle('expanded');
+        card.classList.toggle('collapsed');
+    };
+    cardsHost.appendChild(card);
+    // Populate body with initial seed if any
+    if (seed) {
+        var body = card.querySelector('.ca-card-body');
+        if (body) body.textContent = seed.replace(/\s+/g, ' ').trim();
     }
-    itemsEl.appendChild(item);
-    applyThoughtUi(item);
 }
 
 // ── Render: Read File ────────────────────────────────────
-function _taRenderRead(itemsEl, data, status) {
+function _caRenderRead(data, status) {
+    var group = _caGroup;
+    if (!group) return;
+    var cardsHost = group.querySelector('.ca-group-cards');
+    if (!cardsHost) return;
+
     var fp = data.file_path || '';
     var fname = fp.split('/').pop().split('\\').pop() || 'file';
     var displayPath = fp || fname;
@@ -3576,218 +3563,153 @@ function _taRenderRead(itemsEl, data, status) {
     if (isNaN(requestedOffset) || requestedOffset < 1) requestedOffset = 1;
     var requestedLimit = parseInt(data.requested_limit, 10);
     if (isNaN(requestedLimit) || requestedLimit < 1) requestedLimit = 0;
-
     var actualStart = parseInt(data.actual_start_line, 10);
     var offset = !isNaN(actualStart) && actualStart > 0 ? actualStart : parseInt(data.offset, 10);
     if (isNaN(offset) || offset < 1) offset = requestedOffset;
     var limit = parseInt(data.limit, 10);
     var linesRead = parseInt(data.lines_read, 10);
-    if (isNaN(linesRead) || linesRead < 1) {
-        linesRead = (!isNaN(limit) && limit > 0) ? limit : 0;
-    }
+    if (isNaN(linesRead) || linesRead < 1) linesRead = (!isNaN(limit) && limit > 0) ? limit : 0;
     var hasChunk = linesRead > 0;
     var explicitEnd = parseInt(data.actual_end_line, 10);
-    var actualEnd = (!isNaN(explicitEnd) && explicitEnd >= offset)
-        ? explicitEnd
-        : (offset + linesRead - 1);
+    var actualEnd = (!isNaN(explicitEnd) && explicitEnd >= offset) ? explicitEnd : (offset + linesRead - 1);
     var lineRange = hasChunk ? (offset + '-' + actualEnd) : 'full';
     var readKey = (fp || fname) + '|' + lineRange;
-    var requestedRange = requestedLimit > 0
-        ? (requestedOffset + '-' + (requestedOffset + requestedLimit - 1))
-        : '';
+    var requestedRange = requestedLimit > 0 ? (requestedOffset + '-' + (requestedOffset + requestedLimit - 1)) : '';
 
-    function renderReadErrorCard(targetItem, rawError) {
-        if (!targetItem) return;
-        var cleanMsg = String(rawError || 'Unknown read error').replace(/^Error:\s*/i, '').trim();
-        var errPath = '';
-        var quotedPath = cleanMsg.match(/'([^']+)'/);
-        if (quotedPath && quotedPath[1]) errPath = quotedPath[1];
-        var errno = '';
-        var errnoMatch = cleanMsg.match(/\[Errno\s+(\d+)\]/i);
-        if (errnoMatch && errnoMatch[1]) errno = errnoMatch[1];
-        var title = errno ? ('[Errno ' + errno + '] File Read Failed') : 'File Read Failed';
-
-        targetItem.classList.add('ta-read-error-item');
-        targetItem.classList.add('expanded');
-
-        var headerEl = targetItem.querySelector('.ta-item-header');
-        if (headerEl) {
-            headerEl.onclick = function(e) {
-                e.stopPropagation();
-                targetItem.classList.toggle('expanded');
-            };
-            if (!headerEl.querySelector('.ta-item-chevron')) {
-                var chevronSvg =
-                    '<svg class="ta-item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
-                        '<polyline points="9 18 15 12 9 6"></polyline>' +
-                    '</svg>';
-                headerEl.insertAdjacentHTML('afterbegin', chevronSvg);
-            }
-        }
-
-        var detailsEl = targetItem.querySelector('.ta-item-details');
-        if (!detailsEl) {
-            detailsEl = document.createElement('div');
-            detailsEl.className = 'ta-item-details';
-            targetItem.appendChild(detailsEl);
-        }
-
-        detailsEl.innerHTML =
-            '<div class="tool-error">' +
-                '<div class="tool-error-head">' +
-                    '<span class="tool-error-dot"></span>' +
-                    '<div class="tool-error-title">' + escapeHtml(title) + '</div>' +
-                '</div>' +
-                (errPath
-                    ? ('<div class="tool-error-kv"><div class="tool-error-k">Path</div><div class="tool-error-v">' + escapeHtml(errPath) + '</div></div>')
-                    : '') +
-                '<div class="tool-error-kv"><div class="tool-error-k">Range</div><div class="tool-error-v">' + escapeHtml(lineRange) + '</div></div>' +
-                '<div class="tool-error-kv"><div class="tool-error-k">Message</div><div class="tool-error-v">' + escapeHtml(cleanMsg) + '</div></div>' +
-            '</div>';
+    function finalizeCard(card) {
+        if (!card) return;
+        card.dataset.caKey = readKey;
+        var muted = card.querySelector('.ca-muted');
+        var finalText = ' (read ' + lineRange + ')';
+        if (requestedRange && requestedRange !== lineRange) finalText += ' [req ' + requestedRange + ']';
+        if (data.total_lines) finalText += ' [total ' + data.total_lines + ']';
+        if (muted) muted.textContent = finalText;
+        _caSetCardBadge(card, 'complete');
     }
 
-    function finalizeReadItem(targetItem) {
-        if (!targetItem) return;
-        targetItem.dataset.taKey = readKey;
-        var muted = targetItem.querySelector('.ta-muted');
-        var finalMutedText = ' (read ' + lineRange + ')';
-        if (requestedRange && requestedRange !== lineRange) {
-            finalMutedText += ' [requested ' + requestedRange + ']';
+    function renderErrorBody(card) {
+        if (!card) return;
+        var cleanMsg = String(data.error || 'Unknown read error').replace(/^Error:\s*/i, '').trim();
+        card.classList.add('ca-card-read-error');
+        var body = card.querySelector('.ca-card-body');
+        if (body) {
+            body.innerHTML = '<div class="tool-error"><div class="tool-error-head"><span class="tool-error-dot"></span><div class="tool-error-title">File Read Failed</div></div><div class="tool-error-kv"><div class="tool-error-k">Path</div><div class="tool-error-v">' + escapeHtml(fp) + '</div></div><div class="tool-error-kv"><div class="tool-error-k">Range</div><div class="tool-error-v">' + escapeHtml(lineRange) + '</div></div><div class="tool-error-kv"><div class="tool-error-k">Message</div><div class="tool-error-v">' + escapeHtml(cleanMsg) + '</div></div></div>';
         }
-        if (data.total_lines) {
-            finalMutedText += ' [total ' + data.total_lines + ']';
-        }
-        if (data.remaining_range) {
-            finalMutedText += ' [' + data.remaining_lines + ' lines remain: ' + data.remaining_range + ']';
-        }
-        if (muted) muted.textContent = finalMutedText;
-        var st = targetItem.querySelector('.ta-item-status');
-        if (st) st.innerHTML = '<span class="ta-ok">OK</span>';
+        card.classList.add('expanded');
+        card.classList.remove('collapsed');
     }
 
-    // Track each read chunk independently: file + line range
-    var existing = _taFindItem(itemsEl, 'read', readKey);
+    // Track read chunks
+    var existing = _caFindCard('read', readKey);
     if (existing) {
-        if (status === 'complete') {
-            finalizeReadItem(existing);
-        } else if (status === 'error') {
-            var stErr = existing.querySelector('.ta-item-status');
-            if (stErr) stErr.innerHTML = '<span class="ta-err">ERR</span>';
-            renderReadErrorCard(existing, data.error);
-        }
+        if (status === 'complete') finalizeCard(existing);
+        else if (status === 'error') { _caSetCardBadge(existing, 'error'); renderErrorBody(existing); }
         return;
     }
 
-    // For complete status, update any running "full" placeholder for this exact chunk
-    // without destroying entries for other chunks of the same file.
     if (status === 'complete') {
-        // Reconcile with an in-flight running card for same file even when
-        // requested-range key and actual-range key differ.
-        var sameFileCards = itemsEl.querySelectorAll('.ta-item.ta-read[data-ta-file="' + CSS.escape(fp || fname) + '"]');
+        var sameFileCards = cardsHost.querySelectorAll('.ca-card.read[data-ca-file="' + CSS.escape(fp || fname) + '"]');
         for (var i = 0; i < sameFileCards.length; i++) {
-            var card = sameFileCards[i];
-            var statusEl = card.querySelector('.ta-item-status');
-            if (statusEl && statusEl.querySelector('.ta-spinner')) {
-                finalizeReadItem(card);
+            var cardEl = sameFileCards[i];
+            if (cardEl.querySelector('.ca-card-badge.running')) {
+                finalizeCard(cardEl);
                 return;
             }
         }
-
-        var fallback = itemsEl.querySelector('.ta-item.ta-read[data-ta-file="' + CSS.escape(fp || fname) + '"][data-ta-key*="full"]');
-        if (fallback) {
-            finalizeReadItem(fallback);
-            return;
-        }
     }
 
-    _taStats.reads++;
-    _taTrackUniqueFile(fp || fname);
+    _caStats.reads++;
+    _caTrackUniqueFile(fp || fname);
 
-    var item = document.createElement('div');
-    item.className = 'ta-item ta-read' + (status === 'error' ? ' ta-read-error-item' : '');
-    item.dataset.taType = 'read';
-    item.dataset.taKey = readKey;
-    item.dataset.taFile = fp || fname;
     var mutedText = ' (read ' + lineRange + ')';
-    if (requestedRange && requestedRange !== lineRange) {
-        mutedText += ' [requested ' + requestedRange + ']';
-    }
-    if (data.total_lines) {
-        mutedText += ' [total ' + data.total_lines + ']';
-    }
-    if (data.remaining_range && status === 'complete') {
-        mutedText += ' [' + data.remaining_lines + ' lines remain: ' + data.remaining_range + ']';
-    }
-    var chevron = (status === 'error')
-        ? '<svg class="ta-item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>'
-        : '';
+    if (requestedRange && requestedRange !== lineRange) mutedText += ' [req ' + requestedRange + ']';
+    if (data.total_lines) mutedText += ' [total ' + data.total_lines + ']';
 
-    item.innerHTML =
-        '<div class="ta-item-header">' +
-            chevron +
-            '<span class="ta-item-icon">' + _taExtBadge(ext) + '</span>' +
-            '<span class="ta-item-label">' +
-                '<span class="ta-highlight" title="' + escapeHtml(displayPath) + '">' + escapeHtml(displayPath) + '</span>' +
-                '<span class="ta-muted">' + escapeHtml(mutedText) + '</span>' +
+    var card = document.createElement('div');
+    card.className = 'ca-card read collapsed' + (status === 'error' ? ' ca-card-read-error' : '');
+    card.dataset.caType = 'read';
+    card.dataset.caKey = readKey;
+    card.dataset.caFile = fp || fname;
+    card.innerHTML =
+        '<div class="ca-card-header">' +
+            '<svg class="ca-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
+            '<span class="ca-card-icon">' + _caExtBadge(ext) + '</span>' +
+            '<span class="ca-card-label">' +
+                '<span class="ca-highlight" title="' + escapeHtml(displayPath) + '">' + escapeHtml(displayPath) + '</span>' +
+                '<span class="ca-muted">' + escapeHtml(mutedText) + '</span>' +
             '</span>' +
-            '<span class="ta-item-status">' +
-                (status === 'complete'
-                    ? '<span class="ta-ok">OK</span>'
-                    : (status === 'error' ? '<span class="ta-err">ERR</span>' : '<span class="ta-spinner"></span>')) +
-            '</span>' +
+            '<span class="ca-card-badge ' + (status === 'complete' ? 'complete' : status === 'error' ? 'error' : 'running') + '">' + (status === 'complete' ? 'done' : status === 'error' ? 'err' : 'running') + '</span>' +
         '</div>' +
-        (status === 'error' ? '<div class="ta-item-details"></div>' : '');
+        '<div class="ca-card-preview">' + escapeHtml(displayPath) + ' ' + escapeHtml(lineRange) + '</div>' +
+        '<div class="ca-card-body"></div>';
 
-    if (status === 'error') {
-        renderReadErrorCard(item, data.error);
-    }
-    itemsEl.appendChild(item);
+    card.querySelector('.ca-card-header').onclick = function(e) {
+        e.stopPropagation();
+        card.classList.toggle('expanded');
+    };
+
+    if (status === 'error') renderErrorBody(card);
+    cardsHost.appendChild(card);
 }
 
 // ── Render: Edit / Write / Create ────────────────────────
-function _taRenderEdit(itemsEl, data, status, type) {
+function _caRenderEdit(data, status, type) {
+    var group = _caGroup;
+    if (!group) return;
+    var cardsHost = group.querySelector('.ca-group-cards');
+    if (!cardsHost) return;
+
     var fp = data.file_path || '';
     var fname = fp.split('/').pop().split('\\').pop() || 'file';
     var displayPath = fp || fname;
     var ext = fname.includes('.') ? fname.split('.').pop().toLowerCase() : '';
     var desc = data.description || (type === 'create_file' ? 'Creating' : type === 'write_file' ? 'Writing' : 'Editing');
-    var actionColor = type === 'edit_file' ? '#fbbf24' : type === 'create_file' ? '#a78bfa' : '#4ade80';
 
     var editKey = displayPath;
-    var existing = _taFindItem(itemsEl, 'edit', editKey);
+    var existing = _caFindCard('edit', editKey);
     if (existing) {
         if (status === 'complete') {
-            var st = existing.querySelector('.ta-item-status');
-            if (st) st.innerHTML = '<span class="ta-ok">OK</span>';
-            var lbl = existing.querySelector('.ta-muted');
+            _caSetCardBadge(existing, 'complete');
+            var lbl = existing.querySelector('.ca-muted');
             if (lbl) lbl.style.opacity = '0.4';
         }
         return;
     }
 
-    _taStats.edits++;
-    _taTrackUniqueFile(fp || fname);
+    _caStats.edits++;
+    _caTrackUniqueFile(fp || fname);
 
-    var item = document.createElement('div');
-    item.className = 'ta-item';
-    item.dataset.taType = 'edit';
-    item.dataset.taKey = editKey;
-    item.innerHTML =
-        '<div class="ta-item-header">' +
-            '<span class="ta-item-icon">' + _taExtBadge(ext) + '</span>' +
-            '<span class="ta-item-label">' +
-                '<span class="ta-highlight" title="' + escapeHtml(displayPath) + '">' + escapeHtml(displayPath) + '</span>' +
-                '<span class="ta-muted" style="color:' + actionColor + ';">  ' + escapeHtml(desc) + '</span>' +
+    var card = document.createElement('div');
+    card.className = 'ca-card edit collapsed';
+    card.dataset.caType = 'edit';
+    card.dataset.caKey = editKey;
+    card.innerHTML =
+        '<div class="ca-card-header">' +
+            '<svg class="ca-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
+            '<span class="ca-card-icon">' + _caExtBadge(ext) + '</span>' +
+            '<span class="ca-card-label">' +
+                '<span class="ca-highlight" title="' + escapeHtml(displayPath) + '">' + escapeHtml(displayPath) + '</span>' +
+                '<span class="ca-muted">  ' + escapeHtml(desc) + '</span>' +
             '</span>' +
-            '<span class="ta-item-status">' +
-                (status === 'complete' ? '<span class="ta-ok">OK</span>' : '<span class="ta-spinner" style="border-top-color:' + actionColor + ';"></span>') +
-            '</span>' +
-        '</div>';
-    itemsEl.appendChild(item);
+            '<span class="ca-card-badge ' + (status === 'complete' ? 'complete' : 'running') + '">' + (status === 'complete' ? 'done' : 'running') + '</span>' +
+        '</div>' +
+        '<div class="ca-card-preview">' + escapeHtml(desc) + ': ' + escapeHtml(displayPath) + '</div>' +
+        '<div class="ca-card-body"></div>';
+
+    card.querySelector('.ca-card-header').onclick = function(e) {
+        e.stopPropagation();
+        card.classList.toggle('expanded');
+    };
+    cardsHost.appendChild(card);
 }
 
 // ── Render: Search / Grep ────────────────────────────────
-function _taRenderSearch(itemsEl, data, status) {
+function _caRenderSearch(data, status) {
+    var group = _caGroup;
+    if (!group) return;
+    var cardsHost = group.querySelector('.ca-group-cards');
+    if (!cardsHost) return;
+
     var pattern = data.pattern || '';
     var matchCount = data.match_count || 0;
     var matches = data.matches || [];
@@ -3796,253 +3718,385 @@ function _taRenderSearch(itemsEl, data, status) {
     var searchLabel = searchType === 'grep' ? 'Grep' : 'Search';
     var searchKey = searchType + '|' + pattern + '|' + include;
 
-    // Check for existing search item with same pattern
-    var existing = _taFindItem(itemsEl, 'search', searchKey);
+    var existing = _caFindCard('search', searchKey);
     if (existing && status === 'complete') {
-        // Update with results
-        var st = existing.querySelector('.ta-item-status');
-        if (st) st.innerHTML = '<span class="ta-ok">' + matchCount + ' result' + (matchCount !== 1 ? 's' : '') + '</span>';
-        // Populate details
+        _caSetCardBadge(existing, 'complete');
+        existing.querySelector('.ca-card-badge').textContent = matchCount + ' match' + (matchCount !== 1 ? 'es' : '');
         if (matches.length > 0) {
             existing.classList.add('expanded');
-            var details = existing.querySelector('.ta-item-details');
-            if (details) {
-                details.innerHTML = '';
+            var body = existing.querySelector('.ca-card-body');
+            if (body) {
+                body.innerHTML = '';
                 for (var i = 0; i < matches.length; i++) {
                     var m = matches[i];
                     var row = document.createElement('div');
-                    row.className = 'ta-match-row';
-                    row.innerHTML =
-                        '<span class="ta-match-file">' + escapeHtml(m.file || '') + '</span>' +
-                        '<span class="ta-match-lines">' + (m.line ? m.line + '-' + m.line : '') + '</span>' +
-                        '<span class="ta-match-path">' + escapeHtml(m.path || '') + '</span>';
-                    // Click to open file
+                    row.className = 'ca-match-row';
+                    row.innerHTML = '<span class="ca-match-file">' + escapeHtml(m.file || '') + '</span><span class="ca-match-lines">' + (m.line ? m.line + '-' + m.line : '') + '</span><span class="ca-match-path">' + escapeHtml(m.path || '') + '</span>';
                     (function(path, line) {
                         row.onclick = function() {
                             if (path && window.bridge) {
-                                if (line > 0 && window.bridge.on_open_file_at_line) {
-                                    bridge.on_open_file_at_line(path, line);
-                                } else {
-                                    openFileInEditor(path);
-                                }
+                                if (line > 0 && window.bridge.on_open_file_at_line) bridge.on_open_file_at_line(path, line);
+                                else openFileInEditor(path);
                             }
                         };
                     })(m.path, m.line);
-                    details.appendChild(row);
+                    body.appendChild(row);
                 }
             }
         }
         return;
     }
+    if (existing) return;
 
-    if (existing) return; // already rendering this search
-
-    _taStats.searches++;
-
-    var item = document.createElement('div');
-    item.className = 'ta-item';
-    item.dataset.taType = 'search';
-    item.dataset.taKey = searchKey;
-
+    _caStats.searches++;
     var displayPattern = pattern.length > 50 ? pattern.substring(0, 47) + '...' : pattern;
     var includeText = include ? '  ' + include : '';
 
-    item.innerHTML =
-        '<div class="ta-item-header">' +
-            '<svg class="ta-item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
-            '<span class="ta-item-icon" style="color:#60a5fa;">&#128269;</span>' +
-            '<span class="ta-item-label">' +
-                searchLabel + '  <span class="ta-highlight">' + escapeHtml(displayPattern) + '</span>' +
-                '<span class="ta-muted">' + escapeHtml(includeText) + '</span>' +
+    var card = document.createElement('div');
+    card.className = 'ca-card search';
+    card.dataset.caType = 'search';
+    card.dataset.caKey = searchKey;
+    card.innerHTML =
+        '<div class="ca-card-header">' +
+            '<svg class="ca-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
+            '<span class="ca-card-icon">&#128269;</span>' +
+            '<span class="ca-card-label">' +
+                searchLabel + '  <span class="ca-highlight">' + escapeHtml(displayPattern) + '</span>' +
+                '<span class="ca-muted">' + escapeHtml(includeText) + '</span>' +
             '</span>' +
-            '<span class="ta-item-status">' +
-                (status === 'complete'
-                    ? '<span class="ta-ok">' + matchCount + ' result' + (matchCount !== 1 ? 's' : '') + '</span>'
-                    : '<span class="ta-spinner"></span>') +
-            '</span>' +
+            '<span class="ca-card-badge ' + (status === 'complete' ? 'complete' : 'running') + '">' + (status === 'complete' ? matchCount + ' result' + (matchCount !== 1 ? 's' : '') : 'running') + '</span>' +
         '</div>' +
-        '<div class="ta-item-details"></div>';
+        '<div class="ca-card-preview">' + escapeHtml(displayPattern) + (includeText ? ' in ' + escapeHtml(include) : '') + '</div>' +
+        '<div class="ca-card-body"></div>';
 
-    // Toggle expand/collapse on header click
-    item.querySelector('.ta-item-header').onclick = function(e) {
+    card.querySelector('.ca-card-header').onclick = function(e) {
         e.stopPropagation();
-        item.classList.toggle('expanded');
+        card.classList.toggle('expanded');
     };
+    cardsHost.appendChild(card);
+}
 
-    itemsEl.appendChild(item);
+// ── Render: Grep ──────────────────────────────────────────
+function _caRenderGrep(data, status) {
+    var group = _caGroup;
+    if (!group) return;
+    var cardsHost = group.querySelector('.ca-group-cards');
+    if (!cardsHost) return;
+
+    var pattern = data.pattern || '';
+    var matchCount = data.match_count || 0;
+    var matches = data.matches || [];
+    var include = data.include || data.glob || '';
+    var searchKey = 'grep|' + pattern + '|' + include;
+
+    var existing = _caFindCard('grep', searchKey);
+    if (existing && status === 'complete') {
+        _caSetCardBadge(existing, 'complete');
+        existing.querySelector('.ca-card-badge').textContent = matchCount + ' match' + (matchCount !== 1 ? 'es' : '');
+        if (matches.length > 0) {
+            existing.classList.add('expanded');
+            var body = existing.querySelector('.ca-card-body');
+            if (body) {
+                body.innerHTML = '';
+                for (var i = 0; i < matches.length; i++) {
+                    var m = matches[i];
+                    var row = document.createElement('div');
+                    row.className = 'ca-match-row';
+                    row.innerHTML = '<span class="ca-match-file">' + escapeHtml(m.file || '') + '</span><span class="ca-match-lines">' + (m.line ? m.line + '-' + m.line : '') + '</span><span class="ca-match-path">' + escapeHtml(m.path || '') + '</span>';
+                    (function(path, line) {
+                        row.onclick = function() {
+                            if (path && window.bridge) {
+                                if (line > 0 && window.bridge.on_open_file_at_line) bridge.on_open_file_at_line(path, line);
+                                else openFileInEditor(path);
+                            }
+                        };
+                    })(m.path, m.line);
+                    body.appendChild(row);
+                }
+            }
+        }
+        return;
+    }
+    if (existing) return;
+
+    _caStats.searches++;
+    var displayPattern = pattern.length > 50 ? pattern.substring(0, 47) + '...' : pattern;
+    var includeText = include ? '  in ' + include : '';
+
+    var card = document.createElement('div');
+    card.className = 'ca-card grep collapsed';
+    card.dataset.caType = 'grep';
+    card.dataset.caKey = searchKey;
+    card.innerHTML =
+        '<div class="ca-card-header">' +
+            '<svg class="ca-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
+            '<span class="ca-card-icon">&#128270;</span>' +
+            '<span class="ca-card-label">' +
+                'Grep  <span class="ca-highlight">' + escapeHtml(displayPattern) + '</span>' +
+                '<span class="ca-muted">' + escapeHtml(includeText) + '</span>' +
+            '</span>' +
+            '<span class="ca-card-badge ' + (status === 'complete' ? 'complete' : 'running') + '">' + (status === 'complete' ? matchCount + ' result' + (matchCount !== 1 ? 's' : '') : 'running') + '</span>' +
+        '</div>' +
+        '<div class="ca-card-preview">' + escapeHtml(displayPattern) + (includeText ? ' in ' + escapeHtml(include) : '') + '</div>' +
+        '<div class="ca-card-body"></div>';
+
+    card.querySelector('.ca-card-header').onclick = function(e) {
+        e.stopPropagation();
+        card.classList.toggle('expanded');
+    };
+    cardsHost.appendChild(card);
+}
+
+// ── Render: Glob ──────────────────────────────────────────
+function _caRenderGlob(data, status) {
+    var group = _caGroup;
+    if (!group) return;
+    var cardsHost = group.querySelector('.ca-group-cards');
+    if (!cardsHost) return;
+
+    var pattern = data.pattern || data.glob || '';
+    var matchCount = data.match_count || data.count || 0;
+    var matches = data.matches || [];
+    var include = data.include || '';
+    var searchKey = 'glob|' + pattern + '|' + include;
+
+    var existing = _caFindCard('glob', searchKey);
+    if (existing && status === 'complete') {
+        _caSetCardBadge(existing, 'complete');
+        existing.querySelector('.ca-card-badge').textContent = matchCount + ' file' + (matchCount !== 1 ? 's' : '');
+        if (matches.length > 0) {
+            existing.classList.add('expanded');
+            var body = existing.querySelector('.ca-card-body');
+            if (body) {
+                body.innerHTML = '';
+                for (var i = 0; i < matches.length; i++) {
+                    var m = matches[i];
+                    var row = document.createElement('div');
+                    row.className = 'ca-match-row';
+                    row.innerHTML = '<span class="ca-match-file">' + escapeHtml(m.file || m.name || '') + '</span><span class="ca-match-lines">' + (m.line ? m.line + '-' + m.line : '') + '</span><span class="ca-match-path">' + escapeHtml(m.path || '') + '</span>';
+                    (function(path, line) {
+                        row.onclick = function() {
+                            if (path && window.bridge) {
+                                if (line > 0 && window.bridge.on_open_file_at_line) bridge.on_open_file_at_line(path, line);
+                                else openFileInEditor(path);
+                            }
+                        };
+                    })(m.path, m.line);
+                    body.appendChild(row);
+                }
+            }
+        }
+        return;
+    }
+    if (existing) return;
+
+    _caStats.searches++;
+    var displayPattern = pattern.length > 50 ? pattern.substring(0, 47) + '...' : pattern;
+
+    var card = document.createElement('div');
+    card.className = 'ca-card glob collapsed';
+    card.dataset.caType = 'glob';
+    card.dataset.caKey = searchKey;
+    card.innerHTML =
+        '<div class="ca-card-header">' +
+            '<svg class="ca-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
+            '<span class="ca-card-icon">&#127760;</span>' +
+            '<span class="ca-card-label">' +
+                'Glob  <span class="ca-highlight">' + escapeHtml(displayPattern) + '</span>' +
+            '</span>' +
+            '<span class="ca-card-badge ' + (status === 'complete' ? 'complete' : 'running') + '">' + (status === 'complete' ? matchCount + ' file' + (matchCount !== 1 ? 's' : '') : 'running') + '</span>' +
+        '</div>' +
+        '<div class="ca-card-preview">' + escapeHtml(displayPattern) + '</div>' +
+        '<div class="ca-card-body"></div>';
+
+    card.querySelector('.ca-card-header').onclick = function(e) {
+        e.stopPropagation();
+        card.classList.toggle('expanded');
+    };
+    cardsHost.appendChild(card);
 }
 
 // ── Render: List Directory ───────────────────────────────
-function _taRenderListDir(itemsEl, data, status) {
+function _caRenderListDir(data, status) {
+    var group = _caGroup;
+    if (!group) return;
+    var cardsHost = group.querySelector('.ca-group-cards');
+    if (!cardsHost) return;
+
     var path = data.path || '.';
     var count = data.count || 0;
     var pattern = data.pattern || '';
-    var searchType = (data.search_type || '').toLowerCase();
-    var isGlob = searchType === 'glob' || !!pattern;
+    var isGlob = !!pattern;
     var key = isGlob ? (path + '|' + pattern) : path;
 
-    var existing = _taFindItem(itemsEl, 'listdir', key);
+    var existing = _caFindCard('listdir', key);
     if (existing) {
         if (status === 'complete') {
-            var st = existing.querySelector('.ta-item-status');
-            if (st) st.innerHTML = '<span class="ta-ok">' + count + ' files</span>';
+            _caSetCardBadge(existing, 'complete');
+            existing.querySelector('.ca-card-badge').textContent = count + ' files';
         }
         return;
     }
 
-    _taTrackUniqueFile(path);
+    _caTrackUniqueFile(path);
+    var title = isGlob ? 'Glob: ' + escapeHtml(pattern || path) : 'Explored: ' + escapeHtml(path);
 
-    var item = document.createElement('div');
-    item.className = 'ta-item';
-    item.dataset.taType = 'listdir';
-    item.dataset.taKey = key;
-    var title = isGlob ? 'Globbed  <span class="ta-highlight">' + escapeHtml(pattern || path) + '</span>' :
-                         'Explored  <span class="ta-highlight">' + escapeHtml(path) + '</span>';
-    item.innerHTML =
-        '<div class="ta-item-header">' +
-            '<span class="ta-item-icon" style="color:#f59e0b;">&#128193;</span>' +
-            '<span class="ta-item-label">' +
-                title +
-            '</span>' +
-            '<span class="ta-item-status">' +
-                (status === 'complete'
-                    ? '<span class="ta-ok">' + count + ' files</span>'
-                    : '<span class="ta-spinner" style="border-top-color:#f59e0b;"></span>') +
-            '</span>' +
-        '</div>';
-    itemsEl.appendChild(item);
+    var card = document.createElement('div');
+    card.className = 'ca-card explore collapsed';
+    card.dataset.caType = 'listdir';
+    card.dataset.caKey = key;
+    card.innerHTML =
+        '<div class="ca-card-header">' +
+            '<svg class="ca-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
+            '<span class="ca-card-icon">&#128193;</span>' +
+            '<span class="ca-card-label"><span class="ca-highlight">' + title + '</span></span>' +
+            '<span class="ca-card-badge ' + (status === 'complete' ? 'complete' : 'running') + '">' + (status === 'complete' ? count + ' files' : 'running') + '</span>' +
+        '</div>' +
+        '<div class="ca-card-preview">' + escapeHtml(path) + '</div>' +
+        '<div class="ca-card-body"></div>';
+
+    card.querySelector('.ca-card-header').onclick = function(e) {
+        e.stopPropagation();
+        card.classList.toggle('expanded');
+    };
+    cardsHost.appendChild(card);
 }
 
-// ── Render: Terminal command summary ──────────────────────
-function _taRenderTerminalActivity(itemsEl, data, status) {
+// ── Render: Terminal Command ─────────────────────────────
+function _caRenderTerminal(data, status) {
+    var group = _caGroup;
+    if (!group) return;
+    var cardsHost = group.querySelector('.ca-group-cards');
+    if (!cardsHost) return;
+
     var command = String(data.command || '').trim();
     if (!command) command = 'command';
     var shortCmd = command.length > 90 ? command.substring(0, 87) + '...' : command;
     var key = String(data.command_id || shortCmd);
-    var existing = _taFindItem(itemsEl, 'terminal', key);
+
+    var existing = _caFindCard('terminal', key);
     if (existing) {
-        var st0 = existing.querySelector('.ta-item-status');
-        if (st0) {
-            if (status === 'running') st0.innerHTML = '<span class="ta-spinner"></span>';
-            else if (status === 'error') st0.innerHTML = '<span class="ta-err">ERR</span>';
-            else st0.innerHTML = '<span class="ta-ok">OK</span>';
-        }
+        if (status === 'running') _caSetCardBadge(existing, 'running');
+        else if (status === 'error') _caSetCardBadge(existing, 'error');
+        else _caSetCardBadge(existing, 'complete');
         return;
     }
-    _taStats.commands++;
-    var item = document.createElement('div');
-    item.className = 'ta-item';
-    item.dataset.taType = 'terminal';
-    item.dataset.taKey = key;
-    item.innerHTML =
-        '<div class="ta-item-header">' +
-            '<span class="ta-item-icon" style="color:#22d3ee;">&#36;</span>' +
-            '<span class="ta-item-label">' +
-                '<span class="ta-highlight">' + escapeHtml(shortCmd) + '</span>' +
-            '</span>' +
-            '<span class="ta-item-status">' +
-                (status === 'running' ? '<span class="ta-spinner"></span>' : (status === 'error' ? '<span class="ta-err">ERR</span>' : '<span class="ta-ok">OK</span>')) +
-            '</span>' +
-        '</div>';
-    itemsEl.appendChild(item);
+
+    _caStats.commands++;
+    var card = document.createElement('div');
+    card.className = 'ca-card terminal';
+    card.dataset.caType = 'terminal';
+    card.dataset.caKey = key;
+    card.innerHTML =
+        '<div class="ca-card-header">' +
+            '<svg class="ca-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
+            '<span class="ca-card-icon">&#36;</span>' +
+            '<span class="ca-card-label"><span class="ca-highlight">' + escapeHtml(shortCmd) + '</span></span>' +
+            '<span class="ca-card-badge ' + (status === 'running' ? 'running' : status === 'error' ? 'error' : 'complete') + '">' + (status === 'running' ? 'running' : status === 'error' ? 'err' : 'done') + '</span>' +
+        '</div>' +
+        '<div class="ca-card-preview">$ ' + escapeHtml(shortCmd) + '</div>' +
+        '<div class="ca-card-body"></div>';
+
+    card.querySelector('.ca-card-header').onclick = function(e) {
+        e.stopPropagation();
+        card.classList.toggle('expanded');
+    };
+    cardsHost.appendChild(card);
 }
 
-// ── Render: Team Create/Delete ───────────────────────────
-function _taRenderTeam(itemsEl, data, status, type) {
+// ── Render: Team Operations ──────────────────────────────
+function _caRenderTeam(data, status, type) {
+    var group = _caGroup;
+    if (!group) return;
+    var cardsHost = group.querySelector('.ca-group-cards');
+    if (!cardsHost) return;
+
     var teamName = data.team_name || data.name || 'team';
-    var message = data.message || '';
-    var teamId = data.team_id || '';
     var isCreate = type === 'team_create';
     var label = isCreate ? 'Create Team' : 'Delete Team';
     var icon = isCreate ? '&#128101;' : '&#128465;';
-    var mutedText = teamName;
-    if (teamId) mutedText += ' (' + teamId + ')';
-    if (message) mutedText += ' — ' + message.substring(0, 60);
 
-    var item = document.createElement('div');
-    item.className = 'ta-item';
-    item.dataset.taType = type;
-    item.dataset.taKey = teamName;
-    item.innerHTML =
-        '<div class="ta-item-header">' +
-            '<span class="ta-item-icon">' + icon + '</span>' +
-            '<span class="ta-item-label">' +
-                '<span class="ta-highlight">' + escapeHtml(label) + '</span>' +
-                '<span class="ta-muted"> (' + escapeHtml(mutedText) + ')</span>' +
-            '</span>' +
-            '<span class="ta-item-status">' +
-                (status === 'complete' ? '<span class="ta-ok">OK</span>' :
-                 status === 'error' ? '<span class="ta-err">ERR</span>' :
-                 '<span class="ta-spinner"></span>') +
-            '</span>' +
-        '</div>';
-    itemsEl.appendChild(item);
+    var card = document.createElement('div');
+    card.className = 'ca-card';
+    card.dataset.caType = type;
+    card.dataset.caKey = teamName;
+    card.innerHTML =
+        '<div class="ca-card-header">' +
+            '<span class="ca-card-icon">' + icon + '</span>' +
+            '<span class="ca-card-label"><span class="ca-highlight">' + escapeHtml(label) + '</span><span class="ca-muted"> (' + escapeHtml(teamName) + ')</span></span>' +
+            '<span class="ca-card-badge ' + (status === 'complete' ? 'complete' : status === 'error' ? 'error' : 'running') + '">' + (status === 'complete' ? 'done' : status === 'error' ? 'err' : 'running') + '</span>' +
+        '</div>' +
+        '<div class="ca-card-preview">' + escapeHtml(label) + ': ' + escapeHtml(teamName) + '</div>' +
+        '<div class="ca-card-body"></div>';
+    cardsHost.appendChild(card);
 }
 
 // ── Render: Task Operations ──────────────────────────────
-function _taRenderTask(itemsEl, data, status, type) {
+function _caRenderTask(data, status, type) {
+    var group = _caGroup;
+    if (!group) return;
+    var cardsHost = group.querySelector('.ca-group-cards');
+    if (!cardsHost) return;
+
     var taskId = data.task_id || '';
     var subject = data.subject || '';
-    var message = data.message || '';
-    var opMap = {
-        'task_create': 'Create Task',
-        'task_update': 'Update Task',
-        'task_list': 'List Tasks',
-        'task_get': 'Get Task',
-        'task_stop': 'Stop Task'
-    };
+    var opMap = { 'task_create': 'Create Task', 'task_update': 'Update Task', 'task_list': 'List Tasks', 'task_get': 'Get Task', 'task_stop': 'Stop Task' };
     var label = opMap[type] || type.replace(/_/g, ' ');
-    var icon = '&#9749;';
-    var mutedText = subject || taskId;
-    if (message) mutedText += ' — ' + message.substring(0, 60);
 
-    var item = document.createElement('div');
-    item.className = 'ta-item';
-    item.dataset.taType = type;
-    item.dataset.taKey = taskId || label;
-    item.innerHTML =
-        '<div class="ta-item-header">' +
-            '<span class="ta-item-icon">' + icon + '</span>' +
-            '<span class="ta-item-label">' +
-                '<span class="ta-highlight">' + escapeHtml(label) + '</span>' +
-                '<span class="ta-muted"> (' + escapeHtml(mutedText) + ')</span>' +
-            '</span>' +
-            '<span class="ta-item-status">' +
-                (status === 'complete' ? '<span class="ta-ok">OK</span>' :
-                 status === 'error' ? '<span class="ta-err">ERR</span>' :
-                 '<span class="ta-spinner"></span>') +
-            '</span>' +
-        '</div>';
-    itemsEl.appendChild(item);
+    var card = document.createElement('div');
+    card.className = 'ca-card';
+    card.dataset.caType = type;
+    card.dataset.caKey = taskId || label;
+    card.innerHTML =
+        '<div class="ca-card-header">' +
+            '<span class="ca-card-icon">&#9749;</span>' +
+            '<span class="ca-card-label"><span class="ca-highlight">' + escapeHtml(label) + '</span><span class="ca-muted"> (' + escapeHtml(subject || taskId) + ')</span></span>' +
+            '<span class="ca-card-badge ' + (status === 'complete' ? 'complete' : status === 'error' ? 'error' : 'running') + '">' + (status === 'complete' ? 'done' : status === 'error' ? 'err' : 'running') + '</span>' +
+        '</div>' +
+        '<div class="ca-card-preview">' + escapeHtml(label) + '</div>' +
+        '<div class="ca-card-body"></div>';
+    cardsHost.appendChild(card);
 }
 
 // ── Render: Generic / Fallback ───────────────────────────
-function _taRenderGeneric(itemsEl, data, status, type) {
-    var label = type.replace(/_/g, ' ');
-    var raw = data.raw || JSON.stringify(data).substring(0, 80);
+function _caRenderGeneric(data, status, type) {
+    var group = _caGroup;
+    if (!group) return;
+    var cardsHost = group.querySelector('.ca-group-cards');
+    if (!cardsHost) return;
 
-    var item = document.createElement('div');
-    item.className = 'ta-item';
-    item.dataset.taType = type;
-    item.dataset.taKey = label;
-    item.innerHTML =
-        '<div class="ta-item-header">' +
-            '<span class="ta-item-icon">&#9881;</span>' +
-            '<span class="ta-item-label">' +
-                '<span class="ta-highlight">' + escapeHtml(label) + '</span>' +
-                '<span class="ta-muted">  ' + escapeHtml(raw.substring(0, 60)) + '</span>' +
+    var label = type.replace(/_/g, ' ');
+    var raw = data.raw || '';
+    var preview = raw ? String(raw).substring(0, 80).replace(/\s+/g, ' ').trim() : label;
+    var shortRaw = raw ? String(raw).substring(0, 40).replace(/\s+/g, ' ').trim() : '';
+
+    // Deduplicate: don't create multiple generic cards of the same type
+    var existing = cardsHost.querySelector('.ca-card[data-ca-type="' + CSS.escape(type) + '"]');
+    if (existing && status === 'complete') {
+        _caSetCardBadge(existing, 'complete');
+        return;
+    }
+    if (existing) return;
+
+    var card = document.createElement('div');
+    card.className = 'ca-card';
+    card.dataset.caType = type;
+    card.dataset.caKey = label;
+    card.innerHTML =
+        '<div class="ca-card-header">' +
+            '<span class="ca-card-icon">&#9881;</span>' +
+            '<span class="ca-card-label"><span class="ca-highlight">' + escapeHtml(label) + '</span>' +
+            (shortRaw ? '<span class="ca-muted">  ' + escapeHtml(shortRaw) + '</span>' : '') +
             '</span>' +
-            '<span class="ta-item-status">' +
-                (status === 'complete' ? '<span class="ta-ok">OK</span>' :
-                 status === 'error' ? '<span class="ta-err">ERR</span>' :
-                 '<span class="ta-spinner"></span>') +
-            '</span>' +
-        '</div>';
-    itemsEl.appendChild(item);
+            '<span class="ca-card-badge ' + (status === 'complete' ? 'complete' : status === 'error' ? 'error' : 'running') + '">' + (status === 'complete' ? 'done' : status === 'error' ? 'err' : 'running') + '</span>' +
+        '</div>' +
+        '<div class="ca-card-preview">' + escapeHtml(preview) + '</div>' +
+        '<div class="ca-card-body"></div>';
+    cardsHost.appendChild(card);
 }
 
 // ── Handle Terminal Commands ─────────────────────────────
-function _taHandleTerminal(container, data, status) {
+function _caHandleTerminal(container, data, status) {
     if (!currentAssistantMessage) {
         currentAssistantMessage = document.createElement('div');
         currentAssistantMessage.className = 'message-bubble assistant';
@@ -4075,31 +4129,6 @@ function _taHandleTerminal(container, data, status) {
         }
     }
     smartScroll(container);
-}
-
-// ── Helpers ──────────────────────────────────────────────
-function _taFindItem(itemsEl, type, key) {
-    if (!key) return null;
-    var items = itemsEl.querySelectorAll('.ta-item');
-    for (var i = 0; i < items.length; i++) {
-        if (items[i].dataset.taType === type && items[i].dataset.taKey === key) {
-            return items[i];
-        }
-    }
-    return null;
-}
-
-function _taExtBadge(ext) {
-    if (!ext) return '<span style="font-size:9px;padding:1px 4px;border-radius:3px;background:rgba(107,114,128,0.2);color:#9ca3af;font-weight:700;text-transform:uppercase;font-family:var(--font-mono);">FILE</span>';
-    var colors = {
-        'py': '#3b82f6', 'js': '#eab308', 'ts': '#3b82f6', 'tsx': '#3b82f6', 'jsx': '#eab308',
-        'html': '#ef4444', 'css': '#8b5cf6', 'json': '#f59e0b', 'md': '#6b7280',
-        'yaml': '#ec4899', 'yml': '#ec4899', 'toml': '#f97316', 'xml': '#ef4444',
-        'sh': '#22c55e', 'bat': '#22c55e', 'ps1': '#3b82f6', 'sql': '#06b6d4',
-        'rs': '#f97316', 'go': '#06b6d4', 'java': '#ef4444', 'c': '#6b7280', 'cpp': '#6b7280',
-    };
-    var clr = colors[ext] || '#6b7280';
-    return '<span style="font-size:9px;padding:1px 4px;border-radius:3px;background:' + clr + '22;color:' + clr + ';font-weight:700;text-transform:uppercase;font-family:var(--font-mono);">' + ext.toUpperCase() + '</span>';
 }
 
 // Professional Tool Execution Summary Display
@@ -4627,12 +4656,11 @@ function showThinking() {
         if (emptyState) emptyState.remove();
     }
 
-    // Route thinking into the same Explore dropdown used for tool activity.
-    var group = _taEnsureGroup(container, false);
-    var itemsEl = group ? _taGetSectionItems('thinking') : null;
-    if (itemsEl) {
-        _taRenderThought(itemsEl, 'running', 'Thinking');
-        _taUpdateGroupHeader();
+    // Route thinking into the Cortex Activity card system
+    var group = _caEnsureGroup(container);
+    if (group) {
+        _caRenderThought({ text: 'Thinking' }, 'running');
+        _caUpdateGroupHeader();
         smartScroll(container);
     }
 }
@@ -4664,12 +4692,9 @@ function hideThinking() {
         }
     }
 
-    if (_taCurrentGroup) {
-        var itemsEl = _taGetSectionItems('thinking');
-        if (itemsEl) {
-            _taRenderThought(itemsEl, 'complete', '');
-            _taUpdateGroupHeader();
-        }
+    if (_caGroup) {
+        _caRenderThought({}, 'complete');
+        _caUpdateGroupHeader();
     }
     
     // Hide agent mode indicator
@@ -4684,19 +4709,19 @@ function clearActivitySection() {
         currentActivitySection.remove();
         currentActivitySection = null;
     }
-    if (_taCurrentGroup) {
-        _taCurrentGroup.remove();
-        _taCurrentGroup = null;
+    if (_caGroup) {
+        _caGroup.remove();
+        _caGroup = null;
     }
 }
 
 // Collapse (not remove) the activity section on completion — shows only summary header
 function collapseActivitySection() {
-    // Collapse the new ta-group if present
-    if (_taCurrentGroup) {
-        _taCurrentGroup.classList.add('collapsed');
-        _taMarkGroupComplete();
-        _taCurrentGroup = null;
+    // Collapse the new cortex-activity-group if present
+    if (_caGroup) {
+        _caGroup.classList.add('collapsed');
+        _caMarkGroupComplete();
+        _caGroup = null;
     }
 
     if (!currentActivitySection) return;
@@ -5479,7 +5504,7 @@ function normalizeMarkdownText(text) {
     // Guard: skip complex processing for very large text to prevent stack overflow
     if (text.length > 200000) {
         text = text.replace(/\r\n/g, '\n');
-        text = text.replace(/\n{4,}/g, '\n\n\n');
+        text = text.replace(/\\n{4,}/g, '\\n\\n\\n');
         return text;
     }
 
@@ -5596,7 +5621,7 @@ function normalizeMarkdownText(text) {
     }
 
     // Limit blank lines.
-    text = text.replace(/\n{4,}/g, '\n\n\n');
+    text = text.replace(/\\n{4,}/g, '\\n\\n\\n');
 
     return text;
 }

@@ -4944,8 +4944,8 @@ Use Markdown tables for structured data comparison:
         content = args.get("content", "")
         
         # INDUSTRY-STANDARD: Strict path validation
-        # Reject directory paths IMMEDIATELY with clear error message
-        if path.endswith((os.sep, '/')) or os.path.isdir(path):
+        # Reject empty, blank, and directory paths IMMEDIATELY
+        if not path or not path.strip() or path.endswith((os.sep, '/')) or os.path.isdir(path):
             log.warning(f"[WRITE] Rejected directory path: {path}")
             return ToolResult(
                 tool_id=tool_id,
@@ -5076,6 +5076,22 @@ Use Markdown tables for structured data comparison:
         path = args.get("file_path", "")
         old_string = args.get("old_string", "")
         new_string = args.get("new_string", "")
+        # Reject empty, blank, and directory paths IMMEDIATELY
+        if not path or not path.strip() or path.endswith((os.sep, '/')) or os.path.isdir(path):
+            log.warning(f"[EDIT] Rejected directory path: {path}")
+            return ToolResult(
+                tool_id=tool_id,
+                result=None,
+                success=False,
+                error=(
+                    f"ERROR: You provided a directory path '{path}' instead of a file path.\n\n"
+                    f"You MUST provide a complete file path with filename and extension.\n"
+                    f"Examples:\n"
+                    f"  CORRECT: 'index.html', 'src/questions.js', 'main.py'\n"
+                    f"  WRONG: 'C:\\Game\\', 'src/', './'\n\n"
+                    f"Please call Edit again with the FULL file path."
+                ),
+            )
         if not os.path.isabs(path) and self._project_root:
             args = {**args, "file_path": os.path.join(self._project_root, path)}
         full_path = str(args["file_path"])
