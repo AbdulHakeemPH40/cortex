@@ -2,10 +2,14 @@ import asyncio
 import os
 import sys
 import json
+import re
+import time
 import uuid as _uuid
+from pathlib import Path
 import threading
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Callable, Tuple, Type, Set, Protocol, cast
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from PyQt6.QtCore import QObject, pyqtSignal, QThread
 
@@ -15,10 +19,13 @@ from PyQt6.QtCore import QObject, pyqtSignal, QThread
 _AGENT_SRC = os.path.abspath(
     os.path.join(os.path.dirname(__file__), '..', 'agent', 'src')
 )
-_AGENT_PARENT = os.path.dirname(_AGENT_SRC)
-for _path in (_AGENT_PARENT, _AGENT_SRC):
-    if _path not in sys.path:
-        sys.path.insert(0, _path)
+_PROJECT_SRC = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if _PROJECT_SRC not in sys.path:
+    sys.path.insert(0, _PROJECT_SRC)
+# Keep agent internals importable, but do not prepend to avoid shadowing stdlib
+# modules (e.g. src/agent/src/types.py vs Python's built-in types module).
+if _AGENT_SRC not in sys.path:
+    sys.path.append(_AGENT_SRC)
 
 from src.utils.logger import get_logger  
 from src.ai.streaming import get_streaming_emitter  
@@ -129,6 +136,13 @@ class _ToolLimitsLike(Protocol):
 
 
 # ============================================================
+# EXTRACTED UTILITIES (Phase B refactor)
+# ============================================================
+from src.ai.circuit_breaker import ToolCircuitBreaker
+from src.ai.tool_executor import ToolExecutionEngine, ParsedToolCall
+
+
+# ============================================================
 # IMPORT REAL AGENT TOOLS from src/agent/src/tools/
 # These are the robust, production-quality implementations.
 # ============================================================
@@ -136,7 +150,7 @@ class _ToolLimitsLike(Protocol):
 import importlib as _importlib
 import importlib.util as _importlib_util
 
-def _load_agent_tool(module_path: str, class_name: str) -> type | None:
+def _load_agent_tool(module_path: str, class_name: str) -> Optional[type]:
     """Dynamically import a real agent tool class. Returns None on failure."""
     try:
         mod = _importlib.import_module(module_path)
@@ -1285,6 +1299,19 @@ _TOOL_SCHEMAS: List[Dict[str, Any]] = [
                         "type": "string",
                         "description": "Present continuous form shown when task is in_progress (e.g., 'Fixing authentication bug')"
                     },
+                    "parentId": {
+                        "type": "string",
+                        "description": "Optional ID of the parent task if this is a subtask"
+                    },
+                    "dependsOn": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of task IDs that must be completed before this task can start"
+                    },
+                    "estimatedEffort": {
+                        "type": "string",
+                        "description": "Optional estimated effort (e.g., '30min', '2h', '3d')"
+                    },
                 },
                 "required": ["subject", "description"],
             },
@@ -1307,7 +1334,7 @@ _TOOL_SCHEMAS: List[Dict[str, Any]] = [
                     },
                     "status": {
                         "type": "string",
-                        "enum": ["pending", "in_progress", "completed", "cancelled"],
+                        "enum": ["pending", "in_progress", "completed", "cancelled", "blocked"],
                         "description": "New status for the task"
                     },
                     "owner": {
@@ -1323,6 +1350,19 @@ _TOOL_SCHEMAS: List[Dict[str, Any]] = [
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "Task IDs that block this task"
+                    },
+                    "parentId": {
+                        "type": "string",
+                        "description": "Update the parent task ID (or empty string to remove parent)"
+                    },
+                    "dependsOn": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Replace the list of dependency task IDs"
+                    },
+                    "estimatedEffort": {
+                        "type": "string",
+                        "description": "Update estimated effort (e.g., '30min', '2h', '3d')"
                     },
                 },
                 "required": ["taskId"],
@@ -1492,6 +1532,31 @@ def _get_tool_definitions() -> List[Dict[str, Any]]:
     skipped to avoid false warnings.
     """
     return list(_TOOL_SCHEMAS)
+
+
+def _tool_name_from_schema(tool_def: Dict[str, Any]) -> str:
+    """Extract tool function name from OpenAI-compatible schema entry."""
+    fn_any = tool_def.get("function")
+    fn = cast(Dict[str, Any], fn_any) if isinstance(fn_any, dict) else None
+    if isinstance(fn, dict):
+        name = fn.get("name")
+        if isinstance(name, str):
+            return name
+    return ""
+
+
+def _filter_tool_definitions(
+    tool_defs: List[Dict[str, Any]],
+    allowed_names: Set[str],
+) -> List[Dict[str, Any]]:
+    """Return only tool schemas whose function name is in allowed_names."""
+    if not allowed_names:
+        return []
+    out: List[Dict[str, Any]] = []
+    for td in tool_defs:
+        if _tool_name_from_schema(td) in allowed_names:
+            out.append(td)
+    return out
 
 
 # ============================================================
@@ -1697,12 +1762,79 @@ class AgentWorker(QThread):
                 msg.get("context", {}),
                 msg.get("images", []),
             )
+            # ── INDUSTRY-STANDARD: Task Completion Validation ───────────
+            # Before emitting response_ready (which triggers Windows notification),
+            # verify that ALL todos are actually completed with mutations.
+            # This prevents premature notifications when AI tries to skip work.
+            
+            _should_notify = True
+            _pending_count = 0
+            # Use PERSISTENT session counter, not per-turn counter
+            _mutation_count = self.bridge._session_mutation_count
+            
+            # ── CRITICAL: Check if todos were auto-cancelled (incomplete) ──
+            if getattr(self.bridge, '_todos_auto_cancelled', False):
+                _should_notify = False
+                log.warning(
+                    f"[WORKER] Notification BLOCKED: Todos were auto-cancelled (not completed). "
+                    f"AI made {_mutation_count} mutation(s) but tasks were NOT finished."
+                )
+                self.bridge._allow_notification = False
+                self.bridge._todos_auto_cancelled = False  # Reset for next time
+            
+            # Check if there are pending todos
+            elif hasattr(self.bridge, '_current_todos') and self.bridge._current_todos:
+                _pending_todos = [
+                    t for t in self.bridge._current_todos
+                    if t.get("status") not in ("COMPLETE", "CANCELLED")
+                ]
+                _pending_count = len(_pending_todos)
+                
+                # If there are pending todos, DO NOT show notification
+                if _pending_count > 0:
+                    _should_notify = False
+                    log.warning(
+                        f"[WORKER] Suppressing notification: {_pending_count} todo(s) still pending. "
+                        f"AI made {_mutation_count} mutation(s) but tasks incomplete."
+                    )
+                
+                # Even if todos marked complete, check if mutations match
+                elif _pending_count == 0 and _mutation_count == 0:
+                    # All marked complete but zero mutations = AI skipped work
+                    _should_notify = False
+                    log.warning(
+                        "[WORKER] Suppressing notification: Todos marked complete but NO mutations made. "
+                        "AI tried to skip work!"
+                    )
+            
             # Always emit response_ready (even if response is empty text) so
             # on_complete → onComplete() → _onGenerationComplete() always fires
             # in JS, which drains the message queue and un-sticks any 'Continue'
             # message that was enqueued while _isGenerating was still True.
             if not self.bridge.stop_requested:
+                # Attach task completion metadata to response for notification control
+                _response_data = {
+                    "text": response or "",
+                    "should_notify": _should_notify,
+                    "pending_todos": _pending_count,
+                    "mutations": _mutation_count,
+                }
                 self.response_ready.emit(response or "")
+                
+                if _should_notify:
+                    log.info(
+                        f"[WORKER] Notification allowed: {_mutation_count} mutation(s), "
+                        f"{_pending_count} pending todo(s) — task genuinely complete."
+                    )
+                    # Set flag for main_window to check before showing notification
+                    self.bridge._allow_notification = True
+                else:
+                    # Block notification - tasks incomplete
+                    self.bridge._allow_notification = False
+                    log.info(
+                        f"[WORKER] Notification BLOCKED: {_pending_count} pending todo(s), "
+                        f"{_mutation_count} mutation(s) — AI must complete remaining tasks."
+                    )
         except asyncio.CancelledError:
             # Task was cancelled via asyncio.Task.cancel() from stop_session_task().
             # This is an intentional stop — do NOT emit error_occurred.
@@ -1774,6 +1906,10 @@ class CortexAgentBridge(QObject):
     turn_limit_hit      = pyqtSignal(list)       # list of still-pending todo dicts
     # Token budget signal — (used_tokens, budget_tokens, provider_name)
     context_budget_update = pyqtSignal(int, int, str)
+    # ── INDUSTRY-STANDARD: Progress tracking signal ───────────
+    # Emits (completed, total, percentage, status_message)
+    # Allows UI to show progress bar: "3/5 tasks complete (60%)"
+    task_progress_update = pyqtSignal(int, int, int, str)
 
     # ── Internal state ──────────────────────────────────────────
     def __init__(self, **kwargs: Any):
@@ -1796,11 +1932,24 @@ class CortexAgentBridge(QObject):
         # without any progress.  After _MAX_STALE_CYCLES, auto-cancel them.
         self._continue_cycle_count: int = 0
         self._last_pending_ids: set[str] = set()
-        self._MAX_STALE_CYCLES: int = 1
+        self._MAX_STALE_CYCLES: int = 3  # Increased from 1 to allow more working turns
         # Guard against "plan-only" loops where TodoWrite repeats without real action.
         self._todo_write_streak: int = 0
         self._last_todo_signature: str = ""
+        self._mutation_success_count: int = 0
+        self._last_todo_mutation_count: int = -1
+        # ── Persistent session mutation counter ─────────────────────
+        # This survives across call_llm calls to track TOTAL mutations
+        # made by the AI throughout the entire session (not just one message)
+        self._session_mutation_count: int = 0
         self._stop_requested: bool = False  # Set to interrupt the streaming loop
+        # ── Notification control flag ────────────────────────────────
+        # Set by worker thread to control whether Windows notification should show.
+        # Only True when ALL todos are genuinely completed with mutations.
+        self._allow_notification: bool = True  # Default: allow (for simple Q&A with no todos)
+        # ── Auto-cancel tracking ─────────────────────────────────────
+        # Tracks if todos were auto-cancelled (incomplete) vs genuinely completed
+        self._todos_auto_cancelled: bool = False
         # Persistent memory dir — computed once per project root
         self._memory_dir: Optional[str] = None
         # Permission gate — used by BridgeBashTool to pause until user accepts/rejects
@@ -1810,12 +1959,40 @@ class CortexAgentBridge(QObject):
         # Tracks the active asyncio.Task for proper cancellation on stop.
         self._task_registry: SessionTaskRegistry = SessionTaskRegistry()
 
-        # ── Persistent tool safety counters (survive across _call_llm calls) ──
-        self._tool_fail_counts: Dict[str, int] = {}   # tool_name -> consecutive failures
-        self._disabled_tools:   set[str]       = set() # tools disabled by circuit breaker
-        self._tool_total_calls: Dict[str, int] = {}    # tool_name -> total calls per session
+        # ── Circuit breaker & Tool Execution Engine (Phase B) ───────────
+        self._tool_circuit_breaker: ToolCircuitBreaker = ToolCircuitBreaker(
+            threshold=5,
+            repetitive_limit=4,
+        )
+        self._tool_executor: ToolExecutionEngine = ToolExecutionEngine(self._tool_circuit_breaker)
+        # Legacy aliases for backward compatibility
+        self._tool_fail_counts: Dict[str, int] = self._tool_circuit_breaker._fail_counts
+        self._disabled_tools: set = self._tool_circuit_breaker._disabled_tools
+        self._tool_total_calls: Dict[str, int] = self._tool_circuit_breaker._total_calls
         self._session_tasks: Dict[str, Dict[str, Any]] = {}  # task_id -> task payload
+        self._task_graph: "TaskGraph" = None  # initialized on first use
         self._teams: Dict[str, Dict[str, Any]] = {}  # team_id -> team payload
+
+        # ── Test verification state ────────────────────────────────────────
+        # Stores recent tool results for verification enforcement.
+        # Each entry: (tool_name: str, success: bool, content_preview: str, exit_code: Optional[int])
+        self._recent_tool_results: List[Tuple[str, bool, str, Optional[int]]] = []
+        self._max_recent_results: int = 20  # Keep last 20 tool results
+        # Detected test framework (populated lazily on first check)
+        self._test_framework: Optional[str] = None
+        self._test_framework_checked: bool = False
+
+        # ── Self-healing debug loop state ─────────────────────────────────
+        from src.core.debug_loop import DebugLoop
+        self._debug_loop: DebugLoop = DebugLoop()
+
+        # ── Sandbox execution manager (Phase 7) ────────────────────────────
+        # Lazy-initialized on first call via property
+        self._sandbox_manager: Optional[Any] = None
+
+        # ── Hierarchical task graph ───────────────────────────────────────
+        from src.core.task_graph import TaskGraph, TaskNode, TaskStatus
+        self._task_graph: TaskGraph = TaskGraph()
 
         log.info("[BRIDGE] Initialising Cortex Agent Bridge")
 
@@ -1865,6 +2042,19 @@ class CortexAgentBridge(QObject):
         self._connect_qt_signal(self._worker.thinking_started, self.thinking_started.emit)
         self._connect_qt_signal(self._worker.thinking_stopped, self.thinking_stopped.emit)
         self._worker.start()
+
+        # ── Phase 4: Auto-resume from previous interrupted session ────────
+        _resume_requested = "--resume" in sys.argv
+        _no_resume_requested = "--no-resume" in sys.argv
+        if not _no_resume_requested and (_resume_requested or (Path.home() / ".cortex" / "agent_state.json").exists()):
+            try:
+                from src.core.agent_session_manager import load_snapshot
+                snapshot = load_snapshot()
+                if snapshot:
+                    self._hydrate_from_snapshot(snapshot)
+                    log.info("[SESSION] Session restored from snapshot")
+            except Exception as _ses_exc:
+                log.warning(f"[SESSION] Auto-resume failed: {_ses_exc}")
 
         log.info("[BRIDGE] Agent bridge ready")
         
@@ -2000,6 +2190,9 @@ Shell: PowerShell (use semicolons ; not &&)
 {known_files}
 
 {memory_section}
+
+## Task Graph
+{self._task_graph.build_prompt_section() if self._task_graph and self._task_graph.get_task_count() > 0 else "No tasks created yet. Use TaskCreate to create structured tasks with optional parent/child relationships and dependencies."}
 
 ## Tools Available
 You MUST call tools to take real action. Never describe what you "would" do — actually do it.
@@ -2269,6 +2462,24 @@ Use Markdown tables for structured data comparison:
         except Exception as exc:
             log.debug('[BRIDGE] Memory file loading skipped: %s', exc)
 
+        # --- Layer 3: Cross-session semantic memory ---
+        try:
+            from src.core.semantic_memory import get_semantic_memory_index
+            _sem_idx = get_semantic_memory_index()
+            if _sem_idx is not None and _sem_idx.count() > 0:
+                # Use a generic query so we get broad-relevance results
+                semantic_section = _sem_idx.build_prompt_section(
+                    "coding project context decisions architecture",
+                    max_entries=3,
+                )
+                if semantic_section:
+                    # Keep memory section lean by tail-inserting
+                    parts.append(semantic_section)
+        except ImportError:
+            pass
+        except Exception as exc:
+            log.debug('[BRIDGE] Semantic memory search skipped: %s', exc)
+
         return '\n\n'.join(parts)
 
     def _get_project_summary(self, project_root: str) -> Optional[str]:
@@ -2430,6 +2641,28 @@ Use Markdown tables for structured data comparison:
 
             # Clean up old checkpoints (keep only last 3)
             self._cleanup_old_checkpoints(memory_dir, keep=3)
+
+            # ── Update cross-session semantic memory index ─────────────────
+            try:
+                from src.core.semantic_memory import get_semantic_memory_index
+                _sem_idx = get_semantic_memory_index()
+                if _sem_idx is not None:
+                    # Derive a compact summary from the checkpoint text
+                    _sem_summary = self._extract_semantic_summary(checkpoint_text)
+                    _project_dir = os.path.basename(self._project_root) if self._project_root else 'unknown'
+                    _sem_idx.store_session(
+                        session_id=f"chk_{ts}",
+                        summary=_sem_summary,
+                        metadata={
+                            "project": _project_dir,
+                            "checkpoint_file": filename,
+                            "source": "context_compaction",
+                        },
+                    )
+            except ImportError:
+                pass
+            except Exception as exc:
+                log.debug(f"[BRIDGE] Semantic memory update skipped: {exc}")
 
         except Exception as exc:
             log.warning(f"[BRIDGE] Failed to save context checkpoint: {exc}")
@@ -2638,6 +2871,8 @@ Use Markdown tables for structured data comparison:
         if self._failover_chain is None:
             self._failover_chain = [
                 ProviderType.MISTRAL,
+                ProviderType.SILICONFLOW,
+                ProviderType.DEEPSEEK,
             ]
 
         _attempted_raw = getattr(self, '_failover_attempted', None)
@@ -2700,6 +2935,11 @@ Use Markdown tables for structured data comparison:
         # Reset failover state for this call
         self._failover_attempted: Set[Any] = set()
         self._failover_exhausted = False
+        # Per-request mutation progress counters.
+        self._mutation_success_count = 0
+        self._last_todo_mutation_count = -1
+        # Reset auto-cancel tracking
+        self._todos_auto_cancelled = False
 
         merged = {**self._enhancement_data, **context}
 
@@ -2832,25 +3072,21 @@ Use Markdown tables for structured data comparison:
 
             full_response = ""
 
-            # ── Circuit breaker: track consecutive failures per tool ──
-            # If the same tool fails 3+ times in a row, disable it and
-            # inject a synthetic error telling the LLM it is unavailable.
-            _tool_fail_counts = self._tool_fail_counts  # persistent across turns
-            _disabled_tools = self._disabled_tools       # persistent across turns
-            _CIRCUIT_BREAKER_THRESHOLD = 3
-
-            # ── Repetitive call detector (persistent across _call_llm calls) ─────
-            if not hasattr(self, '_tool_total_calls'):
-                self._tool_total_calls = {}
-            _tool_total_calls = self._tool_total_calls
+            # ── Circuit breaker & Tool execution engine (Phase B) ──
+            # Both are persistent instances owned by the bridge.
+            _cb: ToolCircuitBreaker = self._tool_circuit_breaker
+            _executor: ToolExecutionEngine = self._tool_executor
             _REPETITIVE_CALL_LIMIT = 4  # Prevent wasteful loops (Grep/Read/Todo cycles)
-
-            # ── Consecutive same-tool detector ─────────────────────────────────
-            # If the model calls the SAME read-only tool 3+ turns in a row without
-            # any write/edit action, force it to stop exploring and take action.
-            _last_tool_name = None
-            _consecutive_same_tool = 0
             _CONSECUTIVE_READONLY_LIMIT = 3  # Max same read-only tool in a row
+            
+            # ── Mutation progress detector ─────────────────────────────────────
+            # Track if agent has performed ANY write/edit operation
+            # If no mutation after N turns, force aggressive action mode
+            _mutation_turns = 0  # Turns with write/edit/bash operations
+            _READONLY_FORCE_ACTION_TURN = 4  # After this many turns, force action
+            _AGGRESSIVE_NUDGE_TURN = 6  # After this, use stronger language
+            _has_mutated = False  # Track if ANY mutation has occurred this session
+            _POST_MUTATION_READ_LIMIT = 2  # Max reads allowed after mutation
 
             _compacted_once = False  # Track if we already compacted
             _mistral_downgraded_once = False  # Per-request, timeout-triggered model fallback within Mistral
@@ -2865,6 +3101,28 @@ Use Markdown tables for structured data comparison:
 
             for turn in range(max_turns):
                 log.info(f"[BRIDGE] === Agentic turn {turn + 1}/{max_turns} ===")
+                # Track per-turn tool success so we only count successful mutations
+                self._tool_call_success = {}
+
+                
+                # ── INDUSTRY-STANDARD: Agent Phase Tracking ─────────────────
+                # Track which phase the agent is in to enforce proper workflow
+                # Phases: READING → PLANNING → IMPLEMENTING → VERIFYING → DONE
+                if turn == 0:
+                    _agent_phase = "READING"
+                elif _has_mutated and len(self._current_todos) == 0:
+                    _agent_phase = "VERIFYING"
+                elif _has_mutated:
+                    _agent_phase = "IMPLEMENTING"
+                elif self._current_todos:
+                    _agent_phase = "PLANNING"
+                else:
+                    _agent_phase = "READING"
+                
+                # Log phase transitions
+                if turn == 0 or _agent_phase != getattr(self, '_last_agent_phase', ''):
+                    log.info(f"[BRIDGE] Agent phase: {_agent_phase}")
+                    self._last_agent_phase = _agent_phase
 
                 # ── Micro-compact: clear old tool results (cheap, no LLM) ────
                 # Ported from Claude Code's microCompact.ts. Runs every turn
@@ -2915,6 +3173,26 @@ Use Markdown tables for structured data comparison:
                 # ── Stream LLM response (with context-compaction retry) ────
                 tool_acc: Dict[int, Dict[str, Any]] = {}   # idx -> {id, name, arguments}
                 turn_text  = ""
+                turn_reasoning = ""
+                # ── INDUSTRY-STANDARD: Start with minimal toolset ────
+                # Only load 9 core tools initially to:
+                # 1. Save tokens (~10,000 tokens per turn)
+                # 2. Reduce AI confusion
+                # 3. Speed up responses (3-5s vs 10-15s)
+                # Expand to full set only after mutations occur
+                core_names = {
+                    "Read", "Write", "Edit", "Glob", "Grep", "LS", "Bash",
+                    "TodoWrite", "AskUserQuestion",
+                }
+                active_tool_defs = _filter_tool_definitions(list(tool_defs), core_names)
+                
+                # After AI has made mutations, expand to full toolset
+                if self._session_mutation_count > 5:
+                    active_tool_defs = list(tool_defs)
+                    log.info(
+                        f"[TOOLS] Expanded to full toolset ({len(active_tool_defs)} tools) "
+                        f"after {self._session_mutation_count} mutations"
+                    )
 
                 # Context-length errors are retried up to 2 times per turn by
                 # compacting the message history before each retry.
@@ -2977,16 +3255,16 @@ Use Markdown tables for structured data comparison:
                         _chat_kwargs: Dict[str, Any] = {
                             "retry_callback": _retry_notify
                         }
-                        if provider_type == ProviderType.MISTRAL and tool_defs:
+                        if provider_type == ProviderType.MISTRAL and active_tool_defs:
                             _chat_kwargs["max_retries"] = 3
 
                         # Adaptive output budget:
                         # - keep tool turns intentionally lean for fast iteration
                         # - allow larger answers when no tools are needed
                         # Always respect model cap (max_tokens) and remaining context budget.
-                        if tool_defs:
+                        if active_tool_defs:
                             prompt_chars = len(message)
-                            tool_count = len(tool_defs)
+                            tool_count = len(active_tool_defs)
                             remaining_ctx = max(0, int(_budget - _est_tokens))
                             budget_cap = min(max_tokens, max(800, remaining_ctx // 4))
 
@@ -3005,10 +3283,10 @@ Use Markdown tables for structured data comparison:
                             # Final answer / no-tool turns can be larger, but keep bounded.
                             stream_max_tokens = min(max_tokens, 8_192)
 
-                        log.debug(f"[BRIDGE] Adaptive stream cap: {stream_max_tokens} (tool_turn={bool(tool_defs)}, est={_est_tokens}, budget={_budget}, base_max={max_tokens})")
+                        log.debug(f"[BRIDGE] Adaptive stream cap: {stream_max_tokens} (tool_turn={bool(active_tool_defs)}, est={_est_tokens}, budget={_budget}, base_max={max_tokens})")
 
                         for chunk in provider.chat_stream(
-                            messages, model=model, max_tokens=stream_max_tokens, tools=tool_defs, **_chat_kwargs
+                            messages, model=model, max_tokens=stream_max_tokens, tools=active_tool_defs, **_chat_kwargs
                         ):
                             # Respect a stop request from the user
                             if self._stop_requested:
@@ -3138,8 +3416,60 @@ Use Markdown tables for structured data comparison:
                             },
                         })
 
-                # If no tool calls → final answer
+                # If no tool calls → check if we should force action or exit
                 if not pending:
+                    # ── INDUSTRY-STANDARD: Task Completion Verification ──────
+                    # AI cannot exit unless:
+                    # 1. It has made mutations (wrote/edited files)
+                    # 2. All todos are marked complete
+                    # 3. OR it's a legitimate informational response
+                    
+                    _has_pending_todos = len(self._current_todos) > 0
+                    _todos_all_done = all(
+                        t.get("status") in ("completed", "cancelled") 
+                        for t in self._current_todos
+                    ) if self._current_todos else True
+                    
+                    # Case 1: No mutations yet and early turns - FORCE ACTION
+                    if _mutation_turns == 0 and (turn + 1) <= 5:
+                        log.warning(
+                            f"[BRIDGE] AI attempted to exit on turn {turn + 1} without making any changes. "
+                            f"Forcing action mode - injecting strong directive."
+                        )
+                        _force_action_msg = (
+                            f"STOP. You are trying to end the conversation on turn {turn + 1} without making ANY file changes. "
+                            f"The user's task is NOT complete. You MUST:\n"
+                            f"1. Use Write or Edit tool to modify files NOW\n"
+                            f"2. Do NOT respond with just text - you MUST call a tool\n"
+                            f"3. Start implementing the solution immediately\n\n"
+                            f"User request: {message[:100]}..."
+                        )
+                        messages.append(PCM(role="user", content=_force_action_msg))
+                        continue
+                    
+                    # Case 2: Has mutations but todos still pending - VERIFY COMPLETION
+                    if _has_mutated and _has_pending_todos and not _todos_all_done:
+                        _pending_count = sum(
+                            1 for t in self._current_todos 
+                            if t.get("status") not in ("completed", "cancelled")
+                        )
+                        log.warning(
+                            f"[BRIDGE] AI tried to exit with {_pending_count} pending todos. "
+                            f"Requiring verification before allowing exit."
+                        )
+                        _verify_msg = (
+                            f"You have {_pending_count} incomplete task(s). Before ending:\n"
+                            f"1. Verify ALL your changes actually work\n"
+                            f"2. Complete remaining todos or mark them cancelled with explanation\n"
+                            f"3. Test the result (use Bash to run/test if needed)\n"
+                            f"4. Only then can you end the conversation\n\n"
+                            f"Pending tasks:\n"
+                            + "\n".join(f"  - {t['content']} [{t.get('status', 'pending')}]" for t in self._current_todos if t.get("status") not in ("completed", "cancelled"))
+                        )
+                        messages.append(PCM(role="user", content=_verify_msg))
+                        continue
+                    
+                    # Case 3: Legitimate exit - all done or informational
                     log.info(f"[BRIDGE] No tool calls on turn {turn + 1} — done")
                     break
 
@@ -3147,33 +3477,6 @@ Use Markdown tables for structured data comparison:
                     f"[BRIDGE] {len(pending)} tool call(s) on turn {turn + 1}: "
                     + ", ".join(p["function"]["name"] for p in pending)
                 )
-
-                # ── Consecutive same read-only tool detection ─────────────
-                # If model calls the SAME read-only tool (Grep/Read) multiple
-                # turns in a row without doing writes, inject a nudge message.
-                _readonly_tools = {"Grep", "Read", "Glob", "LS"}
-                _turn_tool_names = set(p["function"]["name"] for p in pending)
-                if len(_turn_tool_names) == 1:
-                    _single_name = next(iter(_turn_tool_names))
-                    if _single_name in _readonly_tools:
-                        if _single_name == _last_tool_name:
-                            _consecutive_same_tool += 1
-                        else:
-                            _last_tool_name = _single_name
-                            _consecutive_same_tool = 1
-                        
-                        if _consecutive_same_tool >= _CONSECUTIVE_READONLY_LIMIT:
-                            log.warning(f"[BRIDGE] Consecutive read-only tool: {_single_name} called {_consecutive_same_tool} turns in a row. Injecting nudge.")
-                            _nudge = (f"WARNING: You have called {_single_name} {_consecutive_same_tool} turns in a row without writing any code. "
-                                      f"Stop searching and START IMPLEMENTING. Use Write or Edit tools to create/modify files. "
-                                      f"Summarize what you know and take action NOW.")
-                            messages.append(PCM(role="user", content=_nudge))
-                    else:
-                        _last_tool_name = _single_name
-                        _consecutive_same_tool = 0
-                else:
-                    _last_tool_name = None
-                    _consecutive_same_tool = 0
 
                 # ── Append assistant turn with tool_calls ──────
                 assistant_tool_calls: List[Dict[str, Any]] = [
@@ -3187,7 +3490,6 @@ Use Markdown tables for structured data comparison:
                     }
                     for tc in pending
                 ]
-                turn_reasoning = ""  # guaranteed by for-loop initialization on all paths
                 messages.append(
                     PCM(
                         role="assistant",
@@ -3197,8 +3499,7 @@ Use Markdown tables for structured data comparison:
                     )
                 )
 
-                # ── Execute tools, append results ──────────────
-                # Separate independent and dependent tool calls for parallel execution
+                # ── Execute tools via ToolExecutionEngine (Phase B) ─
                 parsed_calls: List[ParsedToolCall] = []
                 for tc in pending:
                     tool_name: str = str(tc["function"]["name"])
@@ -3210,110 +3511,122 @@ Use Markdown tables for structured data comparison:
                         args = cast(Dict[str, Any], {})
                     parsed_calls.append((tool_name, tool_id, args))
 
-                # Classify: read-only tools can run in parallel, mutating tools run sequentially
-                _READ_ONLY_TOOLS = {"Read", "Glob", "Grep", "LS"}
+                _nudges = await _executor.execute_turn(
+                    parsed_calls,
+                    lambda tn, ti, ta, msgs, pcm, lims: self._execute_single_tool(
+                        tn, ti, ta, msgs, pcm, lims
+                    ),
+                    messages,
+                    PCM,
+                    _limits,
+                )
+                for _n in _nudges:
+                    messages.append(PCM(role="user", content=_n))
 
-                # Group into batches: consecutive read-only tools form a parallel batch,
-                # each mutating tool is its own sequential batch.
-                batches: List[List[ParsedToolCall]] = []  # Each batch is list of (tool_name, tool_id, args)
-                current_parallel: List[ParsedToolCall] = []
-                for call in parsed_calls:
-                    if call[0] in _READ_ONLY_TOOLS:
-                        current_parallel.append(call)
-                    else:
-                        # Flush any pending parallel batch
-                        if current_parallel:
-                            batches.append(current_parallel)
-                            current_parallel = []
-                        batches.append([call])  # Mutating tool alone
-                if current_parallel:
-                    batches.append(current_parallel)
-
-                for batch in batches:
-                    # Check stop before each tool batch — fast exit if cancelled
-                    if self._stop_requested:
-                        log.info("[BRIDGE] Tool batch skipped — stop requested")
-                        break
-
-                    # ── Circuit breaker: skip disabled tools ──────────
-                    filtered_batch: List[ParsedToolCall] = []
-                    for call in batch:
-                        t_name, t_id, t_args = call
-                        # Read should never stay blocked across loop retries.
-                        if t_name == "Read" and t_name in _disabled_tools:
-                            _disabled_tools.discard(t_name)
-                        if t_name in _disabled_tools:
-                            log.warning(f"[BRIDGE] Circuit breaker: {t_name} disabled after repeated failures")
-                            _cb_msg = (f"Error: {t_name} is UNAVAILABLE (failed {_CIRCUIT_BREAKER_THRESHOLD} times). "
-                                       f"Do NOT call {t_name} again. Use alternative tools instead. "
-                                       f"For file search, use Read with offset/limit parameters.")
-                            messages.append(PCM(role="tool", content=_cb_msg, tool_call_id=t_id))
-                        else:
-                            # Check repetitive call limit
-                            _tool_total_calls[t_name] = _tool_total_calls.get(t_name, 0) + 1
-                            if t_name != "Read" and _tool_total_calls[t_name] > _REPETITIVE_CALL_LIMIT:
-                                # HARD STOP: disable tool immediately at limit
-                                _disabled_tools.add(t_name)
-                                log.warning(f"[BRIDGE] Repetitive call limit reached: {t_name} called {_tool_total_calls[t_name]} times (limit={_REPETITIVE_CALL_LIMIT}). Tool DISABLED.")
-                                _rep_msg = (f"STOPPED: {t_name} has been called {_tool_total_calls[t_name]} times (limit={_REPETITIVE_CALL_LIMIT}). "
-                                            f"Tool is now disabled. You MUST use a different approach. "
-                                            f"Summarize what you have learned so far and proceed without {t_name}.")
-                                messages.append(PCM(role="tool", content=_rep_msg, tool_call_id=t_id))
-                            else:
-                                filtered_batch.append(call)
-
-                    if not filtered_batch:
-                        continue
-
-                    if len(filtered_batch) == 1:
-                        # Single tool — run directly
-                        t_name, t_id, t_args = filtered_batch[0]
-                        await self._execute_single_tool(t_name, t_id, t_args, messages, PCM, _limits)
-                    else:
-                        # Parallel batch — run all concurrently
-                        log.info(f"[BRIDGE] Running {len(filtered_batch)} tools in parallel: "
-                                 + ", ".join(b[0] for b in filtered_batch))
-                        tasks = [
-                            self._execute_single_tool(t_name, t_id, t_args, messages, PCM, _limits)
-                            for t_name, t_id, t_args in filtered_batch
-                        ]
-                        await asyncio.gather(*tasks)
-
-                    # ── Update circuit breaker counters ───────────────
-                    for t_name, t_id, t_args in filtered_batch:
-                        # Check the last tool message for this call
-                        for msg in reversed(messages):
-                            if getattr(msg, 'tool_call_id', None) == t_id:
-                                _content = getattr(msg, 'content', '') or ''
-                                if _content.startswith('Error:'):
-                                    # Only trip the breaker on likely tool-internal failures.
-                                    # User/path errors (e.g. reading a missing file) should not disable the tool.
-                                    _err = _content[6:].strip().lower()
-                                    _expected_error = (
-                                        ('file does not exist' in _err)
-                                        or ('no such file' in _err)
-                                        or ('permission denied' in _err)
-                                        or ('access is denied' in _err)
-                                        or ('invalid argument' in _err)
-                                    )
-                                    if _expected_error:
-                                        _tool_fail_counts[t_name] = 0
-                                    else:
-                                        _tool_fail_counts[t_name] = _tool_fail_counts.get(t_name, 0) + 1
-                                        if t_name != "Read" and _tool_fail_counts[t_name] >= _CIRCUIT_BREAKER_THRESHOLD:
-                                            _disabled_tools.add(t_name)
-                                            log.warning(f"[BRIDGE] Circuit breaker TRIPPED for {t_name} after {_tool_fail_counts[t_name]} consecutive failures" )
-                                else:
-                                    # Success — reset counter
-                                    _tool_fail_counts[t_name] = 0
-                                break
-
-                    # Check stop after each tool batch too
-                    if self._stop_requested:
-                        log.info("[BRIDGE] Aborting remaining tool batches — stop requested")
-                        break
+                # Check stop after tool execution
+                if self._stop_requested:
+                    log.info("[BRIDGE] Aborting remaining — stop requested")
+                    break
 
                 log.info(f"[BRIDGE] Tool results sent — continuing to turn {turn + 2}")
+
+                # ── Phase 4: Auto-save session snapshot ──────────────────────
+                # Save every 3 turns so we can resume if the app crashes/restarts.
+                if turn > 0 and (turn + 1) % 3 == 0:
+                    try:
+                        from src.core.agent_session_manager import save_snapshot
+                        save_snapshot(self)
+                    except Exception as _ses_exc:
+                        log.warning(f"[SESSION] Auto-save failed on turn {turn + 1}: {_ses_exc}")
+
+                # ── Self-healing debug loop ──────────────────────────────────
+                # Phase 2: If a command failed, enter structured debug cycle
+                if self._debug_loop.should_enter(self._recent_tool_results):
+                    self._debug_loop.enter_debug_cycle()
+                    debug_nudge = self._debug_loop.build_nudge_message()
+                    if debug_nudge:
+                        log.info(
+                            f"[DEBUG LOOP] Injecting debug nudge (cycle "
+                            f"{self._debug_loop.cycle_count})"
+                        )
+                        messages.append(PCM(role="user", content=debug_nudge))
+                        # Reset the stop flag so debug can proceed
+                        self._stop_requested = False
+                        # Continue the turn loop for debugging
+                        continue
+
+                # ── Track mutation progress ───────────────────────────────────
+                # Check if any tool in this turn was a write/edit/bash operation
+                _mutation_tools = {"Write", "Edit", "Bash", "NotebookEdit"}
+                _turn_had_mutation = any(
+                    (t_name in _mutation_tools) and self._tool_call_success.get(t_id, False)
+                    for t_name, t_id, _ in parsed_calls
+                )
+                if _turn_had_mutation:
+                    _mutation_turns += 1
+                    _has_mutated = True  # Mark that mutation has occurred
+                    _post_mutation_read_count = 0  # Reset read counter after mutation
+                    
+                    # Track which todo this mutation corresponds to
+                    if self._current_todos:
+                        # Find first IN_PROGRESS todo and verify it gets real work
+                        for _todo in self._current_todos:
+                            if _todo.get("status") == "IN_PROGRESS":
+                                _todo["_mutation_count"] = _todo.get("_mutation_count", 0) + 1
+                                log.info(
+                                    f"[TODO] Mutation #{_todo['_mutation_count']} for todo: "
+                                    + f"{_todo.get('content', 'unknown')[:50]}"
+                                )
+                                break
+                
+                # ── Post-mutation enforcement ─────────────────────────────────
+                # After mutation, limit how many turns can be pure reading
+                # This prevents AI from going backwards after making changes
+                if _has_mutated:
+                    _read_only_tools = {"Read", "Grep", "Glob", "LS"}
+                    _turn_is_read_only = all(t_name in _read_only_tools for t_name, _, _ in parsed_calls)
+                    if _turn_is_read_only:
+                        _post_mutation_read_count = getattr(self, '_post_mutation_read_count', 0) + 1
+                        self._post_mutation_read_count = _post_mutation_read_count
+                        
+                        if _post_mutation_read_count >= _POST_MUTATION_READ_LIMIT:
+                            _verify_nudge = (
+                                f"STOP READING. You already made file changes. Now you MUST:\n"
+                                f"1. VERIFY your changes work (test in browser, run commands, etc.)\n"
+                                f"2. COMPLETE remaining tasks\n"
+                                f"3. Do NOT read more files unless absolutely necessary for debugging\n"
+                                f"4. Use Bash to test, or Write/Edit to fix issues"
+                            )
+                            log.warning(
+                                f"[BRIDGE] Post-mutation read limit reached ({_post_mutation_read_count} turns). "
+                                + f"Injecting verification directive."
+                            )
+                            messages.append(PCM(role="user", content=_verify_nudge))
+                    else:
+                        # Reset counter if turn had non-read tools
+                        self._post_mutation_read_count = 0
+                
+                # ── Aggressive action enforcement ─────────────────────────────
+                # If agent hasn't mutated anything after N turns, inject strong nudge
+                if turn + 1 >= _READONLY_FORCE_ACTION_TURN and _mutation_turns == 0:
+                    _severity = "AGGRESSIVE" if (turn + 1 >= _AGGRESSIVE_NUDGE_TURN) else "STRONG"
+                    if _severity == "AGGRESSIVE":
+                        _action_nudge = (
+                            f"CRITICAL: You have spent {turn + 1} turns ONLY reading files without making ANY changes. "
+                            f"This is unacceptable. You MUST take action NOW:\n"
+                            f"1. Summarize what you've learned in 2-3 sentences MAX\n"
+                            f"2. IMMEDIATELY use Write or Edit to modify files\n"
+                            f"3. Do NOT read any more files\n"
+                            f"4. Start coding RIGHT NOW"
+                        )
+                    else:
+                        _action_nudge = (
+                            f"IMPORTANT: You've read multiple files across {turn + 1} turns but haven't written any code yet. "
+                            f"Stop analyzing and START IMPLEMENTING. Use Write/Edit tools to make changes now. "
+                            f"Reading more files won't complete the task - action will."
+                        )
+                    log.warning(f"[BRIDGE] {_severity} action nudge at turn {turn + 1} (no mutation yet)")
+                    messages.append(PCM(role="user", content=_action_nudge))
 
                 # ── Per-message budget enforcement ─────────────────────────────
                 # Ported from Claude Code's enforceToolResultBudget().
@@ -3374,8 +3687,30 @@ Use Markdown tables for structured data comparison:
                         # Auto-cancel the stuck todos
                         for t in self._current_todos:
                             if str(t.get('status', '')).upper() in ('PENDING', 'IN_PROGRESS'):
-                                t['status'] = 'cancelled'
-                        self._current_todos = []
+                                t['status'] = 'CANCELLED'
+                        
+                        # CRITICAL: Mark that todos were auto-cancelled (not completed)
+                        # This prevents false "task complete" notifications
+                        self._todos_auto_cancelled = True
+                        # Ensure the UI and system notifications do not claim completion
+                        self._allow_notification = False
+                        try:
+                            self.todos_updated.emit(list(self._current_todos), "")
+                        except Exception:
+                            pass
+                        try:
+                            _total = len(self._current_todos)
+                            _completed = sum(
+                                1 for t in self._current_todos
+                                if t.get("status") in ("COMPLETE", "CANCELLED")
+                            )
+                            _pct = int((_completed / _total) * 100) if _total > 0 else 0
+                            self.task_progress_update.emit(
+                                _completed, _total, _pct, f"{_completed}/{_total} tasks complete ({_pct}%)"
+                            )
+                        except Exception:
+                            pass
+                        
                         self._continue_cycle_count = 0
                         self._last_pending_ids = set()
                         # Emit a final note to the user
@@ -3392,6 +3727,20 @@ Use Markdown tables for structured data comparison:
                     # All done — reset stale tracking
                     self._continue_cycle_count = 0
                     self._last_pending_ids = set()
+
+            # ── Phase 4: Save/clear snapshot on session exit ────────────
+            try:
+                from src.core.agent_session_manager import save_snapshot, clear_snapshot
+                _pending = [t for t in self._current_todos
+                            if t.get("status") in ("PENDING", "IN_PROGRESS")]
+                if _pending:
+                    # Still has pending work — save snapshot for resume later
+                    save_snapshot(self)
+                else:
+                    # All done — clean up snapshot
+                    clear_snapshot()
+            except Exception as _ses_exc:
+                log.warning(f"[SESSION] Exit save failed: {_ses_exc}")
 
             return full_response
 
@@ -3426,7 +3775,7 @@ Use Markdown tables for structured data comparison:
 
     def _build_activity_info(
         self, activity: str, tool_name: str, args: Dict[str, Any],
-        result_str: str | None, status: str,
+        result_str: Optional[str], status: str,
     ) -> str:
         """Build structured JSON info for tool_activity signal.
 
@@ -3690,7 +4039,23 @@ Use Markdown tables for structured data comparison:
 
         result: ToolResult = cast(ToolResult, await self._dispatch_tool(tool_name, tool_id, args))
 
+        try:
+            self._tool_call_success[tool_id] = bool(result.success)
+        except Exception:
+            pass
+
+        # ── Record in circuit breaker ────────────────────────────────
+        _error_text = str(result.error) if not result.success and result.error else ""
+        self._tool_circuit_breaker.record_call(tool_name, result.success, _error_text)
+
         if result.success:
+            if tool_name in ("Write", "Edit", "Bash"):
+                self._mutation_success_count += 1
+                self._session_mutation_count += 1  # Persistent session counter
+                log.debug(
+                    f"[MUTATION] Turn mutation: {self._mutation_success_count}, "
+                    f"Session mutation: {self._session_mutation_count}"
+                )
             result_payload: Any = result.result
             if isinstance(result_payload, dict):
                 result_str = json.dumps(cast(Dict[str, Any], result_payload))
@@ -3706,6 +4071,19 @@ Use Markdown tables for structured data comparison:
             if not _silent:
                 error_info = self._build_activity_info(activity, tool_name, args, result_str, "error")
                 self._safe_emit(self.tool_activity, activity, error_info, "error")
+
+        # ── Track tool results for verification enforcement ────────────────
+        _exit_code: Optional[int] = None
+        if tool_name in ("Bash", "PowerShell", "LS"):
+            try:
+                _raw = result.result if hasattr(result, 'result') else None
+                if isinstance(_raw, dict):
+                    _exit_code = _raw.get("exit_code") or _raw.get("exitCode")
+            except Exception:
+                pass
+        self._recent_tool_results.append((tool_name, bool(result.success), result_str[:200], _exit_code))
+        if len(self._recent_tool_results) > self._max_recent_results:
+            self._recent_tool_results = self._recent_tool_results[-self._max_recent_results:]
 
         # Feed result back to LLM — persist large results to disk instead of truncating.
         # Ported from Claude Code's toolResultStorage.ts: results exceeding
@@ -3739,6 +4117,299 @@ Use Markdown tables for structured data comparison:
                     _wp = os.path.join(self._project_root, _wp)
                 self._tool_ctx.file_cache_invalidate(_wp)
 
+    # ── Test framework detection and verification ─────────────────
+    # Phase 1: Replace keyword-nudge verification with actual test
+    # execution analysis.  See plan: frolicking-singing-garden.md
+
+    _TEST_CONFIG_FILES: Dict[str, str] = {
+        "pytest":       ("pytest.ini", "setup.cfg", "pyproject.toml", "tox.ini"),
+        "unittest":     ("",),  # built-in; always available
+        "node":         ("package.json",),
+        "jest":         ("jest.config.js", "jest.config.ts", "jest.config.mjs"),
+        "go test":      ("go.mod",),
+        "cargo test":   ("Cargo.toml",),
+    }
+
+    _TEST_COMMAND_PATTERNS: Dict[str, str] = {
+        "pytest":       r"\bpytest\b",
+        "unittest":     r"python\s+-m\s+unittest\b",
+        "node":         r"(?:npm|yarn|pnpm)\s+(?:test|run\s+test)",
+        "jest":         r"\bnpx\s+jest\b|node_modules/\.bin/jest",
+        "go test":      r"\bgo\s+test\b",
+        "cargo test":   r"\bcargo\s+test\b",
+    }
+
+    def _detect_test_framework(self) -> Optional[str]:
+        """Detect which test framework the project uses by scanning for config files.
+
+        Scans from project root, lazily caching result. Returns None if no
+        recognised framework is detected.
+        """
+        if self._test_framework_checked:
+            return self._test_framework
+        self._test_framework_checked = True
+
+        root = self._project_root or os.getcwd()
+        try:
+            for framework, config_files in self._TEST_CONFIG_FILES.items():
+                for cfg in config_files:
+                    if not cfg:
+                        continue
+                    candidate = os.path.join(root, cfg)
+                    if os.path.isfile(candidate):
+                        self._test_framework = framework
+                        log.info(f"[VERIFY] Detected test framework: {framework} (via {cfg})")
+                        return framework
+                    # Also check pyproject.toml content for [tool.pytest]
+                    if cfg == "pyproject.toml":
+                        try:
+                            with open(candidate, "r", encoding="utf-8") as fh:
+                                content = fh.read()
+                            if "[tool.pytest" in content:
+                                self._test_framework = "pytest"
+                                log.info(f"[VERIFY] Detected test framework: pytest (via pyproject.toml)")
+                                return "pytest"
+                            if "[tool.jest" in content:
+                                self._test_framework = "jest"
+                                return "jest"
+                        except Exception:
+                            pass
+        except Exception as exc:
+            log.warning(f"[VERIFY] Error detecting test framework: {exc}")
+
+        self._test_framework = "unknown"
+        return None
+
+    def _check_recent_tool_results_for_tests(self) -> Tuple[bool, str]:
+        """Scan recent tool results for test/verification commands and their outcomes.
+
+        Returns:
+            (was_tested: bool, message: str)
+            - was_tested=True + message="": Tests passed
+            - was_tested=True + message!="": Tests ran but failed
+            - was_tested=False + message: No tests found (explanation)
+        """
+        # Count how many of the last N results are test runs
+        test_tool_names = {"Bash", "PowerShell", "LS"}
+        recent = self._recent_tool_results[-15:]  # Look at last 15 tools
+
+        test_runs: List[Tuple[str, bool, str, Optional[int]]] = []
+        for entry in reversed(recent):
+            t_name, success, preview, exit_code = entry
+            if t_name not in test_tool_names:
+                continue
+            # Detect test commands in the preview
+            preview_lower = preview.lower()
+            is_test = any(
+                re.search(pat, preview_lower)
+                for pat in [r"\bpytest\b", r"python\s+-m\s+pytest", r"python\s+-m\s+unittest",
+                            r"\bnpm\s+test", r"\byarn\s+test", r"go\s+test", r"cargo\s+test",
+                            r"\bnpx\s+jest", r"\brun\s+test", r"verify"]
+            )
+            if is_test:
+                test_runs.append((t_name, success, preview[:150], exit_code))
+
+        if not test_runs:
+            return False, "No test or verification commands found in recent tool results."
+
+        # Check if any test run failed
+        failed_runs = [(n, p, ec) for n, s, p, ec in test_runs if not s]
+        if failed_runs:
+            t_name, preview, exit_code = failed_runs[0]
+            details = preview.strip()
+            return True, (
+                f"Test/verification command FAILED ({t_name}):\n"
+                f"  {details}\n"
+                f"  Exit code: {exit_code}\n\n"
+                "Fix the issue before marking tasks complete."
+            )
+
+        # All test runs succeeded
+        return True, ""
+
+    def _build_verification_message(self) -> Optional[str]:
+        """Build a verification-required error message if tests haven't passed.
+
+        Returns None if verification is satisfied, or an error string to block completion.
+        """
+        # Quick pass: if no mutations were made, verification is not needed
+        if self._mutation_success_count == 0 and self._session_mutation_count == 0:
+            return None
+
+        # Check if tests were run and passed
+        was_tested, test_msg = self._check_recent_tool_results_for_tests()
+
+        # Detect framework for the suggestion
+        framework = self._detect_test_framework()
+        framework_suggestion = ""
+        if framework and framework != "unknown":
+            if framework == "pytest":
+                framework_suggestion = "python -m pytest"
+            elif framework == "unittest":
+                framework_suggestion = "python -m unittest discover"
+            elif framework == "node":
+                framework_suggestion = "npm test"
+            elif framework == "jest":
+                framework_suggestion = "npx jest"
+            elif framework == "go test":
+                framework_suggestion = "go test ./..."
+            elif framework == "cargo test":
+                framework_suggestion = "cargo test"
+            else:
+                framework_suggestion = "python -m pytest"
+        else:
+            framework_suggestion = "python -m pytest"
+
+        if was_tested and not test_msg:
+            return None  # Tests ran and passed — verification satisfied
+
+        if was_tested and test_msg:
+            # Tests ran but failed
+            return (
+                f"VERIFICATION FAILED: Your changes produced test/verification failures.\n\n"
+                f"Details: {test_msg}\n\n"
+                f"Fix the failing tests before marking tasks complete."
+            )
+
+        # No tests found — require them
+        return (
+            f"VERIFICATION REQUIRED: You've made changes, but no tests or verification "
+            f"commands were detected.\n\n"
+            f"Before marking tasks complete, you MUST:\n"
+            f"1. Run tests to verify your changes work\n"
+            f"2. Run your app to verify it still functions\n"
+            f"3. Fix any issues found\n\n"
+            f"Suggested command: {framework_suggestion}"
+        )
+
+    # ── Task Graph Sync ───────────────────────────────────────────────
+
+    def _sync_tasks_to_graph(self) -> None:
+        """Bulk-sync all existing _session_tasks into the task graph.
+
+        Called after session restore to populate the graph from flat task dicts.
+        """
+        if not self._session_tasks:
+            return
+        from src.core.task_graph import TaskNode, TaskStatus
+        for task_id, task in self._session_tasks.items():
+            if self._task_graph.has_node(task_id):
+                continue
+            status_kind = TaskStatus.from_str(task.get("status", "pending"))
+            node = TaskNode(
+                id=task_id,
+                subject=task.get("subject", ""),
+                description=task.get("description", ""),
+                status=status_kind,
+                active_form=task.get("activeForm"),
+                owner=task.get("owner"),
+                parent_id=task.get("parentId"),
+                depends_on=list(task.get("dependsOn", []) or task.get("blockedBy", [])),
+                estimated_effort=task.get("estimatedEffort"),
+            )
+            self._task_graph.add_node(node)
+
+    # ── Phase 4: Session restore ──────────────────────────────────
+
+    def _hydrate_from_snapshot(self, snapshot: dict) -> None:
+        """Restore session state from a previously saved snapshot.
+
+        Called during __init__ when a snapshot file is found on disk.
+        Restores the task graph, mutation counters, debug loop, and tool
+        circuit breaker state. Does NOT restore full conversation history.
+        """
+        # Tasks
+        saved_tasks: dict = snapshot.get("session_tasks", {})
+        if saved_tasks:
+            self._session_tasks.update(saved_tasks)
+            log.info(f"[SESSION] Restored {len(saved_tasks)} session tasks")
+
+        # Task graph
+        saved_graph: dict = snapshot.get("task_graph", {})
+        if saved_graph and saved_graph.get("nodes"):
+            try:
+                from src.core.task_graph import TaskGraph
+                self._task_graph = TaskGraph.from_dict(saved_graph)
+                log.info(f"[SESSION] Restored task graph: {self._task_graph.get_task_count()} nodes")
+            except Exception as e:
+                log.warning(f"[SESSION] Failed to restore task graph: {e}")
+
+        # Todos
+        saved_todos: list = snapshot.get("current_todos", [])
+        if saved_todos:
+            self._current_todos.clear()
+            self._current_todos.extend(saved_todos)
+            log.info(f"[SESSION] Restored {len(saved_todos)} todos")
+
+        # Mutation counters
+        self._session_mutation_count = snapshot.get("session_mutation_count", 0)
+        self._mutation_success_count = snapshot.get("mutation_success_count", 0)
+
+        # Tool circuit breaker
+        disabled = snapshot.get("disabled_tools", [])
+        if disabled:
+            self._disabled_tools = set(disabled)
+            log.info(f"[SESSION] Restored {len(disabled)} disabled tools: {disabled}")
+
+        tool_fails: dict = snapshot.get("tool_fail_counts", {})
+        if tool_fails:
+            self._tool_fail_counts.update(tool_fails)
+
+        # Recent tool results (last 10 for context continuity)
+        recent: list = snapshot.get("recent_tool_results", [])
+        if recent:
+            self._recent_tool_results = list(recent)[-10:]
+
+        # Debug loop
+        dl_data: dict = snapshot.get("debug_loop", {})
+        if dl_data and dl_data.get("state", "idle") != "idle":
+            try:
+                from src.core.debug_loop import DebugLoop, DebugLoopState
+                dl_state = DebugLoopState.from_str(dl_data.get("state", "idle"))
+                self._debug_loop.cycle_count = dl_data.get("cycle_count", 0)
+                self._debug_loop.state = dl_state
+                self._debug_loop.failed_tool_name = dl_data.get("failed_tool_name", "")
+                self._debug_loop.failed_exit_code = dl_data.get("failed_exit_code")
+                self._debug_loop.failed_preview = dl_data.get("failed_preview", "")
+                self._debug_loop.failed_command = dl_data.get("failed_command", "")
+                self._debug_loop.last_fix_summary = dl_data.get("last_fix_summary", "")
+                log.info(f"[SESSION] Restored debug loop: state={dl_state}, cycles={self._debug_loop.cycle_count}")
+            except Exception as e:
+                log.warning(f"[SESSION] Failed to restore debug loop: {e}")
+
+        # Inject resume marker into conversation history
+        saved_at = snapshot.get("saved_at", 0)
+        task_count = len(saved_tasks)
+        mutation_count = snapshot.get("session_mutation_count", 0)
+        resume_msg = (
+            f"[System: Session resumed from {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(saved_at))}. "
+            f"{mutation_count} mutations had been made, {task_count} tasks were in progress. "
+            f"Continuing from previous state.]"
+        )
+        self._conversation_history.append(
+            ChatMessage(role="system", content=resume_msg)
+        )
+        log.info(f"[SESSION] Injected resume marker: {resume_msg[:80]}...")
+
+    def _rollback_last_change(self) -> Optional[str]:
+        """Roll back the last change group via the change orchestrator.
+
+        Used by the debug loop to revert failed changes. Returns a summary
+        string if a rollback occurred, or None if there was nothing to roll back.
+        """
+        try:
+            from src.core.change_orchestrator import get_change_orchestrator
+            orch = get_change_orchestrator()
+            if orch.can_undo():
+                group = orch.undo()
+                if group:
+                    summary = group.description or f"{len(group)} file(s)"
+                    log.info(f"[DEBUG LOOP] Rolled back: {summary}")
+                    return summary
+        except Exception as exc:
+            log.warning(f"[DEBUG LOOP] Rollback failed: {exc}")
+        return None
+
     # ── Tool dispatch ──────────────────────────────────────────
 
     async def _dispatch_tool(
@@ -3759,25 +4430,81 @@ Use Markdown tables for structured data comparison:
             LS    → BridgeLSTool.execute()
         """
         try:
+            # ── Autonomy gate (Phase 8) ────────────────────────────────────
+            try:
+                from src.core.autonomy_manager import get_autonomy_manager
+                _auto_mgr = get_autonomy_manager()
+                if _auto_mgr.get_level().value != "ask":
+                    decision = _auto_mgr.check_action(tool_name, args)
+                    if decision.requires_permission:
+                        log.info(f"[AUTONOMY] Blocked {tool_name} (mode={decision.autonomy_level.value}): {decision.reason}")
+                        from src.core.tool_result import ToolResult
+                        return ToolResult(
+                            success=False,
+                            error=(
+                                f"[Autonomy] Action requires permission: {decision.reason}. "
+                                f"Current mode: {decision.autonomy_level.value.upper()}. "
+                                f"Switch to ASK mode or adjust autonomy level."
+                            ),
+                            tool_id=tool_id,
+                        )
+            except ImportError:
+                pass
+            except Exception as exc:
+                log.debug(f"[AUTONOMY] Gate check skipped: {exc}")
+
             # Track TodoWrite streaks so we can short-circuit planning loops.
             if tool_name == "TodoWrite":
                 self._todo_write_streak += 1
             else:
                 self._todo_write_streak = 0
 
-            # ---- Real Agent Tools ----
-            if tool_name == "Read":
-                return await self._dispatch_read(tool_id, args)
-            elif tool_name == "Write":
-                return await self._dispatch_write(tool_id, args)
-            elif tool_name == "Edit":
-                return await self._dispatch_edit(tool_id, args)
-            elif tool_name == "Glob":
-                return await self._dispatch_glob(tool_id, args)
-            elif tool_name == "Grep":
-                return await self._dispatch_grep(tool_id, args)
-            # ---- Bridge-native ----
-            elif tool_name == "Bash":
+            # ---- Dispatch via registry map (Phase B) ----
+            _TOOL_DISPATCH_MAP = {
+                "Read":            self._dispatch_read,
+                "Write":           self._dispatch_write,
+                "Edit":            self._dispatch_edit,
+                "Glob":            self._dispatch_glob,
+                "Grep":            self._dispatch_grep,
+                "TodoWrite":       self._dispatch_todo_write,
+                "AskUserQuestion": self._dispatch_ask_user_question,
+                "LSP":             self._dispatch_lsp,
+                "WebFetch":        self._dispatch_web_fetch,
+                "WebSearch":       self._dispatch_web_search,
+                "TaskCreate":      self._dispatch_task_create,
+                "TaskUpdate":      self._dispatch_task_update,
+                "TaskList":        self._dispatch_task_list,
+                "TaskGet":         self._dispatch_task_get,
+                "TaskStop":        self._dispatch_task_stop,
+                "MCP":             self._dispatch_mcp,
+                "TeamCreate":      self._dispatch_team_create,
+                "TeamDelete":      self._dispatch_team_delete,
+            }
+
+            handler = _TOOL_DISPATCH_MAP.get(tool_name)
+            if handler is not None:
+                return await handler(tool_id, args)
+
+            # ---- Bridge-native tools with special pre-processing ----
+            if tool_name == "Bash":
+                command = args.get("command", "")
+                # Check sandbox policy if enabled (lazy init)
+                if self._sandbox_manager is None:
+                    try:
+                        from src.core.sandbox_manager import get_sandbox_manager
+                        self._sandbox_manager = get_sandbox_manager()
+                    except Exception:
+                        pass
+                if self._sandbox_manager and self._sandbox_manager.is_enabled():
+                    allowed, reason = self._sandbox_manager.is_command_allowed(command)
+                    if not allowed:
+                        from src.core.tool_result import ToolResult
+                        result = ToolResult(
+                            success=False,
+                            error=f"[Sandbox] Command blocked: {reason}",
+                            tool_id=tool_id,
+                        )
+                        return result
                 result = await self._bash_tool.execute(args)
                 result.tool_id = tool_id
                 return result
@@ -3785,35 +4512,6 @@ Use Markdown tables for structured data comparison:
                 result = await self._ls_tool.execute(args)
                 result.tool_id = tool_id
                 return result
-            elif tool_name == "TodoWrite":
-                return await self._dispatch_todo_write(tool_id, args)
-            elif tool_name == "AskUserQuestion":
-                return await self._dispatch_ask_user_question(tool_id, args)
-            elif tool_name == "LSP":
-                return await self._dispatch_lsp(tool_id, args)
-            elif tool_name == "WebFetch":
-                return await self._dispatch_web_fetch(tool_id, args)
-            elif tool_name == "WebSearch":
-                return await self._dispatch_web_search(tool_id, args)
-            # Task V2 tools
-            elif tool_name == "TaskCreate":
-                return await self._dispatch_task_create(tool_id, args)
-            elif tool_name == "TaskUpdate":
-                return await self._dispatch_task_update(tool_id, args)
-            elif tool_name == "TaskList":
-                return await self._dispatch_task_list(tool_id, args)
-            elif tool_name == "TaskGet":
-                return await self._dispatch_task_get(tool_id, args)
-            elif tool_name == "TaskStop":
-                return await self._dispatch_task_stop(tool_id, args)
-            # MCP tool
-            elif tool_name == "MCP":
-                return await self._dispatch_mcp(tool_id, args)
-            # Team/Swarm tools
-            elif tool_name == "TeamCreate":
-                return await self._dispatch_team_create(tool_id, args)
-            elif tool_name == "TeamDelete":
-                return await self._dispatch_team_delete(tool_id, args)
             else:
                 return ToolResult(tool_id=tool_id, result=None, success=False,
                                   error=f"Unknown tool: {tool_name!r}")
@@ -4150,13 +4848,79 @@ Use Markdown tables for structured data comparison:
         except Exception as e:
             return ToolResult(tool_id=tool_id, result=None, success=False, error=str(e))
 
+    def _resolve_directory_target_path(self, requested_path: str) -> Optional[str]:
+        """
+        Resolve a directory target to a concrete file path when possible.
+        Returns None when no sensible file target can be inferred.
+        """
+        if not os.path.isdir(requested_path):
+            return requested_path
+
+        # Prefer active file if it is inside the requested directory.
+        if self._active_file and os.path.isfile(self._active_file):
+            try:
+                active_abs = os.path.abspath(self._active_file)
+                req_abs = os.path.abspath(requested_path)
+                if active_abs.startswith(req_abs + os.sep):
+                    return active_abs
+            except Exception:
+                pass
+
+        preferred_names = [
+            "index.html",
+            "main.py",
+            "app.py",
+            "script.js",
+            "style.css",
+            "README.md",
+        ]
+        for name in preferred_names:
+            candidate = os.path.join(requested_path, name)
+            if os.path.isfile(candidate):
+                return candidate
+        return None
+
     async def _dispatch_write(self, tool_id: str, args: Dict[str, Any]) -> ToolResult:
         """Dispatch to real FileWriteTool or bridge-native fallback."""
         path = args.get("file_path", "")
         content = args.get("content", "")
+        
+        # INDUSTRY-STANDARD: Strict path validation
+        # Reject directory paths IMMEDIATELY with clear error message
+        if path.endswith((os.sep, '/')) or os.path.isdir(path):
+            log.warning(f"[WRITE] Rejected directory path: {path}")
+            return ToolResult(
+                tool_id=tool_id,
+                result=None,
+                success=False,
+                error=(
+                    f"ERROR: You provided a directory path '{path}' instead of a file path.\n\n"
+                    f"You MUST provide a complete file path with filename and extension.\n"
+                    f"Examples:\n"
+                    f"  CORRECT: 'index.html', 'src/questions.js', 'main.py'\n"
+                    f"  WRONG: 'C:\\Game\\', 'src/', './'\n\n"
+                    f"Please call Write again with the FULL file path."
+                ),
+            )
+        
         if not os.path.isabs(path) and self._project_root:
             args = {**args, "file_path": os.path.join(self._project_root, path)}
-        full_path = args["file_path"]
+        full_path = str(args["file_path"])
+        if os.path.isdir(full_path):
+            resolved = self._resolve_directory_target_path(full_path)
+            if resolved is None:
+                return ToolResult(
+                    tool_id=tool_id,
+                    result=None,
+                    success=False,
+                    error=(
+                        f"Write expected a file path, but received directory: {full_path}. "
+                        "Provide a concrete file path (for example, index.html or main.py)."
+                    ),
+                )
+            args = {**args, "file_path": resolved}
+            full_path = resolved
+            log.warning(f"[BRIDGE] Write received directory path; auto-resolved to file: {full_path}")
         is_new = not os.path.exists(full_path)
         original_content: Optional[str] = None
         if not is_new:
@@ -4256,7 +5020,22 @@ Use Markdown tables for structured data comparison:
         new_string = args.get("new_string", "")
         if not os.path.isabs(path) and self._project_root:
             args = {**args, "file_path": os.path.join(self._project_root, path)}
-        full_path = args["file_path"]
+        full_path = str(args["file_path"])
+        if os.path.isdir(full_path):
+            resolved = self._resolve_directory_target_path(full_path)
+            if resolved is None:
+                return ToolResult(
+                    tool_id=tool_id,
+                    result=None,
+                    success=False,
+                    error=(
+                        f"Edit expected a file path, but received directory: {full_path}. "
+                        "Use a concrete file path to edit (for example, index.html or main.py)."
+                    ),
+                )
+            args = {**args, "file_path": resolved}
+            full_path = resolved
+            log.warning(f"[BRIDGE] Edit received directory path; auto-resolved to file: {full_path}")
 
         # Register CortexDiffBridge open-diff callback (idempotent — safe to call each time)
         if _CORTEX_DIFF_BRIDGE is not None and not _CORTEX_DIFF_BRIDGE.is_registered:
@@ -4526,7 +5305,37 @@ Use Markdown tables for structured data comparison:
             t_map = cast(Dict[str, Any], t)
             td: Dict[str, Any] = dict(t_map)
             td["status"] = _normalize_status(td.get("status"))
+            
+            # ── Validate todo completion ───────────────────────────────
+            # If marking as COMPLETE, check if it has mutations
+            if td["status"] == "COMPLETE":
+                _mutation_count = td.get("_mutation_count", 0)
+                _content = td.get("content", "").lower()
+                
+                # Skip validation for non-implementation tasks
+                _is_implementation = not any(
+                    _content.startswith(x) for x in 
+                    ("test", "verify", "analyze", "read", "review", "check")
+                )
+                
+                if _is_implementation and _mutation_count == 0:
+                    log.warning(
+                        f"[TODO] Todo marked COMPLETE without mutations: {td.get('content', '')[:60]}"
+                    )
+                    # Don't block, but log warning for monitoring
+            
             normalized_todos.append(td)
+
+        if self._todo_write_streak >= 2 and self._mutation_success_count == self._last_todo_mutation_count:
+            return ToolResult(
+                tool_id=tool_id,
+                result=None,
+                success=False,
+                error=(
+                    "TodoWrite loop detected: no successful Write/Edit since the previous TodoWrite. "
+                    "Perform real implementation actions first, then update todos."
+                ),
+            )
 
         if self._todo_write_streak >= 3:
             return ToolResult(
@@ -4544,7 +5353,53 @@ Use Markdown tables for structured data comparison:
         all_done = bool(normalized_todos) and all(
             t.get("status") in ("COMPLETE", "CANCELLED") for t in normalized_todos
         )
+        
+        # ── INDUSTRY-STANDARD: Todo Completion Validation ─────────────────
+        # CRITICAL: AI cannot mark todos as complete without actual mutations!
+        # Validate that mutations match the number of implementation tasks
+        if all_done:
+            _implementation_tasks = [
+                t for t in normalized_todos 
+                if t.get("status") == "COMPLETE"
+                and not t.get("content", "").lower().startswith(("test", "verify", "analyze", "read"))
+            ]
+            _required_mutations = len(_implementation_tasks)
+            
+            # ── MANDATORY VERIFICATION STEP ─────────────────────
+            # Industry-standard: block completion unless tests/verification
+            # commands were run and passed successfully.
+            _verification_msg = self._build_verification_message()
 
+            if _verification_msg is not None:
+                log.warning("[TODO] AI trying to complete without passing verification.")
+                return ToolResult(
+                    tool_id=tool_id,
+                    result=None,
+                    success=False,
+                    error=_verification_msg,
+                )
+            
+            # If AI claims tasks are done but hasn't made enough mutations, BLOCK IT
+            if _required_mutations > 0 and self._session_mutation_count < _required_mutations:
+                log.warning(
+                    f"[TODO] TodoWrite blocked: AI claims {_required_mutations} tasks complete "
+                    + f"but only made {self._session_mutation_count} mutation(s). "
+                    + f"Forcing actual implementation!"
+                )
+                return ToolResult(
+                    tool_id=tool_id,
+                    result=None,
+                    success=False,
+                    error=(
+                        f"INVALID: You marked {_required_mutations} task(s) as complete, "
+                        f"but you've only made {self._session_mutation_count} file change(s). "
+                        f"You cannot mark tasks complete without actually doing the work!\n\n"
+                        f"Required: At least {_required_mutations} Write/Edit operations\n"
+                        f"Your mutations so far: {self._session_mutation_count}\n\n"
+                        f"COMPLETE THE ACTUAL WORK FIRST, then update todos."
+                    ),
+                )
+        
         old_todos = list(self._current_todos)
         new_todos = normalized_todos  # keep full list so UI shows completed state briefly
 
@@ -4576,11 +5431,42 @@ Use Markdown tables for structured data comparison:
                 ),
             )
         self._last_todo_signature = _todo_sig
+        self._last_todo_mutation_count = self._mutation_success_count
 
-        self._current_todos = [] if all_done else list(new_todos)
+        # ── CRITICAL FIX: Never clear todos without verification ─────────
+        # Even if AI marks all as "complete", we keep them in _current_todos
+        # so the exit verification can check them
+        # Only clear if:
+        # 1. All are complete AND
+        # 2. AI has made sufficient mutations AND  
+        # 3. At least one verification/test action occurred after last mutation
+        
+        _should_clear_todos = False
+        if all_done:
+            _has_verification = getattr(self, '_post_mutation_read_count', 0) == 0
+            # Only clear if mutations happened AND some verification occurred
+            _should_clear_todos = (self._mutation_success_count > 0 and _has_verification)
+            
+            if not _should_clear_todos and self._mutation_success_count == 0:
+                log.warning(
+                    "[TODO] Todos marked complete but NO mutations made. "
+                    + "Keeping todos visible - AI is trying to skip work!"
+                )
+        
+        self._current_todos = [] if _should_clear_todos else list(new_todos)
 
         # Emit to update_todos() in ai_chat.py → window.updateTodos() in JS
         self.todos_updated.emit(new_todos, "")
+        
+        # ── INDUSTRY-STANDARD: Emit progress update ───────────
+        if new_todos:
+            _total = len(new_todos)
+            _completed = sum(1 for t in new_todos if t.get("status") in ("COMPLETE", "CANCELLED"))
+            _pct = int((_completed / _total) * 100) if _total > 0 else 0
+            _msg = f"{_completed}/{_total} tasks complete ({_pct}%)" if _total > 0 else "No tasks"
+            
+            self.task_progress_update.emit(_completed, _total, _pct, _msg)
+            log.info(f"[PROGRESS] {_msg}")
 
         log.info(f"[TODO] TodoWrite dispatched: {len(new_todos)} items, all_done={all_done}")
 
@@ -4589,6 +5475,30 @@ Use Markdown tables for structured data comparison:
             "newTodos": new_todos,
             "allDone":  all_done,
         })
+
+    def toggle_todo_status(self, task_id: str, completed: bool) -> None:
+        """
+        Apply a UI todo toggle to bridge state so backend and UI stay in sync.
+        """
+        if not self._current_todos:
+            return
+
+        target_id = str(task_id or "")
+        new_status = "COMPLETE" if completed else "PENDING"
+        updated = False
+        for todo in self._current_todos:
+            todo_id = str(todo.get("id", ""))
+            if todo_id == target_id:
+                todo["status"] = new_status
+                updated = True
+                break
+
+        if not updated:
+            return
+
+        # Keep main prompt state aligned with what the UI currently shows.
+        self.todos_updated.emit(list(self._current_todos), "")
+        log.info(f"[TODO] Backend sync from UI toggle: {target_id} -> {new_status}")
 
     def on_answer_question(self, question_id: str, answer: str) -> None:
         """
@@ -4874,6 +5784,7 @@ Use Markdown tables for structured data comparison:
     async def _dispatch_task_create(self, tool_id: str, args: Dict[str, Any]) -> ToolResult:
         """
         Handle TaskCreate tool - create a new structured task.
+        Supports hierarchical fields: parentId, dependsOn, estimatedEffort.
         """
         subject = args.get("subject", "")
         description = args.get("description", "")
@@ -4890,6 +5801,16 @@ Use Markdown tables for structured data comparison:
         import uuid
         task_id = f"task-{uuid.uuid4().hex[:8]}"
 
+        # Hierarchical fields
+        parent_id = args.get("parentId")
+        depends_on = args.get("dependsOn", [])
+        estimated_effort = args.get("estimatedEffort")
+
+        # Prevent circular dependencies before creating
+        if depends_on and task_id in depends_on:
+            return ToolResult(tool_id=tool_id, result=None, success=False,
+                              error="Task cannot depend on itself")
+
         # Store task in session
         task: Dict[str, Any] = {
             "id": task_id,
@@ -4899,14 +5820,45 @@ Use Markdown tables for structured data comparison:
             "status": "pending",
             "owner": None,
             "blocks": [],
-            "blockedBy": [],
+            "blockedBy": list(depends_on),
+            "parentId": parent_id,
+            "dependsOn": list(depends_on),
+            "estimatedEffort": estimated_effort,
+            "tags": [],
             "createdAt": _get_current_timestamp(),
         }
 
         # Add to session task list
         self._session_tasks[task_id] = task
 
-        log.info(f"[TASK] Created task {task_id}: {subject}")
+        # Sync with hierarchical task graph
+        node = TaskNode(
+            id=task_id,
+            subject=subject,
+            description=description,
+            status=TaskStatus.PENDING,
+            active_form=active_form or f"Working on: {subject}",
+            parent_id=parent_id,
+            depends_on=list(depends_on),
+            estimated_effort=estimated_effort,
+        )
+        self._task_graph.add_node(node)
+
+        # Emit event
+        try:
+            from src.core.event_bus import ComponentEventBus, EventType
+            bus = ComponentEventBus.get_instance()
+            bus.emit(EventType.TASK_GRAPH_UPDATED, {
+                "action": "create",
+                "taskId": task_id,
+                "task": task,
+            })
+        except Exception:
+            pass
+
+        log.info(f"[TASK] Created task {task_id}: {subject}"
+                 f"{' parent=' + parent_id if parent_id else ''}"
+                 f"{' deps=' + str(depends_on) if depends_on else ''}")
 
         return ToolResult(tool_id=tool_id, result={
             "taskId": task_id,
@@ -4917,12 +5869,16 @@ Use Markdown tables for structured data comparison:
     async def _dispatch_task_update(self, tool_id: str, args: Dict[str, Any]) -> ToolResult:
         """
         Handle TaskUpdate tool - update task status, owner, or dependencies.
+        Also syncs with hierarchical task graph.
         """
         task_id = args.get("taskId", "")
         status = args.get("status")
         owner = args.get("owner")
         blocks = args.get("blocks")
         blocked_by = args.get("blockedBy")
+        parent_id = args.get("parentId")  # "" means clear parent
+        depends_on = args.get("dependsOn")
+        estimated_effort = args.get("estimatedEffort")
 
         if not task_id:
             return ToolResult(tool_id=tool_id, result=None, success=False,
@@ -4935,7 +5891,7 @@ Use Markdown tables for structured data comparison:
 
         task = self._session_tasks[task_id]
 
-        # Update fields
+        # Update flat task dict
         if status:
             task["status"] = status
         if owner is not None:
@@ -4944,7 +5900,41 @@ Use Markdown tables for structured data comparison:
             task["blocks"] = blocks
         if blocked_by is not None:
             task["blockedBy"] = blocked_by
+        if parent_id is not None:
+            task["parentId"] = parent_id if parent_id else None
+        if depends_on is not None:
+            task["dependsOn"] = list(depends_on)
+        if estimated_effort is not None:
+            task["estimatedEffort"] = estimated_effort
         task["updatedAt"] = _get_current_timestamp()
+
+        # Sync with hierarchical task graph
+        if self._task_graph.has_node(task_id):
+            updates: Dict[str, Any] = {}
+            if status:
+                updates["status"] = TaskStatus.from_str(status)
+            if owner is not None:
+                updates["owner"] = owner
+            if parent_id is not None:
+                updates["parent_id"] = parent_id if parent_id else None
+            if depends_on is not None:
+                updates["depends_on"] = list(depends_on)
+            if estimated_effort is not None:
+                updates["estimated_effort"] = estimated_effort
+            if updates:
+                self._task_graph.update_node(task_id, **updates)
+
+        # Emit event
+        try:
+            from src.core.event_bus import ComponentEventBus, EventType
+            bus = ComponentEventBus.get_instance()
+            bus.emit(EventType.TASK_GRAPH_UPDATED, {
+                "action": "update",
+                "taskId": task_id,
+                "task": task,
+            })
+        except Exception:
+            pass
 
         log.info(f"[TASK] Updated task {task_id}: status={status or 'unchanged'}")
 
@@ -4967,10 +5957,14 @@ Use Markdown tables for structured data comparison:
 
         log.info(f"[TASK] Listed {len(tasks)} tasks (filter={status_filter})")
 
+        # Include task graph summary
+        graph_section = self._task_graph.build_prompt_section() if self._task_graph else ""
+
         return ToolResult(tool_id=tool_id, result={
             "tasks": tasks,
             "count": len(tasks),
-            "filter": status_filter
+            "filter": status_filter,
+            "graph": graph_section,
         })
 
     async def _dispatch_task_get(self, tool_id: str, args: Dict[str, Any]) -> ToolResult:
@@ -4989,8 +5983,19 @@ Use Markdown tables for structured data comparison:
 
         task = self._session_tasks[task_id]
 
+        # Include hierarchical context
+        children = []
+        rollup = {}
+        if self._task_graph and self._task_graph.has_node(task_id):
+            child_nodes = self._task_graph.get_direct_children(task_id)
+            children = [{"id": c.id, "subject": c.subject, "status": c.status.value}
+                        for c in child_nodes]
+            rollup = self._task_graph.get_rollup_status(task_id)
+
         return ToolResult(tool_id=tool_id, result={
-            "task": task
+            "task": task,
+            "children": children,
+            "rollup": rollup,
         })
 
     async def _dispatch_task_stop(self, tool_id: str, args: Dict[str, Any]) -> ToolResult:
@@ -5323,20 +6328,27 @@ Use Markdown tables for structured data comparison:
         except Exception:
             pass
 
-    def set_project_context(self, context):
-        if hasattr(context, "to_dict"):
-            self._enhancement_data.update(context.to_dict())
+    def set_project_context(self, context: Any) -> None:
+        if isinstance(context, dict):
+            self._enhancement_data.update(cast(Dict[str, Any], context))
+        elif hasattr(context, "to_dict"):
+            to_dict_fn = getattr(context, "to_dict", None)
+            if callable(to_dict_fn):
+                mapped = to_dict_fn()
+                if isinstance(mapped, dict):
+                    self._enhancement_data.update(cast(Dict[str, Any], mapped))
         elif hasattr(context, "__dict__"):
-            self._enhancement_data.update(
-                {k: v for k, v in vars(context).items() if not k.startswith("_")}
-            )
-        elif isinstance(context, dict):
-            self._enhancement_data.update(context)
+            raw_vars_any: Any = vars(context)  # pyright: ignore[reportUnknownVariableType]
+            raw_vars = cast(Dict[str, Any], raw_vars_any) if isinstance(raw_vars_any, dict) else {}
+            filtered: Dict[str, Any] = {
+                str(k): v for k, v in raw_vars.items() if isinstance(k, str) and not k.startswith("_")
+            }
+            self._enhancement_data.update(filtered)
 
-    def update_settings(self, **kwargs):
+    def update_settings(self, **kwargs: Any) -> None:
         self._enhancement_data.update(kwargs)
 
-    def set_terminal(self, terminal):
+    def set_terminal(self, terminal: Any) -> None:
         self._terminal = terminal
 
     def set_active_file(self, filepath: str, cursor_pos: Optional[int] = None):
@@ -5353,7 +6365,7 @@ Use Markdown tables for structured data comparison:
     def set_interaction_mode(self, mode: str):
         self._interaction_mode = mode
 
-    def set_ui_parent(self, parent):
+    def set_ui_parent(self, parent: Any) -> None:
         self._ui_parent = parent
 
     def user_responded(self, question_id: str, answer: str):
@@ -5400,6 +6412,24 @@ Use Markdown tables for structured data comparison:
     def clear_conversation(self):
         """Clear the in-memory conversation history."""
         self._conversation_history.clear()
+
+    @staticmethod
+    def _extract_semantic_summary(checkpoint_text: str, max_chars: int = 500) -> str:
+        """
+        Extract a concise summary from a context checkpoint for semantic storage.
+
+        Pulls the Conversation Digest section (most recent exchanges) which
+        gives the best snapshot of what happened in the session.
+        """
+        # Try to find the Conversation Digest section
+        digest_marker = "**Conversation Digest:**"
+        digest_idx = checkpoint_text.find(digest_marker)
+        if digest_idx >= 0:
+            return checkpoint_text[digest_idx + len(digest_marker):].strip()[:max_chars]
+
+        # Fallback: first non-empty lines up to max_chars
+        lines = [l.strip() for l in checkpoint_text.split("\n") if l.strip()]
+        return " | ".join(lines[:10])[:max_chars]
 
 
 # ============================================================

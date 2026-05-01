@@ -92,7 +92,8 @@ class BaseProvider(ABC):
                    model: str,
                    temperature: float = 0.7,
                    max_tokens: int = 2000,
-                   tools: Optional[List[Dict[str, Any]]] = None) -> Generator[str, None, None]:
+                   tools: Optional[List[Dict[str, Any]]] = None,
+                   **kwargs: Any) -> Generator[str, None, None]:
         """
         Stream chat completion response.
         """

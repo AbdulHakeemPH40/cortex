@@ -94,8 +94,8 @@ class _GitStatusWorker(QThread):
             if r.returncode == 0 and r.stdout.strip():
                 a, d = self._parse_numstat(r.stdout)
                 total_add += a; total_del += d
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug(f'[MainWindow] Suppressed error: {e}')
         try:
             # FIX: Prevent console window popup
             if sys.platform == 'win32':
@@ -118,8 +118,8 @@ class _GitStatusWorker(QThread):
             if r.returncode == 0 and r.stdout.strip():
                 a, d = self._parse_numstat(r.stdout)
                 total_add += a; total_del += d
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug(f'[MainWindow] Suppressed error: {e}')
         return total_add, total_del
 
     # ---- main work (runs in QThread) --------------------------------
@@ -234,7 +234,7 @@ from src.utils.icons import make_icon
 # from src.core.live_server import LiveServer
 from src.utils.helpers import detect_language, shorten_path
 from src.utils.logger import get_logger
-from src.utils.notifications import show_task_complete_notification
+from src.utils.notifications import show_task_complete_notification, show_toast_notification
 
 log = get_logger("main_window")
 
@@ -2262,8 +2262,8 @@ class CortexMainWindow(QMainWindow):
                 a, d = _parse_numstat(r.stdout)
                 total_add += a
                 total_del += d
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug(f'[MainWindow] Suppressed error: {e}')
 
         try:
             # Staged changes (index vs HEAD)
@@ -2280,8 +2280,8 @@ class CortexMainWindow(QMainWindow):
                 a, d = _parse_numstat(r.stdout)
                 total_add += a
                 total_del += d
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug(f'[MainWindow] Suppressed error: {e}')
 
         return total_add, total_del
 
@@ -3037,6 +3037,7 @@ class CortexMainWindow(QMainWindow):
         self._ai_agent.thinking_started.connect(self._ai_chat.show_thinking)
         self._ai_agent.thinking_stopped.connect(self._ai_chat.hide_thinking)
         self._ai_agent.todos_updated.connect(self._ai_chat.update_todos)
+        self._ai_agent.task_progress_update.connect(self._on_task_progress_update)
         self._ai_agent.tool_summary_ready.connect(self._ai_chat.show_tool_summary)
         # Recovery: context compaction status + turn-limit continuation
         self._ai_agent.agent_status_update.connect(self._ai_chat.on_agent_status_update)
@@ -3126,8 +3127,8 @@ class CortexMainWindow(QMainWindow):
             for file_path in root.rglob(clean_filename):
                 if file_path.is_file():
                     return str(file_path)
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug(f'[MainWindow] Suppressed error: {e}')
         
         return None
 
@@ -3154,8 +3155,8 @@ class CortexMainWindow(QMainWindow):
         try:
             from src.core.lsp_manager import get_lsp_manager
             get_lsp_manager().set_project_root(folder)
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug(f'[MainWindow] Suppressed error: {e}')
 
     def _new_project(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Folder for New Project",
@@ -3590,8 +3591,8 @@ class CortexMainWindow(QMainWindow):
             cache_path.parent.mkdir(parents=True, exist_ok=True)
             import json
             cache_path.write_text(json.dumps(self._diff_cache), encoding='utf-8')
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug(f'[MainWindow] Suppressed error: {e}')
 
     def _on_show_diff(self, file_path: str):
         """Show diff in Qt dialog window — triggered by Diff button click in chat."""
@@ -3946,6 +3947,12 @@ class CortexMainWindow(QMainWindow):
             "tool_name": question_payload.get("tool_name", "AskUserQuestion")
         }
         self._ai_chat.show_question(info)
+        try:
+            preview = (info.get('text') or '')
+            preview = preview.replace('\n', ' ').strip()
+            show_toast_notification('Cortex AI - Needs your input', preview[:120])
+        except Exception as e:
+            log.debug(f'[MainWindow] Suppressed error: {e}')
 
     def _open_file_at_line(self, file_path: str, line_number: int):
         """Open file and navigate to specific line."""
@@ -4051,8 +4058,8 @@ class CortexMainWindow(QMainWindow):
                     orig = entry.get('original', '')
                     if orig:
                         return orig
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug(f'[MainWindow] Suppressed error: {e}')
 
         return None
     
@@ -4095,8 +4102,8 @@ class CortexMainWindow(QMainWindow):
                 seen.add(norm)
                 if os.path.isfile(norm):
                     self._open_file(norm)
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug(f'[MainWindow] Suppressed error: {e}')
         if hasattr(self, '_diff_data_store'):
             self._diff_data_store.clear()
         if hasattr(self, '_file_snapshots'):
@@ -4966,8 +4973,8 @@ class CortexMainWindow(QMainWindow):
                         try:
                             if LocalPath(file_path).resolve() == LocalPath(str(self._project_manager.root)).resolve():
                                 return
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            log.debug(f'[MainWindow] Suppressed error: {e}')
                     self._rename_path(file_path)
                     return
         
@@ -5930,8 +5937,8 @@ class CortexMainWindow(QMainWindow):
         try:
             from src.core.lsp_manager import get_lsp_manager
             get_lsp_manager().set_project_root(folder_path)
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug(f'[MainWindow] Suppressed error: {e}')
         
         # Reset codebase index for new project
         self._codebase_index = None
@@ -6422,6 +6429,17 @@ class CortexMainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent):
         """Save session on close, prompt for unsaved files, and kill terminals."""
+        # 0. Save agent session state for resume after restart
+        try:
+            from src.core.agent_session_manager import save_snapshot
+            from src.ai.agent_bridge import get_agent_bridge
+            bridge = get_agent_bridge()
+            if bridge is not None:
+                save_snapshot(bridge)
+                log.info("[SESSION] Agent state saved on app close")
+        except Exception as _ses_exc:
+            log.warning(f"[SESSION] Failed to save agent state on close: {_ses_exc}")
+
         # 1. Check for unsaved files
         modified_files = self._editor_tabs._modified
         if modified_files:
@@ -6854,8 +6872,10 @@ class CortexMainWindow(QMainWindow):
         """
         status = "completed" if completed else "reopened"
         log.info(f"[TODO] UI toggle: {task_id} -> {status}")
-        # The todo state is managed by the bridge's TodoWrite tool and the JS UI.
-        # No backend persistence needed here - the UI handles the visual state.
+        try:
+            self._ai_agent.toggle_todo_status(task_id, completed)
+        except Exception as exc:
+            log.warning(f"[TODO] Failed to sync toggle to backend state: {exc}")
 
     def _on_todo_task_completed(self, task_id: str):
         """Handle completed todo - LEGACY (todo manager removed)."""
@@ -6865,22 +6885,75 @@ class CortexMainWindow(QMainWindow):
         """Handle updated todo - LEGACY (todo manager removed)."""
         log.info(f"[TODO] _on_todo_task_updated called (legacy): {task_id}")
 
+    def _on_task_progress_update(self, completed: int, total: int, pct: int, message: str):
+        """Update UI with real-time AI task progress."""
+        try:
+            self._last_task_progress_msg = message
+            self._last_task_progress_counts = (completed, total, pct)
+            if hasattr(self, '_statusbar') and self._statusbar:
+                self._statusbar.showMessage(f'AI Progress: {message}', 5000)
+        except Exception as e:
+            log.debug(f'[MainWindow] Suppressed error: {e}')
+
     def _on_ai_task_complete(self, response: str):
         """Show Windows toast notification when AI task completes."""
         try:
+            # Build an up-to-date progress summary from todos when available
+            progress_msg = getattr(self, '_last_task_progress_msg', '')
+            try:
+                todos = getattr(self._ai_agent, '_current_todos', None) or []
+                if isinstance(todos, list) and todos:
+                    total = len(todos)
+                    completed = sum(
+                        1 for t in todos
+                        if str(getattr(t, 'get', lambda *_: '')('status', '')).upper() in ('COMPLETE', 'CANCELLED')
+                    )
+                    pending = max(0, total - completed)
+                    pct = int((completed / total) * 100) if total else 0
+                    progress_msg = f"{completed}/{total} tasks complete ({pct}%)"
+                    if pending:
+                        progress_msg += f", {pending} pending"
+            except Exception as e:
+                log.debug(f'[MainWindow] Suppressed error: {e}')
+
+            # If the bridge auto-cancelled remaining todos, never claim completion
+            if getattr(self._ai_agent, '_todos_auto_cancelled', False):
+                show_toast_notification(
+                    'Cortex AI - Needs Attention',
+                    'Remaining tasks were auto-cancelled after repeated attempts without progress.'
+                )
+                log.info('[MainWindow] Notification shown: todos auto-cancelled')
+                return
+
+            # INDUSTRY-STANDARD: Check if notification should actually show
+            _should_notify = True
+            if hasattr(self._ai_agent, '_allow_notification'):
+                _should_notify = self._ai_agent._allow_notification
+
+            if not _should_notify:
+                # Don't show a false "task complete" toast. Show progress instead.
+                if progress_msg:
+                    show_toast_notification('Cortex AI - In Progress', progress_msg)
+                log.info('[MainWindow] Completion notification suppressed: tasks not genuinely complete')
+                return
+
+            # Only show completion notification if response is meaningful
             if response and len(response) > 10:
                 summary = response[:150].replace('\n', ' ').strip()
-                show_task_complete_notification(summary)
-            
+                msg = summary
+                if progress_msg:
+                    msg = f"{progress_msg} ? {summary}"
+                show_toast_notification('? Cortex AI - Task Complete', msg)
+                log.info(f"[MainWindow] Windows notification shown: {msg[:60]}...")
+
             # TODO: POINTS SYSTEM - Disabled for development
-            # Will be enabled when connecting to https://logic-practice.com backend
             """
-            # Consume points based on actual response length
             self._consume_points_for_response(response)
             """
-        except Exception:
-            pass
-    
+        except Exception as e:
+            log.debug(f'[MainWindow] Suppressed error: {e}')
+
+
     def _consume_points_for_response(self, response: str):
         """Consume points based on actual AI response tokens."""
         try:

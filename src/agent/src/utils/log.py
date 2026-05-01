@@ -17,6 +17,13 @@ def logError(error: Any) -> None:
     print(f"ERROR: {error}", file=sys.stderr)
 
 
+
+
+# Backwards-compatible snake_case alias used across the agent codebase.
+def log_error(error: Any) -> None:
+    logError(error)
+
+
 def logForDebugging(msg: str, level: str = 'debug', **kwargs: Any) -> None:
     """
     Log a debug message.

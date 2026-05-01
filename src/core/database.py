@@ -205,13 +205,26 @@ class CortexDatabase:
                     CREATE VIRTUAL TABLE IF NOT EXISTS code_fts
                     USING fts5(code, name, signature, docstring, file_path)
                 """)
+
+                # If an older schema exists (missing columns), rebuild it.
+                cols = [row[1] for row in cursor.execute("PRAGMA table_info(code_fts)")]
+                if "file_path" not in cols:
+                    log.warning(
+                        "FTS5 index schema outdated (missing file_path) ? rebuilding code_fts"
+                    )
+                    cursor.execute("DROP TABLE IF EXISTS code_fts")
+                    cursor.execute("""
+                        CREATE VIRTUAL TABLE code_fts
+                        USING fts5(code, name, signature, docstring, file_path)
+                    """)
+
                 cursor.execute("""
                     INSERT OR IGNORE INTO code_fts (rowid, code, name, signature, docstring, file_path)
                     SELECT id, code, name, signature, docstring, file_path FROM chunks
                 """)
             except sqlite3.OperationalError as e:
                 log.warning(f"FTS5 not available, code search disabled: {e}")
-            
+
             # Embeddings table - vector embeddings for chunks
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS embeddings (

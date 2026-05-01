@@ -1,10 +1,11 @@
+"""Debug logging utilities.
+
+Some converted modules import `utils.debug.logForDebugging`.
+We route that to the shared logger in `utils.log`.
 """
-Auto-generated stub for .utils.debug.
-TODO: Implement based on requirements.
-"""
-from typing import Any, Dict, List, Optional
 
+from __future__ import annotations
 
-# Placeholder exports
-__all__ = []
+from .log import logForDebugging
 
+__all__ = ['logForDebugging']

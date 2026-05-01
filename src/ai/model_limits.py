@@ -95,8 +95,9 @@ class ModelLimits:
 
         # --- Agentic turn limit ----------------------------------------------
         # Larger context → agent can afford more tool-call round-trips
+        # BUT we cap it to prevent analysis paralysis (especially for DeepSeek)
         if self.context_window >= 200_000:
-            self.max_turns = 40
+            self.max_turns = 15  # Reduced from 40 to prevent endless loops
         elif self.context_window >= 100_000:
             self.max_turns = 30
         elif self.context_window >= 32_000:
@@ -213,7 +214,7 @@ _REGISTRY: List[Tuple[str, int, int]] = [
     ("codestral",             32_000,   4_096),
     ("mixtral-8x22b",         65_536,   4_096),
     ("mixtral-8x7b",          32_768,   4_096),
-    ("mistral",               32_768,   4_096),   # generic mistral fallback
+    ("mistral",               128_000,   4_096),   # generic mistral fallback
 
     # ── Google Gemini ─────────────────────────────────────────────────────────
     ("gemini-2.5",          1_000_000,  65_536),

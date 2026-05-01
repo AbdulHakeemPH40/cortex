@@ -146,6 +146,10 @@ class MemoryIndex:
             log.warning("[MemorySearch] No memories in index")
             return []
         
+        # Hash embeddings are non-semantic; use keyword search for predictable relevance.
+        if self.embeddings and getattr(self.embeddings, 'backend', None) == 'hash':
+            return self._fallback_keyword_search(query, top_k)
+
         # Generate query embedding
         if self.embeddings:
             query_result = self.embeddings.generate_embedding(query)
@@ -176,7 +180,7 @@ class MemoryIndex:
                     title=metadata.get('title', 'Untitled'),
                     description=metadata.get('description', ''),
                     similarity_score=similarity,
-                    memory_type=metadata.get('type', 'project'),
+                    memory_type=metadata.get('memory_type', 'project'),
                     content_preview=metadata.get('content_preview', ''),
                     mtime=metadata.get('mtime', 0)
                 ))
@@ -212,7 +216,7 @@ class MemoryIndex:
                     title=metadata.get('title', 'Untitled'),
                     description=metadata.get('description', ''),
                     similarity_score=overlap,
-                    memory_type=metadata.get('type', 'project'),
+                    memory_type=metadata.get('memory_type', 'project'),
                     content_preview=metadata.get('content_preview', ''),
                     mtime=metadata.get('mtime', 0)
                 ))
@@ -231,7 +235,7 @@ class MemoryIndex:
                 'mtime': os.path.getmtime(file_path),
                 'title': '',
                 'description': '',
-                'type': 'project',
+                'memory_type': 'project',
                 'content_preview': ''
             }
             
@@ -248,12 +252,12 @@ class MemoryIndex:
                             key = key.strip().lower()
                             value = value.strip().strip('"').strip("'")
                             
-                            if key == 'name':
+                            if key in ('name', 'title'):
                                 metadata['title'] = value
                             elif key == 'description':
                                 metadata['description'] = value
                             elif key == 'type':
-                                metadata['type'] = value
+                                metadata['memory_type'] = value
                     
                     # Extract content preview (first 200 chars)
                     metadata['content_preview'] = body[:200]

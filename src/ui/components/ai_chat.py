@@ -370,6 +370,7 @@ def _write_chat_summary_memory(project_root: str, conversation_id: str, title: s
         )
 
         # Call LLM provider with timeout handling
+        content = ""  # Initialize to ensure scope
         try:
             resp = provider.chat(
                 messages=[
@@ -381,6 +382,43 @@ def _write_chat_summary_memory(project_root: str, conversation_id: str, title: s
                 max_tokens=900,
                 stream=False,
             )
+            
+            # Handle generator response (some providers return async generators)
+            if hasattr(resp, '__aiter__') or hasattr(resp, '__iter__'):
+                # Consume generator to get full response
+                content_parts = []
+                if hasattr(resp, '__aiter__'):
+                    # Async generator
+                    import asyncio
+                    loop = asyncio.new_event_loop()
+                    try:
+                        for chunk in loop.run_until_complete(asyncio.gather(*[resp.__anext__() for _ in range(100)])):
+                            if hasattr(chunk, 'content'):
+                                content_parts.append(chunk.content)
+                            elif isinstance(chunk, str):
+                                content_parts.append(chunk)
+                    except StopAsyncIteration:
+                        pass
+                    finally:
+                        loop.close()
+                else:
+                    # Sync generator
+                    for chunk in resp:
+                        if hasattr(chunk, 'content'):
+                            content_parts.append(chunk.content)
+                        elif isinstance(chunk, str):
+                            content_parts.append(chunk)
+                
+                content = ''.join(content_parts).strip()
+            elif hasattr(resp, 'content'):
+                # Standard response object
+                content = (resp.content or "").strip()
+            elif isinstance(resp, str):
+                # Direct string response
+                content = resp.strip()
+            else:
+                # Fallback: convert to string
+                content = str(resp).strip()
         except Exception as e:
             error_msg = str(e).lower()
             is_transient = any(keyword in error_msg for keyword in [
@@ -399,7 +437,7 @@ def _write_chat_summary_memory(project_root: str, conversation_id: str, title: s
                 _save_fallback_summary(project_root, conversation_id, title, messages)
                 return
         
-        content = (resp.content or "").strip()
+        # Content already extracted above in the try block
         if not content:
             log.warning("[MEMORY] LLM returned empty content")
             _save_fallback_summary(project_root, conversation_id, title, messages)

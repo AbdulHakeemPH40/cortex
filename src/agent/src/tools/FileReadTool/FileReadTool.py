@@ -976,28 +976,41 @@ async def read_file_in_range(
         if callable(throw_if_aborted):
             throw_if_aborted()
 
-    with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
-        for idx, line in enumerate(f):
-            _check_abort()
+    try:
+        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+            for idx, line in enumerate(f):
+                _check_abort()
 
-            if idx == 0 and line.startswith('\ufeff'):
-                line = line.lstrip('\ufeff')
+                if idx == 0 and line.startswith('\ufeff'):
+                    line = line.lstrip('\ufeff')
 
-            line_bytes = len(line.encode('utf-8'))
-            total_bytes += line_bytes
-            total_lines += 1
+                line_bytes = len(line.encode('utf-8'))
+                total_bytes += line_bytes
+                total_lines += 1
 
-            if max_size is not None and total_bytes > max_size:
-                raise ValueError(
-                    f'File content ({format_file_size(total_bytes)}) exceeds maximum '
-                    f'allowed size ({format_file_size(max_size)}). Use offset and limit parameters.'
-                )
+                if max_size is not None and total_bytes > max_size:
+                    raise ValueError(
+                        f'File content ({format_file_size(total_bytes)}) exceeds maximum '
+                        f'allowed size ({format_file_size(max_size)}). Use offset and limit parameters.'
+                    )
 
-            if idx < safe_offset:
-                continue
-            if end_line is not None and idx >= end_line:
-                continue
-            selected_lines.append(line)
+                if idx < safe_offset:
+                    continue
+                if end_line is not None and idx >= end_line:
+                    continue
+                selected_lines.append(line)
+    except PermissionError as e:
+        raise PermissionError(
+            f"Permission denied: '{file_path}'. "
+            f"This file may be locked by OneDrive syncing or another process. "
+            f"Try: (1) Pause OneDrive syncing, (2) Close other apps using this file, "
+            f"(3) Check folder Security permissions."
+        ) from e
+    except OSError as e:
+        raise OSError(
+            f"Cannot read file '{file_path}': {e}. "
+            f"The file may be corrupted, locked, or in a synced folder."
+        ) from e
 
     content = ''.join(selected_lines)
     line_count = len(selected_lines)
@@ -1528,6 +1541,20 @@ class FileReadTool:
                 limit_provided=limit_provided,
                 message_id=None,  # Would get from parent_message.message.id
             )
+        except PermissionError as perm_err:
+            # Handle OneDrive/syncing permission issues gracefully
+            error_msg = (
+                f"Permission denied accessing '{file_path}'. This may be due to:\n"
+                f"1. OneDrive syncing - try pausing OneDrive temporarily\n"
+                f"2. File locked by another process\n"
+                f"3. Insufficient file permissions\n\n"
+                f"Suggestions:\n"
+                f"- Right-click the folder > Properties > Security > Verify Full Control\n"
+                f"- Try accessing the file from a non-OneDrive location\n"
+                f"- Check if the file is open in another application"
+            )
+            log.warning(f"[FileReadTool] Permission error: {perm_err}")
+            raise PermissionError(error_msg) from perm_err
         except FileNotFoundError:
             # macOS screenshots may use a thin space or regular space before AM/PM
             alt_path = get_alternate_screenshot_path(full_file_path)

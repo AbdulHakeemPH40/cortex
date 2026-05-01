@@ -10,7 +10,7 @@ import time
 import random
 import requests
 from typing import List, Dict, Any, Generator, Optional, Callable
-from src.ai.providers import BaseProvider, ProviderType
+from src.ai.providers import BaseProvider, ProviderType, ChatMessage, ChatResponse
 from src.utils.logger import get_logger
 
 log = get_logger("mistral_provider")
@@ -657,24 +657,87 @@ class MistralProvider(BaseProvider):
             log.error(f"Unexpected error: {e}")
             raise
     
-    def chat(self, messages: List[Dict[str, str]], model: str = "mistral-medium-latest",
-             stream: bool = True, retry_callback=None, **kwargs) -> Generator[str, None, None]:
-        """Standard chat interface with retry logic"""
-        max_retries = kwargs.pop("max_retries", self._max_retries)
-        yield from self.chat_with_retry(
-            messages,
-            model,
-            stream,
-            max_retries=max_retries,
-            retry_callback=retry_callback,
-            **kwargs,
-        )
-    
-    def chat_stream(self, messages, model, temperature=0.7, max_tokens=2000, tools=None, retry_callback=None, **kwargs):
-        """Stream chat completion - delegates to chat()"""
+    def chat(self, messages: List[ChatMessage], model: str = "mistral-medium-latest",
+             temperature: float = 0.7, max_tokens: int = 2000,
+             stream: bool = False, tools: Optional[List[Dict[str, Any]]] = None,
+             tool_choice: Optional[str] = None, **kwargs: Any) -> ChatResponse:
+        """Standard chat interface matching BaseProvider contract.
+
+        Accepts List[ChatMessage], returns ChatResponse.
+        Delegates to chat_stream() for streaming internally.
+        """
+        start_time = time.time()
+
+        # Convert ChatMessage objects to dict format
+        message_dicts = self._format_messages_for_mistral(messages)
+
+        # Build kwargs for the internal call
+        chat_kwargs: Dict[str, Any] = {"temperature": temperature}
+        if max_tokens:
+            chat_kwargs["max_tokens"] = max_tokens
+        if tools:
+            chat_kwargs["tools"] = tools
+        if tool_choice:
+            chat_kwargs["tool_choice"] = tool_choice
+
+        if stream:
+            # Generate a helpful error — streaming users should use chat_stream()
+            raise ValueError("Use chat_stream() for streaming; chat() returns ChatResponse")
+
+        # Non-streaming: collect from streaming generator into ChatResponse
+        try:
+            chunks: List[str] = []
+            for chunk in self.chat_with_retry(
+                message_dicts, model, stream=True,
+                max_retries=kwargs.get("max_retries", self._max_retries),
+                retry_callback=kwargs.get("retry_callback"),
+                **chat_kwargs,
+            ):
+                chunks.append(chunk)
+
+            full_content = "".join(chunks)
+            duration_ms = (time.time() - start_time) * 1000
+
+            return ChatResponse(
+                content=full_content,
+                model=model,
+                provider="mistral",
+                input_tokens=0,
+                output_tokens=0,
+                duration_ms=duration_ms,
+            )
+        except Exception as e:
+            log.error(f"[Mistral] chat() failed: {e}")
+            return ChatResponse(
+                content="",
+                model=model,
+                provider="mistral",
+                error=str(e),
+                duration_ms=(time.time() - start_time) * 1000,
+            )
+
+    def chat_stream(self,
+                    messages: List[ChatMessage],
+                    model: str = "mistral-medium-latest",
+                    temperature: float = 0.7,
+                    max_tokens: int = 2000,
+                    tools: Optional[List[Dict[str, Any]]] = None,
+                    retry_callback=None,
+                    **kwargs: Any) -> Generator[str, None, None]:
+        """Stream chat completion."""
         formatted_messages = self._format_messages_for_mistral(messages)
-        # FIX: Pass tools parameter to chat() method
-        yield from self.chat(formatted_messages, model, stream=True, tools=tools, retry_callback=retry_callback, **kwargs)
+        chat_kwargs: Dict[str, Any] = {"temperature": temperature}
+        if max_tokens:
+            chat_kwargs["max_tokens"] = max_tokens
+        if tools:
+            chat_kwargs["tools"] = tools
+
+        yield from self.chat_with_retry(
+            formatted_messages, model, stream=True,
+            max_retries=kwargs.get("max_retries", self._max_retries),
+            retry_callback=retry_callback,
+            **chat_kwargs,
+        )
     
     def _format_messages_for_mistral(self, messages) -> List[Dict[str, Any]]:
         """Convert ChatMessage objects to Mistral-compatible format.

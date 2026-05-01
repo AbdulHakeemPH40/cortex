@@ -528,7 +528,7 @@ class GrepTool:
         context_before = inp.get("before_context")
         context_after = inp.get("after_context")
         context_c = inp.get("context_lines")
-        context = inp.get("context")
+        context_lines = inp.get("context")
         show_line_numbers = inp.get("show_line_numbers", True)
         case_insensitive = inp.get("case_insensitive", False)
         head_limit = inp.get("head_limit")
@@ -585,8 +585,8 @@ class GrepTool:
         # Add context flags (-C/context takes precedence)
         # --------------------------------------------------------------
         if output_mode == 'content':
-            if context is not None:
-                args.extend(['-C', str(context)])
+            if context_lines is not None:
+                args.extend(['-C', str(context_lines)])
             elif context_c is not None:
                 args.extend(['-C', str(context_c)])
             else:

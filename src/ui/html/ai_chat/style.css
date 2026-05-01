@@ -4258,6 +4258,18 @@ body.loaded #loading-overlay {
     border: 1px solid rgba(255, 255, 255, 0.04);
 }
 
+.ta-item.ta-thought.collapsed .ta-thought-stream {
+    display: none;
+}
+
+.ta-item.ta-thought.expanded .ta-thought-stream {
+    display: block;
+}
+
+.ta-item.ta-thought.expanded .ta-item-chevron {
+    transform: rotate(90deg);
+}
+
 .ta-item-status {
     flex-shrink: 0;
     display: flex;

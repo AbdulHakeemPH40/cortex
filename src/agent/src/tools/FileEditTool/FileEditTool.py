@@ -19,6 +19,15 @@ from .constants import (
     FILE_UNEXPECTEDLY_MODIFIED_ERROR,
 )
 
+# Import patch utilities from utils.py
+try:
+    from .utils import get_patch_for_edit
+except ImportError:
+    # Fallback: define a simple version if utils.py is not available
+    def get_patch_for_edit(**kwargs):
+        """Fallback patch generator - returns empty patch."""
+        return {"patch": [], "updatedFile": kwargs.get("new_string", "")}
+
 # Import MAX_EDIT_FILE_SIZE from constants or define locally
 try:
     from .constants import MAX_EDIT_FILE_SIZE

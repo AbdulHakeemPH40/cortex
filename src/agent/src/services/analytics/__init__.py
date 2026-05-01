@@ -1,34 +1,30 @@
+"""Analytics package facade.
+
+This module intentionally provides lightweight no-op shims so package imports
+remain stable even when the full analytics runtime is not wired.
 """
-Auto-converted from index.ts
-TODO: Review and refine type annotations
-"""
 
-from typing import Any, Dict, List, Optional
-from dataclasses import dataclass, field
-from enum import Enum
+from typing import Any, Mapping, Optional
 
 
-def attachAnalyticsSink(self, newSink: AnalyticsSink) -> None:
-    """TODO: Implement attachAnalyticsSink"""
-    pass
+def attachAnalyticsSink(new_sink: Any) -> None:
+    """Register analytics sink (no-op shim)."""
+    _ = new_sink
 
 
-def logEvent(self, eventName: str, // intentionally no strings unless AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, // to avoid accidentally logging code/filepaths
-  metadata: LogEventMetadata) -> None:
-    """TODO: Implement logEvent"""
-    pass
+def logEvent(event_name: str, metadata: Optional[Mapping[str, Any]] = None) -> None:
+    """Record analytics event (no-op shim)."""
+    _ = (event_name, metadata)
 
 
-def logEventAsync(self, eventName: str, // intentionally no strings, to avoid accidentally logging code/filepaths
-  metadata: LogEventMetadata) -> None:
-    """TODO: Implement logEventAsync"""
-    pass
+def logEventAsync(event_name: str, metadata: Optional[Mapping[str, Any]] = None) -> None:
+    """Record analytics event asynchronously (no-op shim)."""
+    _ = (event_name, metadata)
 
 
-def _resetForTesting(self) -> None:
-    """TODO: Implement _resetForTesting"""
-    pass
+def _resetForTesting() -> None:
+    """Reset analytics test state (no-op shim)."""
+    return None
 
 
-
-__all__ = ['attachAnalyticsSink', 'logEvent', 'logEventAsync', '_resetForTesting']
+__all__ = ["attachAnalyticsSink", "logEvent", "logEventAsync", "_resetForTesting"]

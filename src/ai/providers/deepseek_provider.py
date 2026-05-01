@@ -11,7 +11,9 @@ Note: deepseek-chat and deepseek-reasoner will be retired after Jul 24th, 2026
 
 import os
 import json
+import random
 import re
+import time
 from typing import List, Dict, Any, Generator, Optional
 import requests
 from src.utils.logger import get_logger
@@ -40,14 +42,18 @@ DEEPSEEK_PERFORMANCE = {
 
 class DeepSeekProvider(BaseProvider):
     """DeepSeek API Provider - Supports V4 models with 1M context length"""
-    
+
     def __init__(self):
         # Initialize base class with DEEPSEEK provider type
         super().__init__(ProviderType.DEEPSEEK)
         self.api_key = os.getenv("DEEPSEEK_API_KEY", "")
         self._base_url = "https://api.deepseek.com/v1"
         self._token_count = {"input": 0, "output": 0}
-        
+        self._session = requests.Session()
+        self._max_retries = 2
+        self._retry_delay = 1.0
+        self._timeout = 120.0
+
         if not self.api_key:
             log.warning("DEEPSEEK_API_KEY not configured")
     
@@ -296,114 +302,145 @@ class DeepSeekProvider(BaseProvider):
             log.debug("[DEEPSEEK DEBUG] No tools in request")
         
         url = f"{self._base_url}/chat/completions"
-        
-        try:
-            if stream:
-                response = requests.post(url, headers=headers, json=payload, stream=True, timeout=120)
-                if not response.ok:
+
+        retry_callback = kwargs.pop("retry_callback", None)
+        max_retries = self._max_retries
+        last_error: Optional[Exception] = None
+
+        for attempt in range(max_retries + 1):
+            if attempt > 0:
+                backoff = self._retry_delay * (2 ** (attempt - 1)) + random.random()
+                if retry_callback:
                     try:
-                        log.error("[DeepSeek] API error response: %s", json.dumps(response.json(), indent=2))
+                        retry_callback(attempt + 1, max_retries + 1, 'error')
                     except Exception:
-                        log.error("[DeepSeek] API error response (text): %s", response.text[:1000])
-                response.raise_for_status()
-                
-                for line in response.iter_lines():
-                    if line:
-                        try:
-                            line_text = line.decode('utf-8', errors='replace').strip()
-                        except UnicodeDecodeError as e:
-                            log.warning(f"[DeepSeek] Unicode decode error: {e}")
-                            line_text = line.decode('utf-8', errors='replace').strip()
-                        
-                        if line_text.startswith('data: '):
-                            data_str = line_text[6:]
-                            
-                            if data_str.strip() == '[DONE]':
-                                break
-                            
-                            try:
-                                data = json.loads(data_str)
-                                if 'choices' in data and len(data['choices']) > 0:
-                                    delta = data['choices'][0].get('delta', {})
-                                    # Handle content, reasoning_content (V4 models), and tool_calls
-                                    content = delta.get('content', '')
-                                    reasoning = delta.get('reasoning_content', '')
-                                    tool_calls = delta.get('tool_calls', [])
-                                    
-                                    # Yield content if available
-                                    if content:
-                                        # Filter out corrupted/non-printable characters
-                                        # Remove replacement chars and control chars, BUT preserve \n (0x0a) and \t (0x09)
-                                        content = re.sub(r'[\ufffd\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]', '', content)
-                                        # Preserve whitespace-only chunks to avoid breaking token spacing.
-                                        if content:
-                                            yield content
-                                    # Consume reasoning chunks internally so they are not rendered as
-                                    # visible "[THINK]" text in the main assistant output stream.
-                                    elif reasoning:
-                                        # Also sanitize reasoning content for safety/debug visibility.
-                                        reasoning = re.sub(r'[\ufffd\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]', '', reasoning)
-                                        if reasoning:
-                                            log.debug("[DeepSeek] Received reasoning_content chunk (%d chars)", len(reasoning))
-                                            yield f"__REASONING_DELTA__:{reasoning}"
-                                    
-                                    # Handle tool calls
-                                    if tool_calls:
-                                        tool_call_data: List[Dict[str, Any]] = []
-                                        for tc in tool_calls:
-                                            tc_info: Dict[str, Any] = {
-                                                'index': tc.get('index', 0),
-                                                'id': tc.get('id', ''),
-                                                'function': {
-                                                    'name': tc.get('function', {}).get('name', ''),
-                                                    'arguments': tc.get('function', {}).get('arguments', '')
-                                               }
-                                            }
-                                            tool_call_data.append(tc_info)
-                                        yield f"__TOOL_CALL_DELTA__:{json.dumps(tool_call_data)}"
-                                    
-                                    # Track tokens if available
-                                    if 'usage' in data:
-                                        self._token_count["input"] = data['usage'].get('prompt_tokens', 0)
-                                        self._token_count["output"] = data['usage'].get('completion_tokens', 0)
-                                        
-                            except json.JSONDecodeError as e:
-                                log.error(f"Failed to parse SSE data: {e}")
-                                continue
-                                
-            else:
-                response = requests.post(url, headers=headers, json=payload, timeout=120)
-                if not response.ok:
-                    try:
-                        log.error("[DeepSeek] API error response: %s", json.dumps(response.json(), indent=2))
-                    except Exception:
-                        log.error("[DeepSeek] API error response (text): %s", response.text[:1000])
-                response.raise_for_status()
-                
-                result = response.json()
-                
-                # Track tokens
-                if 'usage' in result:
-                    self._token_count["input"] = result['usage'].get('prompt_tokens', 0)
-                    self._token_count["output"] = result['usage'].get('completion_tokens', 0)
-                
-                content = result['choices'][0]['message']['content']
-                yield content
-                
-        except requests.exceptions.RequestException as e:
-            detail = ""
+                        pass
+                time.sleep(backoff)
+
             try:
-                if e.response is not None:
-                    detail = (e.response.text or "")[:1000]
-            except Exception:
+                if stream:
+                    response = self._session.post(
+                        url, headers=headers, json=payload, stream=True, timeout=self._timeout,
+                    )
+                    if not response.ok:
+                        try:
+                            log.error("[DeepSeek] API error: %s", json.dumps(response.json(), indent=2))
+                        except Exception:
+                            log.error("[DeepSeek] API error: %s", response.text[:1000])
+                    response.raise_for_status()
+
+                    for line in response.iter_lines():
+                        if line:
+                            try:
+                                line_text = line.decode('utf-8', errors='replace').strip()
+                            except UnicodeDecodeError as e:
+                                log.warning(f"[DeepSeek] Unicode decode error: {e}")
+                                line_text = line.decode('utf-8', errors='replace').strip()
+
+                            if line_text.startswith('data: '):
+                                data_str = line_text[6:]
+
+                                if data_str.strip() == '[DONE]':
+                                    break
+
+                                try:
+                                    data = json.loads(data_str)
+                                    if 'choices' in data and len(data['choices']) > 0:
+                                        delta = data['choices'][0].get('delta', {})
+                                        content = delta.get('content', '')
+                                        reasoning = delta.get('reasoning_content', '')
+                                        tool_calls = delta.get('tool_calls', [])
+
+                                        if content:
+                                            content = re.sub(r'[\ufffd\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]', '', content)
+                                            if content:
+                                                yield content
+                                        elif reasoning:
+                                            reasoning = re.sub(r'[\ufffd\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]', '', reasoning)
+                                            if reasoning:
+                                                log.debug("[DeepSeek] Received reasoning_content chunk (%d chars)", len(reasoning))
+                                                yield f"__REASONING_DELTA__:{reasoning}"
+
+                                        if tool_calls:
+                                            tool_call_data: List[Dict[str, Any]] = []
+                                            for tc in tool_calls:
+                                                tool_call_data.append({
+                                                    'index': tc.get('index', 0),
+                                                    'id': tc.get('id', ''),
+                                                    'function': {
+                                                        'name': tc.get('function', {}).get('name', ''),
+                                                        'arguments': tc.get('function', {}).get('arguments', '')
+                                                    }
+                                                })
+                                            yield f"__TOOL_CALL_DELTA__:{json.dumps(tool_call_data)}"
+
+                                        if 'usage' in data:
+                                            self._token_count["input"] = data['usage'].get('prompt_tokens', 0)
+                                            self._token_count["output"] = data['usage'].get('completion_tokens', 0)
+
+                                except json.JSONDecodeError as e:
+                                    log.error(f"Failed to parse SSE data: {e}")
+                                    continue
+                    return  # Successfully streamed — exit retry loop
+
+                else:
+                    response = self._session.post(
+                        url, headers=headers, json=payload, timeout=self._timeout,
+                    )
+                    if not response.ok:
+                        try:
+                            log.error("[DeepSeek] API error: %s", json.dumps(response.json(), indent=2))
+                        except Exception:
+                            log.error("[DeepSeek] API error: %s", response.text[:1000])
+                    response.raise_for_status()
+
+                    result = response.json()
+
+                    if 'usage' in result:
+                        self._token_count["input"] = result['usage'].get('prompt_tokens', 0)
+                        self._token_count["output"] = result['usage'].get('completion_tokens', 0)
+
+                    content = result['choices'][0]['message']['content']
+                    yield content
+                    return  # Success — exit retry loop
+
+            except requests.exceptions.Timeout:
+                last_error = Exception(f"DeepSeek API timeout after {self._timeout}s")
+                log.warning(f"[DeepSeek] Timeout (attempt {attempt + 1}/{max_retries + 1})")
+                if attempt < max_retries:
+                    continue
+                raise last_error
+            except requests.exceptions.HTTPError as e:
+                status = e.response.status_code if e.response is not None else 0
+                if status in (429, 502, 503, 504) and attempt < max_retries:
+                    log.warning(f"[DeepSeek] Transient error {status} (attempt {attempt + 1}/{max_retries + 1})")
+                    time.sleep(self._retry_delay * (2 ** attempt))
+                    continue
                 detail = ""
-            log.error(f"DeepSeek API error: {e}")
-            if detail:
-                raise Exception(f"DeepSeek API request failed: {str(e)} | response: {detail}")
-            raise Exception(f"DeepSeek API request failed: {str(e)}")
-        except Exception as e:
-            log.error(f"Unexpected error: {e}")
-            raise
+                try:
+                    if e.response is not None:
+                        detail = (e.response.text or "")[:1000]
+                except Exception:
+                    pass
+                log.error(f"DeepSeek API HTTP {status}: {e}")
+                raise Exception(f"DeepSeek API HTTP {status}: {e} | {detail}" if detail else f"DeepSeek API HTTP {status}: {e}")
+            except requests.exceptions.RequestException as e:
+                last_error = e
+                log.warning(f"[DeepSeek] Request error (attempt {attempt + 1}/{max_retries + 1}): {e}")
+                if attempt < max_retries:
+                    continue
+                detail = ""
+                try:
+                    if e.response is not None:
+                        detail = (e.response.text or "")[:1000]
+                except Exception:
+                    detail = ""
+                if detail:
+                    raise Exception(f"DeepSeek API request failed: {str(e)} | response: {detail}")
+                raise Exception(f"DeepSeek API request failed: {str(e)}")
+
+        # Should not reach here, but fallback
+        raise last_error or Exception("DeepSeek API call failed after all retries")
     
     def chat(self, 
              messages: List[ChatMessage], 
@@ -415,10 +452,9 @@ class DeepSeekProvider(BaseProvider):
              tool_choice: Optional[str] = None,
              **kwargs: Any) -> ChatResponse:
         """Send chat request to DeepSeek API and return ChatResponse.
-        
+
         This implements the BaseProvider abstract method.
         """
-        import time
         start_time = time.time()
         
         # Convert ChatMessage objects to dict format

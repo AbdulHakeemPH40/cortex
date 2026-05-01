@@ -308,6 +308,10 @@ var userScrolled = false; // Track if user manually scrolled
 var _taskSummaryBuffer = ""; // Accumulates <task_summary>...</task_summary> during streaming
 var _inTaskSummary = false;  // True while receiving a task_summary block
 
+// -- CHUNK QUEUE (Phase C: prevent race conditions between consecutive onChunk calls) --
+var _chunkQueue = [];          // Queued chunks waiting to be processed
+var _chunkProcessing = false;  // True while a chunk is being processed
+
 
 // -- TASK COMPLETION TRACKING -----------------------------------------
 var _taskActivities = [];
@@ -3273,11 +3277,15 @@ function _taHasItems(groupEl) {
 }
 
 function _taEnsureGroup(container, forceNew) {
-    if (forceNew && _taCurrentGroup && _taHasItems(_taCurrentGroup)) {
-        _taCurrentGroup.classList.add('collapsed');
-        _taMarkGroupComplete();
-        _taCurrentGroup = null;
+    // Keep a single reusable activity container instead of creating a new one
+    // for every thought burst/turn.
+    if (!_taCurrentGroup || !document.body.contains(_taCurrentGroup)) {
+        var existingGroups = container ? container.querySelectorAll('.ta-group') : null;
+        if (existingGroups && existingGroups.length > 0) {
+            _taCurrentGroup = existingGroups[existingGroups.length - 1];
+        }
     }
+
     if (!_taCurrentGroup || !document.body.contains(_taCurrentGroup)) {
         _taCurrentGroup = _taCreateGroup(container);
         _taFileCount = 0;
@@ -3298,6 +3306,9 @@ function _taEnsureSection(sectionKey) {
     var meta = _TA_SECTION_META[sectionKey] || _TA_SECTION_META.other;
     var section = document.createElement('div');
     section.className = 'ta-section';
+    if (sectionKey === 'thought') {
+        section.classList.add('collapsed');
+    }
     section.dataset.section = sectionKey;
     section.innerHTML =
         '<div class="ta-section-header">' +
@@ -3530,13 +3541,16 @@ function _taRenderThought(itemsEl, status, text) {
     _taStats.thoughts++;
     var seed = (text && String(text)) ? String(text) : '';
     var item = document.createElement('div');
-    item.className = 'ta-item';
+    item.className = 'ta-item ta-thought collapsed';
     item.dataset.taType = 'thought';
     item.dataset.taKey = 'thought-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
     item.dataset.taState = 'running';
     item.dataset.taThoughtText = seed;
     item.innerHTML =
         '<div class="ta-item-header">' +
+            '<svg class="ta-item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+                '<polyline points="9 18 15 12 9 6"></polyline>' +
+            '</svg>' +
             '<span class="ta-item-icon" style="color:#a78bfa;">&#129504;</span>' +
             '<span class="ta-item-label">' +
                 '<span class="ta-highlight">Thought</span>' +
@@ -3545,6 +3559,14 @@ function _taRenderThought(itemsEl, status, text) {
             '<span class="ta-item-status"><span class="ta-spinner"></span></span>' +
         '</div>' +
         '<div class="ta-thought-stream">Thinking...</div>';
+    var header = item.querySelector('.ta-item-header');
+    if (header) {
+        header.onclick = function(e) {
+            e.stopPropagation();
+            item.classList.toggle('expanded');
+            item.classList.toggle('collapsed');
+        };
+    }
     itemsEl.appendChild(item);
     applyThoughtUi(item);
 }
@@ -4658,7 +4680,7 @@ function showThinking() {
     }
 
     // Route thinking into the same Explore dropdown used for tool activity.
-    var group = _taEnsureGroup(container, true);
+    var group = _taEnsureGroup(container, false);
     var itemsEl = group ? _taGetSectionItems('thinking') : null;
     if (itemsEl) {
         _taRenderThought(itemsEl, 'running', 'Thinking');
@@ -5032,6 +5054,23 @@ function startStreaming() {
 }
 
 function onChunk(chunk) {
+    // Queue the chunk to avoid race conditions between consecutive runJavaScript calls
+    _chunkQueue.push(String(chunk));
+    if (!_chunkProcessing) {
+        _chunkProcessing = true;
+        _processChunkQueue();
+    }
+}
+
+function _processChunkQueue() {
+    while (_chunkQueue.length > 0) {
+        var chunk = _chunkQueue.shift();
+        _processSingleChunk(chunk);
+    }
+    _chunkProcessing = false;
+}
+
+function _processSingleChunk(chunk) {
     if (chunk === undefined || chunk === null) {
         console.warn('[JS] onChunk received undefined/null chunk');
         return;
@@ -5135,7 +5174,7 @@ function onChunk(chunk) {
     // Accumulate raw content (INCLUDING custom tags - stripped at render time)
     currentContent += chunk;
 
-    // Throttled Rendering (200ms debounce - increased to reduce UI freezing during terminal streaming)
+    // Throttled Rendering (200ms debounce)
     if (!renderPending) {
         renderPending = true;
         window._streamRenderTimeout = setTimeout(function() {
@@ -5144,6 +5183,7 @@ function onChunk(chunk) {
         }, 200);
     }
 }
+// End _processSingleChunk
 
 /**
  * Normalize markdown text for consistent rendering across all providers.
@@ -6013,6 +6053,12 @@ function onComplete() {
     hideThinking();
     collapseFecContainer();     // Must run first: FEC cards collapsed while currentActivitySection is still valid
     collapseActivitySection();  // Safe second call — if collapseFecContainer already ran collapseActivitySection internally this is a no-op
+
+    // Phase C: Clear any pending render timeout before doing final render
+    if (window._streamRenderTimeout) {
+        clearTimeout(window._streamRenderTimeout);
+        window._streamRenderTimeout = null;
+    }
 
     // If a debounced render is still pending (not yet fired), execute it
     // synchronously RIGHT NOW before reading contentDiv.innerHTML.

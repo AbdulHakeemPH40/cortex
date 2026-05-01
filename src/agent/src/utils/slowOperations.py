@@ -1,37 +1,44 @@
+"""slowOperations utilities (minimal Python implementation).
+
+Some converted modules depend on a few helpers from the TS version.
+This file intentionally provides small, synchronous-safe equivalents.
 """
-Auto-converted from slowOperations.ts
-TODO: Review and refine type annotations
-"""
 
-from typing import Any, Dict, List, Optional
-from dataclasses import dataclass, field
-from enum import Enum
+from __future__ import annotations
 
-
-def callerFrame(self, stack: Optional[str]) -> str:
-    """TODO: Implement callerFrame"""
-    pass
+import inspect
+import json
+from pathlib import Path
+from typing import Any, Optional
 
 
-def jsonStringify(self, value: Any, replacer: (this: unknown = None, key: str, value: Any) -> None:
-    """TODO: Implement jsonStringify"""
-    pass
+def callerFrame(stack: Optional[str] = None) -> str:
+    """Best-effort caller frame string for debugging."""
+    try:
+        frame = inspect.stack()[2]
+        return f"{frame.filename}:{frame.lineno}"
+    except Exception:
+        return ''
 
 
-def jsonStringify(self, value: Any, replacer: Any = None) -> None:
-    """TODO: Implement jsonStringify"""
-    pass
+def jsonParse(text: str) -> Any:
+    """Parse JSON text."""
+    return json.loads(text)
 
 
-def jsonStringify(self, value: Any, replacer: Any = None, key: str, value: Any) -> None:
-    """TODO: Implement jsonStringify"""
-    pass
+def jsonStringify(value: Any, replacer: Any = None, **kwargs: Any) -> str:
+    """Serialize to JSON text."""
+    return json.dumps(value, ensure_ascii=False)
 
 
-def writeFileSync_DEPRECATED(self, filePath: str, data: Any, options: WriteFileOptionsWithFlush = None) -> None:
-    """TODO: Implement writeFileSync_DEPRECATED"""
-    pass
+def writeFileSync_DEPRECATED(filePath: str, data: Any, options: Any = None) -> None:
+    """Legacy helper: write text to a file path."""
+    Path(filePath).write_text(str(data), encoding='utf-8')
 
 
-
-__all__ = ['callerFrame', 'jsonStringify', 'jsonStringify', 'jsonStringify', 'writeFileSync_DEPRECATED']
+__all__ = [
+    'callerFrame',
+    'jsonParse',
+    'jsonStringify',
+    'writeFileSync_DEPRECATED',
+]

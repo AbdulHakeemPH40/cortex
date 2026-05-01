@@ -121,3 +121,51 @@ def setAdditionalDirectoriesForCortexMd(directories: List[str]) -> None:
     """
     STATE.additional_directories_for_cortex_md = directories
 
+
+
+# ============================================================
+# Compatibility aliases (snake_case + camelCase)
+# Many converted modules still import the original TS-style names.
+# ============================================================
+
+# Extra feature flags used by some tools (default: off)
+if not hasattr(STATE, 'kairos_active'):
+    STATE.kairos_active = False
+if not hasattr(STATE, 'user_msg_opt_in'):
+    STATE.user_msg_opt_in = False
+
+
+def get_session_id() -> str:
+    return getSessionId()
+
+
+def getProjectRoot() -> str:
+    return get_project_root()
+
+
+def setProjectRoot(path: str) -> None:
+    set_project_root(path)
+
+
+def getOriginalCwd() -> str:
+    return get_original_cwd()
+
+
+def setOriginalCwd(cwd: str) -> None:
+    set_original_cwd(cwd)
+
+
+def getKairosActive() -> bool:
+    return bool(getattr(STATE, 'kairos_active', False))
+
+
+def setKairosActive(active: bool) -> None:
+    STATE.kairos_active = bool(active)
+
+
+def getUserMsgOptIn() -> bool:
+    return bool(getattr(STATE, 'user_msg_opt_in', False))
+
+
+def setUserMsgOptIn(active: bool) -> None:
+    STATE.user_msg_opt_in = bool(active)

@@ -299,7 +299,16 @@ class CrossProjectMemoryManager:
         
         if not project_mem:
             # No project version, use global
-            shutil.copy2(global_mem.file_path, dest_path)
+            try:
+                if global_mem.file_path and os.path.exists(global_mem.file_path):
+                    shutil.copy2(global_mem.file_path, dest_path)
+                else:
+                    with open(dest_path, 'w', encoding='utf-8') as f:
+                        f.write(global_mem.content or '')
+            except Exception as e:
+                log.error(f"[CrossProject] Failed to write global memory {global_mem.filename}: {e}")
+                with open(dest_path, 'w', encoding='utf-8') as f:
+                    f.write(global_mem.content or '')
             return
         
         # Both exist: project wins, but preserve global insights
@@ -356,7 +365,7 @@ class CrossProjectMemoryManager:
         
         return sections
     
-    def _sections_similar(self, section1: str, section2: str, threshold: float = 0.7) -> bool:
+    def _sections_similar(self, section1: str, section2: str, threshold: float = 0.4) -> bool:
         """Check if two sections are similar."""
         # Simple keyword overlap
         words1 = set(section1.lower().split())
@@ -383,10 +392,25 @@ class CrossProjectMemoryManager:
         Returns:
             Path to global memory file, or None
         """
-        project_memory_dir = self.get_project_memory_dir(project_root)
-        source_path = os.path.join(project_memory_dir, filename)
-        
-        if not os.path.exists(source_path):
+        # Project memories may live in the project itself (standard) or in the
+        # manager-managed shared-project directory. Check both.
+        candidates = [
+            os.path.join(project_root, '.cortex', 'memories'),
+            os.path.join(project_root, '.cortex', 'memory'),
+            self.get_project_memory_dir(project_root),
+        ]
+
+        source_path = None
+        for d in candidates:
+            try:
+                p = os.path.join(d, filename)
+                if os.path.exists(p):
+                    source_path = p
+                    break
+            except Exception:
+                continue
+
+        if not source_path:
             log.error(f"[CrossProject] Project memory not found: {filename}")
             return None
         

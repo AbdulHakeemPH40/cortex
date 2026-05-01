@@ -55,7 +55,23 @@ class EventType(Enum):
     # Git events
     GIT_STATUS_CHANGED = "git_status_changed"
     GIT_BRANCH_CHANGED = "git_branch_changed"
-    
+
+    # Task graph events
+    TASK_GRAPH_UPDATED = "task_graph_updated"
+
+    # Session events
+    SESSION_SAVED = "session_saved"
+    SESSION_LOADED = "session_loaded"
+
+    # Background worker events
+    WORKER_STARTED = "worker_started"
+    WORKER_STOPPED = "worker_stopped"
+    WORKER_TASK_DISPATCHED = "worker_task_dispatched"
+    WORKER_TASK_PROGRESS = "worker_task_progress"
+    WORKER_TASK_COMPLETED = "worker_task_completed"
+    WORKER_TASK_FAILED = "worker_task_failed"
+    WORKER_HEARTBEAT_MISSED = "worker_heartbeat_missed"
+
     # Completion events
     COMPLETION_SHOWN = "completion_shown"
     COMPLETION_HIDDEN = "completion_hidden"
