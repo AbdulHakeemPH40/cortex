@@ -7,9 +7,8 @@ import time
 import uuid as _uuid
 from pathlib import Path
 import threading
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Callable, Tuple, Type, Set, Protocol, cast
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from PyQt6.QtCore import QObject, pyqtSignal, QThread
 
@@ -139,7 +138,8 @@ class _ToolLimitsLike(Protocol):
 # EXTRACTED UTILITIES (Phase B refactor)
 # ============================================================
 from src.ai.circuit_breaker import ToolCircuitBreaker
-from src.ai.tool_executor import ToolExecutionEngine, ParsedToolCall
+from src.ai.tool_executor import ToolExecutionEngine
+from src.core.task_graph import TaskGraph, TaskNode, TaskStatus
 
 
 # ============================================================
@@ -1775,11 +1775,12 @@ class AgentWorker(QThread):
             # ── CRITICAL: Check if todos were auto-cancelled (incomplete) ──
             if getattr(self.bridge, '_todos_auto_cancelled', False):
                 _should_notify = False
-                log.warning(
-                    f"[WORKER] Notification BLOCKED: Todos were auto-cancelled (not completed). "
+                msg_text = (
+                    "[WORKER] Notification BLOCKED: Todos were auto-cancelled (not completed). "
                     f"AI made {_mutation_count} mutation(s) but tasks were NOT finished."
                 )
-                self.bridge._allow_notification = False
+                log.warning(msg_text)
+                self.bridge.allow_notification = False
                 self.bridge._todos_auto_cancelled = False  # Reset for next time
             
             # Check if there are pending todos
@@ -1794,7 +1795,8 @@ class AgentWorker(QThread):
                 if _pending_count > 0:
                     _should_notify = False
                     log.warning(
-                        f"[WORKER] Suppressing notification: {_pending_count} todo(s) still pending. "
+                        "[WORKER] Suppressing notification: " +
+                        f"{_pending_count} todo(s) still pending. " +
                         f"AI made {_mutation_count} mutation(s) but tasks incomplete."
                     )
                 
@@ -1803,7 +1805,7 @@ class AgentWorker(QThread):
                     # All marked complete but zero mutations = AI skipped work
                     _should_notify = False
                     log.warning(
-                        "[WORKER] Suppressing notification: Todos marked complete but NO mutations made. "
+                        "[WORKER] Suppressing notification: Todos marked complete but NO mutations made. " +
                         "AI tried to skip work!"
                     )
             
@@ -1813,26 +1815,20 @@ class AgentWorker(QThread):
             # message that was enqueued while _isGenerating was still True.
             if not self.bridge.stop_requested:
                 # Attach task completion metadata to response for notification control
-                _response_data = {
-                    "text": response or "",
-                    "should_notify": _should_notify,
-                    "pending_todos": _pending_count,
-                    "mutations": _mutation_count,
-                }
                 self.response_ready.emit(response or "")
                 
                 if _should_notify:
                     log.info(
-                        f"[WORKER] Notification allowed: {_mutation_count} mutation(s), "
+                        f"[WORKER] Notification allowed: {_mutation_count} mutation(s), " +
                         f"{_pending_count} pending todo(s) — task genuinely complete."
                     )
                     # Set flag for main_window to check before showing notification
-                    self.bridge._allow_notification = True
+                    self.bridge.allow_notification = True
                 else:
                     # Block notification - tasks incomplete
-                    self.bridge._allow_notification = False
+                    self.bridge.allow_notification = False
                     log.info(
-                        f"[WORKER] Notification BLOCKED: {_pending_count} pending todo(s), "
+                        f"[WORKER] Notification BLOCKED: {_pending_count} pending todo(s), " +
                         f"{_mutation_count} mutation(s) — AI must complete remaining tasks."
                     )
         except asyncio.CancelledError:
@@ -1962,7 +1958,7 @@ class CortexAgentBridge(QObject):
         # ── Circuit breaker & Tool Execution Engine (Phase B) ───────────
         self._tool_circuit_breaker: ToolCircuitBreaker = ToolCircuitBreaker(
             threshold=5,
-            repetitive_limit=4,
+            repetitive_limit=50,  # Allow 50 calls per tool before repetitive-limit kicks in (was 4, which killed Write after 4 edits)
         )
         self._tool_executor: ToolExecutionEngine = ToolExecutionEngine(self._tool_circuit_breaker)
         # Legacy aliases for backward compatibility
@@ -1970,7 +1966,6 @@ class CortexAgentBridge(QObject):
         self._disabled_tools: set = self._tool_circuit_breaker._disabled_tools
         self._tool_total_calls: Dict[str, int] = self._tool_circuit_breaker._total_calls
         self._session_tasks: Dict[str, Dict[str, Any]] = {}  # task_id -> task payload
-        self._task_graph: "TaskGraph" = None  # initialized on first use
         self._teams: Dict[str, Dict[str, Any]] = {}  # team_id -> team payload
 
         # ── Test verification state ────────────────────────────────────────
@@ -1991,7 +1986,6 @@ class CortexAgentBridge(QObject):
         self._sandbox_manager: Optional[Any] = None
 
         # ── Hierarchical task graph ───────────────────────────────────────
-        from src.core.task_graph import TaskGraph, TaskNode, TaskStatus
         self._task_graph: TaskGraph = TaskGraph()
 
         log.info("[BRIDGE] Initialising Cortex Agent Bridge")
@@ -2069,6 +2063,15 @@ class CortexAgentBridge(QObject):
         # Initialize file_edit_notification signal for WebChannel
         self.file_edit_notification = pyqtSignal(str, str, str)  # filePath, editType, status
         log.info("[BRIDGE] file_edit_notification signal initialized")
+
+    @property
+    def allow_notification(self) -> bool:
+        """Whether Windows notification should show after task completion."""
+        return self._allow_notification
+
+    @allow_notification.setter
+    def allow_notification(self, value: bool) -> None:
+        self._allow_notification = value
 
     @staticmethod
     def _connect_qt_signal(signal: Any, slot: Callable[..., Any]) -> None:
@@ -3064,7 +3067,7 @@ Use Markdown tables for structured data comparison:
                 # Keep agent loops bounded for responsiveness. Can be overridden.
                 try:
                     # Lower default improves first-action latency for typical IDE tasks.
-                    _max_turns_env = int(os.environ.get("CORTEX_MAX_AGENT_TURNS", "10"))
+                    _max_turns_env = int(os.environ.get("CORTEX_MAX_AGENT_TURNS", "25"))
                     if _max_turns_env > 0:
                         max_turns = min(max_turns, _max_turns_env)
                 except Exception:
@@ -3083,10 +3086,10 @@ Use Markdown tables for structured data comparison:
             # Track if agent has performed ANY write/edit operation
             # If no mutation after N turns, force aggressive action mode
             _mutation_turns = 0  # Turns with write/edit/bash operations
-            _READONLY_FORCE_ACTION_TURN = 4  # After this many turns, force action
-            _AGGRESSIVE_NUDGE_TURN = 6  # After this, use stronger language
+            _READONLY_FORCE_ACTION_TURN = 8  # Increased from 4 — give agent more reading/planning turns before nagging
+            _AGGRESSIVE_NUDGE_TURN = 12  # Increased from 6
             _has_mutated = False  # Track if ANY mutation has occurred this session
-            _POST_MUTATION_READ_LIMIT = 2  # Max reads allowed after mutation
+            _POST_MUTATION_READ_LIMIT = 5  # Increased from 2 — let agent read more files post-mutation before forcing verify
 
             _compacted_once = False  # Track if we already compacted
             _mistral_downgraded_once = False  # Per-request, timeout-triggered model fallback within Mistral
@@ -3186,11 +3189,15 @@ Use Markdown tables for structured data comparison:
                 }
                 active_tool_defs = _filter_tool_definitions(list(tool_defs), core_names)
                 
-                # After AI has made mutations, expand to full toolset
+                # After AI has made mutations, expand toolset slightly
+                # but DON'T dump all 19 tools — only add WebSearch + LSP
+                # for research/navigation, keep task/MCP/team tools excluded
+                # to save ~500+ lines of JSON per turn.
                 if self._session_mutation_count > 5:
-                    active_tool_defs = list(tool_defs)
+                    expanded_names = core_names | {"WebSearch", "LSP"}
+                    active_tool_defs = _filter_tool_definitions(list(tool_defs), expanded_names)
                     log.info(
-                        f"[TOOLS] Expanded to full toolset ({len(active_tool_defs)} tools) "
+                        f"[TOOLS] Expanded to {len(active_tool_defs)} tools "
                         f"after {self._session_mutation_count} mutations"
                     )
 
@@ -3433,8 +3440,8 @@ Use Markdown tables for structured data comparison:
                     # Case 1: No mutations yet and early turns - FORCE ACTION
                     if _mutation_turns == 0 and (turn + 1) <= 5:
                         log.warning(
-                            f"[BRIDGE] AI attempted to exit on turn {turn + 1} without making any changes. "
-                            f"Forcing action mode - injecting strong directive."
+                            f"[BRIDGE] AI attempted to exit on turn {turn + 1} without making any changes. " +
+                            "Forcing action mode - injecting strong directive."
                         )
                         _force_action_msg = (
                             f"STOP. You are trying to end the conversation on turn {turn + 1} without making ANY file changes. "
@@ -3454,17 +3461,17 @@ Use Markdown tables for structured data comparison:
                             if t.get("status") not in ("completed", "cancelled")
                         )
                         log.warning(
-                            f"[BRIDGE] AI tried to exit with {_pending_count} pending todos. "
-                            f"Requiring verification before allowing exit."
+                            f"[BRIDGE] AI tried to exit with {_pending_count} pending todos. " +
+                            "Requiring verification before allowing exit."
                         )
                         _verify_msg = (
-                            f"You have {_pending_count} incomplete task(s). Before ending:\n"
-                            f"1. Verify ALL your changes actually work\n"
-                            f"2. Complete remaining todos or mark them cancelled with explanation\n"
-                            f"3. Test the result (use Bash to run/test if needed)\n"
-                            f"4. Only then can you end the conversation\n\n"
-                            f"Pending tasks:\n"
-                            + "\n".join(f"  - {t['content']} [{t.get('status', 'pending')}]" for t in self._current_todos if t.get("status") not in ("completed", "cancelled"))
+                            f"You have {_pending_count} incomplete task(s). Before ending:\n" +
+                            "1. Verify ALL your changes actually work\n" +
+                            "2. Complete remaining todos or mark them cancelled with explanation\n" +
+                            "3. Test the result (use Bash to run/test if needed)\n" +
+                            "4. Only then can you end the conversation\n\n" +
+                            "Pending tasks:\n" +
+                            "\n".join(f"  - {t['content']} [{t.get('status', 'pending')}]" for t in self._current_todos if t.get("status") not in ("completed", "cancelled"))
                         )
                         messages.append(PCM(role="user", content=_verify_msg))
                         continue
@@ -3500,7 +3507,7 @@ Use Markdown tables for structured data comparison:
                 )
 
                 # ── Execute tools via ToolExecutionEngine (Phase B) ─
-                parsed_calls: List[ParsedToolCall] = []
+                parsed_calls: List[Tuple[str, str, Any]] = []
                 for tc in pending:
                     tool_name: str = str(tc["function"]["name"])
                     tool_id: str = str(tc["id"])
@@ -3513,9 +3520,7 @@ Use Markdown tables for structured data comparison:
 
                 _nudges = await _executor.execute_turn(
                     parsed_calls,
-                    lambda tn, ti, ta, msgs, pcm, lims: self._execute_single_tool(
-                        tn, ti, ta, msgs, pcm, lims
-                    ),
+                    self._execute_single_tool,
                     messages,
                     PCM,
                     _limits,
@@ -4121,7 +4126,7 @@ Use Markdown tables for structured data comparison:
     # Phase 1: Replace keyword-nudge verification with actual test
     # execution analysis.  See plan: frolicking-singing-garden.md
 
-    _TEST_CONFIG_FILES: Dict[str, str] = {
+    _TEST_CONFIG_FILES: Dict[str, Tuple[str, ...]] = {
         "pytest":       ("pytest.ini", "setup.cfg", "pyproject.toml", "tox.ini"),
         "unittest":     ("",),  # built-in; always available
         "node":         ("package.json",),
@@ -4364,8 +4369,8 @@ Use Markdown tables for structured data comparison:
         dl_data: dict = snapshot.get("debug_loop", {})
         if dl_data and dl_data.get("state", "idle") != "idle":
             try:
-                from src.core.debug_loop import DebugLoop, DebugLoopState
-                dl_state = DebugLoopState.from_str(dl_data.get("state", "idle"))
+                from src.core.debug_loop import DebugLoopState
+                dl_state = DebugLoopState(dl_data.get("state", "idle"))
                 self._debug_loop.cycle_count = dl_data.get("cycle_count", 0)
                 self._debug_loop.state = dl_state
                 self._debug_loop.failed_tool_name = dl_data.get("failed_tool_name", "")
@@ -4438,15 +4443,15 @@ Use Markdown tables for structured data comparison:
                     decision = _auto_mgr.check_action(tool_name, args)
                     if decision.requires_permission:
                         log.info(f"[AUTONOMY] Blocked {tool_name} (mode={decision.autonomy_level.value}): {decision.reason}")
-                        from src.core.tool_result import ToolResult
                         return ToolResult(
+                            tool_id=tool_id,
+                            result=None,
                             success=False,
                             error=(
                                 f"[Autonomy] Action requires permission: {decision.reason}. "
                                 f"Current mode: {decision.autonomy_level.value.upper()}. "
                                 f"Switch to ASK mode or adjust autonomy level."
                             ),
-                            tool_id=tool_id,
                         )
             except ImportError:
                 pass
@@ -4498,11 +4503,11 @@ Use Markdown tables for structured data comparison:
                 if self._sandbox_manager and self._sandbox_manager.is_enabled():
                     allowed, reason = self._sandbox_manager.is_command_allowed(command)
                     if not allowed:
-                        from src.core.tool_result import ToolResult
                         result = ToolResult(
+                            tool_id=tool_id,
+                            result=None,
                             success=False,
                             error=f"[Sandbox] Command blocked: {reason}",
-                            tool_id=tool_id,
                         )
                         return result
                 result = await self._bash_tool.execute(args)
@@ -5846,13 +5851,9 @@ Use Markdown tables for structured data comparison:
 
         # Emit event
         try:
-            from src.core.event_bus import ComponentEventBus, EventType
-            bus = ComponentEventBus.get_instance()
-            bus.emit(EventType.TASK_GRAPH_UPDATED, {
-                "action": "create",
-                "taskId": task_id,
-                "task": task,
-            })
+            from src.core.event_bus import get_event_bus, EventType, EventData
+            bus = get_event_bus()
+            bus.publish(EventType.TASK_GRAPH_UPDATED, EventData(source_component="agent_bridge"))
         except Exception:
             pass
 
@@ -5926,13 +5927,9 @@ Use Markdown tables for structured data comparison:
 
         # Emit event
         try:
-            from src.core.event_bus import ComponentEventBus, EventType
-            bus = ComponentEventBus.get_instance()
-            bus.emit(EventType.TASK_GRAPH_UPDATED, {
-                "action": "update",
-                "taskId": task_id,
-                "task": task,
-            })
+            from src.core.event_bus import get_event_bus, EventType, EventData
+            bus = get_event_bus()
+            bus.publish(EventType.TASK_GRAPH_UPDATED, EventData(source_component="agent_bridge"))
         except Exception:
             pass
 

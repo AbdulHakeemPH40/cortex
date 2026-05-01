@@ -229,7 +229,11 @@ class EnhancedAIChatWidget(QWidget):
     
     def on_complete(self, full_text: str):
         """Handle AI completion"""
-        self._view.page().runJavaScript("if(window.onComplete) window.onComplete();")
+        # Must pass full_text to JS onComplete to avoid undefined — matches on_chunk escaping
+        safe_text = full_text.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
+        self._view.page().runJavaScript(
+            f"if(window.onComplete) window.onComplete('{safe_text}');"
+        )
     
     def on_error(self, error: str):
         """Handle error"""

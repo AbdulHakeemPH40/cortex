@@ -2233,6 +2233,13 @@ code:not(pre code) {
     margin: 16px 0;
 }
 
+/* Prevent images from overflowing the message container */
+.message-content img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 6px;
+}
+
 /* ================================================
    THINKING INDICATOR
    ================================================ */

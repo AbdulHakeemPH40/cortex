@@ -97,7 +97,7 @@ class ModelLimits:
         # Larger context → agent can afford more tool-call round-trips
         # BUT we cap it to prevent analysis paralysis (especially for DeepSeek)
         if self.context_window >= 200_000:
-            self.max_turns = 15  # Reduced from 40 to prevent endless loops
+            self.max_turns = 25  # Increased from 15 for complex multi-step tasks
         elif self.context_window >= 100_000:
             self.max_turns = 30
         elif self.context_window >= 32_000:
@@ -125,7 +125,7 @@ class ModelLimits:
 
 def _deepseek_max_output_tokens() -> int:
     """Configurable DeepSeek output cap (default: 16384, override via env)."""
-    raw = os.environ.get("CORTEX_DEEPSEEK_MAX_OUTPUT_TOKENS", "16384")
+    raw = os.environ.get("CORTEX_DEEPSEEK_MAX_OUTPUT_TOKENS", "32768")
     try:
         parsed = int(raw)
         if parsed > 0:

@@ -1778,6 +1778,10 @@ class AIChatWidget(QWidget):
         self._view.loadFinished.connect(self._on_page_loaded)
         self._page_loaded = False
         self._pending_project_info = None
+
+        # Handle render process crashes (e.g. OOM, GPU hang)
+        self._view.page().renderProcessTerminated.connect(self._on_render_process_terminated)
+
         layout.addWidget(self._view)
         
         # DEFERRED LOAD: Minimal delay for cache clearing to flush
@@ -1826,22 +1830,41 @@ class AIChatWidget(QWidget):
         else:
             _log.error("[AI_CHAT] Page load failed!")
 
+    def _on_render_process_terminated(self, termination_type: int):
+        """Handle QWebEnginePage render process crash."""
+        import logging as _log
+        reasons = {0: "normal exit", 1: "abnormal termination", 2: "crashed", 3: "killed"}
+        reason = reasons.get(termination_type, f"unknown ({termination_type})")
+        _log.error(f"[AI_CHAT] Render process terminated: {reason}. Reloading...")
+        self._page_loaded = False
+        # Reload the page to recover
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(500, self._delayed_load_page)
+
     def on_chunk(self, chunk):
         """Handle AI streaming chunk - accumulate buffer and push to JS."""
         import logging as _log
+
+        # Guard: don't push chunks before the page/bridge is ready
+        if not self._page_loaded:
+            self._response_buffer += chunk
+            _log.debug(f"[AI_CHAT] page not loaded yet, buffering: {len(chunk)} chars")
+            return
+
         self._response_buffer += chunk
 
-        # Debounce JS calls: batch rapid small chunks to avoid UI flooding
+        # Debounce JS calls: batch rapid small chunks to avoid UI flooding.
+        # Always send the full accumulated buffer so JS has complete state.
         if not self._js_call_pending:
             self._js_call_pending = True
-            safe_chunk = json.dumps(chunk)
+            safe = json.dumps(self._response_buffer)
             self._view.page().runJavaScript(
-                f"if(window.onChunk) window.onChunk({safe_chunk});",
+                f"if(window.onChunk) window.onChunk({safe});",
                 lambda result: None
             )
-            _log.debug(f"[AI_CHAT] chunk pushed: {len(chunk)} chars")
+            _log.debug(f"[AI_CHAT] chunk pushed: {len(chunk)} chars, total: {len(self._response_buffer)}")
         else:
-            # When debounced, push deltas after a short coalescing window
+            # Debounced — schedule a flush with the full buffer
             if self._js_call_timer is None:
                 try:
                     from PyQt6.QtCore import QTimer
@@ -1849,28 +1872,28 @@ class AIChatWidget(QWidget):
                     self._js_call_timer.setSingleShot(True)
                     self._js_call_timer.timeout.connect(self._flush_chunk_buffer)
                 except Exception:
-                    # Fallback: push directly if QTimer unavailable
-                    safe_chunk = json.dumps(chunk)
+                    # Fallback: push full buffer directly if QTimer unavailable
+                    safe = json.dumps(self._response_buffer)
                     self._view.page().runJavaScript(
-                        f"if(window.onChunk) window.onChunk({safe_chunk});",
+                        f"if(window.onChunk) window.onChunk({safe});",
                         lambda result: None
                     )
+                    self._js_call_pending = True
                     return
             if not self._js_call_timer.isActive():
                 self._js_call_timer.start(40)  # 40ms coalescing window
 
     def _flush_chunk_buffer(self):
-        """Flush accumulated buffer to JS after debounce."""
+        """Flush accumulated buffer to JS after debounce — sends full text."""
         import logging as _log
-        self._js_call_pending = False
-        # Push current accumulated chunk
         if self._response_buffer:
-            safe = json.dumps(self._response_buffer[-200:])  # Push last 200 chars delta
+            safe = json.dumps(self._response_buffer)
             self._view.page().runJavaScript(
                 f"if(window.onChunk) window.onChunk({safe});",
                 lambda result: None
             )
-            _log.debug(f"[AI_CHAT] debounced flush: last 200 chars")
+            _log.debug(f"[AI_CHAT] debounced flush: {len(self._response_buffer)} chars")
+        self._js_call_pending = False
 
     def on_complete(self, full_response=None):
         """Handle completion of the AI response — pass full buffered text to JS."""
@@ -3789,4 +3812,11 @@ class AIChatWidget(QWidget):
             self._pty_process.terminate()
         if self._terminal_process:
             self._terminal_process.terminate()
+        # Clean up QWebEngine resources
+        if hasattr(self, '_channel'):
+            self._channel = None
+        if hasattr(self, '_view') and self._view:
+            self._view.page().profile().clearHttpCache()
+            self._view.stop()
+            self._view.deleteLater()
         super().closeEvent(event)

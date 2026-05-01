@@ -317,11 +317,6 @@ var _chunkProcessing = false;  // True while a chunk is being processed
 var _taskActivities = [];
 var _taskStartTime = null;
 
-function startTaskTracking(prompt) {
-    _taskActivities = [];
-    _taskStartTime = Date.now();
-}
-
 function trackActivity(type, detail, status) {
     _taskActivities.push({ type: type, detail: detail, status: status, time: Date.now() });
 }
@@ -1017,6 +1012,12 @@ function initBridge() {
     var transport = (window.qt && window.qt.webChannelTransport) || (typeof qt !== 'undefined' && qt.webChannelTransport);
 
     if (typeof QWebChannel === 'undefined' || !transport) {
+        if (window._bridgeRetryCount === undefined) window._bridgeRetryCount = 0;
+        window._bridgeRetryCount++;
+        if (window._bridgeRetryCount > 50) { // ~10s max
+            console.error("Cortex: Bridge init timed out after 50 retries (~10s)");
+            return;
+        }
         setTimeout(initBridge, 200);
         return;
     }
@@ -3270,12 +3271,6 @@ function _taTrackUniqueFile(pathLike) {
     _taFileCount++;
 }
 
-function _taHasItems(groupEl) {
-    if (!groupEl) return false;
-    var itemsEl = groupEl.querySelector('.ta-group-items');
-    return !!(itemsEl && itemsEl.children && itemsEl.children.length > 0);
-}
-
 function _taEnsureGroup(container, forceNew) {
     // Keep a single reusable activity container instead of creating a new one
     // for every thought burst/turn.
@@ -4407,46 +4402,6 @@ function formatActivityLabel(type, info, status) {
     return displayInfo;
 }
 
-function getStatusBadge(type, info) {
-    if (type === 'edit_file' || type === 'write_file') {
-        return '<span class="activity-badge applied">Applied</span>';
-    }
-    if (type === 'run_command') {
-        return '<span class="activity-badge completed">Completed</span>';
-    }
-    if (type === 'list_directory' && info.includes('items')) {
-        return '<span class="activity-badge completed">' + info + '</span>';
-    }
-    return '';
-}
-
-// Returns the animated operation badge pill for an activity item type
-function getActivityOpBadge(type) {
-    var label = '';
-    switch (type) {
-        case 'read_file':       label = 'Read';    break;
-        case 'edit_file':
-        case 'write_file':
-        case 'inject_after':
-        case 'add_import':      label = 'Edit';    break;
-        case 'create_file':     label = 'Create';  break;
-        case 'create_directory':label = 'Create';  break;
-        case 'delete_file':
-        case 'delete_directory':label = 'Delete';  break;
-        case 'list_directory':  label = 'Explore'; break;
-        case 'search':
-        case 'grep_code':
-        case 'search_files':
-        case 'search_codebase': label = 'Search';  break;
-        case 'run_command':     label = 'Run';     break;
-        default:
-            if (type && type.startsWith('terminal')) label = 'Run';
-            break;
-    }
-    if (!label) return '';
-    return '<span class="activity-op">' + label + '</span>';
-}
-
 
 // Render directory contents HTML (used for both live display and restoration)
 function renderDirectoryContents(path, contents) {
@@ -4555,13 +4510,6 @@ function showDirectoryContents(path, contents) {
     
     // Render the directory contents
     renderDirectoryContents(path, contents);
-}
-
-// Test function - can be called from console
-function testDirectoryDisplay() {
-    var testContent = "DIR agents/\nDIR skills/\nFILE plugin.json\nFILE main.py\nFILE script.js\nFILE index.html";
-    showDirectoryContents("test_folder", testContent);
-    console.log("Test directory display called");
 }
 
 // SVG file icons (VS Code style)
@@ -5006,15 +4954,6 @@ function getCfcFileIcon(ext) {
 
 var currentTodoList = [];
 
-function getStatusClass(status) {
-    switch (status) {
-        case 'COMPLETE': return 'completed';
-        case 'IN_PROGRESS': return 'in-progress';
-        case 'CANCELLED': return 'cancelled';
-        default: return 'pending';
-    }
-}
-
 function startStreaming() {
     console.log('[JS] startStreaming called');
     var container = document.getElementById('chatMessages');
@@ -5055,7 +4994,9 @@ function startStreaming() {
 
 function onChunk(chunk) {
     // Queue the chunk to avoid race conditions between consecutive runJavaScript calls
-    _totalChunksReceived = (_totalChunksReceived || 0) + 1;
+    var _totalChunksReceived = window._totalChunksReceived || 0;
+    _totalChunksReceived++;
+    window._totalChunksReceived = _totalChunksReceived;
     if (_CHAT_DEBUG && _totalChunksReceived % 50 === 1) {
         console.log('[CHAT] chunks received:', _totalChunksReceived, 'last len:', chunk.length);
     }
@@ -5086,6 +5027,18 @@ function _processSingleChunk(chunk) {
     }
     chunk = String(chunk);
     if (_CHAT_DEBUG) console.log('[JS] onChunk received:', chunk.substring(0, 50));
+
+    // Split-tag guard: if chunk starts or ends with an orphan tag boundary (e.g. chunk ending
+    // with '<' or starting with '>'), skip per-chunk special handling. The buffer accumulates
+    // all chunks, so updateStreamingUI() will process the complete tags on the full currentContent.
+    if (chunk.endsWith('<') || chunk.startsWith('>')) {
+        if (_CHAT_DEBUG) console.warn('[JS] chunk has split-tag boundary, deferring special checks');
+        // Still append content to the streaming buffer
+        currentContent += chunk;
+        updateStreamingUI();
+        return;
+    }
+
     var container = document.getElementById('chatMessages');
     if (!container) {
         console.error('[JS] chatMessages container not found in onChunk');
@@ -5180,8 +5133,10 @@ function _processSingleChunk(chunk) {
         if (emptyState) emptyState.remove();
     }
 
-    // Accumulate raw content (INCLUDING custom tags - stripped at render time)
-    currentContent += chunk;
+    // Use Python's full buffer as source of truth (replaces, not appends).
+    // Python sends the complete accumulated text each time, so JS always
+    // has consistent state even if a chunk was dropped by the debounce.
+    currentContent = chunk;
 
     // Throttled Rendering (200ms debounce)
     if (!renderPending) {
@@ -5696,10 +5651,28 @@ function convertSuggestionChips(html) {
 
 function updateStreamingUI() {
     var container = document.getElementById('chatMessages');
-    if (!currentAssistantMessage || !container) return;
+    if (!currentAssistantMessage || !container) {
+        // Fallback: if currentAssistantMessage was cleared mid-stream (e.g. clearChat),
+        // re-find the last assistant message bubble in the DOM
+        if (container) {
+            var lastBubble = container.querySelector('.message-bubble.assistant:last-of-type');
+            if (lastBubble) {
+                currentAssistantMessage = lastBubble;
+            } else {
+                return;
+            }
+        } else {
+            return;
+        }
+    }
 
     var contentDiv = currentAssistantMessage.querySelector('.message-content');
-    if (!contentDiv) return;
+    if (!contentDiv) {
+        // contentDiv might have been detached by virtualization — re-query fallback
+        var fallback = currentAssistantMessage.querySelector('.message-content');
+        if (!fallback) return;
+        contentDiv = fallback;
+    }
 
     try {
         // -- 1. Strip ALL custom tags before markdown render -----------------
@@ -5710,9 +5683,10 @@ function updateStreamingUI() {
             .replace(/<tasklist>[\s\S]*?<\/tasklist>/g, '')
             .replace(/<plan>[\s\S]*?<\/plan>/g, '')
             .replace(/<permission>[\s\S]*?<\/permission>/g, '')
-            .replace(/<THINK>[\s\S]*?<\/THINK>/gi, '')  // Strip DeepSeek thinking tags (case-insensitive)
-            .replace(/<think>[\s\S]*?<\/think>/gi, '')    // Strip DeepSeek think tags (case-insensitive)
-            .replace(/[\u2299\u229a\u25ce\u29bf\u2609]Thought\s*[\u00B7\u00b7\.\xB7]\s*\d+s\s*/g, '') // strip DeepSeek ⊙Thought · Xs
+            // Strip DeepSeek/Cursor think tags (case-insensitive covers both <think> and <THINK>)
+            .replace(/<think>[\s\S]*?<\/think>/gi, '')
+            // Strip "⊙Thought · Xs" timing line (covers circle/bullet/star Unicode variants)
+            .replace(/[\u2299\u229a\u25ce\u25cf\u2609\u2605\u2606]\s*Thought\s*[\u00B7\u00b7\.\xB7]\s*\d+s\s*/g, '')
             .trim();
 
         // -- 1b. Normalize markdown for consistent bold/italic rendering ----
@@ -5933,19 +5907,6 @@ function formatMarkdownFallback(text) {
     }
     
     return result.join('');
-}
-
-// Process inline markdown (bold, italic, code) - for use in text renderer (no HTML escaping)
-function processInlineMarkdownNoEscape(text) {
-    return text
-        // Bold - must come before italic
-        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-        .replace(/__(.+?)__/g, '<strong>$1</strong>')
-        // Italic
-        .replace(/\*(.+?)\*/g, '<em>$1</em>')
-        .replace(/_(.+?)_/g, '<em>$1</em>')
-        // Inline code
-        .replace(/`([^`]+)`/g, '<code>$1</code>');
 }
 
 // Process inline markdown with HTML escaping - for fallback parser
@@ -6978,22 +6939,6 @@ function highlightFileCreations(html) {
     });
     
     return html;
-}
-
-function copyToClipboard(btn) {
-    var container = btn.closest('.code-block-container');
-    var code = container.querySelector('code').innerText;
-    navigator.clipboard.writeText(code).then(function () {
-        var originalHtml = btn.innerHTML;
-        btn.innerHTML = '<i class="fas fa-check"></i>';
-        setTimeout(function () { btn.innerHTML = originalHtml; }, 2000);
-    });
-}
-
-function runCode(btn) {
-    var container = btn.closest('.code-block-container');
-    var code = container.querySelector('code').innerText;
-    if (bridge) bridge.on_run_command(code);
 }
 
 // --- Advanced Toolbar Logic ---
@@ -8557,24 +8502,6 @@ function injectFullCodeBlock(preEl) {
 }
 
 // ================================================================
-// GREP CARD
-// ================================================================
-function buildGrepCard(query, resultCount) {
-    var card = document.createElement('div');
-    card.className = 'grep-card';
-    var shortQuery = (query || '').length > 50 ? (query || '').slice(0, 50) + '...' : (query || '');
-    card.innerHTML =
-        '<div class="grep-left">' +
-            '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
-                '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>' +
-            '</svg>' +
-            '<span class="grep-label">Grepped code</span>' +
-        '</div>' +
-        '<div class="grep-query">' + escapeHtml(shortQuery) + '</div>' +
-        '<div class="grep-count">' + (resultCount || 0) + ' result' + ((resultCount || 0) !== 1 ? 's' : '') + '</div>';
-    return card;
-}
-
 // ================================================================
 // THOUGHT DURATION BADGE
 // ================================================================
@@ -9051,23 +8978,6 @@ function buildProjectTreeCard(rootPath, items) {
     return card;
 }
 
-function getFileEmoji(filename) {
-    var ext = (filename || '').split('.').pop().toLowerCase();
-    var map = {
-        'html': 'HTML', 'htm': 'HTML',
-        'js':   'JS', 'ts':  'TS', 'jsx': 'JSX', 'tsx': 'TSX',
-        'css':  'CSS', 'scss': 'SCSS',
-        'py':   'PY', 'java': 'JAVA', 'go':  'GO', 'rs':  'RS',
-        'json': 'JSON', 'yaml': 'YAML', 'yml': 'YML',
-        'md':   'MD', 'txt':  'TXT',
-        'png':  'PNG', 'jpg': 'JPG', 'svg': 'SVG',
-        'mp4':  'MP4', 'mp3':  'MP3',
-        'zip':  'ZIP', 'tar':  'TAR',
-        'sh':   'SH', 'bat':  'BAT',
-    };
-    return map[ext] || 'FILE';
-}
-
 function showProjectTreeCard(rootPath, items) {
     var container = document.getElementById('chatMessages');
     if (!container) return;
@@ -9181,20 +9091,6 @@ function toggleTerminalToolCard(headerEl) {
 }
 
 // Copy terminal command to clipboard
-function _copyTermCmd(cmd) {
-    if (!cmd) return;
-    navigator.clipboard.writeText(cmd).then(function() {
-        showToast && showToast('Command copied');
-    }).catch(function() {
-        var ta = document.createElement('textarea');
-        ta.value = cmd;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-    });
-}
-
 // Toggle terminal card expand / collapse (legacy .term-card style)
 function toggleTermCard(headerEl) {
     var card = headerEl.closest('.term-card');
