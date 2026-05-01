@@ -3309,22 +3309,38 @@ Use Markdown tables for structured data comparison:
                         # - allow larger answers when no tools are needed
                         # Always respect model cap (max_tokens) and remaining context budget.
                         if active_tool_defs:
-                            prompt_chars = len(message)
-                            tool_count = len(active_tool_defs)
                             remaining_ctx = max(0, int(_budget - _est_tokens))
-                            budget_cap = min(max_tokens, max(800, remaining_ctx // 4))
-
-                            # Complexity hint grows with prompt size, number of tools, and later turns.
-                            complexity_hint = prompt_chars + (tool_count * 120) + (turn * 300)
-                            # Keep tool turns lean for lower latency.
-                            tool_turn_upper_cap = min(max_tokens, 1_600)
-                            tool_turn_mid_cap = min(max_tokens, 900)
-                            if complexity_hint < 900:
-                                stream_max_tokens = min(max_tokens, 500)
-                            elif complexity_hint < 2400:
-                                stream_max_tokens = min(budget_cap, max(700, tool_turn_mid_cap))
+                            # ── Write/Edit/CreateFile need large output budget ──
+                            # These tools take a "content" parameter that can be
+                            # 30K+ chars (7,500+ tokens). The lean cap MUST be
+                            # lifted, otherwise the LLM hits the token ceiling
+                            # before finishing the arguments → empty args → failure.
+                            _large_content_tool_names = {"Write", "Edit", "CreateFile"}
+                            _has_large_content_tool = any(
+                                td.get("function", {}).get("name") in _large_content_tool_names
+                                for td in active_tool_defs
+                            )
+                            if _has_large_content_tool:
+                                # Allow up to 75% of model max or 32K — whichever is smaller.
+                                # Write/Edit turns MUST have room to output full file content.
+                                stream_max_tokens = min(max_tokens, max(8_192, remaining_ctx // 2)) if remaining_ctx else max_tokens
+                                log.info(f"[BRIDGE] Large-content tools active (Write/Edit) — stream cap raised to {stream_max_tokens}")
                             else:
-                                stream_max_tokens = min(budget_cap, max(1_000, tool_turn_upper_cap))
+                                prompt_chars = len(message)
+                                tool_count = len(active_tool_defs)
+                                budget_cap = min(max_tokens, max(800, remaining_ctx // 4))
+
+                                # Complexity hint grows with prompt size, number of tools, and later turns.
+                                complexity_hint = prompt_chars + (tool_count * 120) + (turn * 300)
+                                # Keep tool turns lean for lower latency.
+                                tool_turn_upper_cap = min(max_tokens, 1_600)
+                                tool_turn_mid_cap = min(max_tokens, 900)
+                                if complexity_hint < 900:
+                                    stream_max_tokens = min(max_tokens, 500)
+                                elif complexity_hint < 2400:
+                                    stream_max_tokens = min(budget_cap, max(700, tool_turn_mid_cap))
+                                else:
+                                    stream_max_tokens = min(budget_cap, max(1_000, tool_turn_upper_cap))
                         else:
                             # Final answer / no-tool turns can be larger, but keep bounded.
                             stream_max_tokens = min(max_tokens, 8_192)
@@ -3343,6 +3359,20 @@ Use Markdown tables for structured data comparison:
                             await asyncio.sleep(0)
                             if isinstance(chunk, str) and chunk.startswith("__TOOL_CALL_DELTA__:"):
                                 delta_list = json.loads(chunk[20:])
+                                # DIAGNOSTIC: Log tool call deltas at INFO for Write/Edit, DEBUG for others
+                                for _td in delta_list:
+                                    _fn = _td.get("function", {})
+                                    _args_val = _fn.get("arguments", "")
+                                    _tname = _fn.get("name", "")
+                                    _is_write_edit = _tname in ("Write", "Edit")
+                                    if _args_val:
+                                        if _is_write_edit:
+                                            log.info(f"[TOOL-DELTA] {_tname} args chunk: idx={_td.get('index')}, args_len={len(_args_val) if isinstance(_args_val, str) else 'N/A'}")
+                                        else:
+                                            log.debug(f"[TOOL-DELTA] idx={_td.get('index')}, name={_tname}, args_len={len(_args_val) if isinstance(_args_val, str) else 'N/A'}")
+                                    elif _is_write_edit:
+                                        # EMPTY args delta for Write/Edit — CRITICAL diagnostic
+                                        log.warning(f"[TOOL-DELTA] {_tname} EMPTY args! idx={_td.get('index')} — LLM sent name but no arguments in this delta")
                                 for td in delta_list:
                                     idx = td.get("index", 0)
                                     if idx not in tool_acc:
@@ -3552,10 +3582,31 @@ Use Markdown tables for structured data comparison:
                 for tc in pending:
                     tool_name: str = str(tc["function"]["name"])
                     tool_id: str = str(tc["id"])
+                    raw_args: Any = None
                     try:
                         raw_args = tc["function"]["arguments"]
-                        args: Any = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
-                    except json.JSONDecodeError:
+                        # DIAGNOSTIC: Log raw tool call arguments for Write/Edit at INFO level
+                        # to track whether accumulated arguments arrive complete or empty.
+                        if tool_name in ("Write", "Edit"):
+                            _args_len = len(raw_args) if isinstance(raw_args, (str, dict)) else 0
+                            if _args_len == 0:
+                                log.error(f"[TOOL-CALL RAW] {tool_name} arguments EMPTY — LLM did not provide any arguments for this tool call")
+                            else:
+                                log.info(f"[TOOL-CALL RAW] {tool_name} arguments: {_args_len} chars (type={type(raw_args).__name__})")
+                        if isinstance(raw_args, dict):
+                            # Arguments already parsed as dict (some LLMs do this)
+                            args = raw_args
+                        elif isinstance(raw_args, str):
+                            if raw_args.strip():
+                                args = json.loads(raw_args)
+                            else:
+                                # Empty string → empty args (LLM didn't provide arguments)
+                                log.error(f"[TOOL-CALL] {tool_name} received EMPTY arguments string! Tool call ID: {tool_id}")
+                                args = {}
+                        else:
+                            args = cast(Dict[str, Any], {})
+                    except json.JSONDecodeError as e:
+                        log.error(f"[TOOL-CALL] {tool_name} JSON parse FAILED: {e} | raw_args={str(raw_args)[:500]}")
                         args = cast(Dict[str, Any], {})
                     parsed_calls.append((tool_name, tool_id, args))
 
@@ -4072,10 +4123,10 @@ Use Markdown tables for structured data comparison:
 
         # For Write tool, detect create vs update for proper UI card
         if tool_name == "Write":
-            fpath = args.get("file_path", "")
-            if not os.path.isabs(fpath) and self._project_root:
+            fpath = args.get("file_path", "") or args.get("path", "")
+            if fpath and not os.path.isabs(fpath) and self._project_root:
                 fpath = os.path.join(self._project_root, fpath)
-            activity = "create_file" if not os.path.exists(fpath) else "write_file"
+            activity = "create_file" if (fpath and not os.path.exists(fpath)) else "write_file"
 
         # TodoWrite is a silent background tool — no tool-activity card in UI
         _silent = (tool_name == "TodoWrite")
@@ -4392,11 +4443,19 @@ Use Markdown tables for structured data comparison:
         self._session_mutation_count = snapshot.get("session_mutation_count", 0)
         self._mutation_success_count = snapshot.get("mutation_success_count", 0)
 
-        # Tool circuit breaker
+        # Tool circuit breaker — reset disabled state on session restore
+        # Previous session's failures should not permanently disable tools.
+        # The breaker state is session-local; persisting it causes tools to be
+        # permanently unavailable across restarts.
         disabled: List[str] = cast(List[str], snapshot.get("disabled_tools", []))
         if disabled:
-            self._disabled_tools = set(disabled)
-            log.info(f"[SESSION] Restored {len(disabled)} disabled tools: {disabled}")
+            log.warning(f"[SESSION] Clearing {len(disabled)} disabled tools from previous session: {disabled}")
+            self._disabled_tools.clear()
+            # Reset breaker's internal disabled set too
+            try:
+                self._tool_circuit_breaker._disabled_tools.clear()
+            except Exception:
+                pass
 
         tool_fails: Dict[str, int] = cast(Dict[str, int], snapshot.get("tool_fail_counts", {}))
         if tool_fails:
@@ -4940,24 +4999,32 @@ Use Markdown tables for structured data comparison:
 
     async def _dispatch_write(self, tool_id: str, args: Dict[str, Any]) -> ToolResult:
         """Dispatch to real FileWriteTool or bridge-native fallback."""
-        path = args.get("file_path", "")
+        # Support both "file_path" (schema standard) and "path" (some LLMs use shorthand)
+        path = args.get("file_path", "") or args.get("path", "")
         content = args.get("content", "")
+        
+        # DIAGNOSTIC: Log full args when file_path is empty to detect parameter name mismatch
+        if not path:
+            log.warning(f"[WRITE] Empty file_path! Full args keys: {list(args.keys())}. Args preview: {str(args)[:500]}")
         
         # INDUSTRY-STANDARD: Strict path validation
         # Reject empty, blank, and directory paths IMMEDIATELY
         if not path or not path.strip() or path.endswith((os.sep, '/')) or os.path.isdir(path):
-            log.warning(f"[WRITE] Rejected directory path: {path}")
+            reason = "empty or blank" if (not path or not path.strip()) else "directory"
+            log.warning(f"[WRITE] Rejected {reason} path: '{path}'")
             return ToolResult(
                 tool_id=tool_id,
                 result=None,
                 success=False,
                 error=(
-                    f"ERROR: You provided a directory path '{path}' instead of a file path.\n\n"
-                    f"You MUST provide a complete file path with filename and extension.\n"
+                    f"ERROR: Missing or invalid file_path parameter.\n\n"
+                    f"You MUST provide the 'file_path' parameter with a complete file path including filename and extension.\n"
                     f"Examples:\n"
-                    f"  CORRECT: 'index.html', 'src/questions.js', 'main.py'\n"
-                    f"  WRONG: 'C:\\Game\\', 'src/', './'\n\n"
-                    f"Please call Write again with the FULL file path."
+                    f"  CORRECT: Write(file_path='index.html', content='...')\n"
+                    f"  CORRECT: Write(file_path='src/questions.js', content='...')\n"
+                    f"  WRONG: Write(content='...')  ← missing file_path!\n"
+                    f"  WRONG: Write(file_path='src/', content='...')  ← directory, not file\n\n"
+                    f"The 'file_path' parameter is REQUIRED. Please call Write again with a valid file_path."
                 ),
             )
         
@@ -5073,23 +5140,32 @@ Use Markdown tables for structured data comparison:
 
     async def _dispatch_edit(self, tool_id: str, args: Dict[str, Any]) -> ToolResult:
         """Dispatch to real FileEditTool or bridge-native fallback."""
-        path = args.get("file_path", "")
+        # Support both "file_path" (schema standard) and "path" (some LLMs use shorthand)
+        path = args.get("file_path", "") or args.get("path", "")
         old_string = args.get("old_string", "")
         new_string = args.get("new_string", "")
+        
+        # DIAGNOSTIC: Log full args when file_path is empty to detect parameter name mismatch
+        if not path:
+            log.warning(f"[EDIT] Empty file_path! Full args keys: {list(args.keys())}. Args preview: {str(args)[:500]}")
+        
         # Reject empty, blank, and directory paths IMMEDIATELY
         if not path or not path.strip() or path.endswith((os.sep, '/')) or os.path.isdir(path):
-            log.warning(f"[EDIT] Rejected directory path: {path}")
+            reason = "empty or blank" if (not path or not path.strip()) else "directory"
+            log.warning(f"[EDIT] Rejected {reason} path: '{path}'")
             return ToolResult(
                 tool_id=tool_id,
                 result=None,
                 success=False,
                 error=(
-                    f"ERROR: You provided a directory path '{path}' instead of a file path.\n\n"
-                    f"You MUST provide a complete file path with filename and extension.\n"
+                    f"ERROR: Missing or invalid file_path parameter.\n\n"
+                    f"You MUST provide the 'file_path' parameter with a complete file path including filename and extension.\n"
                     f"Examples:\n"
-                    f"  CORRECT: 'index.html', 'src/questions.js', 'main.py'\n"
-                    f"  WRONG: 'C:\\Game\\', 'src/', './'\n\n"
-                    f"Please call Edit again with the FULL file path."
+                    f"  CORRECT: Edit(file_path='index.html', old_string='...', new_string='...')\n"
+                    f"  CORRECT: Edit(file_path='src/questions.js', old_string='...', new_string='...')\n"
+                    f"  WRONG: Edit(old_string='...', new_string='...')  ← missing file_path!\n"
+                    f"  WRONG: Edit(file_path='src/', old_string='...', new_string='...')  ← directory, not file\n\n"
+                    f"The 'file_path' parameter is REQUIRED. Please call Edit again with a valid file_path."
                 ),
             )
         if not os.path.isabs(path) and self._project_root:

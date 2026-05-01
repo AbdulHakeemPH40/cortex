@@ -156,6 +156,9 @@ class ToolCircuitBreaker:
             or ('directory path' in _err)
             or ('expected a file path' in _err)
             or ('provide a complete file path' in _err)
+            or ('missing or invalid file_path' in _err)  # V4: empty args from LLM
+            or ('missing or invalid' in _err and 'file_path' in _err)  # broader match
+            or ('empty file_path' in _err)  # diagnostic: args came through empty
         )
         return _expected
 

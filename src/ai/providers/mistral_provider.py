@@ -595,7 +595,15 @@ class MistralProvider(BaseProvider):
                                     if tool_calls:
                                         validated_tool_calls = []
                                         for tc in tool_calls:
-                                            tool_name = tc.get('function', {}).get('name', '')
+                                            fn = tc.get('function', {})
+                                            tool_name = fn.get('name', '')
+                                            raw_args = fn.get('arguments', '')
+                                            
+                                            # DIAGNOSTIC: Log raw tool call structure (DEBUG only)
+                                            log.debug(f"[MISTRAL RAW] Tool delta: index={tc.get('index')}, name={tool_name}, args_type={type(raw_args).__name__}, args_len={len(raw_args) if isinstance(raw_args, str) else 'N/A'}, args_preview={str(raw_args)[:200]}")
+                                            # Normalize: some LLMs send arguments as dict instead of JSON string
+                                            if isinstance(raw_args, dict):
+                                                raw_args = json.dumps(raw_args)
                                             
                                             # Validate tool name - WARN but don't reject
                                             # This prevents false positives when AI uses valid tools not in current selection
@@ -608,7 +616,7 @@ class MistralProvider(BaseProvider):
                                                 'id': tc.get('id', ''),
                                                 'function': {
                                                     'name': tool_name,
-                                                    'arguments': tc.get('function', {}).get('arguments', '')
+                                                    'arguments': raw_args if isinstance(raw_args, str) else str(raw_args)
                                                 }
                                             }
                                             validated_tool_calls.append(tc_info)

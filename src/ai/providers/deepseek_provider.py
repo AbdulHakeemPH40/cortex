@@ -381,12 +381,19 @@ class DeepSeekProvider(BaseProvider):
                                         if tool_calls:
                                             tool_call_data: List[Dict[str, Any]] = []
                                             for tc in tool_calls:
+                                                fn = tc.get('function', {})
+                                                raw_args = fn.get('arguments', '')
+                                                # DIAGNOSTIC: Log raw tool call structure (DEBUG only)
+                                                log.debug(f"[DEEPSEEK V4 RAW] Tool delta: index={tc.get('index')}, name={fn.get('name')}, args_type={type(raw_args).__name__}, args_len={len(raw_args) if isinstance(raw_args, str) else 'N/A'}, args_preview={str(raw_args)[:200]}")
+                                                # Normalize: DeepSeek V4 may send arguments as dict instead of JSON string
+                                                if isinstance(raw_args, dict):
+                                                    raw_args = json.dumps(raw_args)
                                                 tool_call_data.append({
                                                     'index': tc.get('index', 0),
                                                     'id': tc.get('id', ''),
                                                     'function': {
-                                                        'name': tc.get('function', {}).get('name', ''),
-                                                        'arguments': tc.get('function', {}).get('arguments', '')
+                                                        'name': fn.get('name', ''),
+                                                        'arguments': raw_args if isinstance(raw_args, str) else str(raw_args)
                                                     }
                                                 })
                                             yield f"__TOOL_CALL_DELTA__:{json.dumps(tool_call_data)}"
