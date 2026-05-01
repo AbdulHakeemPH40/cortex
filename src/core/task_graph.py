@@ -10,7 +10,7 @@ Replaces flat task lists with a proper DAG:
 
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple, Any
+from typing import Dict, List, Optional, Set, Tuple, Any, cast
 from enum import Enum
 
 import logging
@@ -44,15 +44,15 @@ class TaskNode:
     active_form: Optional[str] = None
     owner: Optional[str] = None
     parent_id: Optional[str] = None
-    depends_on: List[str] = field(default_factory=list)  # Task IDs this task depends on
+    depends_on: List[str] = field(default_factory=lambda: cast(List[str], []))  # Task IDs this task depends on
     estimated_effort: Optional[str] = None  # e.g. "30min", "2h", "3d"
-    tags: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    tags: List[str] = field(default_factory=lambda: cast(List[str], []))
+    metadata: Dict[str, Any] = field(default_factory=lambda: cast(Dict[str, Any], {}))
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
     completed_at: Optional[float] = None
     # Subtask ordering (the order children were added)
-    child_order: List[str] = field(default_factory=list)
+    child_order: List[str] = field(default_factory=lambda: cast(List[str], []))
 
     @property
     def is_completed(self) -> bool:
@@ -166,7 +166,7 @@ class TaskGraph:
         log.debug(f"[TASK_GRAPH] Removed node {task_id}")
         return True
 
-    def update_node(self, task_id: str, **updates) -> Optional[TaskNode]:
+    def update_node(self, task_id: str, **updates: Any) -> Optional["TaskNode"]:
         """Update fields on a task node. Returns the node or None."""
         node = self._nodes.get(task_id)
         if node is None:
@@ -189,7 +189,7 @@ class TaskGraph:
         parent = self._nodes.get(parent_id)
         if parent is None:
             return []
-        children = []
+        children: List[TaskNode] = []
         for cid in parent.child_order:
             child = self._nodes.get(cid)
             if child:
