@@ -1995,6 +1995,7 @@ class CortexAgentBridge(QObject):
 
         # Build tool context for real agent tools (use model from settings if available)
         _initial_model: str = 'mistral-large-latest'
+        _ai_map: Optional[Dict[str, Any]] = None
         try:
             from src.config.settings import get_settings
             _raw_settings: Any = get_settings()
@@ -2002,11 +2003,22 @@ class CortexAgentBridge(QObject):
             _raw_model: Optional[str] = None
             if isinstance(_raw_ai, dict):
                 _ai_map = cast(Dict[str, Any], _raw_ai)
-                _candidate = _ai_map.get('model')
-                if isinstance(_candidate, str) and _candidate:
-                    _raw_model = _candidate
-            if _raw_model:
+                # Prefer "model_id" (runtime setting from dropdown), fall back to "model" (legacy)
+                _candidate_id = _ai_map.get('model_id')
+                if isinstance(_candidate_id, str) and _candidate_id:
+                    _raw_model = _candidate_id
+                else:
+                    _candidate = _ai_map.get('model')
+                    if isinstance(_candidate, str) and _candidate:
+                        _raw_model = _candidate
+            if _raw_model and _ai_map is not None:
                 _initial_model = _raw_model
+                # Also seed enhancement_data so model routing works even before
+                # the model_changed signal fires (e.g., model persisted from prior session).
+                self._enhancement_data["model_id"] = _raw_model
+                _provider: Optional[str] = _ai_map.get('provider')
+                if isinstance(_provider, str) and _provider:
+                    self._enhancement_data["provider"] = _provider
         except Exception:
             pass
         self._tool_ctx = CortexToolContext(self, _initial_model)
@@ -2973,6 +2985,18 @@ Use Markdown tables for structured data comparison:
             
             # Determine provider type based on model
             model_id = merged.get("model_id", merged.get("model", "mistral-large-latest"))
+            # Safety-net: if neither enhancement_data nor context have model_id, read from settings
+            if model_id == "mistral-large-latest" and not merged.get("model_id"):
+                try:
+                    from src.config.settings import get_settings
+                    _settings: Any = get_settings()
+                    _ai_section: Any = cast(Dict[str, Any], _settings).get('ai') if isinstance(_settings, dict) else None
+                    _settings_model: Optional[str] = cast(Optional[str], cast(Dict[str, Any], _ai_section).get('model_id')) if isinstance(_ai_section, dict) else None
+                    if _settings_model:
+                        model_id = _settings_model
+                        log.info(f"[BRIDGE] Model resolved from settings fallback: {model_id}")
+                except Exception:
+                    pass
             model_lower = model_id.lower() if model_id else ""
             
             # Update tool context with current model (for model-aware file limits)
@@ -3259,23 +3283,18 @@ Use Markdown tables for structured data comparison:
                             _raw_mult: Any = 1.0
                             _raw_ai = settings_any.get("ai")
                             if isinstance(_raw_ai, dict):
-                                _ai_map = cast(Dict[str, Any], _raw_ai)
+                                _ai_map: Any = cast(Dict[str, Any], _raw_ai)
                                 _raw_mult = _ai_map.get("token_multiplier", 1.0)
                             token_multiplier = float(_raw_mult) if isinstance(_raw_mult, (int, float, str)) else 1.0
                             if token_multiplier != 1.0:
-                                # Calculate with multiplier
                                 calculated_tokens = int(max_tokens * token_multiplier)
-                                
-                                # CRITICAL: Cap at model's hard limit to avoid API errors
-                                # APIs enforce strict max_output_tokens limits
                                 if calculated_tokens > max_tokens:
-                                    log.warning(
-                                        f"[BRIDGE] Token multiplier {token_multiplier}x would exceed model limit ({calculated_tokens} > {max_tokens}). Capping at {max_tokens}"
-                                    )
+                                    # Multiplier stale from previous session/model — clamp silently
                                     calculated_tokens = max_tokens
-                                
-                                max_tokens = calculated_tokens
-                                log.info(f"[BRIDGE] Applied performance token_multiplier: {token_multiplier}x, max_tokens: {_limits.max_output_tokens} -> {max_tokens}")
+                                    # Reset stale multiplier so future turns aren't noisy
+                                    settings_any.set("ai", "token_multiplier", "1.0")
+                                else:
+                                    max_tokens = calculated_tokens
                         except Exception as _mult_err:
                             pass  # Use base max_tokens if multiplier not available
                         
@@ -3458,7 +3477,9 @@ Use Markdown tables for structured data comparison:
                     ) if self._current_todos else True
                     
                     # Case 1: No mutations yet and early turns - FORCE ACTION
-                    if _mutation_turns == 0 and (turn + 1) <= 5:
+                    # SKIP if no tools were provided (simple-query fast path) — the AI
+                    # can't take action when it has no tools available.
+                    if _mutation_turns == 0 and (turn + 1) <= 5 and active_tool_defs:
                         log.warning(
                             f"[BRIDGE] AI attempted to exit on turn {turn + 1} without making any changes. " +
                             "Forcing action mode - injecting strong directive."
@@ -4074,7 +4095,7 @@ Use Markdown tables for structured data comparison:
         self._tool_circuit_breaker.record_call(tool_name, result.success, _error_text)
 
         if result.success:
-            if tool_name in ("Write", "Edit", "Bash"):
+            if tool_name in ("Write", "Edit", "Bash", "PowerShell"):
                 self._mutation_success_count += 1
                 self._session_mutation_count += 1  # Persistent session counter
                 log.debug(
@@ -4512,7 +4533,7 @@ Use Markdown tables for structured data comparison:
                 return await handler(tool_id, args)
 
             # ---- Bridge-native tools with special pre-processing ----
-            if tool_name == "Bash":
+            if tool_name in ("Bash", "PowerShell"):
                 command = args.get("command", "")
                 # Check sandbox policy if enabled (lazy init)
                 if self._sandbox_manager is None:
@@ -4874,7 +4895,7 @@ Use Markdown tables for structured data comparison:
         except Exception as e:
             return ToolResult(tool_id=tool_id, result=None, success=False, error=str(e))
 
-    def _resolve_directory_target_path(self, requested_path: str) -> Optional[str]:
+    def _resolve_directory_target_path(self, requested_path: str, content: str = "") -> Optional[str]:
         """
         Resolve a directory target to a concrete file path when possible.
         Returns None when no sensible file target can be inferred.
@@ -4882,16 +4903,27 @@ Use Markdown tables for structured data comparison:
         if not os.path.isdir(requested_path):
             return requested_path
 
-        # Prefer active file if it is inside the requested directory.
-        if self._active_file and os.path.isfile(self._active_file):
-            try:
-                active_abs = os.path.abspath(self._active_file)
-                req_abs = os.path.abspath(requested_path)
-                if active_abs.startswith(req_abs + os.sep):
-                    return active_abs
-            except Exception:
-                pass
+        # Infer filename from content type when the AI forgot to specify one.
+        # This prevents the active-file resolution from redirecting writes
+        # (e.g., AI wants to create index.html but active file is enhancement_plan.md).
+        content_stripped = content.strip() if content else ""
+        if content_stripped:
+            if content_stripped.startswith("<!DOCTYPE") or content_stripped.startswith("<html"):
+                return os.path.join(requested_path, "index.html")
+            if content_stripped.startswith("<"):
+                # Generic HTML/XML/SVG — use index.html as safe default
+                if "</" in content_stripped[:200] or "/>" in content_stripped[:200]:
+                    return os.path.join(requested_path, "index.html")
+            if content_stripped.lstrip().startswith(("from ", "import ", "def ", "class ", "async def", "#!/usr/bin/env python")):
+                return os.path.join(requested_path, "main.py")
+            if content_stripped.lstrip().startswith(("const ", "let ", "var ", "function ", "import ", "export ")):
+                return os.path.join(requested_path, "script.js")
+            if content_stripped.lstrip().startswith((".", "#", "@media", "@import", "@keyframes", "body {", "html {", ":root")):
+                return os.path.join(requested_path, "style.css")
+            if content_stripped.startswith("---"):
+                return os.path.join(requested_path, "README.md")
 
+        # Check existing files in preferred order
         preferred_names = [
             "index.html",
             "main.py",
@@ -4933,7 +4965,7 @@ Use Markdown tables for structured data comparison:
             args = {**args, "file_path": os.path.join(self._project_root, path)}
         full_path = str(args["file_path"])
         if os.path.isdir(full_path):
-            resolved = self._resolve_directory_target_path(full_path)
+            resolved = self._resolve_directory_target_path(full_path, content)
             if resolved is None:
                 return ToolResult(
                     tool_id=tool_id,
@@ -6263,6 +6295,24 @@ Use Markdown tables for structured data comparison:
         if not _is_continue:
             self._continue_cycle_count = 0
             self._last_pending_ids = set()
+            # Reset stale session mutation count from previous session snapshot
+            # so new requests start fresh instead of showing "after 50 mutations"
+            self._session_mutation_count = 0
+            self._mutation_success_count = 0
+            # Reset stale todo state from previous session snapshot
+            # so fresh requests don't show leftover "2 todos pending"
+            self._current_todos.clear()
+            self._todo_write_streak = 0
+            self._last_todo_signature = ""
+            self._last_todo_mutation_count = -1
+            self._todos_auto_cancelled = False
+            # Reset stale AskUserQuestion state from previous session
+            # Cancel any unresolved futures to prevent memory leaks
+            for _q_id, _q_data in list(self._pending_questions.items()):
+                _fut = _q_data.get("future")
+                if isinstance(_fut, asyncio.Future) and not _fut.done():
+                    _fut.cancel()
+            self._pending_questions.clear()
         # Always reset tool counters — even on Continue — so tools
         # aren't still disabled from the previous cycle's limits.
         self._tool_fail_counts.clear()

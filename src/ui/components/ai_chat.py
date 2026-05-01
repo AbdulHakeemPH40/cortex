@@ -307,7 +307,9 @@ def _write_chat_summary_memory(project_root: str, conversation_id: str, title: s
 
         settings = get_settings()
         provider_name = (settings.get("ai", "provider") or "mistral").strip().lower()
-        model_id = (settings.get("ai", "model") or "mistral-large-latest").strip()
+        # Prefer "model_id" (runtime key set by _on_model_changed), fall back to "model" (legacy)
+        _raw_model = (settings.get("ai", "model_id") or settings.get("ai", "model") or "mistral-large-latest")
+        model_id = str(_raw_model).strip()
 
         provider_map = {
             "mistral": ProviderType.MISTRAL,

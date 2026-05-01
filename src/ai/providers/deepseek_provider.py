@@ -57,6 +57,20 @@ class DeepSeekProvider(BaseProvider):
         if not self.api_key:
             log.warning("DEEPSEEK_API_KEY not configured")
     
+    # Legacy model routing — auto-map deprecated models to V4 equivalents.
+    # deepseek-chat and deepseek-reasoner are retired Jul 24, 2026.
+    _DEPRECATED_MAP: Dict[str, str] = {
+        "deepseek-chat": "deepseek-v4-flash",
+        "deepseek-reasoner": "deepseek-v4-pro",
+    }
+
+    def _resolve_model(self, model: str) -> str:
+        """Map deprecated model IDs to their V4 replacements."""
+        resolved = self._DEPRECATED_MAP.get(model, model)
+        if resolved != model:
+            log.info(f"[DeepSeek] Auto-routing deprecated model '{model}' → '{resolved}'")
+        return resolved
+    
     @property
     def available_models(self) -> List[ModelInfo]:
         """Return list of available DeepSeek models as ModelInfo objects."""
@@ -247,7 +261,10 @@ class DeepSeekProvider(BaseProvider):
             **kwargs: Additional params (tools, temperature, etc.)
         """
         
-        # Warn if using deprecated model
+        # Auto-route deprecated models to V4 equivalents
+        model = self._resolve_model(model)
+        
+        # Warn if using deprecated model (only after resolution fails)
         if model in ["deepseek-chat", "deepseek-reasoner"]:
             warning_msg = (
                 f"[DeepSeek] Model '{model}' is deprecated and will be retired on Jul 24, 2026. "

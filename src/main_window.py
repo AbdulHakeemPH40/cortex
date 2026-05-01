@@ -5791,8 +5791,11 @@ class CortexMainWindow(QMainWindow):
         try:
             from src.config.settings import get_settings
             settings = get_settings()
-            settings.set("ai", "model_id", model_id)
+            settings.set("ai", "model_id", model_id)  # Runtime key (preferred)
+            settings.set("ai", "model", model_id)      # Legacy key (backward compat)
             settings.set("ai", "provider", provider)
+            # Reset stale token_multiplier from previous session's perf mode
+            settings.set("ai", "token_multiplier", "1.0")
             log.info(f"[MainWindow] Saved model selection to settings: {model_id} (provider: {provider})")
         except Exception as e:
             log.warning(f"[MainWindow] Failed to save model to settings: {e}")
