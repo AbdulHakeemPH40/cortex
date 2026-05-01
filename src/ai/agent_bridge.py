@@ -1962,9 +1962,9 @@ class CortexAgentBridge(QObject):
         )
         self._tool_executor: ToolExecutionEngine = ToolExecutionEngine(self._tool_circuit_breaker)
         # Legacy aliases for backward compatibility
-        self._tool_fail_counts: Dict[str, int] = self._tool_circuit_breaker._fail_counts
-        self._disabled_tools: Set[str] = self._tool_circuit_breaker._disabled_tools
-        self._tool_total_calls: Dict[str, int] = self._tool_circuit_breaker._total_calls
+        self._tool_fail_counts: Dict[str, int] = self._tool_circuit_breaker._fail_counts  # pyright: ignore[reportPrivateUsage]
+        self._disabled_tools: Set[str] = self._tool_circuit_breaker._disabled_tools  # pyright: ignore[reportPrivateUsage]
+        self._tool_total_calls: Dict[str, int] = self._tool_circuit_breaker._total_calls  # pyright: ignore[reportPrivateUsage]
         self._session_tasks: Dict[str, Dict[str, Any]] = {}  # task_id -> task payload
         self._teams: Dict[str, Dict[str, Any]] = {}  # team_id -> team payload
 
@@ -3559,7 +3559,7 @@ Use Markdown tables for structured data comparison:
                 # Save every 3 turns so we can resume if the app crashes/restarts.
                 if turn > 0 and (turn + 1) % 3 == 0:
                     try:
-                        from src.core.agent_session_manager import save_snapshot
+                        from src.core.agent_session_manager import save_snapshot  # pyright: ignore[reportUnknownVariableType]
                         save_snapshot(self)
                     except Exception as _ses_exc:
                         log.warning(f"[SESSION] Auto-save failed on turn {turn + 1}: {_ses_exc}")
@@ -3755,7 +3755,7 @@ Use Markdown tables for structured data comparison:
 
             # ── Phase 4: Save/clear snapshot on session exit ────────────
             try:
-                from src.core.agent_session_manager import save_snapshot, clear_snapshot
+                from src.core.agent_session_manager import save_snapshot, clear_snapshot  # pyright: ignore[reportUnknownVariableType]
                 _pending = [t for t in self._current_todos
                             if t.get("status") in ("PENDING", "IN_PROGRESS")]
                 if _pending:
@@ -4103,7 +4103,8 @@ Use Markdown tables for structured data comparison:
             try:
                 _raw = result.result if hasattr(result, 'result') else None
                 if isinstance(_raw, dict):
-                    _exit_code = cast(Optional[int], _raw.get("exit_code") or _raw.get("exitCode"))
+                    _raw = cast(Dict[str, Any], _raw)
+                    _exit_code = _raw.get("exit_code") or _raw.get("exitCode")  # pyright: ignore[reportUnknownMemberType]
             except Exception:
                 pass
         self._recent_tool_results.append((tool_name, bool(result.success), result_str[:200], _exit_code))
@@ -4344,13 +4345,13 @@ Use Markdown tables for structured data comparison:
         circuit breaker state. Does NOT restore full conversation history.
         """
         # Tasks
-        saved_tasks: dict = snapshot.get("session_tasks", {})
+        saved_tasks: Dict[str, Any] = cast(Dict[str, Any], snapshot.get("session_tasks", {}))
         if saved_tasks:
             self._session_tasks.update(saved_tasks)
             log.info(f"[SESSION] Restored {len(saved_tasks)} session tasks")
 
         # Task graph
-        saved_graph: dict = snapshot.get("task_graph", {})
+        saved_graph: Dict[str, Any] = cast(Dict[str, Any], snapshot.get("task_graph", {}))
         if saved_graph and saved_graph.get("nodes"):
             try:
                 from src.core.task_graph import TaskGraph
@@ -4360,7 +4361,7 @@ Use Markdown tables for structured data comparison:
                 log.warning(f"[SESSION] Failed to restore task graph: {e}")
 
         # Todos
-        saved_todos: list = snapshot.get("current_todos", [])
+        saved_todos: List[Dict[str, Any]] = cast(List[Dict[str, Any]], snapshot.get("current_todos", []))
         if saved_todos:
             self._current_todos.clear()
             self._current_todos.extend(saved_todos)
@@ -4371,33 +4372,33 @@ Use Markdown tables for structured data comparison:
         self._mutation_success_count = snapshot.get("mutation_success_count", 0)
 
         # Tool circuit breaker
-        disabled = snapshot.get("disabled_tools", [])
+        disabled: List[str] = cast(List[str], snapshot.get("disabled_tools", []))
         if disabled:
             self._disabled_tools = set(disabled)
             log.info(f"[SESSION] Restored {len(disabled)} disabled tools: {disabled}")
 
-        tool_fails: dict = snapshot.get("tool_fail_counts", {})
+        tool_fails: Dict[str, int] = cast(Dict[str, int], snapshot.get("tool_fail_counts", {}))
         if tool_fails:
             self._tool_fail_counts.update(tool_fails)
 
         # Recent tool results (last 10 for context continuity)
-        recent: list = snapshot.get("recent_tool_results", [])
+        recent: List[Any] = cast(List[Any], snapshot.get("recent_tool_results", []))
         if recent:
             self._recent_tool_results = list(recent)[-10:]
 
         # Debug loop
-        dl_data: dict = snapshot.get("debug_loop", {})
-        if dl_data and dl_data.get("state", "idle") != "idle":
+        dl_data: Dict[str, Any] = cast(Dict[str, Any], snapshot.get("debug_loop", {}))
+        if dl_data and dl_data.get("state", "idle") != "idle":  # pyright: ignore[reportUnknownMemberType]
             try:
                 from src.core.debug_loop import DebugLoopState
-                dl_state = DebugLoopState(dl_data.get("state", "idle"))
-                self._debug_loop.cycle_count = dl_data.get("cycle_count", 0)
+                dl_state = DebugLoopState(dl_data.get("state", "idle"))  # pyright: ignore[reportUnknownMemberType]
+                self._debug_loop.cycle_count = dl_data.get("cycle_count", 0)  # pyright: ignore[reportUnknownMemberType]
                 self._debug_loop.state = dl_state
-                self._debug_loop.failed_tool_name = dl_data.get("failed_tool_name", "")
-                self._debug_loop.failed_exit_code = dl_data.get("failed_exit_code")
-                self._debug_loop.failed_preview = dl_data.get("failed_preview", "")
-                self._debug_loop.failed_command = dl_data.get("failed_command", "")
-                self._debug_loop.last_fix_summary = dl_data.get("last_fix_summary", "")
+                self._debug_loop.failed_tool_name = dl_data.get("failed_tool_name", "")  # pyright: ignore[reportUnknownMemberType]
+                self._debug_loop.failed_exit_code = dl_data.get("failed_exit_code")  # pyright: ignore[reportUnknownMemberType]
+                self._debug_loop.failed_preview = dl_data.get("failed_preview", "")  # pyright: ignore[reportUnknownMemberType]
+                self._debug_loop.failed_command = dl_data.get("failed_command", "")  # pyright: ignore[reportUnknownMemberType]
+                self._debug_loop.last_fix_summary = dl_data.get("last_fix_summary", "")  # pyright: ignore[reportUnknownMemberType]
                 log.info(f"[SESSION] Restored debug loop: state={dl_state}, cycles={self._debug_loop.cycle_count}")
             except Exception as e:
                 log.warning(f"[SESSION] Failed to restore debug loop: {e}")
