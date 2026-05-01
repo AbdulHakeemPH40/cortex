@@ -1629,7 +1629,12 @@ class AIChatWidget(QWidget):
         
         # NEW: Store last user message for permission retry (OpenCode enhancement)
         self._last_user_message = ""
-        
+
+        # Response streaming buffer — accumulates chunks for on_complete
+        self._response_buffer = ""
+        self._js_call_pending = False  # Debounce flag for runJavaScript flood
+        self._js_call_timer = None     # QTimer for debounced JS push
+
         # Track current interaction mode: 'Agent', 'Ask', or 'Plan'
         self._current_interaction_mode = "Agent"
         
@@ -1822,17 +1827,63 @@ class AIChatWidget(QWidget):
             _log.error("[AI_CHAT] Page load failed!")
 
     def on_chunk(self, chunk):
-        """Handle AI streaming chunk - async to prevent UI blocking."""
-        # Use JSON encoding to properly escape for JavaScript
-        safe_chunk = json.dumps(chunk)
-        self._view.page().runJavaScript(
-            f"if(window.onChunk) window.onChunk({safe_chunk});",
-            lambda result: None  # Async callback
-        )
+        """Handle AI streaming chunk - accumulate buffer and push to JS."""
+        import logging as _log
+        self._response_buffer += chunk
 
-    def on_complete(self, full_response: str):
-        """Handle completion of the AI response."""
-        self._view.page().runJavaScript("if(window.onComplete) window.onComplete();")
+        # Debounce JS calls: batch rapid small chunks to avoid UI flooding
+        if not self._js_call_pending:
+            self._js_call_pending = True
+            safe_chunk = json.dumps(chunk)
+            self._view.page().runJavaScript(
+                f"if(window.onChunk) window.onChunk({safe_chunk});",
+                lambda result: None
+            )
+            _log.debug(f"[AI_CHAT] chunk pushed: {len(chunk)} chars")
+        else:
+            # When debounced, push deltas after a short coalescing window
+            if self._js_call_timer is None:
+                try:
+                    from PyQt6.QtCore import QTimer
+                    self._js_call_timer = QTimer(self)
+                    self._js_call_timer.setSingleShot(True)
+                    self._js_call_timer.timeout.connect(self._flush_chunk_buffer)
+                except Exception:
+                    # Fallback: push directly if QTimer unavailable
+                    safe_chunk = json.dumps(chunk)
+                    self._view.page().runJavaScript(
+                        f"if(window.onChunk) window.onChunk({safe_chunk});",
+                        lambda result: None
+                    )
+                    return
+            if not self._js_call_timer.isActive():
+                self._js_call_timer.start(40)  # 40ms coalescing window
+
+    def _flush_chunk_buffer(self):
+        """Flush accumulated buffer to JS after debounce."""
+        import logging as _log
+        self._js_call_pending = False
+        # Push current accumulated chunk
+        if self._response_buffer:
+            safe = json.dumps(self._response_buffer[-200:])  # Push last 200 chars delta
+            self._view.page().runJavaScript(
+                f"if(window.onChunk) window.onChunk({safe});",
+                lambda result: None
+            )
+            _log.debug(f"[AI_CHAT] debounced flush: last 200 chars")
+
+    def on_complete(self, full_response=None):
+        """Handle completion of the AI response — pass full buffered text to JS."""
+        import logging as _log
+        if full_response is not None:
+            self._response_buffer = full_response
+        safe = json.dumps(self._response_buffer) if self._response_buffer else '""'
+        self._view.page().runJavaScript(
+            f"if(window.onComplete) window.onComplete({safe});"
+        )
+        self._response_buffer = ""
+        self._js_call_pending = False
+        _log.info("[AI_CHAT] response complete, buffer cleared")
 
     def _on_mode_changed_internal(self, mode: str):
         """Track the current interaction mode internally."""

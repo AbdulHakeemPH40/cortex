@@ -5055,10 +5055,19 @@ function startStreaming() {
 
 function onChunk(chunk) {
     // Queue the chunk to avoid race conditions between consecutive runJavaScript calls
+    _totalChunksReceived = (_totalChunksReceived || 0) + 1;
+    if (_CHAT_DEBUG && _totalChunksReceived % 50 === 1) {
+        console.log('[CHAT] chunks received:', _totalChunksReceived, 'last len:', chunk.length);
+    }
     _chunkQueue.push(String(chunk));
     if (!_chunkProcessing) {
         _chunkProcessing = true;
-        _processChunkQueue();
+        try {
+            _processChunkQueue();
+        } catch (e) {
+            console.error('[CHAT] _processChunkQueue error:', e.message);
+            _chunkProcessing = false;  // Reset so future chunks still process
+        }
     }
 }
 
@@ -6041,12 +6050,19 @@ function collapseFecContainer() {
     });
 }
 
-function onComplete() {
+function onComplete(fullText) {
     // If the user already clicked Stop, Python's late-firing onComplete is a no-op
     if (_stopRequested) {
         _stopRequested = false;
         console.log('[CHAT] onComplete: suppressed (stop was requested)');
         return;
+    }
+
+    // If Python sent the full buffered text, reconcile JS buffer with it
+    if (typeof fullText === 'string' && fullText.length > (currentContent || '').length) {
+        console.log('[CHAT] onComplete: reconciling JS buffer from Python (', fullText.length, 'chars)');
+        currentContent = fullText;
+        currentAssistantMessageContent = fullText;
     }
 
     removeThinkingIndicator();
@@ -6182,6 +6198,8 @@ function onComplete() {
     currentContent          = '';
     _taskSummaryBuffer      = '';
     _inTaskSummary          = false;
+    _chunkQueue.length      = 0;   // Clear any stale queued chunks
+    _chunkProcessing        = false;
 
     var sendBtn = document.getElementById('sendBtn');
     var stopBtn = document.getElementById('stopBtn');
