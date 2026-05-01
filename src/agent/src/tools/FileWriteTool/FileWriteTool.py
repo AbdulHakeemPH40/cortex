@@ -499,8 +499,9 @@ class FileWriteTool:
     async def call(
         inp: Dict,
         context: Any,
-        _unused: Any = None,
-        parent_message: Any = None,
+        can_use_tool: Any = None,
+        assistant_message: Any = None,
+        progress_callback: Any = None,
     ) -> Dict[str, Any]:
         """Execute file write."""
         file_path = inp.get("file_path", "")

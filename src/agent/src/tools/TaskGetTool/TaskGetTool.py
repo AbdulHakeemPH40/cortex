@@ -116,7 +116,7 @@ def get_output_schema() -> Dict[str, Any]:
                     'description': {'type': 'string'},
                     'status': {
                         'type': 'string',
-                        'enum': ['pending', 'in_progress', 'completed'],
+                        'enum': ['pending', 'in_progress', 'completed', 'failed', 'cancelled'],
                     },
                     'blocks': {
                         'type': 'array',

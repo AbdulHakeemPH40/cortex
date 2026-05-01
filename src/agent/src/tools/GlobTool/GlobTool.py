@@ -385,6 +385,9 @@ class GlobTool:
     async def call(
         inp: Dict,
         context: Any,
+        can_use_tool: Any = None,
+        assistant_message: Any = None,
+        progress_callback: Any = None,
     ) -> Dict[str, Any]:
         """Execute glob search."""
         start_time = time.time()

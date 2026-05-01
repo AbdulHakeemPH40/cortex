@@ -5,6 +5,7 @@
 # ------------------------------------------------------------
 
 import asyncio
+import inspect
 import json
 import os
 import re
@@ -1532,6 +1533,35 @@ async def check_permissions_and_call_tool(
     # ----------------------------------------------------------------
     try:
         tool_call_fn = getattr(tool, "call", None)
+        # Dict-style tools (from buildTool fallback) store call in a dict key
+        if tool_call_fn is None and isinstance(tool, dict):
+            tool_call_fn = tool.get("call")
+
+        # Adapt signature mismatch: the executor passes 5 positional args
+        # but many tools define call() with only 2-3 params.
+        if tool_call_fn is not None:
+            try:
+                sig = inspect.signature(tool_call_fn)
+                required_pos = sum(
+                    1 for p in sig.parameters.values()
+                    if p.default is inspect.Parameter.empty and
+                    p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+                )
+                # If the function takes fewer positional params than we pass,
+                # wrap it with a thinner adapter that only passes what it accepts.
+                if required_pos <= 3:
+                    _orig = tool_call_fn
+                    _needed = required_pos
+                    async def _adapted(
+                        _inp, _ctx,
+                        _can_use=None, _msg=None, _progress=None,
+                    ):
+                        if _needed <= 3:
+                            return await _orig(_inp, _ctx)
+                        return await _orig(_inp, _ctx, _can_use, _msg, _progress)
+                    tool_call_fn = _adapted
+            except (ValueError, TypeError):
+                pass  # Can't introspect (C callable, etc.) — let it try directly
 
         def progress_callback(progress: ToolProgress) -> None:
             on_tool_progress({

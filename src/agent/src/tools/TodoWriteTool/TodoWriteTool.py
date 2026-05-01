@@ -191,14 +191,17 @@ class TodoWriteTool:
     async def call(
         input_: Dict,
         context: Any,
+        can_use_tool: Any = None,
+        assistant_message: Any = None,
+        progress_callback: Any = None,
     ) -> Dict[str, Any]:
         """
         Execute todo write operation.
-        
+
         Args:
             input_: Tool input with todos list
             context: Tool execution context
-            
+
         Returns:
             Execution result with old/new todos
         """

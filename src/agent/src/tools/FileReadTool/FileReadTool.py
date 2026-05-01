@@ -1109,13 +1109,15 @@ class FileReadTool:
     search_hint = 'read files, images, PDFs, notebooks'
     max_result_size_chars = float('inf')
     strict = True
+    is_concurrency_safe = True
+    is_read_only = True
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or {}
         self._read_file_state: Dict[str, FileStateEntry] = {}
     
-    @property
-    def input_schema(self) -> Dict[str, Any]:
+    @staticmethod
+    def input_schema() -> Dict[str, Any]:
         """Get the input schema for this tool."""
         return {
             'type': 'object',
@@ -1424,8 +1426,9 @@ class FileReadTool:
         self,
         input_data: Dict[str, Any],
         context: Optional[Any] = None,
-        can_use_tool: Optional[Any] = None,
-        parent_message: Optional[Any] = None,
+        can_use_tool: Optional[Callable[..., Any]] = None,
+        assistant_message: Optional[Any] = None,
+        progress_callback: Optional[Callable[..., Any]] = None,
     ) -> Dict[str, Any]:
         """
         Execute the file read operation.
