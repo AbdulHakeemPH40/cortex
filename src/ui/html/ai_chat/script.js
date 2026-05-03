@@ -5504,7 +5504,7 @@ function normalizeMarkdownText(text) {
     // Guard: skip complex processing for very large text to prevent stack overflow
     if (text.length > 200000) {
         text = text.replace(/\r\n/g, '\n');
-        text = text.replace(/\\n{4,}/g, '\\n\\n\\n');
+        text = text.replace(/\n{4,}/g, '\n\n\n');
         return text;
     }
 
@@ -5621,7 +5621,7 @@ function normalizeMarkdownText(text) {
     }
 
     // Limit blank lines.
-    text = text.replace(/\\n{4,}/g, '\\n\\n\\n');
+    text = text.replace(/\n{4,}/g, '\n\n\n');
 
     return text;
 }
@@ -10216,11 +10216,10 @@ function continueTask(pendingTodos) {
         return '- ' + (t.content || t.description || '');
     });
     var msg = 'Continue the task. Remaining todos:\n' + lines.join('\n') +
-        '\n\nIMPORTANT — large file rule: For any file over ~500 lines (e.g. script.js, ' +
-        'ai_chat.html, agent_bridge.py) you MUST use Grep first to find the relevant ' +
-        'line number, then Read with offset+limit (e.g. offset=200, limit=80). ' +
-        'Never call Read on a large file without offset and limit — it will exceed ' +
-        'the context limit and the task will fail again.';
+        '\n\nCRITICAL — STOP READING, START CODING. You already know the codebase. ' +
+        'Use Write/Edit to make changes IMMEDIATELY. Reading more files will NOT ' +
+        'complete the task — only writing code will. Do NOT use Grep/Read unless ' +
+        'you are debugging a specific error or test failure.';
 
     // Inject into the input and fire sendMessage
     var input = document.getElementById('chatInput');

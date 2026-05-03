@@ -3130,10 +3130,10 @@ Use Markdown tables for structured data comparison:
             # Track if agent has performed ANY write/edit operation
             # If no mutation after N turns, force aggressive action mode
             _mutation_turns = 0  # Turns with write/edit/bash operations
-            _READONLY_FORCE_ACTION_TURN = 8  # Increased from 4 — give agent more reading/planning turns before nagging
-            _AGGRESSIVE_NUDGE_TURN = 12  # Increased from 6
+            _READONLY_FORCE_ACTION_TURN = 3  # Nudge after 3 turns of no mutation (was 8 — far too permissive)
+            _AGGRESSIVE_NUDGE_TURN = 5  # Aggressive after 5 turns of no mutation (was 12)
             _has_mutated = False  # Track if ANY mutation has occurred this session
-            _POST_MUTATION_READ_LIMIT = 5  # Increased from 2 — let agent read more files post-mutation before forcing verify
+            _POST_MUTATION_READ_LIMIT = 2  # Only allow 2 post-mutation reads before forcing verify (was 5)
 
             _compacted_once = False  # Track if we already compacted
             _mistral_downgraded_once = False  # Per-request, timeout-triggered model fallback within Mistral
@@ -3663,6 +3663,18 @@ Use Markdown tables for structured data comparison:
                     _mutation_turns += 1
                     _has_mutated = True  # Mark that mutation has occurred
                     _post_mutation_read_count = 0  # Reset read counter after mutation
+                    # ── Re-enable read-only tools that were locked by AGGRESSIVE nudge ──
+                    _readonly_tools_to_unlock = {"Read", "Grep", "Glob", "LS"}
+                    _re_enabled = set()
+                    for _rt in _readonly_tools_to_unlock:
+                        if _rt in self._disabled_tools:
+                            self._disabled_tools.discard(_rt)
+                            _re_enabled.add(_rt)
+                    if _re_enabled:
+                        log.info(
+                            f"[BRIDGE] Mutation detected — re-enabled read-only tools: "
+                            f"{', '.join(sorted(_re_enabled))}"
+                        )
                     
                     # Track which todo this mutation corresponds to
                     if self._current_todos:
@@ -3716,6 +3728,23 @@ Use Markdown tables for structured data comparison:
                             f"3. Do NOT read any more files\n"
                             f"4. Start coding RIGHT NOW"
                         )
+                        # ── FORCE ACTION: Disable read-only tools so agent CANNOT keep reading ──
+                        _readonly_tools_to_block = {"Read", "Grep", "Glob", "LS"}
+                        _disabled_any = False
+                        for _rt in _readonly_tools_to_block:
+                            if _rt not in self._disabled_tools:
+                                self._disabled_tools.add(_rt)
+                                _disabled_any = True
+                        if _disabled_any:
+                            _action_nudge += (
+                                f"\n\nTOOLS LOCKED: Read, Grep, Glob, LS are now DISABLED. "
+                                f"You can ONLY use Write, Edit, Bash, or PowerShell. "
+                                f"These tools will be re-enabled after you make at least one file change."
+                            )
+                            log.warning(
+                                f"[BRIDGE] AGGRESSIVE mode: Disabled read-only tools "
+                                f"({', '.join(sorted(_readonly_tools_to_block))})"
+                            )
                     else:
                         _action_nudge = (
                             f"IMPORTANT: You've read multiple files across {turn + 1} turns but haven't written any code yet. "
@@ -5273,10 +5302,16 @@ Use Markdown tables for structured data comparison:
                 self._safe_emit(self.file_edit_notification, full_path, "edit", "complete")
             except Exception:
                 pass
-            self.file_edited_diff.emit(full_path, file_content, new_content)
+            try:
+                self.file_edited_diff.emit(full_path, file_content, new_content)
+            except Exception:
+                pass  # pyqtSignal emit may fail if signal not properly bound — non-critical
             # Emit completion signal for card animation
             if card_id:
-                self.file_operation_completed.emit(card_id, full_path, new_content, "edit")
+                try:
+                    self.file_operation_completed.emit(card_id, full_path, new_content, "edit")
+                except Exception:
+                    pass
             self._tool_ctx.mark_file_modified(full_path)
             
             # Emit file edit notification for WebChannel
