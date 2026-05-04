@@ -4370,6 +4370,84 @@ body.loaded #loading-overlay {
     max-height: 400px;
 }
 
+/* ── Card Variant: Web Search ────────────────────────────── */
+.ca-card.websearch::before { background: #38bdf8; }
+.ca-card.websearch .ca-card-icon { color: #38bdf8; }
+.ca-card.websearch .ca-card-body {
+    padding: 4px 0;
+}
+.ca-card.websearch.expanded .ca-card-body {
+    max-height: 600px;
+}
+
+/* ── Card Variant: Web Fetch ────────────────────────────── */
+.ca-card.webfetch::before { background: #a78bfa; }
+.ca-card.webfetch .ca-card-icon { color: #a78bfa; }
+.ca-card.webfetch .ca-card-body {
+    padding: 4px 0;
+}
+.ca-card.webfetch.expanded .ca-card-body {
+    max-height: 500px;
+}
+
+/* ── Web Search Result Rows ─────────────────────────────── */
+.ca-webresult-row {
+    padding: 7px 16px 7px 43px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    transition: background 0.12s;
+}
+.ca-webresult-row:last-child {
+    border-bottom: none;
+}
+.ca-webresult-row:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.ca-webresult-title {
+    font-size: 12px;
+    line-height: 1.5;
+    margin-bottom: 2px;
+}
+.ca-webresult-title a {
+    color: #38bdf8;
+    text-decoration: none;
+    font-weight: 500;
+    transition: color 0.12s;
+}
+.ca-webresult-title a:hover {
+    color: #7dd3fc;
+    text-decoration: underline;
+}
+
+.ca-webresult-url {
+    font-size: 10px;
+    color: #4ade80;
+    font-family: var(--font-mono, 'Cascadia Code', monospace);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 2px;
+    opacity: 0.75;
+}
+
+.ca-webresult-snippet {
+    font-size: 11px;
+    color: var(--text-muted, #9ca3af);
+    line-height: 1.45;
+    margin-top: 3px;
+}
+
+/* ── Web Fetch Preview ──────────────────────────────────── */
+.ca-fetch-preview {
+    padding: 8px 16px 12px 43px;
+    color: var(--text-muted, #9ca3af);
+    font-family: var(--font-mono, 'Cascadia Code', monospace);
+    font-size: 11px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
 /* ── Collapse / Expand State Rules (MUST be after all variants) ── */
 .ca-card:not(.expanded) .ca-card-body {
     max-height: 0 !important;

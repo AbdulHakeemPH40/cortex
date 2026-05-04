@@ -1762,6 +1762,45 @@ class AgentWorker(QThread):
                 msg.get("context", {}),
                 msg.get("images", []),
             )
+            # ── Auto-continue loop ──────────────────────────────────────
+            # When the turn budget exhausts with pending todos but progress
+            # was made, _call_llm sets _auto_continue_requested = True and
+            # stores compacted messages. Silently re-enter _call_llm so the
+            # user never sees a manual "Continue" button unless auto-continue
+            # is truly exhausted.
+            _auto_continue_guard = 0
+            while getattr(self.bridge, '_auto_continue_requested', False):
+                _auto_continue_guard += 1
+                if _auto_continue_guard > 10:  # Safety limit
+                    log.warning("[WORKER] Auto-continue safety limit reached — breaking")
+                    break
+                # Build continuation message from pending todos
+                _pending = [
+                    t for t in (self.bridge.current_todos or [])
+                    if str(t.get('status', '')).upper() in ('PENDING', 'IN_PROGRESS')
+                ]
+                _lines = ["Continue the task. Remaining todos:"]
+                for _t in _pending:
+                    _lines.append(f"- {_t.get('content', _t.get('description', ''))}")
+                # Include tool availability so the agent knows which tools are usable
+                _disabled_set = getattr(self.bridge, '_disabled_tools', set())
+                _disabled_list = sorted(_disabled_set) if _disabled_set else []
+                _tool_info = ''
+                if _disabled_list:
+                    _tool_info = (
+                        f'\n\n⚠️ Disabled tools (do NOT call): {", ".join(_disabled_list)}. '
+                        f'Use alternative tools instead.'
+                    )
+                _continuation_msg = '\n'.join(_lines) + _tool_info + (
+                    '\n\n[Conversation was auto-compacted and saved to MEMORY.md. '
+                    'Continue from your checkpoint above. Do NOT re-read files you already read.]'
+                )
+                log.info(f"[WORKER] Auto-continuing (cycle {self.bridge._auto_continue_cycle}) with continuation message ({len(_continuation_msg)} chars)")
+                response = await self.bridge.call_llm(
+                    _continuation_msg,
+                    msg.get("context", {}),
+                    msg.get("images", []),
+                )
             # ── INDUSTRY-STANDARD: Task Completion Validation ───────────
             # Before emitting response_ready (which triggers Windows notification),
             # verify that ALL todos are actually completed with mutations.
@@ -1899,7 +1938,7 @@ class CortexAgentBridge(QObject):
     file_operation_completed = pyqtSignal(str, str, str, str)  # card_id, file_path, content, op_type
     # Recovery signals — context compaction / turn-limit continuation
     agent_status_update = pyqtSignal(str, str)  # type ('compacting'|'retrying'|'failover'), message
-    turn_limit_hit      = pyqtSignal(list)       # list of still-pending todo dicts
+    turn_limit_hit      = pyqtSignal(list, str)  # pending todos, context summary
     # Token budget signal — (used_tokens, budget_tokens, provider_name)
     context_budget_update = pyqtSignal(int, int, str)
     # ── INDUSTRY-STANDARD: Progress tracking signal ───────────
@@ -1928,7 +1967,16 @@ class CortexAgentBridge(QObject):
         # without any progress.  After _MAX_STALE_CYCLES, auto-cancel them.
         self._continue_cycle_count: int = 0
         self._last_pending_ids: set[str] = set()
-        self._MAX_STALE_CYCLES: int = 3  # Increased from 1 to allow more working turns
+        self._MAX_STALE_CYCLES: int = 2  # Auto-cancel after 2 stale cycles (was 3)
+        # ── Auto-continue: silently compact + restart when turn budget exhausts ──
+        # Modern IDEs (Cursor, Copilot) auto-compact and continue without user
+        # intervention. Only show manual "Continue" button as a last resort.
+        self._MAX_AUTO_CONTINUE_CYCLES: int = 5  # Max auto-continue cycles before falling back to manual
+        self._auto_continue_cycle: int = 0  # Current auto-continue cycle count (per _call_llm)
+        self._last_cycle_session_mutations: int = 0  # Session mutation count at start of last cycle
+        self._auto_continue_compacted: Optional[List[Any]] = None  # Pre-compacted messages for auto-continue
+        self._auto_continue_requested: bool = False  # True when _call_llm wants auto-continue
+        self._consecutive_bash_turns: int = 0  # DEPRECATED — kept for backward compat, see _bash_usage_history
         # Guard against "plan-only" loops where TodoWrite repeats without real action.
         self._todo_write_streak: int = 0
         self._last_todo_signature: str = ""
@@ -2609,22 +2657,69 @@ Use Markdown tables for structured data comparison:
                 todo_lines.append(f"  {icon} {content}")
             parts.append("**Todo Progress:**\n" + "\n".join(todo_lines))
 
-        # 3. Files read / modified
+        # 3. Files read / modified WITH CONTENT SNAPSHOTS ──────────────
+        # CRITICAL: Without content snapshots, the AI forgets what it already
+        # wrote after compaction — it sees only filenames and rewrites
+        # everything from scratch, creating an infinite rework loop.
         _read_files = self._tool_ctx.get_recent_read_files(10)
         _mod_files = self._tool_ctx.get_recent_modified_files(10)
         if _read_files:
             parts.append("**Files Read:** " + ", ".join(os.path.basename(f) for f in _read_files))
         if _mod_files:
-            parts.append("**Files Modified:** " + ", ".join(os.path.basename(f) for f in _mod_files))
+            _mod_parts: List[str] = []
+            for f in _mod_files:
+                _bn = os.path.basename(f)
+                try:
+                    _size = os.path.getsize(f)
+                    _size_str = f"{_size:,} bytes"
+                except Exception:
+                    _size_str = "unknown size"
+                _mod_parts.append(f"  - `{_bn}` ({_size_str})")
+            parts.append("**Files Modified (DO NOT re-read or re-write these):**\n" + "\n".join(_mod_parts))
+            
+            # ── FILE CONTENT SNAPSHOTS: Capture current state of modified files ──
+            # After compaction the AI has zero memory of what it wrote — it sees
+            # "index.html (42KB)" with no idea what's inside. This causes the
+            # catastrophic rework loop: compaction → forget → re-read → exhaustion.
+            # Content snapshots give the AI 600 chars of each file's content so it
+            # knows exactly what was written and can continue without re-reading.
+            _snapshot_lines: List[str] = []
+            _snapshot_bytes = 0
+            _SNAPSHOT_MAX_BYTES = 6000  # Total budget for all file snapshots
+            for f in _mod_files[:6]:  # Max 6 files to avoid context bloat
+                try:
+                    _bn = os.path.basename(f)
+                    # Read file content (binary first, then decode heuristically)
+                    with open(f, 'rb') as fh:
+                        _raw = fh.read(min(1800, os.path.getsize(f)))  # 600 chars ≈ 1800 bytes UTF-8
+                    try:
+                        _text = _raw.decode('utf-8')
+                    except UnicodeDecodeError:
+                        try:
+                            _text = _raw.decode('cp1252')
+                        except Exception:
+                            _text = _raw.decode('utf-8', errors='replace')
+                    # Truncate to ~600 chars for a meaningful preview
+                    _preview = _text[:600]
+                    _snap = f"**{_bn}** (total: {os.path.getsize(f):,} bytes):\n```\n{_preview}\n```"
+                    if _snapshot_bytes + len(_snap.encode('utf-8')) > _SNAPSHOT_MAX_BYTES:
+                        _snapshot_lines.append(f"**{_bn}** — (snapshot skipped, budget full)")
+                    else:
+                        _snapshot_lines.append(_snap)
+                        _snapshot_bytes += len(_snap.encode('utf-8'))
+                except Exception:
+                    _snapshot_lines.append(f"**{_bn}** — (could not read file)")
+            if _snapshot_lines:
+                parts.append("**📸 File Content Snapshots (current state — DO NOT re-read):**\n\n" + "\n\n".join(_snapshot_lines))
 
-        # 4. Key assistant decisions (last 3 assistant messages, truncated)
+        # 4. Key assistant decisions (last 5 assistant messages, truncated)
         _decisions: List[str] = []
         for msg in reversed(messages):
             if getattr(msg, 'role', None) == 'assistant':
                 _content = getattr(msg, 'content', '') or ''
                 if _content and not getattr(msg, 'tool_calls', None):
-                    _decisions.append(_content[:200])
-                    if len(_decisions) >= 3:
+                    _decisions.append(_content[:300])
+                    if len(_decisions) >= 5:
                         break
         if _decisions:
             parts.append("**Key Decisions:**\n" + "\n".join(f"- {d}" for d in reversed(_decisions)))
@@ -2636,12 +2731,12 @@ Use Markdown tables for structured data comparison:
             _role = getattr(msg, 'role', None)
             _content = getattr(msg, 'content', '') or ''
             if _role == 'user' and _content and not _content.startswith('['):
-                _summary_lines.append(f"User: {_content[:150]}")
+                _summary_lines.append(f"User: {_content[:300]}")
                 _msg_count += 1
             elif _role == 'assistant' and _content and not getattr(msg, 'tool_calls', None):
-                _summary_lines.append(f"Assistant: {_content[:150]}")
+                _summary_lines.append(f"Assistant: {_content[:300]}")
                 _msg_count += 1
-            if _msg_count >= 10:  # Keep last 10 exchanges max
+            if _msg_count >= 15:  # Keep last 15 exchanges for better continuity
                 break
         if _summary_lines:
             parts.append("**Conversation Digest:**\n" + "\n".join(_summary_lines))
@@ -2746,11 +2841,11 @@ Use Markdown tables for structured data comparison:
         # Add the summary section directly in MEMORY.md
         # This is what gets loaded into the system prompt on next session
         _summary_lines: List[str] = checkpoint_text.split('\n')
-        # Truncate to ~2000 chars to keep MEMORY.md lean
+        # Truncate to ~4000 chars to keep MEMORY.md lean but useful
         _truncated: List[str] = []
         _total = 0
         for sl in _summary_lines:
-            if _total + len(sl) > 2000:
+            if _total + len(sl) > 4000:
                 _truncated.append('...(truncated)')
                 break
             _truncated.append(sl)
@@ -2836,17 +2931,31 @@ Use Markdown tables for structured data comparison:
         except Exception:
             pass
 
-        KEEP_TAIL = 10
-        if len(messages) <= KEEP_TAIL + 2:
+        # Keep more tail messages to preserve recent editing context.
+        # With 1M token context windows, 10 messages was absurdly conservative —
+        # the AI would forget what it just edited and re-read files endlessly.
+        # KEEP_TAIL scales with context budget so 1M models keep ~50 messages,
+        # preserving 10+ turns of work instead of 5-8.
+        _ctx_limits = getattr(self._tool_ctx, '_model_limits', None)
+        _budget_tokens = _ctx_limits.context_window if _ctx_limits else 500_000
+        if _budget_tokens >= 900_000:
+            keep_tail = 50  # 1M models — keep ~25 turns of context
+        elif _budget_tokens >= 400_000:
+            keep_tail = 40  # 400K+ models
+        elif _budget_tokens >= 100_000:
+            keep_tail = 30  # 100K+ models
+        else:
+            keep_tail = 25  # Legacy — small models
+        if len(messages) <= keep_tail + 2:
             return messages  # nothing meaningful to drop
 
         system_msg: Any = messages[0]
         rest: List[Any] = messages[1:]          # everything after the system prompt
 
-        if len(rest) <= KEEP_TAIL:
+        if len(rest) <= keep_tail:
             return messages
 
-        tail: List[Any] = rest[-KEEP_TAIL:]
+        tail: List[Any] = rest[-keep_tail:]
         dropped_count = len(rest) - len(tail)
 
         # Advance `tail` to the first safe role boundary so we never start
@@ -2975,6 +3084,11 @@ Use Markdown tables for structured data comparison:
         self._last_todo_mutation_count = -1
         # Reset auto-cancel tracking
         self._todos_auto_cancelled = False
+        # Reset auto-continue tracking (only on fresh user request, not on re-entry)
+        if not getattr(self, '_auto_continue_requested', False):
+            self._auto_continue_cycle = 0
+            self._auto_continue_compacted = None
+            self._last_cycle_session_mutations = self._session_mutation_count
 
         merged = {**self._enhancement_data, **context}
 
@@ -3018,7 +3132,7 @@ Use Markdown tables for structured data comparison:
                     max_output_tokens      = 32_000
                     max_tool_result_chars  = 15_000
                     max_hist_chars         = 20_000
-                    max_turns              = 25
+                    max_turns              = 35
                 _limits = _FallbackLimits()
             
             # Models requiring Responses API (removed - no longer supported)
@@ -3053,7 +3167,26 @@ Use Markdown tables for structured data comparison:
                 _simple_query = False
 
             messages: List[Any]
-            if _simple_query:
+            # ── Auto-continue: use pre-compacted messages from previous cycle ──
+            _pre_compacted = self._auto_continue_compacted
+            if _pre_compacted:
+                messages = list(_pre_compacted)
+                self._auto_continue_compacted = None
+                self._auto_continue_requested = False  # Clear flag now that we're consuming the compacted messages
+                log.info(f"[BRIDGE] Auto-continue: using pre-compacted messages ({len(messages)} messages)")
+                # Append continuation user message
+                messages.append(PCM(role="user", content=message))
+                system_prompt = merged.get("system_prompt") or self._build_system_prompt(context)
+                tool_defs = _get_tool_definitions()
+                log.info(f"[BRIDGE] Total tools after merge: {len(tool_defs)}")
+                max_turns = _limits.max_turns
+                try:
+                    _max_turns_env = int(os.environ.get("CORTEX_MAX_AGENT_TURNS", "50"))
+                    if _max_turns_env > 0:
+                        max_turns = min(max_turns, _max_turns_env)
+                except Exception:
+                    pass
+            elif _simple_query:
                 system_prompt = (
                     "You are Cortex AI Chat inside a coding IDE. "
                     "Answer the user directly and concisely. "
@@ -3110,8 +3243,9 @@ Use Markdown tables for structured data comparison:
                 max_turns = _limits.max_turns
                 # Keep agent loops bounded for responsiveness. Can be overridden.
                 try:
-                    # Lower default improves first-action latency for typical IDE tasks.
-                    _max_turns_env = int(os.environ.get("CORTEX_MAX_AGENT_TURNS", "25"))
+                    # Higher default gives agents room to complete multi-file tasks
+                    # without hitting the continue wall on small/medium projects.
+                    _max_turns_env = int(os.environ.get("CORTEX_MAX_AGENT_TURNS", "50"))
                     if _max_turns_env > 0:
                         max_turns = min(max_turns, _max_turns_env)
                 except Exception:
@@ -3174,10 +3308,13 @@ Use Markdown tables for structured data comparison:
                 # ── Micro-compact: clear old tool results (cheap, no LLM) ────
                 # Ported from Claude Code's microCompact.ts. Runs every turn
                 # to keep context lean by clearing stale tool result content.
+                # keep_recent scales with budget: 1M models keep 24 results (~12 turns)
+                # instead of 16 (~8 turns) so recent file content isn't lost.
                 if turn > 0:
                     try:
                         from src.ai.conversation_compactor import microcompact_messages
-                        messages, _mc_saved = microcompact_messages(messages, keep_recent=6)
+                        _mc_keep = 24 if _budget >= 800_000 else 16
+                        messages, _mc_saved = microcompact_messages(messages, keep_recent=_mc_keep)
                         if _mc_saved > 0:
                             log.info(f"[BRIDGE] Micro-compact saved ~{_mc_saved:,} tokens on turn {turn + 1}")
                     except Exception as _mc_err:
@@ -3196,9 +3333,13 @@ Use Markdown tables for structured data comparison:
                 # Estimate current context usage before sending to LLM.
                 # If approaching the limit, proactively compact instead of
                 # waiting for the API to reject with a context_length error.
+                # Threshold scales with context: 1M models can run to 85%,
+                # smaller models stay at 75% to avoid API rejections.
                 if turn > 0:  # Skip first turn (messages are fresh)
                     _usage_pct = _est_tokens / max(_budget, 1)
-                    if _usage_pct > 0.75:
+                    # Larger budget → higher threshold (more headroom before compacting)
+                    _threshold = 0.85 if _budget >= 800_000 else 0.80 if _budget >= 400_000 else 0.75
+                    if _usage_pct > _threshold:
                         if not _compacted_once:
                             log.warning(
                                 f"[BRIDGE] Pre-overflow: {_est_tokens:,} tokens estimated ({_usage_pct:.0%} of {_budget:,} budget) — compacting proactively"
@@ -3210,8 +3351,8 @@ Use Markdown tables for structured data comparison:
                             )
                             messages = self._compact_messages(messages, PCM)
                             _compacted_once = True
-                        elif _usage_pct > 0.85:
-                            # Already compacted once and STILL over 85% — aggressive trim
+                        elif _usage_pct > (_threshold + 0.07):
+                            # Already compacted once and STILL over threshold+7% — aggressive trim
                             log.warning(
                                 f"[BRIDGE] Post-compact overflow: {_est_tokens:,} tokens ({_usage_pct:.0%}) — aggressive trim"
                             )
@@ -3663,6 +3804,21 @@ Use Markdown tables for structured data comparison:
                     _mutation_turns += 1
                     _has_mutated = True  # Mark that mutation has occurred
                     _post_mutation_read_count = 0  # Reset read counter after mutation
+                    
+                    # ── Track mutation type for Bash-only detection ──────
+                    # Record whether this mutation was a real edit (Write/Edit)
+                    # vs a Bash workaround. If the AI relies on Bash for too
+                    # many mutations in a row, it's avoiding proper editing tools.
+                    if not hasattr(self, '_mutation_type_history'):
+                        self._mutation_type_history: List[str] = []
+                    _used_real_edit = any(
+                        t_name in ("Write", "Edit") and self._tool_call_success.get(t_id, False)
+                        for t_name, t_id, _ in parsed_calls
+                    )
+                    self._mutation_type_history.append("edit" if _used_real_edit else "bash")
+                    if len(self._mutation_type_history) > 8:
+                        self._mutation_type_history = self._mutation_type_history[-8:]
+                    
                     # ── Re-enable read-only tools that were locked by AGGRESSIVE nudge ──
                     _readonly_tools_to_unlock = {"Read", "Grep", "Glob", "LS"}
                     _re_enabled = set()
@@ -3678,15 +3834,30 @@ Use Markdown tables for structured data comparison:
                     
                     # Track which todo this mutation corresponds to
                     if self._current_todos:
-                        # Find first IN_PROGRESS todo and verify it gets real work
+                        # Credit ALL IN_PROGRESS todos — a single Write/Edit/Bash often
+                        # fulfills multiple tasks (e.g., editing index.html fixes both
+                        # emoji placeholders AND CTA banner in one pass).
+                        # Without this, only the first IN_PROGRESS todo gets credit
+                        # and the rest get falsely blocked as "no mutations".
+                        _mutated_any = False
                         for _todo in self._current_todos:
                             if _todo.get("status") == "IN_PROGRESS":
                                 _todo["_mutation_count"] = _todo.get("_mutation_count", 0) + 1
+                                _mutated_any = True
                                 log.info(
                                     f"[TODO] Mutation #{_todo['_mutation_count']} for todo: "
                                     + f"{_todo.get('content', 'unknown')[:50]}"
                                 )
-                                break
+                        if not _mutated_any:
+                            # No IN_PROGRESS todo — credit the first PENDING one
+                            for _todo in self._current_todos:
+                                if _todo.get("status") == "PENDING":
+                                    _todo["_mutation_count"] = _todo.get("_mutation_count", 0) + 1
+                                    log.info(
+                                        f"[TODO] Mutation #{_todo['_mutation_count']} for todo (was PENDING): "
+                                        + f"{_todo.get('content', 'unknown')[:50]}"
+                                    )
+                                    break
                 
                 # ── Post-mutation enforcement ─────────────────────────────────
                 # After mutation, limit how many turns can be pure reading
@@ -3700,11 +3871,13 @@ Use Markdown tables for structured data comparison:
                         
                         if _post_mutation_read_count >= _POST_MUTATION_READ_LIMIT:
                             _verify_nudge = (
-                                f"STOP READING. You already made file changes. Now you MUST:\n"
-                                f"1. VERIFY your changes work (test in browser, run commands, etc.)\n"
-                                f"2. COMPLETE remaining tasks\n"
-                                f"3. Do NOT read more files unless absolutely necessary for debugging\n"
-                                f"4. Use Bash to test, or Write/Edit to fix issues"
+                                f"You've been reading files after already making changes. "
+                                f"Now you MUST:\n"
+                                f"1. Read the file you need to edit ONCE (only if you haven't already)\n"
+                                f"2. Use Edit for targeted changes — NEVER rewrite an entire large file\n"
+                                f"3. VERIFY your changes work (test in browser, run commands, etc.)\n"
+                                f"4. COMPLETE remaining tasks — do NOT keep reading unrelated files\n"
+                                f"5. If you need to read a file to understand its current state before editing, do it ONCE then edit immediately"
                             )
                             log.warning(
                                 f"[BRIDGE] Post-mutation read limit reached ({_post_mutation_read_count} turns). "
@@ -3724,12 +3897,15 @@ Use Markdown tables for structured data comparison:
                             f"CRITICAL: You have spent {turn + 1} turns ONLY reading files without making ANY changes. "
                             f"This is unacceptable. You MUST take action NOW:\n"
                             f"1. Summarize what you've learned in 2-3 sentences MAX\n"
-                            f"2. IMMEDIATELY use Write or Edit to modify files\n"
-                            f"3. Do NOT read any more files\n"
-                            f"4. Start coding RIGHT NOW"
+                            f"2. Read the file you plan to edit ONCE to see current content\n"
+                            f"3. IMMEDIATELY use Write or Edit to make your changes\n"
+                            f"4. Do NOT read unrelated files — only read the file you're actively editing\n"
+                            f"5. Use Edit for targeted changes. NEVER rewrite an entire large file with Write — you WILL destroy existing code."
                         )
-                        # ── FORCE ACTION: Disable read-only tools so agent CANNOT keep reading ──
-                        _readonly_tools_to_block = {"Read", "Grep", "Glob", "LS"}
+                        # ── FORCE ACTION: Disable analysis tools but KEEP Read enabled ──
+                        # Read is essential for editing — writing blind causes mass deletion.
+                        # Only block Grep/Glob/LS which encourage endless searching.
+                        _readonly_tools_to_block = {"Grep", "Glob", "LS"}
                         _disabled_any = False
                         for _rt in _readonly_tools_to_block:
                             if _rt not in self._disabled_tools:
@@ -3737,22 +3913,121 @@ Use Markdown tables for structured data comparison:
                                 _disabled_any = True
                         if _disabled_any:
                             _action_nudge += (
-                                f"\n\nTOOLS LOCKED: Read, Grep, Glob, LS are now DISABLED. "
-                                f"You can ONLY use Write, Edit, Bash, or PowerShell. "
+                                f"\n\nTOOLS LIMITED: Grep, Glob, LS are now DISABLED to prevent analysis paralysis. "
+                                f"Read is still available — use it ONCE to see the file, then Edit/Write immediately. "
                                 f"These tools will be re-enabled after you make at least one file change."
                             )
                             log.warning(
-                                f"[BRIDGE] AGGRESSIVE mode: Disabled read-only tools "
-                                f"({', '.join(sorted(_readonly_tools_to_block))})"
+                                f"[BRIDGE] AGGRESSIVE mode: Disabled analysis tools "
+                                f"({', '.join(sorted(_readonly_tools_to_block))}), Read kept enabled"
                             )
                     else:
                         _action_nudge = (
                             f"IMPORTANT: You've read multiple files across {turn + 1} turns but haven't written any code yet. "
-                            f"Stop analyzing and START IMPLEMENTING. Use Write/Edit tools to make changes now. "
-                            f"Reading more files won't complete the task - action will."
+                            f"Stop analyzing and START IMPLEMENTING:\n"
+                            f"1. Read the file you plan to edit ONCE to see current content\n"
+                            f"2. Immediately use Edit (preferred) or Write to make targeted changes\n"
+                            f"3. Reading more unrelated files won't complete the task — action will."
                         )
                     log.warning(f"[BRIDGE] {_severity} action nudge at turn {turn + 1} (no mutation yet)")
                     messages.append(PCM(role="user", content=_action_nudge))
+
+                # ── Bash overuse detection (rolling window) ──────────────────
+                # Bash is expensive (each call returns output that inflates
+                # context) and the AI often uses sed/echo instead of Write/Edit.
+                # The old approach required 5 CONSECUTIVE Bash turns, but the AI
+                # evaded this by inserting a single Read between Bash blocks
+                # (e.g., Bash×4, Read×1, Bash×2).  Now we use a rolling window:
+                # if ≥70% of the last 10 turns were Bash-only, fire the nudge.
+                _turn_has_only_bash = all(t_name == "Bash" for t_name, _, _ in parsed_calls)
+                
+                # Initialize rolling history if not present
+                if not hasattr(self, '_bash_usage_history'):
+                    self._bash_usage_history: List[bool] = []
+                
+                # Append this turn's Bash-only status and keep last 10
+                self._bash_usage_history.append(_turn_has_only_bash)
+                if len(self._bash_usage_history) > 10:
+                    self._bash_usage_history = self._bash_usage_history[-10:]
+                
+                # Check: need at least 5 turns of history before judging
+                if len(self._bash_usage_history) >= 5:
+                    _bash_ratio = sum(self._bash_usage_history) / len(self._bash_usage_history)
+                    _bash_count = sum(self._bash_usage_history)
+                    if _bash_ratio >= 0.70:
+                        _bash_nudge = (
+                            f"WARNING: You have used Bash in {_bash_count} of the last "
+                            f"{len(self._bash_usage_history)} turns ({_bash_ratio:.0%}). "
+                            f"Each Bash call inflates context and causes premature compaction. "
+                            f"Instead of using sed/echo/printf in Bash:\n"
+                            f"1. Read the file ONCE to see current content\n"
+                            f"2. Use Edit (preferred) for targeted changes — it preserves context\n"
+                            f"3. Use Write only for creating new files or complete rewrites\n"
+                            f"Edit and Write are faster, more reliable, and won't exhaust your context window."
+                        )
+                        log.warning(
+                            f"[BRIDGE] Bash overuse: {_bash_count}/{len(self._bash_usage_history)} "
+                            f"turns ({_bash_ratio:.0%}) were Bash. Injecting Write/Edit directive."
+                        )
+                        messages.append(PCM(role="user", content=_bash_nudge))
+                        # Reset history after firing to avoid repeated nudges
+                        self._bash_usage_history = []
+
+                # ── Bash circuit-breaker redirect ──────────────────────────
+                # When Bash is blocked by the circuit breaker (hit 50+ calls),
+                # the AI often defaults to Read/Grep instead of Write/Edit,
+                # creating an infinite read-after-block loop.
+                # Detect this and force a redirect to the proper editing tools.
+                _bash_called_this_turn = any(
+                    t_name == "Bash" for t_name, _, _ in parsed_calls
+                )
+                _bash_disabled = "Bash" in self._disabled_tools
+                if _bash_called_this_turn and _bash_disabled:
+                    # Bash was called but is now disabled — the call failed.
+                    # Reset the Bash usage history since the tool is unavailable.
+                    if hasattr(self, '_bash_usage_history'):
+                        self._bash_usage_history = []
+                    _bash_blocked_redirect = (
+                        f"Bash has been DISABLED (limit reached). You can no longer use Bash.\n"
+                        f"To continue editing files, you MUST use these tools instead:\n"
+                        f"1. Read the file ONCE to see current content\n"
+                        f"2. Use Edit for all targeted changes — it's faster and more reliable\n"
+                        f"3. Use Write only for creating new files\n"
+                        f"Do NOT use Grep/Glob/LS endlessly — edit the files directly."
+                    )
+                    log.warning(
+                        f"[BRIDGE] Bash circuit-broken: Redirecting AI to Write/Edit. "
+                        f"Reset consecutive Bash counter."
+                    )
+                    messages.append(PCM(role="user", content=_bash_blocked_redirect))
+
+                # ── Bash-only mutation detection ──────────────────────────
+                # Even when Bash counts as a "mutation" (it's in _mutation_tools),
+                # using ONLY Bash for edits means the AI is avoiding Write/Edit.
+                # If the last 5+ mutations were ALL Bash (no Write/Edit success),
+                # the AI is stuck in a Bash workaround loop — probably because
+                # Edit failed earlier.  Force it to use the proper tools.
+                _mutation_hist = getattr(self, '_mutation_type_history', [])
+                if len(_mutation_hist) >= 5 and all(m == "bash" for m in _mutation_hist):
+                    _bash_only_nudge = (
+                        f"CRITICAL: Your last {len(_mutation_hist)} file changes were ALL made "
+                        f"through Bash (sed/echo/scripts), NOT through Write or Edit. "
+                        f"Bash workarounds are fragile and waste context.\n\n"
+                        f"STOP using Bash for file editing. Instead:\n"
+                        f"1. Read the target file ONCE to see its current content\n"
+                        f"2. Use Edit to make targeted changes — copy the EXACT text from the file\n"
+                        f"3. If Edit fails with 'not found', re-read the file and try again\n"
+                        f"4. As a last resort, use Write to rewrite the entire file\n\n"
+                        f"Do NOT create .ps1/.bat/.sh scripts as workarounds. "
+                        f"Edit the project files directly."
+                    )
+                    log.warning(
+                        f"[BRIDGE] Bash-only mutations: {len(_mutation_hist)} consecutive "
+                        f"Bash mutations with no Write/Edit. Forcing tool redirect."
+                    )
+                    messages.append(PCM(role="user", content=_bash_only_nudge))
+                    # Reset history to avoid repeated nudges
+                    self._mutation_type_history = []
 
                 # ── Per-message budget enforcement ─────────────────────────────
                 # Ported from Claude Code's enforceToolResultBudget().
@@ -3794,6 +4069,11 @@ Use Markdown tables for structured data comparison:
                         for t in _pending_todos
                     )
                     _cur_count = len(_pending_todos)
+
+                    # ── Track mutation progress this cycle ────────────────
+                    _current_session_mutations = self._session_mutation_count
+                    _mutations_this_cycle = max(0, _current_session_mutations - self._last_cycle_session_mutations)
+                    self._last_cycle_session_mutations = _current_session_mutations
 
                     # Stale if: same content OR same/higher count of pending items
                     _content_same = (_cur_fingerprint == self._last_pending_ids)
@@ -3844,11 +4124,60 @@ Use Markdown tables for structured data comparison:
                             self.response_chunk,
                             f'\n\n---\n*Remaining tasks were auto-cancelled after repeated attempts without progress. You can start a new request if needed.*\n'
                         )
-                    else:
+                    elif _mutations_this_cycle > 0 and self._auto_continue_cycle < self._MAX_AUTO_CONTINUE_CYCLES:
+                        # ── AUTO-CONTINUE: Agent made progress, compact + restart ──
+                        self._auto_continue_cycle += 1
                         log.info(
-                            f'[BRIDGE] {len(_pending_todos)} todos still pending after turn loop (cycle {self._continue_cycle_count}/{self._MAX_STALE_CYCLES}) — emitting turn_limit_hit'
+                            f'[BRIDGE] Auto-continue cycle {self._auto_continue_cycle}/{self._MAX_AUTO_CONTINUE_CYCLES}: '
+                            + f'{len(_pending_todos)} todo(s) remaining, {_mutations_this_cycle} mutations this cycle '
+                            + f'(session total: {_current_session_mutations})'
                         )
-                        self._safe_emit(self.turn_limit_hit, _pending_todos)
+                        self._safe_emit(
+                            self.agent_status_update,
+                            'auto-continue',
+                            f'Auto-compacting conversation — continuing task (cycle {self._auto_continue_cycle}/{self._MAX_AUTO_CONTINUE_CYCLES})...'
+                        )
+                        # Compact conversation and save checkpoint to MEMORY.md
+                        messages = self._compact_messages(messages, PCM)
+                        # Store compacted messages for next _call_llm entry
+                        self._auto_continue_compacted = list(messages)
+                        self._auto_continue_requested = True
+                        # Reset stale tracking for new cycle
+                        self._continue_cycle_count = 0
+                        self._last_pending_ids = set()
+                        # ── Reset circuit breaker state between cycles ──
+                        # Tool failures in previous cycle are often due to context
+                        # exhaustion, not real tool problems. A fresh cycle with
+                        # compacted context deserves a clean slate.
+                        _disabled_before = len(self._disabled_tools)
+                        if _disabled_before > 0:
+                            self._tool_circuit_breaker.reset()
+                            log.info(
+                                f'[BRIDGE] Circuit breaker reset: {_disabled_before} disabled tool(s) '
+                                f're-enabled for auto-continue cycle {self._auto_continue_cycle}'
+                            )
+                        # Also reset post-mutation read counter and Bash overuse history
+                        self._post_mutation_read_count = 0
+                        if hasattr(self, '_bash_usage_history'):
+                            self._bash_usage_history = []
+                        if hasattr(self, '_mutation_type_history'):
+                            self._mutation_type_history = []
+                        log.info(
+                            f'[BRIDGE] Auto-continue requested — _handle_chat will re-enter _call_llm'
+                        )
+                    else:
+                        # ── MANUAL FALLBACK: No progress or auto-continue exhausted ──
+                        log.info(
+                            f'[BRIDGE] {len(_pending_todos)} todos still pending — '
+                            f'mutations this cycle={_mutations_this_cycle}, '
+                            f'auto-continue={self._auto_continue_cycle}/{self._MAX_AUTO_CONTINUE_CYCLES} — emitting turn_limit_hit'
+                        )
+                        # Build context checkpoint so the AI has memory when resumed
+                        try:
+                            _checkpoint = self._create_context_checkpoint(messages)
+                        except Exception:
+                            _checkpoint = "Context checkpoint unavailable."
+                        self._safe_emit(self.turn_limit_hit, _pending_todos, _checkpoint)
                 else:
                     # All done — reset stale tracking
                     self._continue_cycle_count = 0
@@ -3896,8 +4225,8 @@ Use Markdown tables for structured data comparison:
             pass  # sip not available, assume object is alive
         try:
             signal.emit(*args)
-        except RuntimeError:
-            pass  # C++ object deleted during emit
+        except (RuntimeError, AttributeError):
+            pass  # C++ object deleted during emit, or signal not properly bound
 
     def _build_activity_info(
         self, activity: str, tool_name: str, args: Dict[str, Any],
@@ -4063,6 +4392,45 @@ Use Markdown tables for structured data comparison:
                             info["task_id"] = parsed_map.get("taskId", info["task_id"])
                     except Exception:
                         pass
+
+            elif activity == "web_search":
+                info["query"] = args.get("query", "")
+                if status == "complete" and result_str:
+                    try:
+                        parsed = json.loads(result_str)
+                        if isinstance(parsed, dict):
+                            parsed_map = cast(Dict[str, Any], parsed)
+                            results_list = parsed_map.get("results", [])
+                            info["result_count"] = len(results_list)
+                            info["items"] = [
+                                {
+                                    "title": str(r.get("title", ""))[:200],
+                                    "url": str(r.get("url", "")),
+                                    "snippet": str(r.get("snippet", ""))[:200],
+                                }
+                                for r in (results_list or [])[:8]
+                                if isinstance(r, dict)
+                            ]
+                            formatted = parsed_map.get("formatted", "")
+                            if formatted:
+                                info["preview"] = formatted[:500]
+                    except Exception:
+                        info["preview"] = result_str[:500] if result_str else ""
+
+            elif activity == "web_fetch":
+                info["url"] = args.get("url", "")
+                info["query"] = args.get("query", "")
+                if status == "complete" and result_str:
+                    try:
+                        parsed = json.loads(result_str)
+                        if isinstance(parsed, dict):
+                            parsed_map = cast(Dict[str, Any], parsed)
+                            content = str(parsed_map.get("content", ""))
+                            info["content_length"] = len(content)
+                            info["preview"] = content[:600]
+                            info["url"] = parsed_map.get("url", info["url"])
+                    except Exception:
+                        info["preview"] = result_str[:600] if result_str else ""
 
             else:
                 # Fallback: pass raw args
@@ -5092,9 +5460,9 @@ Use Markdown tables for structured data comparison:
             try:
                 existing_size = os.path.getsize(full_path)
                 new_size = len(content.encode('utf-8'))
-                # If existing file is >500 bytes and new content is <30% of it,
+                # If existing file is >500 bytes and new content is <50% of it,
                 # this is almost certainly a truncated overwrite.
-                if existing_size > 500 and new_size < existing_size * 0.30:
+                if existing_size > 500 and new_size < existing_size * 0.50:
                     return ToolResult(
                         tool_id=tool_id, result=None, success=False,
                         error=(
@@ -5133,19 +5501,31 @@ Use Markdown tables for structured data comparison:
                 data_map = cast(Dict[str, Any], data_any) if isinstance(data_any, dict) else {}
                 op_raw = data_map.get("type", "create" if is_new else "update")
                 op_type: str = op_raw if isinstance(op_raw, str) else ("create" if is_new else "update")
-                # Emit UI signals
-                self.file_generated.emit(full_path, content)
+                # ── Emit UI signals (non-critical — catch failures so the real
+                #    write path succeeds even if PyQt signals aren't bound) ──
+                try:
+                    self.file_generated.emit(full_path, content)
+                except Exception:
+                    pass
                 if (not is_new) and (original_content is not None) and (original_content != content):
-                    self.file_edited_diff.emit(full_path, original_content, content)
+                    try:
+                        self.file_edited_diff.emit(full_path, original_content, content)
+                    except Exception:
+                        pass
                 # Emit completion signal for card animation
                 if card_id:
-                    self.file_operation_completed.emit(card_id, full_path, content, ui_op_type)
+                    try:
+                        self.file_operation_completed.emit(card_id, full_path, content, ui_op_type)
+                    except Exception:
+                        pass
                 self._tool_ctx.mark_file_modified(full_path)
                 return ToolResult(tool_id=tool_id, result={
                     "path": full_path, "type": op_type, "written": True,
                 })
             except Exception as exc:
-                log.warning(f"[BRIDGE] Real FileWriteTool failed, using fallback: {exc}")
+                # Only reach here if real_write_tool.call() itself threw —
+                # signal failures are now caught inline above.
+                log.warning(f"[BRIDGE] Real FileWriteTool.call() raised, using fallback: {exc}")
 
         # Fallback: simple write
         try:
@@ -5154,12 +5534,22 @@ Use Markdown tables for structured data comparison:
                 os.makedirs(parent, exist_ok=True)
             with open(full_path, "w", encoding="utf-8") as f:
                 f.write(content)
-            self.file_generated.emit(full_path, content)
+            # ── Emit UI signals (non-critical) ──
+            try:
+                self.file_generated.emit(full_path, content)
+            except Exception:
+                pass
             if (not is_new) and (original_content is not None) and (original_content != content):
-                self.file_edited_diff.emit(full_path, original_content, content)
+                try:
+                    self.file_edited_diff.emit(full_path, original_content, content)
+                except Exception:
+                    pass
             # Emit completion signal for card animation
             if card_id:
-                self.file_operation_completed.emit(card_id, full_path, content, ui_op_type)
+                try:
+                    self.file_operation_completed.emit(card_id, full_path, content, ui_op_type)
+                except Exception:
+                    pass
             self._tool_ctx.mark_file_modified(full_path)
             return ToolResult(tool_id=tool_id, result={
                 "path": full_path, "type": "create" if is_new else "update", "written": True,
@@ -5264,10 +5654,18 @@ Use Markdown tables for structured data comparison:
                     except Exception:
                         full_new = actual_new
                     original_content = actual_old  # best-effort for diff display
-                self.file_edited_diff.emit(full_path, original_content, full_new)
+                # ── Emit UI signals (non-critical — catch failures so the real
+                #    edit path succeeds even if PyQt signals aren't bound) ──
+                try:
+                    self.file_edited_diff.emit(full_path, original_content, full_new)
+                except Exception:
+                    pass  # pyqtSignal may fail if not properly bound — non-critical
                 # Emit completion signal for card animation
                 if card_id:
-                    self.file_operation_completed.emit(card_id, full_path, full_new, "edit")
+                    try:
+                        self.file_operation_completed.emit(card_id, full_path, full_new, "edit")
+                    except Exception:
+                        pass
                 self._tool_ctx.mark_file_modified(full_path)
                 
                 # Emit file edit notification for WebChannel
@@ -5277,17 +5675,50 @@ Use Markdown tables for structured data comparison:
                     "path": full_path, "edited": True,
                 })
             except Exception as exc:
-                log.warning(f"[BRIDGE] Real FileEditTool failed, using fallback: {exc}")
+                # Only reach here if real_edit_tool.call() itself threw —
+                # signal failures are now caught inline above so they don't
+                # force a fallback that double-writes and breaks mutation counting.
+                log.warning(f"[BRIDGE] Real FileEditTool.call() raised, using fallback: {exc}")
 
         # Fallback: simple string replace
         try:
-            with open(full_path, "r", encoding="utf-8") as f:
-                file_content = f.read()
-            if old_string not in file_content:
+            # Try UTF-8 first, then common Windows encodings for files
+            # with special characters (e.g., smart quotes, em-dashes).
+            file_content = None
+            for _enc in ("utf-8", "cp1252", "latin-1"):
+                try:
+                    with open(full_path, "r", encoding=_enc) as f:
+                        file_content = f.read()
+                    if _enc != "utf-8":
+                        log.info(
+                            f"[BRIDGE] Edit fallback: read {full_path} as {_enc} "
+                            f"(UTF-8 failed with encoding error)"
+                        )
+                    break
+                except (UnicodeDecodeError, UnicodeError):
+                    continue
+                except Exception:
+                    raise  # Non-encoding errors should propagate
+            
+            if file_content is None:
                 return ToolResult(tool_id=tool_id, result=None, success=False,
-                                  error=f"old_string not found in {full_path}")
+                                  error=f"Cannot read {full_path}: unsupported encoding")
+                
+            if old_string not in file_content:
+                # Give actionable advice since the AI's search string
+                # doesn't match — likely whitespace or encoding differences.
+                _snippet = file_content[:200]
+                return ToolResult(tool_id=tool_id, result=None, success=False,
+                                  error=(
+                                    f"old_string not found in {full_path}. "
+                                    f"Re-read the file to get current content, "
+                                    f"then use the EXACT text (including whitespace) for old_string. "
+                                    f"File starts with: {_snippet[:120]}..."
+                                  ))
             new_content = file_content.replace(old_string, new_string, 1)
-            with open(full_path, "w", encoding="utf-8") as f:
+            # Write back in the same encoding we successfully read with
+            _write_enc = _enc if file_content is not None else "utf-8"
+            with open(full_path, "w", encoding=_write_enc) as f:
                 f.write(new_content)
             # Update read_file_state so the next Edit turn's staleness check passes
             try:
@@ -5316,7 +5747,10 @@ Use Markdown tables for structured data comparison:
             
             # Emit file edit notification for WebChannel
             self._safe_emit(self.file_edit_notification, full_path, "edit", "complete")
-            await self._refresh_git_diff_stats(full_path)
+            try:
+                await self._refresh_git_diff_stats(full_path)
+            except Exception:
+                pass  # Diff refresh is non-critical — file was already written
             return ToolResult(tool_id=tool_id, result={"path": full_path, "edited": True})
         except Exception as e:
             return ToolResult(tool_id=tool_id, result=None, success=False, error=str(e))
@@ -5504,10 +5938,29 @@ Use Markdown tables for structured data comparison:
                 )
                 
                 if _is_implementation and _mutation_count == 0:
-                    log.warning(
-                        f"[TODO] Todo marked COMPLETE without mutations: {td.get('content', '')[:60]}"
-                    )
-                    # Don't block, but log warning for monitoring
+                    # Only block if the session has NO mutations at all.
+                    # A single Write/Edit can fulfill multiple tasks, so
+                    # per-todo count of 0 is NOT a cheat signal when the
+                    # session has real mutations.
+                    if self._session_mutation_count == 0:
+                        log.warning(
+                            f"[TODO] Todo marked COMPLETE without mutations: {td.get('content', '')[:60]}"
+                        )
+                        # FORCE REVERT: Marking implementation tasks complete without
+                        # any mutations is a clear sign the AI is trying to cheat.
+                        # Revert to IN_PROGRESS and inject a warning into the todo.
+                        td["status"] = "IN_PROGRESS"
+                        td["_completion_blocked"] = True
+                        if "content" in td:
+                            td["content"] = td["content"] + " ⚠️ [BLOCKED: No mutations — do actual work first]"
+                    else:
+                        # Session has real mutations — per-todo count of 0 is normal
+                        # when mutations were credited to other IN_PROGRESS todos.
+                        log.info(
+                            f"[TODO] Todo COMPLETE with 0 per-todo mutations "
+                            f"(session has {self._session_mutation_count} total) — allowing: "
+                            f"{td.get('content', '')[:60]}"
+                        )
             
             normalized_todos.append(td)
 
@@ -5887,7 +6340,8 @@ Use Markdown tables for structured data comparison:
         """
         Handle the WebFetch tool.
 
-        Fetches content from a URL and extracts the main content.
+        Fetches content from a URL and extracts the main readable content
+        using BeautifulSoup (preferred) or regex (fallback).
         """
         url = args.get("url", "")
         query = args.get("query", "")
@@ -5896,7 +6350,11 @@ Use Markdown tables for structured data comparison:
             return ToolResult(tool_id=tool_id, result=None, success=False,
                               error="WebFetch requires 'url' parameter")
 
-        # Try to import and use the real WebFetchTool
+        # Ensure URL has scheme
+        if not url.startswith(('http://', 'https://')):
+            url = 'https://' + url
+
+        # Try to import and use the real WebFetchTool utils
         if _importlib_util.find_spec("agent.src.tools.WebFetchTool.utils"):
             try:
                 from agent.src.tools.WebFetchTool.utils import get_url_markdown_content
@@ -5907,24 +6365,65 @@ Use Markdown tables for structured data comparison:
                     "query": query,
                 })
             except Exception as exc:
-                log.warning(f"[WebFetch] Failed to fetch {url}: {exc}")
+                log.warning(f"[WebFetch] WebFetchTool.utils failed: {exc} — falling back")
 
-        # Fallback: use stdlib urllib (always available)
+        # Fallback: BeautifulSoup-based extraction (preferred)
         import re
         text = ""
         try:
             req = urllib.request.Request(url, headers={
-                'User-Agent': 'Mozilla/5.0 (compatible; Cortex IDE AI Agent)'
+                'User-Agent': (
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                    'AppleWebKit/537.36 (KHTML, like Gecko) '
+                    'Chrome/120.0.0.0 Safari/537.36'
+                ),
+                'Accept': 'text/html,application/xhtml+xml',
+                'Accept-Language': 'en-US,en;q=0.9',
             })
             with urllib.request.urlopen(req, timeout=30) as response:
                 html = response.read().decode('utf-8', errors='replace')
 
-            # Simple text extraction (remove HTML tags)
-            text = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
-            text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
-            text = re.sub(r'<[^>]+>', ' ', text)
-            text = re.sub(r'\s+', ' ', text).strip()
-            
+            # Try BeautifulSoup for smart content extraction
+            try:
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(html, 'lxml')
+
+                # Remove non-content elements
+                for tag in soup.find_all(['script', 'style', 'nav', 'footer', 'header', 'aside',
+                                           'noscript', 'iframe', 'form', 'button', 'input']):
+                    tag.decompose()
+
+                # Remove common non-content CSS classes
+                for cls in ['sidebar', 'sidebar-nav', 'navigation', 'nav', 'footer', 'header',
+                            'advertisement', 'ad-', 'cookie', 'popup', 'modal', 'comment']:
+                    for tag in soup.find_all(class_=re.compile(cls, re.IGNORECASE)):
+                        tag.decompose()
+
+                # Try to find main content
+                main = soup.find('main') or soup.find('article') or soup.find(id='content') or soup.find(id='main')
+                if main:
+                    text = main.get_text(separator='\n', strip=True)
+                else:
+                    # Extract from body without nav/footer/header
+                    body = soup.find('body')
+                    if body:
+                        text = body.get_text(separator='\n', strip=True)
+
+                # Clean up whitespace
+                text = re.sub(r'\n{3,}', '\n\n', text)
+                text = re.sub(r' +', ' ', text)
+                text = text.strip()
+            except ImportError:
+                # Regex fallback if BeautifulSoup unavailable
+                text = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
+                text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
+                text = re.sub(r'<[^>]+>', ' ', text)
+                text = re.sub(r'\s+', ' ', text).strip()
+                log.info("[WebFetch] BeautifulSoup not available — using regex extraction")
+
+            if not text:
+                text = "No readable text content found on this page."
+
             return ToolResult(tool_id=tool_id, result={
                 "url": url,
                 "content": text[:50000],
@@ -5941,25 +6440,293 @@ Use Markdown tables for structured data comparison:
         """
         Handle the WebSearch tool.
 
-        Searches the web for information.
+        Tier 0: SerpAPI — Google search results (100 free/month, requires SERPAPI_API_KEY).
+        Tier 1: DuckDuckGo HTML search scraping (free, no API key, real web results).
+        Tier 2: DuckDuckGo Instant Answer API fallback (free, limited results).
+        Tier 3: Brave Search API (free tier 2K queries/month, requires BRAVE_API_KEY).
         """
+        import asyncio
+        import json
+        import urllib.parse
         query = args.get("query", "")
 
         if not query:
             return ToolResult(tool_id=tool_id, result=None, success=False,
                               error="WebSearch requires 'query' parameter")
 
-        # WebSearch is not fully configured — return guidance so the LLM
-        # does NOT retry this tool and instead proceeds with available info.
+        results: List[Dict[str, str]] = []
+        error_msgs: List[str] = []
+
+        # ── Tier 0: SerpAPI — Google search (best quality) ─────────────────
+        serpapi_key = os.environ.get("SERPAPI_API_KEY", "")
+        if serpapi_key:
+            try:
+                encoded = urllib.parse.quote(query)
+                serpapi_url = (
+                    f'https://serpapi.com/search'
+                    f'?q={encoded}&api_key={serpapi_key}&engine=google'
+                    f'&num=10&gl=us&hl=en'
+                )
+                req = urllib.request.Request(
+                    serpapi_url,
+                    headers={'User-Agent': 'Cortex-IDE/1.0 (web-search)'}
+                )
+                with urllib.request.urlopen(req, timeout=12) as resp:
+                    data = json.loads(resp.read().decode('utf-8'))
+
+                # Organic results
+                for r in (data.get('organic_results') or [])[:10]:
+                    results.append({
+                        'title': r.get('title', ''),
+                        'url': r.get('link', ''),
+                        'snippet': (r.get('snippet', '') or '')[:300],
+                    })
+
+                # Knowledge Graph / Answer Box (if any)
+                kg = data.get('knowledge_graph') or {}
+                if kg:
+                    kg_title = kg.get('title', '')
+                    kg_desc = kg.get('description', '')
+                    kg_url = kg.get('source', {}).get('link', '') if isinstance(kg.get('source'), dict) else ''
+                    if kg_title and kg_desc:
+                        results.append({
+                            'title': f'[Knowledge Graph] {kg_title}: {kg_desc[:200]}',
+                            'url': kg_url,
+                            'snippet': kg_desc[:300],
+                        })
+
+                # Featured snippet
+                answer_box = data.get('answer_box') or {}
+                if answer_box and not results:
+                    ab_title = answer_box.get('title', '')
+                    ab_answer = answer_box.get('answer', '') or answer_box.get('snippet', '')
+                    ab_url = answer_box.get('link', '')
+                    if ab_answer:
+                        results.append({
+                            'title': ab_title or 'Answer',
+                            'url': ab_url,
+                            'snippet': str(ab_answer)[:300],
+                        })
+
+                if results:
+                    log.info(f"[WebSearch] SerpAPI returned {len(results)} results for '{query}'")
+            except Exception as serp_exc:
+                msg = f"SerpAPI: {serp_exc}"
+                log.warning(f"[WebSearch] {msg} — falling through to DuckDuckGo")
+                error_msgs.append(msg)
+        else:
+            log.info(
+                "[WebSearch] SerpAPI key not set (free: https://serpapi.com/users/welcome). "
+                "Falling through to DuckDuckGo HTML search."
+            )
+
+        # ── Tier 1: DuckDuckGo HTML search (real web results) ─────────────
+        if not results:
+            try:
+                encoded = urllib.parse.quote(query)
+                # DuckDuckGo HTML endpoint — returns plain HTML with real search results
+                ddg_html_url = f'https://html.duckduckgo.com/html/?q={encoded}'
+                req = urllib.request.Request(
+                    ddg_html_url,
+                    headers={
+                        'User-Agent': (
+                            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                            'AppleWebKit/537.36 (KHTML, like Gecko) '
+                            'Chrome/120.0.0.0 Safari/537.36'
+                        ),
+                        'Accept': 'text/html,application/xhtml+xml',
+                        'Accept-Language': 'en-US,en;q=0.9',
+                    }
+                )
+                with urllib.request.urlopen(req, timeout=12) as resp:
+                    html = resp.read().decode('utf-8', errors='replace')
+
+                # Parse with BeautifulSoup if available, otherwise regex
+                try:
+                    from bs4 import BeautifulSoup
+                    soup = BeautifulSoup(html, 'lxml')
+                    result_blocks = soup.select('.result, .result__body, .web-result')
+                    if not result_blocks:
+                        # Try older DDG HTML layout
+                        result_blocks = soup.select('.result__body') or soup.select('.results_links')
+                        if not result_blocks:
+                            # Fall back to link-level extraction
+                            links = soup.select('a.result__a, a.result__url')
+                            snippets = soup.select('.result__snippet, .result__extract__snippet')
+                            # Pair links with snippets by position
+                            for i, link in enumerate(links[:10]):
+                                href = link.get('href', '')
+                                if href and not href.startswith('//duckduckgo.com'):
+                                    title = link.get_text(strip=True)
+                                    snippet = snippets[i].get_text(strip=True) if i < len(snippets) else ''
+                                    results.append({
+                                        'title': title[:200],
+                                        'url': href,
+                                        'snippet': snippet[:300],
+                                    })
+                    else:
+                        for block in result_blocks[:10]:
+                            link_elem = block.select_one('a.result__a') or block.select_one('a')
+                            snippet_elem = (
+                                block.select_one('.result__snippet') or
+                                block.select_one('.result__extract__snippet') or
+                                block.select_one('.snippet')
+                            )
+                            if link_elem:
+                                href = link_elem.get('href', '')
+                                if href and 'duckduckgo.com' not in href:
+                                    title = link_elem.get_text(strip=True)
+                                    snippet = snippet_elem.get_text(strip=True) if snippet_elem else ''
+                                    results.append({
+                                        'title': title[:200],
+                                        'url': href,
+                                        'snippet': snippet[:300],
+                                    })
+                except ImportError:
+                    # Fallback: regex-based extraction
+                    import re
+                    # Match DuckDuckGo HTML result links and snippets
+                    link_pattern = re.compile(
+                        r'<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
+                        re.DOTALL | re.IGNORECASE
+                    )
+                    snippet_pattern = re.compile(
+                        r'<[^>]*class="[^"]*result__snippet[^"]*"[^>]*>(.*?)</',
+                        re.DOTALL | re.IGNORECASE
+                    )
+                    found_links = link_pattern.findall(html)
+                    found_snippets = snippet_pattern.findall(html)
+                    for i, (href, title) in enumerate(found_links[:10]):
+                        title_clean = re.sub(r'<[^>]+>', '', title).strip()
+                        if title_clean and 'duckduckgo.com' not in href:
+                            snippet = ''
+                            if i < len(found_snippets):
+                                snippet = re.sub(r'<[^>]+>', '', found_snippets[i]).strip()
+                            results.append({
+                                'title': title_clean[:200],
+                                'url': href,
+                                'snippet': snippet[:300],
+                            })
+
+                if results:
+                    log.info(f"[WebSearch] DuckDuckGo HTML returned {len(results)} results for '{query}'")
+            except Exception as ddg_exc:
+                msg = f"DuckDuckGo HTML: {ddg_exc}"
+                log.warning(f"[WebSearch] {msg} — trying Instant Answer API fallback")
+                error_msgs.append(msg)
+
+        # ── Tier 2: DuckDuckGo Instant Answer API (free, no key) ──────────
+        if not results:
+            try:
+                encoded = urllib.parse.quote(query)
+                ddg_url = (
+                    f'https://api.duckduckgo.com/?q={encoded}'
+                    '&format=json&no_html=1&skip_disambig=1'
+                )
+                req = urllib.request.Request(
+                    ddg_url,
+                    headers={'User-Agent': 'Cortex-IDE/1.0 (web-search)'}
+                )
+                with urllib.request.urlopen(req, timeout=12) as resp:
+                    data = json.loads(resp.read().decode('utf-8'))
+
+                # Abstract (plain text summary)
+                abstract = (data.get('Abstract') or '').strip()
+                if abstract:
+                    source_url = data.get('AbstractURL', '')
+                    source_name = data.get('AbstractSource', '')
+                    results.append({
+                        'title': f'{source_name}: {abstract}' if source_name else abstract,
+                        'url': source_url,
+                        'snippet': abstract[:300],
+                    })
+
+                # Related topics
+                for topic in (data.get('RelatedTopics') or [])[:10]:
+                    if not isinstance(topic, dict):
+                        continue
+                    url = topic.get('FirstURL', '')
+                    text = topic.get('Text', '')
+                    if url and text:
+                        results.append({
+                            'title': text[:120],
+                            'url': url,
+                            'snippet': text[:300],
+                        })
+
+                if results:
+                    log.info(f"[WebSearch] DuckDuckGo API returned {len(results)} results for '{query}'")
+            except Exception as ddg_exc:
+                msg = f"DuckDuckGo API: {ddg_exc}"
+                log.warning(f"[WebSearch] {msg} — trying Brave fallback")
+                error_msgs.append(msg)
+
+        # ── Tier 3: Brave Search API (free tier, 2,000 queries/month) ────
+        if not results:
+            brave_key = os.environ.get("BRAVE_API_KEY", "")
+            if brave_key:
+                try:
+                    encoded = urllib.parse.quote(query)
+                    brave_url = f'https://api.search.brave.com/res/v1/web/search?q={encoded}&count=10'
+                    req = urllib.request.Request(
+                        brave_url,
+                        headers={
+                            'Accept': 'application/json',
+                            'Accept-Encoding': 'gzip',
+                            'X-Subscription-Token': brave_key,
+                            'User-Agent': 'Cortex-IDE/1.0 (web-search)',
+                        }
+                    )
+                    with urllib.request.urlopen(req, timeout=12) as resp:
+                        data = json.loads(resp.read().decode('utf-8'))
+
+                    web_results = data.get('web', {}).get('results', [])
+                    for r in web_results[:10]:
+                        results.append({
+                            'title': r.get('title', ''),
+                            'url': r.get('url', ''),
+                            'snippet': (r.get('description', '') or '')[:300],
+                        })
+
+                    if results:
+                        log.info(f"[WebSearch] Brave returned {len(results)} results for '{query}'")
+                except Exception as brave_exc:
+                    msg = f"Brave: {brave_exc}"
+                    log.warning(f"[WebSearch] {msg}")
+                    error_msgs.append(msg)
+            else:
+                log.info(
+                    "[WebSearch] Brave API key not set. "
+                    "Set BRAVE_API_KEY env var for fallback (free: https://brave.com/search/api/)."
+                )
+
+        # ── No results — return guidance ──────────────────────────────────
+        if not results:
+            error_detail = "; ".join(error_msgs) if error_msgs else ""
+            return ToolResult(tool_id=tool_id, result={
+                "query": query,
+                "results": [],
+                "message": (
+                    f"Web search for '{query}' returned no results. "
+                    + (f"Errors: {error_detail}. " if error_detail else "")
+                    + "Try a more specific query, or use WebFetch with a direct URL."
+                ),
+            })
+
+        # ── Build formatted output ────────────────────────────────────────
+        formatted = f'Web search results for: "{query}"\n\n'
+        for idx, r in enumerate(results, 1):
+            formatted += f"{idx}. **{r['title']}**\n"
+            formatted += f"   URL: {r['url']}\n"
+            if r.get('snippet'):
+                formatted += f"   {r['snippet']}\n"
+            formatted += "\n"
+        formatted += "\nREMINDER: Include sources above in your response using markdown hyperlinks."
+
         return ToolResult(tool_id=tool_id, result={
             "query": query,
-            "results": [],
-            "message": (
-                f"Web search for '{query}' is not available in this environment. "
-                f"Do NOT call WebSearch again. "
-                f"Proceed with the information you already have, "
-                f"or ask the user to provide the information you need."
-            ),
+            "results": results,
+            "formatted": formatted[:50000],
         })
 
     # ============================================================

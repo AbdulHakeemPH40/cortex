@@ -77,29 +77,29 @@ class ModelLimits:
         # --- Tool result cap -------------------------------------------------
         tool_share_tokens = int(budget_tokens * 0.30)
         raw_tool_chars    = (tool_share_tokens // 6) * CHARS_PER_TOKEN
-        self.max_tool_result_chars = max(4_000, min(raw_tool_chars, 60_000))
+        self.max_tool_result_chars = max(8_000, min(raw_tool_chars, 120_000))
 
         # --- History message cap ---------------------------------------------
         hist_share_tokens = int(budget_tokens * 0.40)
         raw_hist_chars    = (hist_share_tokens // 10) * CHARS_PER_TOKEN
-        self.max_hist_chars = max(3_000, min(raw_hist_chars, 40_000))
+        self.max_hist_chars = max(6_000, min(raw_hist_chars, 80_000))
 
         # --- File read cap (CRITICAL for context overflow prevention) --------
         # Single file should never exceed 15% of budget
         # This prevents reading a 100KB file that blows up context
         file_share_tokens = int(budget_tokens * 0.15)
         raw_file_chars    = file_share_tokens * CHARS_PER_TOKEN
-        # Floor: 8KB (enough for small files), Ceiling: 100KB (reasonable limit)
-        self.max_file_read_chars = max(8_000, min(raw_file_chars, 100_000))
+        # Floor: 8KB (enough for small files), Ceiling: raised for 1M context models
+        self.max_file_read_chars = max(8_000, min(raw_file_chars, 200_000))
         self.max_file_read_bytes = self.max_file_read_chars * CHARS_PER_TOKEN
 
         # --- Agentic turn limit ----------------------------------------------
         # Larger context → agent can afford more tool-call round-trips
         # BUT we cap it to prevent analysis paralysis (especially for DeepSeek)
-        if self.context_window >= 200_000:
+        if self.context_window >= 500_000:
+            self.max_turns = 30  # 1M context models — complex multi-file projects
+        elif self.context_window >= 200_000:
             self.max_turns = 25  # Increased from 15 for complex multi-step tasks
-        elif self.context_window >= 100_000:
-            self.max_turns = 30
         elif self.context_window >= 32_000:
             self.max_turns = 20
         else:
@@ -141,13 +141,12 @@ _DEEPSEEK_MAX_OUTPUT_TOKENS = _deepseek_max_output_tokens()
 _REGISTRY: List[Tuple[str, int, int]] = [
 
     # ── DeepSeek V4 / legacy aliases ─────────────────────────────────────────
-    # DeepSeek V4 supports 1M context. We apply tiered caps by model power:
-    # Pro/Reasoner get larger windows, Flash stays tighter for responsiveness.
-    ("deepseek-v4-pro",       400_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),
-    ("deepseek-v4-flash",     220_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),
-    ("deepseek-chat",         300_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),  # currently routed to V4 tier
-    ("deepseek-reasoner",     420_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),  # currently routed to V4 tier
-    ("deepseek",              260_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),  # generic DeepSeek fallback
+    # DeepSeek V4 supports 1M context across all tiers.
+    ("deepseek-v4-pro",     1_000_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),
+    ("deepseek-v4-flash",   1_000_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),
+    ("deepseek-chat",       1_000_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),  # currently routed to V4 tier
+    ("deepseek-reasoner",   1_000_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),  # currently routed to V4 tier
+    ("deepseek",            1_000_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),  # generic DeepSeek fallback
 
     # ── OpenAI GPT-5.x Series (Frontier) ───────────────────────────────────
     ("gpt-5.4-nano",         400_000, 128_000),
@@ -263,7 +262,7 @@ _REGISTRY: List[Tuple[str, int, int]] = [
 
 _DEFAULT_LIMITS = ModelLimits(
     model_id="unknown",
-    context_window=128_000,
+    context_window=500_000,
     max_output_tokens=8_192,
 )
 

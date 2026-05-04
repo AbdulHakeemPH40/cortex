@@ -2853,6 +2853,31 @@
     color: rgba(250, 200, 100, 0.9);
 }
 
+.agent-status-auto-continue {
+    background: rgba(60, 200, 140, 0.08);
+    border-color: rgba(60, 200, 140, 0.22);
+    color: rgba(100, 220, 160, 0.9);
+    animation: statusPulseIn 0.4s ease-out;
+}
+
+/* Status note auto-dismiss: fade out after appearing */
+.agent-status-note.status-dismissing {
+    opacity: 0;
+    max-height: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    border-width: 0;
+    transition: all 0.5s ease-in;
+    overflow: hidden;
+}
+
+@keyframes statusPulseIn {
+    0% { opacity: 0; transform: translateY(-6px); }
+    100% { opacity: 1; transform: translateY(0); }
+}
+
 .agent-status-icon {
     font-size: 13px;
     flex-shrink: 0;

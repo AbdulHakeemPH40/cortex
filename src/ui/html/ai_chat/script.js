@@ -3425,6 +3425,10 @@ function showToolActivity(type, info, status) {
             window.updateContainerHeaderForCommand(data, status);
         }
         _caHandleTerminal(container, data, status);
+    } else if (type === 'web_search') {
+        _caRenderWebSearch(data, status);
+    } else if (type === 'web_fetch') {
+        _caRenderWebFetch(data, status);
     } else {
         _caRenderGeneric(data, status, type);
     }
@@ -4092,6 +4096,137 @@ function _caRenderGeneric(data, status, type) {
         '</div>' +
         '<div class="ca-card-preview">' + escapeHtml(preview) + '</div>' +
         '<div class="ca-card-body"></div>';
+    cardsHost.appendChild(card);
+}
+
+// ── Render: Web Search ──────────────────────────────────
+function _caRenderWebSearch(data, status) {
+    var group = _caGroup;
+    if (!group) return;
+    var cardsHost = group.querySelector('.ca-group-cards');
+    if (!cardsHost) return;
+
+    var query = data.query || '';
+    var resultCount = data.result_count || 0;
+    var items = data.items || [];
+    var key = 'websearch|' + query;
+
+    var existing = _caFindCard('websearch', key);
+    if (existing && status === 'complete') {
+        _caSetCardBadge(existing, 'complete');
+        existing.querySelector('.ca-card-badge').textContent = resultCount + ' result' + (resultCount !== 1 ? 's' : '');
+        if (items.length > 0) {
+            existing.classList.add('expanded');
+            var body = existing.querySelector('.ca-card-body');
+            if (body) {
+                body.innerHTML = '';
+                for (var i = 0; i < items.length; i++) {
+                    var item = items[i];
+                    var row = document.createElement('div');
+                    row.className = 'ca-webresult-row';
+                    row.innerHTML =
+                        '<div class="ca-webresult-title">' +
+                            '<a href="' + escapeHtml(item.url || '#') + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">' +
+                                escapeHtml(item.title || '') +
+                            '</a>' +
+                        '</div>' +
+                        '<div class="ca-webresult-url">' + escapeHtml(item.url || '') + '</div>' +
+                        (item.snippet ? '<div class="ca-webresult-snippet">' + escapeHtml(item.snippet) + '</div>' : '');
+                    body.appendChild(row);
+                }
+            }
+        }
+        return;
+    }
+    if (existing) return;
+
+    _caStats.searches++;
+    var displayQuery = query.length > 60 ? query.substring(0, 57) + '...' : query;
+
+    var card = document.createElement('div');
+    card.className = 'ca-card websearch collapsed';
+    card.dataset.caType = 'websearch';
+    card.dataset.caKey = key;
+    card.innerHTML =
+        '<div class="ca-card-header">' +
+            '<svg class="ca-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
+            '<span class="ca-card-icon">&#128269;</span>' +
+            '<span class="ca-card-label">' +
+                'Web Search  <span class="ca-highlight">' + escapeHtml(displayQuery) + '</span>' +
+            '</span>' +
+            '<span class="ca-card-badge ' + (status === 'complete' ? 'complete' : 'running') + '">' +
+                (status === 'complete' ? resultCount + ' result' + (resultCount !== 1 ? 's' : '') : 'searching') +
+            '</span>' +
+        '</div>' +
+        '<div class="ca-card-preview">' + escapeHtml(displayQuery) + '</div>' +
+        '<div class="ca-card-body"></div>';
+
+    card.querySelector('.ca-card-header').onclick = function(e) {
+        e.stopPropagation();
+        card.classList.toggle('expanded');
+    };
+    cardsHost.appendChild(card);
+}
+
+// ── Render: Web Fetch ──────────────────────────────────
+function _caRenderWebFetch(data, status) {
+    var group = _caGroup;
+    if (!group) return;
+    var cardsHost = group.querySelector('.ca-group-cards');
+    if (!cardsHost) return;
+
+    var url = data.url || '';
+    var contentLength = data.content_length || 0;
+    var preview = data.preview || '';
+    var key = 'webfetch|' + url;
+
+    var existing = _caFindCard('webfetch', key);
+    if (existing && status === 'complete') {
+        _caSetCardBadge(existing, 'complete');
+        var clText = contentLength > 1024 ? (contentLength / 1024).toFixed(1) + ' KB' : contentLength + ' B';
+        existing.querySelector('.ca-card-badge').textContent = clText;
+        if (preview) {
+            existing.classList.add('expanded');
+            var body = existing.querySelector('.ca-card-body');
+            if (body) {
+                body.innerHTML = '<div class="ca-fetch-preview">' + escapeHtml(preview) + '</div>';
+            }
+        }
+        return;
+    }
+    if (existing) return;
+
+    // Extract hostname for display
+    var hostname = url;
+    try {
+        var parsed = new URL(url.startsWith('http') ? url : 'https://' + url);
+        hostname = parsed.hostname;
+    } catch(e) {}
+
+    _caTrackUniqueFile(url);
+
+    var card = document.createElement('div');
+    card.className = 'ca-card webfetch collapsed';
+    card.dataset.caType = 'webfetch';
+    card.dataset.caKey = key;
+    card.innerHTML =
+        '<div class="ca-card-header">' +
+            '<svg class="ca-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
+            '<span class="ca-card-icon">&#127760;</span>' +
+            '<span class="ca-card-label">' +
+                'Web Fetch  <span class="ca-highlight">' + escapeHtml(hostname) + '</span>' +
+            '</span>' +
+            '<span class="ca-card-badge ' + (status === 'complete' ? 'complete' : 'running') + '">' +
+                (status === 'complete' ? (contentLength > 1024 ? (contentLength / 1024).toFixed(1) + ' KB' : contentLength + ' B') : 'fetching') +
+            '</span>' +
+        '</div>' +
+        '<div class="ca-card-preview">' + escapeHtml(url.length > 80 ? url.substring(0, 77) + '...' : url) + '</div>' +
+        '<div class="ca-card-body"></div>';
+
+    card.querySelector('.ca-card-header').onclick = function(e) {
+        e.stopPropagation();
+        card.classList.toggle('expanded');
+    };
     cardsHost.appendChild(card);
 }
 
@@ -10095,14 +10230,41 @@ window.toggleTodoCard = toggleTodoCard;
 function onAgentStatus(type, message) {
     var container = document.getElementById('chatMessages');
     if (!container) return;
+
+    // ── Clean up old status notes of the same type (replace, don't stack) ──
+    var oldClass = 'agent-status-' + (type || 'info');
+    var existing = container.querySelectorAll('.' + oldClass);
+    for (var e = 0; e < existing.length; e++) {
+        if (existing[e].classList.contains('status-dismissing')) continue;
+        existing[e].classList.add('status-dismissing');
+        // Remove from DOM after transition completes
+        (function(el) {
+            setTimeout(function() { if (el.parentNode) el.parentNode.removeChild(el); }, 600);
+        })(existing[e]);
+    }
+
     var note = document.createElement('div');
-    note.className = 'agent-status-note agent-status-' + (type || 'info');
-    var icon = type === 'compacting' ? '&#8635;' : type === 'failover' ? '&#8644;' : '&#8634;';  // ↻ / ⇄ / ↺
+    note.className = 'agent-status-note ' + oldClass;
+    var icon = type === 'auto-continue' ? '&#128260;' :   // 🔄
+               type === 'compacting'   ? '&#8635;' :     // ↻
+               type === 'failover'     ? '&#8644;' :     // ⇄
+                                         '&#8634;';       // ↺
     note.innerHTML =
         '<span class="agent-status-icon">' + icon + '</span>' +
         '<span class="agent-status-text">' + escapeHtml(message || '') + '</span>';
     container.appendChild(note);
     container.scrollTop = container.scrollHeight;
+
+    // ── Auto-dismiss after 6 seconds (fade out gracefully) ──
+    (function(el) {
+        setTimeout(function() {
+            if (!el.parentNode) return;
+            el.classList.add('status-dismissing');
+            setTimeout(function() {
+                if (el.parentNode) el.parentNode.removeChild(el);
+            }, 600);
+        }, 6000);
+    })(note);
 }
 window.onAgentStatus = onAgentStatus;
 
@@ -10164,7 +10326,7 @@ window.onContextBudgetUpdate = onContextBudgetUpdate;
  * Called by Python when the agent loop ends with todos still PENDING/IN_PROGRESS.
  * Shows a one-time "Continue?" banner so the user can resume the task.
  */
-function onTurnLimitHit(pendingTodos) {
+function onTurnLimitHit(pendingTodos, contextSummary) {
     var container = document.getElementById('chatMessages');
     if (!container) return;
     // Only show once per response
@@ -10180,6 +10342,7 @@ function onTurnLimitHit(pendingTodos) {
     var label = count + ' task' + (count !== 1 ? 's' : '') + ' remaining';
 
     var todosJson = JSON.stringify(pendingTodos || []);
+    var ctxJson = JSON.stringify(contextSummary || '');
     var banner = document.createElement('div');
     banner.id = 'continue-task-banner';
     banner.className = 'continue-task-banner';
@@ -10192,7 +10355,7 @@ function onTurnLimitHit(pendingTodos) {
             '</svg>' +
             '<span>' + escapeHtml(label) + '</span>' +
         '</div>' +
-        '<button class="continue-task-btn" onclick="continueTask(' + todosJson.replace(/"/g, '&quot;') + ')">Continue</button>';
+        '<button class="continue-task-btn" onclick="continueTask(' + todosJson.replace(/"/g, '&quot;') + ',' + ctxJson.replace(/"/g, '&quot;') + ')">Continue</button>';
     container.appendChild(banner);
     container.scrollTop = container.scrollHeight;
 }
@@ -10203,7 +10366,7 @@ window.onTurnLimitHit = onTurnLimitHit;
  * Dismisses the banner and sends a continuation user message so the agent
  * picks up where it left off.
  */
-function continueTask(pendingTodos) {
+function continueTask(pendingTodos, contextSummary) {
     // Dismiss the banner
     var banner = document.getElementById('continue-task-banner');
     if (banner) banner.remove();
@@ -10215,11 +10378,15 @@ function continueTask(pendingTodos) {
     }).map(function(t) {
         return '- ' + (t.content || t.description || '');
     });
+    var ctxText = (contextSummary && contextSummary.length > 0)
+        ? '\n\n--- Context Snapshot (current state) ---\n' + contextSummary + '\n--- End Snapshot ---\n'
+        : '';
     var msg = 'Continue the task. Remaining todos:\n' + lines.join('\n') +
-        '\n\nCRITICAL — STOP READING, START CODING. You already know the codebase. ' +
-        'Use Write/Edit to make changes IMMEDIATELY. Reading more files will NOT ' +
-        'complete the task — only writing code will. Do NOT use Grep/Read unless ' +
-        'you are debugging a specific error or test failure.';
+        ctxText +
+        '\n\n(Session state was compacted — file snapshots and progress saved to MEMORY.md. ' +
+        'Read the specific files you need to edit to see their current content, ' +
+        'then use Write/Edit to complete the remaining work. ' +
+        'Do NOT re-read files you already know the contents of.)';
 
     // Inject into the input and fire sendMessage
     var input = document.getElementById('chatInput');

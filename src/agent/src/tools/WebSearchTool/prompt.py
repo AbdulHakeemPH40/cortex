@@ -36,7 +36,10 @@ CRITICAL REQUIREMENT - You MUST follow this:
 
 Usage notes:
   - Domain filtering is supported to include or block specific websites
-  - Web search is only available in the US
+  - Primary: SerpAPI (Google results, requires SERPAPI_API_KEY, 100 free/month)
+  - Fallback 1: DuckDuckGo HTML search (free, global, no API key required)
+  - Fallback 2: DuckDuckGo Instant Answer API (free, limited results)
+  - Fallback 3: Brave Search API if BRAVE_API_KEY env var is set
 
 IMPORTANT - Use the correct year in search queries:
   - The current month is {current_month_year}. You MUST use this year when searching for recent information, documentation, or current events.
