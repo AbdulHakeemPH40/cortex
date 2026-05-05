@@ -28,8 +28,6 @@ window.onerror = function(message, source, lineno, colno, error) {
 
 // Debounced persistence to avoid blocking the UI / delaying message submission.
 var _saveChatsTimer = null;
-var _currentDiffGroup = null; // {id, el} – active group container for current AI turn
-var _currentFileOpGroup = null; // {id, el} – active file op group for current AI turn
 
 // Initialize batch buffer when DOM is ready
 document.addEventListener('DOMContentLoaded', function() {
@@ -2909,21 +2907,19 @@ function showThinkingAnimation() {
     thinkingStartTime = Date.now();
     explorationItems = [];
     
-    // Create Cortex-style thinking indicator with pulsing orb
+    // Windows Installer-style progress bar thinking indicator
     var thinkingEl = document.createElement('div');
     thinkingEl.id = 'thinking-animation';
-    thinkingEl.className = 'thinking-message';
+    thinkingEl.className = 'thinking-progress';
     thinkingEl.innerHTML = `
-        <div class="thinking-orb">
-            <div class="thinking-orb-ring"></div>
-            <div class="thinking-orb-ring"></div>
-            <div class="thinking-orb-core"></div>
+        <div class="thinking-progress-header">
+            <span class="thinking-progress-title">Cortex is working</span>
+            <span class="thinking-progress-timer" id="thinking-timer">0s</span>
         </div>
-        <div class="thinking-content">
-            <span class="thinking-title">Working</span>
-            <span class="thinking-subtitle" id="thinking-main-text">Analyzing your request...</span>
+        <div class="thinking-progress-bar-wrap">
+            <div class="thinking-progress-bar" id="thinking-progress-fill"></div>
         </div>
-        <span class="thinking-timer" id="thinking-timer">0s</span>
+        <div class="thinking-progress-status" id="thinking-main-text">Analyzing your request...</div>
     `;
     
     container.appendChild(thinkingEl);
@@ -2931,6 +2927,34 @@ function showThinkingAnimation() {
     
     // Start timer
     thinkingTimerInterval = setInterval(updateThinkingTimer, 1000);
+    
+    // Animate progress bar with indeterminate pulse
+    var fill = document.getElementById('thinking-progress-fill');
+    var progressStage = 0;
+    var progressStages = [
+        { pct: 15, text: 'Analyzing your request...' },
+        { pct: 30, text: 'Reading project context...' },
+        { pct: 50, text: 'Processing...' },
+        { pct: 75, text: 'Gathering information...' },
+        { pct: 90, text: 'Finalizing response...' },
+    ];
+    
+    window._thinkingProgressInterval = setInterval(function() {
+        if (!fill || !document.getElementById('thinking-animation')) {
+            clearInterval(window._thinkingProgressInterval);
+            return;
+        }
+        if (progressStage < progressStages.length) {
+            var stage = progressStages[progressStage];
+            fill.style.width = stage.pct + '%';
+            var statusEl = document.getElementById('thinking-main-text');
+            if (statusEl) statusEl.textContent = stage.text;
+            progressStage++;
+        } else {
+            // Pulse near completion
+            fill.style.width = '92%';
+        }
+    }, 1800);
 }
 
 function updateThinkingTimer() {
@@ -3130,6 +3154,11 @@ function hideThinkingAnimation() {
         thinkingTimerInterval = null;
     }
     
+    if (window._thinkingProgressInterval) {
+        clearInterval(window._thinkingProgressInterval);
+        window._thinkingProgressInterval = null;
+    }
+    
     thinkingStartTime = null;
     explorationItems = [];
 }
@@ -3229,13 +3258,14 @@ var currentPlan = "";
 var currentTasks = "";
 var currentWalkthrough = "";
 
-// Cortex Activity Cards - Cursor/Windsurf Hybrid Design
-// Each tool/operation renders as a flat card with compact preview + expandable body
-// All cards live inside a single collapsible .cortex-activity-group per AI turn
+// Cortex Activity Cards - Cursor Step-Block Design
+// Each tool/operation renders as a flat step-block card directly inside the AI message bubble
+// No parent wrapper — cards are flat siblings matching Cursor's .step-block pattern
 var activityStartTime = null;
 var thinkingInterval = null;
 var currentActivitySection = null; // kept for backward compat, unused by new system
-var _caGroup = null;             // current .cortex-activity-group element
+var _caGroup = null;             // direct reference to the message container (not a wrapper)
+var _caCardStagger = 0;           // cascading entrance delay counter per turn
 var _caStats = { reads: 0, edits: 0, searches: 0, thoughts: 0, commands: 0 };
 var _caFileCount = 0;
 var _caSeenFileKeys = Object.create(null);
@@ -3287,71 +3317,44 @@ function _caTrackUniqueFile(pathLike) {
     _caFileCount++;
 }
 
-// ── Ensure Activity Group ────────────────────────────────
+// ── Ensure Activity Container (no wrapper) ────────────────
 function _caEnsureGroup(container) {
     if (!_caGroup || !document.body.contains(_caGroup)) {
         _caGroup = null;
+        _caCardStagger = 0;
         _caFileCount = 0;
         _caStats = { reads: 0, edits: 0, searches: 0, thoughts: 0, commands: 0 };
         _caSeenFileKeys = Object.create(null);
     }
     if (!_caGroup) {
-        _caGroup = _caCreateGroup(container);
+        // No wrapper — _caGroup is just the message container itself
+        _caGroup = container;
     }
     return _caGroup;
 }
 
-function _caCreateGroup(container) {
-    var group = document.createElement('div');
-    group.className = 'cortex-activity-group';
-    group.innerHTML =
-        '<div class="ca-group-header">' +
-            '<svg class="ca-group-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>' +
-            '<span class="ca-group-icon"><span class="ca-group-spinner"></span></span>' +
-            '<span class="ca-group-title">Agent Activity</span>' +
-            '<span class="ca-group-stats"></span>' +
-        '</div>' +
-        '<div class="ca-group-cards"></div>';
-    group.querySelector('.ca-group-header').onclick = function(e) {
-        e.stopPropagation();
-        group.classList.toggle('collapsed');
-    };
-    container.appendChild(group);
-    return group;
+// _caCreateGroup removed — cards render directly as flat step-block siblings
+
+// ── No-op header (no parent group header in flat Cursor design) ──
+function _caUpdateGroupHeader() {
+    // No parent group header in flat step-block design
 }
 
-// ── Group Header Update ──────────────────────────────────
-function _caUpdateGroupHeader() {
-    if (!_caGroup) return;
-    var titleEl = _caGroup.querySelector('.ca-group-title');
-    var statsEl = _caGroup.querySelector('.ca-group-stats');
-    var runningCount = _caGroup.querySelectorAll('.ca-card-badge.running').length;
-    if (titleEl) {
-        if (_caFileCount > 0) {
-            titleEl.textContent = 'Explored ' + _caFileCount + ' file' + (_caFileCount !== 1 ? 's' : '');
-        } else {
-            titleEl.textContent = 'Agent Activity';
-        }
-    }
-    if (statsEl) {
-        var parts = [];
-        if (_caStats.reads > 0) parts.push(_caStats.reads + ' read' + (_caStats.reads > 1 ? 's' : ''));
-        if (_caStats.edits > 0) parts.push(_caStats.edits + ' edit' + (_caStats.edits > 1 ? 's' : ''));
-        if (_caStats.searches > 0) parts.push(_caStats.searches + ' search' + (_caStats.searches > 1 ? 'es' : ''));
-        if (_caStats.thoughts > 0) parts.push(_caStats.thoughts + ' thought' + (_caStats.thoughts > 1 ? 's' : ''));
-        if (_caStats.commands > 0) parts.push(_caStats.commands + ' cmd');
-        if (runningCount > 0) parts.push(runningCount + ' running');
-        statsEl.textContent = parts.length ? parts.join('  ') : '';
+// ── Helper: insert ca-card BEFORE currentAssistantMessage so cards flow above AI text ──
+function _caInsertCard(card) {
+    var container = document.getElementById('chatMessages');
+    if (!container) return;
+    // If an assistant bubble already exists, insert cards above it
+    // so the design flows: cards above → AI response below
+    if (currentAssistantMessage && document.body.contains(currentAssistantMessage) && currentAssistantMessage.parentNode === container) {
+        container.insertBefore(card, currentAssistantMessage);
+    } else {
+        container.appendChild(card);
     }
 }
 
 function _caMarkGroupComplete() {
-    if (!_caGroup) return;
-    var iconEl = _caGroup.querySelector('.ca-group-icon');
-    if (iconEl) {
-        iconEl.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>';
-        iconEl.classList.add('complete');
-    }
+    // No parent group to mark complete in flat step-block design
 }
 
 // ── Main Tool Activity Router ────────────────────────────
@@ -3450,7 +3453,7 @@ function showToolActivity(type, info, status) {
 function _caRenderThought(data, status) {
     var group = _caGroup;
     if (!group) return;
-    var cardsHost = group.querySelector('.ca-group-cards');
+    var cardsHost = _caGroup;  // flat step-block: cards render directly into message container
     if (!cardsHost) return;
 
     function mergeThought(existingText, incomingText) {
@@ -3478,6 +3481,16 @@ function _caRenderThought(data, status) {
 
     function applyThoughtUi(card) {
         if (!card) return;
+        // Guard: skip body updates while card is collapsed (user closed it)
+        // to prevent layout recalculation from interfering with the max-height transition
+        if (card.classList.contains('collapsed') && !card.classList.contains('expanded')) {
+            // Still update preview/muted for the collapsed header view
+            var mutedC = card.querySelector('.ca-muted');
+            if (mutedC) mutedC.textContent = ' Thinking';
+            var previewC = card.querySelector('.ca-card-preview');
+            if (previewC) previewC.textContent = makePreview(card.dataset.caThoughtText || '');
+            return;
+        }
         var raw = card.dataset.caThoughtText || '';
         var preview = makePreview(raw);
         var muted = card.querySelector('.ca-muted');
@@ -3543,17 +3556,65 @@ function _caRenderThought(data, status) {
                 '<span class="ca-highlight">Thought</span>' +
                 '<span class="ca-muted"> Thinking</span>' +
             '</span>' +
+            '<span class="ca-card-time">0s</span>' +
             '<span class="ca-card-badge running">running</span>' +
         '</div>' +
         '<div class="ca-card-preview">' + escapeHtml(initialPreview) + '</div>' +
         '<div class="ca-card-body"></div>';
 
+    // Start elapsed timer
+    var cardStartTime = Date.now();
+    var timeEl = card.querySelector('.ca-card-time');
+    var cardTimer = setInterval(function() {
+        if (!document.body.contains(card)) {
+            clearInterval(cardTimer);
+            return;
+        }
+        if (card.dataset.caState === 'complete') {
+            // Show final time and stop
+            var elapsed = Math.round((Date.now() - cardStartTime) / 100) / 10;
+            if (timeEl) timeEl.textContent = elapsed + 's';
+            clearInterval(cardTimer);
+            return;
+        }
+        var elapsed = Math.floor((Date.now() - cardStartTime) / 1000);
+        if (timeEl) timeEl.textContent = elapsed + 's';
+    }, 1000);
+    // Store timer on card for cleanup
+    card._caTimer = cardTimer;
+
     card.querySelector('.ca-card-header').onclick = function(e) {
         e.stopPropagation();
-        card.classList.toggle('expanded');
-        card.classList.toggle('collapsed');
+        var body = card.querySelector('.ca-card-body');
+        if (card.classList.contains('expanded')) {
+            // Collapse: set max-height to current scrollHeight, then to 0
+            if (body) {
+                body.style.maxHeight = body.scrollHeight + 'px';
+                // Force reflow
+                body.offsetHeight;
+                body.style.maxHeight = '0px';
+            }
+            card.classList.remove('expanded');
+            card.classList.add('collapsed');
+        } else {
+            // Expand: set max-height to 0, then to scrollHeight
+            card.classList.remove('collapsed');
+            card.classList.add('expanded');
+            if (body) {
+                body.style.maxHeight = '0px';
+                body.offsetHeight; // Force reflow
+                body.style.maxHeight = body.scrollHeight + 'px';
+                // Clean up inline style after transition so CSS takes over again
+                var onTransitionEnd = function() {
+                    body.style.maxHeight = '';
+                    body.removeEventListener('transitionend', onTransitionEnd);
+                };
+                body.addEventListener('transitionend', onTransitionEnd);
+            }
+        }
     };
-    cardsHost.appendChild(card);
+    card.style.animationDelay = (_caCardStagger++ * 0.08) + 's';
+    _caInsertCard(card);
     // Populate body with initial seed if any
     if (seed) {
         var body = card.querySelector('.ca-card-body');
@@ -3565,7 +3626,7 @@ function _caRenderThought(data, status) {
 function _caRenderRead(data, status) {
     var group = _caGroup;
     if (!group) return;
-    var cardsHost = group.querySelector('.ca-group-cards');
+    var cardsHost = _caGroup;  // flat step-block: cards render directly into message container
     if (!cardsHost) return;
 
     var fp = data.file_path || '';
@@ -3662,14 +3723,15 @@ function _caRenderRead(data, status) {
     };
 
     if (status === 'error') renderErrorBody(card);
-    cardsHost.appendChild(card);
+    card.style.animationDelay = (_caCardStagger++ * 0.08) + 's';
+    _caInsertCard(card);
 }
 
 // ── Render: Edit / Write / Create ────────────────────────
 function _caRenderEdit(data, status, type) {
     var group = _caGroup;
     if (!group) return;
-    var cardsHost = group.querySelector('.ca-group-cards');
+    var cardsHost = _caGroup;  // flat step-block: cards render directly into message container
     if (!cardsHost) return;
 
     var fp = data.file_path || '';
@@ -3711,16 +3773,39 @@ function _caRenderEdit(data, status, type) {
 
     card.querySelector('.ca-card-header').onclick = function(e) {
         e.stopPropagation();
-        card.classList.toggle('expanded');
+        var body = card.querySelector('.ca-card-body');
+        if (card.classList.contains('expanded')) {
+            if (body) {
+                body.style.maxHeight = body.scrollHeight + 'px';
+                body.offsetHeight;
+                body.style.maxHeight = '0px';
+            }
+            card.classList.remove('expanded');
+            card.classList.add('collapsed');
+        } else {
+            card.classList.remove('collapsed');
+            card.classList.add('expanded');
+            if (body) {
+                body.style.maxHeight = '0px';
+                body.offsetHeight;
+                body.style.maxHeight = body.scrollHeight + 'px';
+                var onTransitionEnd = function() {
+                    body.style.maxHeight = '';
+                    body.removeEventListener('transitionend', onTransitionEnd);
+                };
+                body.addEventListener('transitionend', onTransitionEnd);
+            }
+        }
     };
-    cardsHost.appendChild(card);
+    card.style.animationDelay = (_caCardStagger++ * 0.08) + 's';
+    _caInsertCard(card);
 }
 
 // ── Render: Search / Grep ────────────────────────────────
 function _caRenderSearch(data, status) {
     var group = _caGroup;
     if (!group) return;
-    var cardsHost = group.querySelector('.ca-group-cards');
+    var cardsHost = _caGroup;  // flat step-block: cards render directly into message container
     if (!cardsHost) return;
 
     var pattern = data.pattern || '';
@@ -3784,16 +3869,39 @@ function _caRenderSearch(data, status) {
 
     card.querySelector('.ca-card-header').onclick = function(e) {
         e.stopPropagation();
-        card.classList.toggle('expanded');
+        var body = card.querySelector('.ca-card-body');
+        if (card.classList.contains('expanded')) {
+            if (body) {
+                body.style.maxHeight = body.scrollHeight + 'px';
+                body.offsetHeight;
+                body.style.maxHeight = '0px';
+            }
+            card.classList.remove('expanded');
+            card.classList.add('collapsed');
+        } else {
+            card.classList.remove('collapsed');
+            card.classList.add('expanded');
+            if (body) {
+                body.style.maxHeight = '0px';
+                body.offsetHeight;
+                body.style.maxHeight = body.scrollHeight + 'px';
+                var onTransitionEnd = function() {
+                    body.style.maxHeight = '';
+                    body.removeEventListener('transitionend', onTransitionEnd);
+                };
+                body.addEventListener('transitionend', onTransitionEnd);
+            }
+        }
     };
-    cardsHost.appendChild(card);
+    card.style.animationDelay = (_caCardStagger++ * 0.08) + 's';
+    _caInsertCard(card);
 }
 
 // ── Render: Grep ──────────────────────────────────────────
 function _caRenderGrep(data, status) {
     var group = _caGroup;
     if (!group) return;
-    var cardsHost = group.querySelector('.ca-group-cards');
+    var cardsHost = _caGroup;  // flat step-block: cards render directly into message container
     if (!cardsHost) return;
 
     var pattern = data.pattern || '';
@@ -3855,16 +3963,39 @@ function _caRenderGrep(data, status) {
 
     card.querySelector('.ca-card-header').onclick = function(e) {
         e.stopPropagation();
-        card.classList.toggle('expanded');
+        var body = card.querySelector('.ca-card-body');
+        if (card.classList.contains('expanded')) {
+            if (body) {
+                body.style.maxHeight = body.scrollHeight + 'px';
+                body.offsetHeight;
+                body.style.maxHeight = '0px';
+            }
+            card.classList.remove('expanded');
+            card.classList.add('collapsed');
+        } else {
+            card.classList.remove('collapsed');
+            card.classList.add('expanded');
+            if (body) {
+                body.style.maxHeight = '0px';
+                body.offsetHeight;
+                body.style.maxHeight = body.scrollHeight + 'px';
+                var onTransitionEnd = function() {
+                    body.style.maxHeight = '';
+                    body.removeEventListener('transitionend', onTransitionEnd);
+                };
+                body.addEventListener('transitionend', onTransitionEnd);
+            }
+        }
     };
-    cardsHost.appendChild(card);
+    card.style.animationDelay = (_caCardStagger++ * 0.08) + 's';
+    _caInsertCard(card);
 }
 
 // ── Render: Glob ──────────────────────────────────────────
 function _caRenderGlob(data, status) {
     var group = _caGroup;
     if (!group) return;
-    var cardsHost = group.querySelector('.ca-group-cards');
+    var cardsHost = _caGroup;  // flat step-block: cards render directly into message container
     if (!cardsHost) return;
 
     var pattern = data.pattern || data.glob || '';
@@ -3924,16 +4055,39 @@ function _caRenderGlob(data, status) {
 
     card.querySelector('.ca-card-header').onclick = function(e) {
         e.stopPropagation();
-        card.classList.toggle('expanded');
+        var body = card.querySelector('.ca-card-body');
+        if (card.classList.contains('expanded')) {
+            if (body) {
+                body.style.maxHeight = body.scrollHeight + 'px';
+                body.offsetHeight;
+                body.style.maxHeight = '0px';
+            }
+            card.classList.remove('expanded');
+            card.classList.add('collapsed');
+        } else {
+            card.classList.remove('collapsed');
+            card.classList.add('expanded');
+            if (body) {
+                body.style.maxHeight = '0px';
+                body.offsetHeight;
+                body.style.maxHeight = body.scrollHeight + 'px';
+                var onTransitionEnd = function() {
+                    body.style.maxHeight = '';
+                    body.removeEventListener('transitionend', onTransitionEnd);
+                };
+                body.addEventListener('transitionend', onTransitionEnd);
+            }
+        }
     };
-    cardsHost.appendChild(card);
+    card.style.animationDelay = (_caCardStagger++ * 0.08) + 's';
+    _caInsertCard(card);
 }
 
 // ── Render: List Directory ───────────────────────────────
 function _caRenderListDir(data, status) {
     var group = _caGroup;
     if (!group) return;
-    var cardsHost = group.querySelector('.ca-group-cards');
+    var cardsHost = _caGroup;  // flat step-block: cards render directly into message container
     if (!cardsHost) return;
 
     var path = data.path || '.';
@@ -3970,36 +4124,74 @@ function _caRenderListDir(data, status) {
 
     card.querySelector('.ca-card-header').onclick = function(e) {
         e.stopPropagation();
-        card.classList.toggle('expanded');
+        var body = card.querySelector('.ca-card-body');
+        if (card.classList.contains('expanded')) {
+            if (body) {
+                body.style.maxHeight = body.scrollHeight + 'px';
+                body.offsetHeight;
+                body.style.maxHeight = '0px';
+            }
+            card.classList.remove('expanded');
+            card.classList.add('collapsed');
+        } else {
+            card.classList.remove('collapsed');
+            card.classList.add('expanded');
+            if (body) {
+                body.style.maxHeight = '0px';
+                body.offsetHeight;
+                body.style.maxHeight = body.scrollHeight + 'px';
+                var onTransitionEnd = function() {
+                    body.style.maxHeight = '';
+                    body.removeEventListener('transitionend', onTransitionEnd);
+                };
+                body.addEventListener('transitionend', onTransitionEnd);
+            }
+        }
     };
-    cardsHost.appendChild(card);
+    card.style.animationDelay = (_caCardStagger++ * 0.08) + 's';
+    _caInsertCard(card);
 }
 
 // ── Render: Terminal Command ─────────────────────────────
 function _caRenderTerminal(data, status) {
     var group = _caGroup;
     if (!group) return;
-    var cardsHost = group.querySelector('.ca-group-cards');
+    var cardsHost = _caGroup;  // flat step-block: cards render directly into message container
     if (!cardsHost) return;
 
     var command = String(data.command || '').trim();
     if (!command) command = 'command';
     var shortCmd = command.length > 90 ? command.substring(0, 87) + '...' : command;
     var key = String(data.command_id || shortCmd);
+    var output = (status === 'complete' || status === 'error') ? String(data.output || '').trim() : '';
 
     var existing = _caFindCard('terminal', key);
     if (existing) {
         if (status === 'running') _caSetCardBadge(existing, 'running');
         else if (status === 'error') _caSetCardBadge(existing, 'error');
         else _caSetCardBadge(existing, 'complete');
+        // Populate body with output on completion/error
+        if (output) {
+            var body = existing.querySelector('.ca-card-body');
+            if (body) {
+                body.textContent = output;
+                // Auto-expand so output is visible
+                existing.classList.remove('collapsed');
+                existing.classList.add('expanded');
+                body.style.maxHeight = '';
+            }
+        }
         return;
     }
 
     _caStats.commands++;
     var card = document.createElement('div');
-    card.className = 'ca-card terminal';
+    card.className = 'ca-card terminal' + (output ? ' expanded' : '');
     card.dataset.caType = 'terminal';
     card.dataset.caKey = key;
+    var bodyContent = output
+        ? escapeHtml(output).replace(/\n/g, '<br>')
+        : '';
     card.innerHTML =
         '<div class="ca-card-header">' +
             '<svg class="ca-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
@@ -4008,20 +4200,43 @@ function _caRenderTerminal(data, status) {
             '<span class="ca-card-badge ' + (status === 'running' ? 'running' : status === 'error' ? 'error' : 'complete') + '">' + (status === 'running' ? 'running' : status === 'error' ? 'err' : 'done') + '</span>' +
         '</div>' +
         '<div class="ca-card-preview">$ ' + escapeHtml(shortCmd) + '</div>' +
-        '<div class="ca-card-body"></div>';
+        '<div class="ca-card-body"' + (output ? ' style="max-height:none"' : '') + '>' + bodyContent + '</div>';
 
     card.querySelector('.ca-card-header').onclick = function(e) {
         e.stopPropagation();
-        card.classList.toggle('expanded');
+        var body = card.querySelector('.ca-card-body');
+        if (card.classList.contains('expanded')) {
+            if (body) {
+                body.style.maxHeight = body.scrollHeight + 'px';
+                body.offsetHeight;
+                body.style.maxHeight = '0px';
+            }
+            card.classList.remove('expanded');
+            card.classList.add('collapsed');
+        } else {
+            card.classList.remove('collapsed');
+            card.classList.add('expanded');
+            if (body) {
+                body.style.maxHeight = '0px';
+                body.offsetHeight;
+                body.style.maxHeight = body.scrollHeight + 'px';
+                var onTransitionEnd = function() {
+                    body.style.maxHeight = '';
+                    body.removeEventListener('transitionend', onTransitionEnd);
+                };
+                body.addEventListener('transitionend', onTransitionEnd);
+            }
+        }
     };
-    cardsHost.appendChild(card);
+    card.style.animationDelay = (_caCardStagger++ * 0.08) + 's';
+    _caInsertCard(card);
 }
 
 // ── Render: Team Operations ──────────────────────────────
 function _caRenderTeam(data, status, type) {
     var group = _caGroup;
     if (!group) return;
-    var cardsHost = group.querySelector('.ca-group-cards');
+    var cardsHost = _caGroup;  // flat step-block: cards render directly into message container
     if (!cardsHost) return;
 
     var teamName = data.team_name || data.name || 'team';
@@ -4041,14 +4256,15 @@ function _caRenderTeam(data, status, type) {
         '</div>' +
         '<div class="ca-card-preview">' + escapeHtml(label) + ': ' + escapeHtml(teamName) + '</div>' +
         '<div class="ca-card-body"></div>';
-    cardsHost.appendChild(card);
+    card.style.animationDelay = (_caCardStagger++ * 0.08) + 's';
+    _caInsertCard(card);
 }
 
 // ── Render: Task Operations ──────────────────────────────
 function _caRenderTask(data, status, type) {
     var group = _caGroup;
     if (!group) return;
-    var cardsHost = group.querySelector('.ca-group-cards');
+    var cardsHost = _caGroup;  // flat step-block: cards render directly into message container
     if (!cardsHost) return;
 
     var taskId = data.task_id || '';
@@ -4068,14 +4284,15 @@ function _caRenderTask(data, status, type) {
         '</div>' +
         '<div class="ca-card-preview">' + escapeHtml(label) + '</div>' +
         '<div class="ca-card-body"></div>';
-    cardsHost.appendChild(card);
+    card.style.animationDelay = (_caCardStagger++ * 0.08) + 's';
+    _caInsertCard(card);
 }
 
 // ── Render: Streaming Write/Edit (Windows 11 purple progress card) ──
 function _caRenderStreamingWrite(data, status, type) {
     var group = _caGroup;
     if (!group) return;
-    var cardsHost = group.querySelector('.ca-group-cards');
+    var cardsHost = _caGroup;  // flat step-block: cards render directly into message container
     if (!cardsHost) return;
 
     var toolName = (type === 'write_file_streaming') ? 'Creating' : 'Editing';
@@ -4183,14 +4400,15 @@ function _caRenderStreamingWrite(data, status, type) {
         '<div class="ca-stream-progress">' +
             '<div class="' + barClass + '"' + barStyle + '></div>' +
         '</div>';
-    cardsHost.appendChild(card);
+    card.style.animationDelay = (_caCardStagger++ * 0.08) + 's';
+    _caInsertCard(card);
 }
 
 // ── Cleanup: hide streaming card when real write/edit completes ──
 function _caHideStreamingCard(filePath) {
     var group = _caGroup;
     if (!group) return;
-    var cardsHost = group.querySelector('.ca-group-cards');
+    var cardsHost = _caGroup;  // flat step-block: cards render directly into message container
     if (!cardsHost) return;
     var fileName = filePath ? filePath.replace(/^.*[\\\/]/, '') : '';
     if (!fileName) return;
@@ -4216,7 +4434,7 @@ function _caHideStreamingCard(filePath) {
 function _caRenderGeneric(data, status, type) {
     var group = _caGroup;
     if (!group) return;
-    var cardsHost = group.querySelector('.ca-group-cards');
+    var cardsHost = _caGroup;  // flat step-block: cards render directly into message container
     if (!cardsHost) return;
 
     var label = type.replace(/_/g, ' ');
@@ -4246,14 +4464,15 @@ function _caRenderGeneric(data, status, type) {
         '</div>' +
         '<div class="ca-card-preview">' + escapeHtml(preview) + '</div>' +
         '<div class="ca-card-body"></div>';
-    cardsHost.appendChild(card);
+    card.style.animationDelay = (_caCardStagger++ * 0.08) + 's';
+    _caInsertCard(card);
 }
 
 // ── Render: Web Search ──────────────────────────────────
 function _caRenderWebSearch(data, status) {
     var group = _caGroup;
     if (!group) return;
-    var cardsHost = group.querySelector('.ca-group-cards');
+    var cardsHost = _caGroup;  // flat step-block: cards render directly into message container
     if (!cardsHost) return;
 
     var query = data.query || '';
@@ -4313,16 +4532,39 @@ function _caRenderWebSearch(data, status) {
 
     card.querySelector('.ca-card-header').onclick = function(e) {
         e.stopPropagation();
-        card.classList.toggle('expanded');
+        var body = card.querySelector('.ca-card-body');
+        if (card.classList.contains('expanded')) {
+            if (body) {
+                body.style.maxHeight = body.scrollHeight + 'px';
+                body.offsetHeight;
+                body.style.maxHeight = '0px';
+            }
+            card.classList.remove('expanded');
+            card.classList.add('collapsed');
+        } else {
+            card.classList.remove('collapsed');
+            card.classList.add('expanded');
+            if (body) {
+                body.style.maxHeight = '0px';
+                body.offsetHeight;
+                body.style.maxHeight = body.scrollHeight + 'px';
+                var onTransitionEnd = function() {
+                    body.style.maxHeight = '';
+                    body.removeEventListener('transitionend', onTransitionEnd);
+                };
+                body.addEventListener('transitionend', onTransitionEnd);
+            }
+        }
     };
-    cardsHost.appendChild(card);
+    card.style.animationDelay = (_caCardStagger++ * 0.08) + 's';
+    _caInsertCard(card);
 }
 
 // ── Render: Web Fetch ──────────────────────────────────
 function _caRenderWebFetch(data, status) {
     var group = _caGroup;
     if (!group) return;
-    var cardsHost = group.querySelector('.ca-group-cards');
+    var cardsHost = _caGroup;  // flat step-block: cards render directly into message container
     if (!cardsHost) return;
 
     var url = data.url || '';
@@ -4375,45 +4617,40 @@ function _caRenderWebFetch(data, status) {
 
     card.querySelector('.ca-card-header').onclick = function(e) {
         e.stopPropagation();
-        card.classList.toggle('expanded');
+        var body = card.querySelector('.ca-card-body');
+        if (card.classList.contains('expanded')) {
+            if (body) {
+                body.style.maxHeight = body.scrollHeight + 'px';
+                body.offsetHeight;
+                body.style.maxHeight = '0px';
+            }
+            card.classList.remove('expanded');
+            card.classList.add('collapsed');
+        } else {
+            card.classList.remove('collapsed');
+            card.classList.add('expanded');
+            if (body) {
+                body.style.maxHeight = '0px';
+                body.offsetHeight;
+                body.style.maxHeight = body.scrollHeight + 'px';
+                var onTransitionEnd = function() {
+                    body.style.maxHeight = '';
+                    body.removeEventListener('transitionend', onTransitionEnd);
+                };
+                body.addEventListener('transitionend', onTransitionEnd);
+            }
+        }
     };
-    cardsHost.appendChild(card);
+    card.style.animationDelay = (_caCardStagger++ * 0.08) + 's';
+    _caInsertCard(card);
 }
 
-// ── Handle Terminal Commands ─────────────────────────────
+// ── Handle Terminal Commands (flat ca-card — grouped system disabled) ──
 function _caHandleTerminal(container, data, status) {
-    if (!currentAssistantMessage) {
-        currentAssistantMessage = document.createElement('div');
-        currentAssistantMessage.className = 'message-bubble assistant';
-        var ce = document.createElement('div');
-        ce.className = 'message-content';
-        currentAssistantMessage.appendChild(ce);
-        currentContent = '';
-        container.appendChild(currentAssistantMessage);
-        var es = document.getElementById('empty-state');
-        if (es) es.remove();
-    }
-    var cardsEl = currentAssistantMessage.querySelector('.fec-cards-container');
-    if (!cardsEl) {
-        cardsEl = document.createElement('div');
-        cardsEl.className = 'fec-cards-container';
-        currentAssistantMessage.appendChild(cardsEl);
-    }
-    if (status === 'running') {
-        var cardId = 'term-cmd-' + Date.now();
-        currentAssistantMessage.dataset.lastTermCardId = cardId;
-        var cmdStr = data.command || '';
-        var card = buildTerminalCard(cmdStr, '', 'running', null, cardId);
-        cardsEl.appendChild(card);
-    } else {
-        var lastId = currentAssistantMessage.dataset.lastTermCardId;
-        if (lastId) {
-            var termSt = status === 'error' ? 'error' : 'success';
-            var termOut = data.output || '';
-            updateTerminalCard(lastId, termSt, 0, termOut);
-        }
-    }
-    smartScroll(container);
+    // Terminal cards now flow as flat ca-cards via _caRenderTerminal above.
+    // This function is kept as a no-op to avoid the old grouped fec-cards-container
+    // inside currentAssistantMessage.
+    // smartScroll is already handled by showToolActivity caller.
 }
 
 // Professional Tool Execution Summary Display
@@ -4919,7 +5156,7 @@ function showThinking() {
     var container = document.getElementById('chatMessages');
     if (!container) return;
 
-    // Hide the standalone thinking-message bubble once real activity starts
+    // Hide the standalone thinking progress bar once real activity starts
     hideThinkingAnimation();
 
     // Show agent mode indicator with animated Think mode
@@ -4955,33 +5192,13 @@ function hideThinking() {
         clearInterval(thinkingInterval);
         thinkingInterval = null;
     }
-    var item = document.getElementById('thinking-indicator');
-    if (item) {
-        item.removeAttribute('id');             // de-register so no stale id lingers
-        item.className = 'activity-item complete'; // mark complete → stops ALL running animations
-        var dotsEl = item.querySelector('.thinking-dots');
-        if (dotsEl) {
-            dotsEl.textContent = '·';           // freeze to static bullet
-            dotsEl.style.animation = 'none'; // stop dotsWave even if class stays
-            dotsEl.style.opacity = '0.4';
-        }
-        var textEl = item.querySelector('.activity-text');
-        if (textEl) {
-            textEl.style.animation = 'none'; // stop silverWave
-            textEl.style.color = 'var(--text-dim)';
-        }
-        var opEl = item.querySelector('.activity-op');
-        if (opEl) {
-            opEl.style.animation = 'none';   // stop badgePulse
-            opEl.style.opacity = '0.4';
-        }
-    }
 
+    // Mark thought card complete in the flat step-block system
     if (_caGroup) {
         _caRenderThought({}, 'complete');
         _caUpdateGroupHeader();
     }
-    
+
     // Hide agent mode indicator
     if (window.hideAgentMode) {
         window.hideAgentMode();
@@ -4989,125 +5206,28 @@ function hideThinking() {
 }
 
 function clearActivitySection() {
-    // Remove the entire activity section when task is complete
-    if (currentActivitySection) {
-        currentActivitySection.remove();
-        currentActivitySection = null;
-    }
+    // Remove all activity cards from the flat step-block system
     if (_caGroup) {
         _caGroup.remove();
         _caGroup = null;
     }
 }
 
-// Collapse (not remove) the activity section on completion — shows only summary header
+// Collapse (not remove) activity cards on completion — Cursor flat step-block style
 function collapseActivitySection() {
-    // Collapse the new cortex-activity-group if present
+    // No wrapper to collapse in flat Cursor step-block design — just null the reference
     if (_caGroup) {
-        _caGroup.classList.add('collapsed');
         _caMarkGroupComplete();
         _caGroup = null;
     }
-
-    if (!currentActivitySection) return;
-
-    var section = currentActivitySection;
-
-    // Count items for summary
-    var items = section.querySelectorAll('.activity-item');
-    var total = items.length;
-
-    // Build summary label  e.g. "Explored  · 3 steps"
-    var reads = 0, edits = 0, explores = 0, thoughts = 0, searches = 0;
-    items.forEach(function(it) {
-        var t = it.getAttribute('data-type') || '';
-        if (t === 'read_file') reads++;
-        else if (t === 'edit_file' || t === 'write_file') edits++;
-        else if (t === 'list_directory') explores++;
-        else if (t === 'think' || it.classList.contains('thinking')) thoughts++;
-        else if (t === 'search_code' || t === 'grep_code' || t === 'search_codebase') searches++;
-    });
-
-    var parts = [];
-    if (reads > 0)    parts.push(reads + ' read');
-    if (edits > 0)    parts.push(edits + ' edit');
-    if (explores > 0) parts.push(explores + ' explore');
-    if (searches > 0) parts.push(searches + ' search');
-    if (thoughts > 0) parts.push(thoughts + ' thought');
-    var summaryLabel = parts.length ? parts.join(' · ') : (total + ' steps');
-
-    // Update header: stop spinner, update text, rotate chevron
-    var headerEl = section.querySelector('.activity-header');
-    if (headerEl) {
-        // Stop the spinning SVG (.activity-spinner) and replace with static check icon
-        var spinnerEl = headerEl.querySelector('.activity-spinner');
-        if (spinnerEl) {
-            spinnerEl.style.animation = 'none';
-            spinnerEl.style.opacity = '0.45';
-        }
-        // Also handle legacy .activity-icon if present
-        var iconEl = headerEl.querySelector('.activity-icon');
-        if (iconEl) {
-            iconEl.className = 'activity-icon complete';
-            iconEl.style.animation = 'none';
-            iconEl.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 21l-4.35-4.35"/><circle cx="11" cy="11" r="8"/></svg>';
-        }
-        var titleEl = headerEl.querySelector('.activity-title');
-        if (titleEl) titleEl.textContent = 'Explored';
-
-        // Add summary count chip
-        var existingChip = headerEl.querySelector('.activity-summary-chip');
-        if (!existingChip) {
-            var chip = document.createElement('span');
-            chip.className = 'activity-summary-chip';
-            chip.textContent = summaryLabel;
-            // Insert before the chevron toggle
-            var toggle = headerEl.querySelector('.activity-toggle');
-            if (toggle) headerEl.insertBefore(chip, toggle);
-            else headerEl.appendChild(chip);
-        }
-
-        // Rotate chevron to point right (collapsed state)
-        var toggle2 = headerEl.querySelector('.activity-toggle');
-        if (toggle2) toggle2.style.transform = 'rotate(-90deg)';
-    }
-
-    // Collapse the list
-    section.classList.add('collapsed');
-
-    // Force-stop animations on ALL remaining running items inside
-    section.querySelectorAll('.activity-item.running, .activity-item.thinking').forEach(function(it) {
-        it.className = 'activity-item complete';
-        var el;
-        el = it.querySelector('.thinking-dots');
-        if (el) { el.style.animation = 'none'; el.style.opacity = '0.4'; el.textContent = '·'; }
-        el = it.querySelector('.activity-text');
-        if (el) { el.style.animation = 'none'; el.style.color = 'var(--text-dim)'; }
-        el = it.querySelector('.activity-op');
-        if (el) { el.style.animation = 'none'; el.style.opacity = '0.4'; }
-    });
-
-    // Null the reference so the next response gets a fresh section
-    currentActivitySection = null;
 }
 
 function updateActivityHeader(count, status) {
-    var header = document.querySelector('.activity-header .activity-title');
-    if (header) {
-        header.textContent = status === 'complete' ? 'Explored ' + count + ' files' : 'Exploring';
-    }
-    var icon = document.querySelector('.activity-header .activity-icon');
-    if (icon) {
-        icon.textContent = status === 'complete' ? '?' : '?';
-        icon.className = 'activity-icon ' + (status === 'complete' ? 'complete' : 'running');
-    }
+    // No group header in flat Cursor step-block design — no-op
 }
 
 function clearToolActivity() {
-    if (currentActivitySection) {
-        currentActivitySection.remove();
-        currentActivitySection = null;
-    }
+    _caGroup = null;
     fileCount = 0;
     activityStartTime = null;
     if (thinkingInterval) {
@@ -5275,8 +5395,8 @@ function startStreaming() {
     // Remove thinking indicator
     removeThinkingIndicator();
     
-    // Reset activity section for new response
-    currentActivitySection = null;
+    // Reset activity group for new response
+    _caGroup = null;
     fileCount = 0;
     
     // NOTE: We no longer clear todos here - todos persist until explicitly completed
@@ -5790,7 +5910,6 @@ function normalizeMarkdownText(text) {
     if (text.length > 200000) {
         text = text.replace(/\r\n/g, '\n');
         text = text.replace(/\n{4,}/g, '\n\n\n');
-
         return text;
     }
 
@@ -5907,8 +6026,8 @@ function normalizeMarkdownText(text) {
     }
 
     // Limit blank lines.
-   text = text.replace(/\n{4,}/g, '\n\n\n');
-
+    text = text.replace(/\n{4,}/g, '\n\n\n');
+        
     return text;
 }
 
@@ -6237,30 +6356,9 @@ function processInlineMarkdown(text) {
         .replace(/`([^`]+)`/g, '<code>$1</code>');
 }
 
-// Wrap fec-cards-container in activity section on task completion
+// Collapse FEC (Created Files) cards on task completion — flat step-block style
 function collapseFecContainer() {
-    // Now FEC cards are inside activity sections, so collapse the activity section instead
-    if (currentActivitySection) {
-        // Force-complete all FEC cards inside activity section
-        var fecCards = currentActivitySection.querySelectorAll('.fec');
-        fecCards.forEach(function(card) {
-            if (card.dataset.status !== 'applied') {
-                card.classList.remove('fec-pending');
-                card.classList.add('fec-applied');
-                card.dataset.status = 'applied';
-                var rightEl = card.querySelector('.fec-right');
-                if (rightEl) rightEl.innerHTML = '<span class="fec-status-text fec-status-applied">OK</span>';
-                var labelEl = card.querySelector('.fec-action-label');
-                if (labelEl) labelEl.style.opacity = '0.4';
-            }
-        });
-        
-        // Collapse the activity section
-        collapseActivitySection();
-        return;
-    }
-    
-    // Fallback: legacy behavior for any remaining standalone FEC containers
+    // Force-complete and wrap any remaining standalone FEC containers
     if (!currentAssistantMessage) return;
     var containers = currentAssistantMessage.querySelectorAll('.fec-cards-container');
     containers.forEach(function(container) {
@@ -6339,8 +6437,8 @@ function onComplete(fullText) {
 
     removeThinkingIndicator();
     hideThinking();
-    collapseFecContainer();     // Must run first: FEC cards collapsed while currentActivitySection is still valid
-    collapseActivitySection();  // Safe second call — if collapseFecContainer already ran collapseActivitySection internally this is a no-op
+    collapseFecContainer();     // Force-complete any open FEC cards
+    collapseActivitySection();  // Null the flat step-block _caGroup reference
 
     // Phase C: Clear any pending render timeout before doing final render
     if (window._streamRenderTimeout) {
@@ -9439,10 +9537,9 @@ function toggleCard(header) {
 var _fileOpCards = {}; // Track active file operation cards
 
 /**
- * Show a file operation card with pulse animation (Creating/Editing)
- * @param {string} cardId - Unique ID for this operation
- * @param {string} filePath - Path of the file being operated on
- * @param {string} opType - 'create' or 'edit'
+ * Show a file operation card — FLAT ca-card (no group wrapper).
+ * Creates a ca-card edit collapsed card directly in the message container,
+ * same pattern as _caRenderEdit.
  */
 function showFileOperationCard(cardId, filePath, opType) {
     console.log('[FileOpCard] showFileOperationCard called:', cardId, filePath, opType);
@@ -9454,7 +9551,6 @@ function showFileOperationCard(cardId, filePath, opType) {
         var existing = document.getElementById(cardId);
         if (existing) existing.remove();
     }
-
     // Also remove any existing card for the same filePath (prevents duplicates on retry)
     Object.keys(_fileOpCards).forEach(function(key) {
         if (_fileOpCards[key] && _fileOpCards[key].filePath === filePath) {
@@ -9464,83 +9560,73 @@ function showFileOperationCard(cardId, filePath, opType) {
         }
     });
 
-    // ---- Get or create a group container for this AI turn ----
-    if (!_currentFileOpGroup) {
-        var groupId = 'fileop-group-' + Date.now();
-        var groupEl = document.createElement('div');
-        // Use NEW tool-operations-container design for the group
-        groupEl.className = 'tool-operations-container';
-        groupEl.id = groupId;
-        groupEl.innerHTML =
-            '<div class="tool-ops-header" onclick="this.parentElement.classList.toggle(\'collapsed\')">' +
-                '<svg class="tool-ops-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
-                '<span class="tool-ops-label">AI Edits</span>' +
-                '<span class="tool-ops-count">0 files</span>' +
-                '<span class="tool-ops-status"></span>' +
-            '</div>' +
-            '<div class="tool-ops-children"></div>';
-
-        messages.appendChild(groupEl);
-        messages.scrollTop = messages.scrollHeight;
-        _currentFileOpGroup = { id: groupId, el: groupEl };
-    }
-
     var isCreate = opType === 'create';
-    var cardType = isCreate ? 'create' : 'edit';
     var fileName = filePath.split(/[\\/]/).pop() || filePath;
-    var escapedPath = filePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    var displayPath = filePath || fileName;
+    var ext = fileName.includes('.') ? fileName.split('.').pop().toLowerCase() : '';
+    var desc = isCreate ? 'Creating' : 'Editing';
 
-    // ---- Build child card using NEW tool-operation-card design ----
+    // Build flat ca-card identical to _caRenderEdit pattern
     var card = document.createElement('div');
-    card.className = 'tool-operation-card ' + cardType + ' running';
+    card.className = 'ca-card edit collapsed';
     card.id = cardId;
+    card.dataset.caType = 'edit';
+    card.dataset.caKey = displayPath;
     card.dataset.filePath = filePath;
     card.dataset.opType = opType;
-    
-    // Icons for the new design
-    var icons = {
-        create: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>',
-        edit: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>'
-    };
-    
     card.innerHTML =
-        '<div class="tool-card-header" onclick="toggleToolCardById(\'' + cardId + '\')">' +
-            '<svg class="tool-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
-            '<div class="tool-card-icon">' + icons[cardType] + '</div>' +
-            '<div class="tool-card-info">' +
-                '<div class="tool-card-title">' + (isCreate ? 'Create' : 'Edit') + '</div>' +
-                '<div class="tool-card-file" onclick="openFileInEditor(\'' + escapedPath + '\'); event.stopPropagation();" style="cursor:pointer;">' + escapeHtml(fileName) + '</div>' +
-            '</div>' +
-            '<div class="tool-card-status running">' + (isCreate ? 'Creating' : 'Editing') + '</div>' +
+        '<div class="ca-card-header">' +
+            '<svg class="ca-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
+            '<span class="ca-card-icon">' + _caExtBadge(ext) + '</span>' +
+            '<span class="ca-card-label">' +
+                '<span class="ca-highlight" title="' + escapeHtml(displayPath) + '">' + escapeHtml(displayPath) + '</span>' +
+                '<span class="ca-muted">  ' + escapeHtml(desc) + '</span>' +
+            '</span>' +
+            '<span class="ca-card-badge running">running</span>' +
         '</div>' +
-        '<div class="tool-card-content" style="display:none;">' +
-            '<div class="tool-card-scrollable">Processing...</div>' +
-        '</div>';
+        '<div class="ca-card-preview">' + escapeHtml(desc) + ': ' + escapeHtml(displayPath) + '</div>' +
+        '<div class="ca-card-body"></div>';
 
-    // Append to group children and update badge
-    var children = _currentFileOpGroup.el.querySelector('.tool-ops-children');
-    children.appendChild(card);
-    var count = children.querySelectorAll('.tool-operation-card').length;
-    var countEl = _currentFileOpGroup.el.querySelector('.tool-ops-count');
-    if (countEl) countEl.textContent = count + (count === 1 ? ' file' : ' files');
-
+    card.querySelector('.ca-card-header').onclick = function(e) {
+        e.stopPropagation();
+        var body = card.querySelector('.ca-card-body');
+        if (card.classList.contains('expanded')) {
+            if (body) {
+                body.style.maxHeight = body.scrollHeight + 'px';
+                body.offsetHeight;
+                body.style.maxHeight = '0px';
+            }
+            card.classList.remove('expanded');
+            card.classList.add('collapsed');
+        } else {
+            card.classList.remove('collapsed');
+            card.classList.add('expanded');
+            if (body) {
+                body.style.maxHeight = '0px';
+                body.offsetHeight;
+                body.style.maxHeight = body.scrollHeight + 'px';
+                var onTransitionEnd = function() {
+                    body.style.maxHeight = '';
+                    body.removeEventListener('transitionend', onTransitionEnd);
+                };
+                body.addEventListener('transitionend', onTransitionEnd);
+            }
+        }
+    };
+    card.style.animationDelay = (_caCardStagger++ * 0.08) + 's';
+    messages.appendChild(card);
     messages.scrollTop = messages.scrollHeight;
 
     _fileOpCards[cardId] = {
         element: card,
         filePath: filePath,
         opType: opType,
-        groupId: _currentFileOpGroup.id,
         startTime: Date.now()
     };
 }
 
 /**
- * Complete a file operation card - transform to file list display
- * @param {string} cardId - The operation card ID
- * @param {string} filePath - Path of the completed file
- * @param {number} lineCount - Number of lines in the file
- * @param {string} opType - 'create' or 'edit'
+ * Complete a file operation card — update flat ca-card badge to 'done'.
  */
 function completeFileOperationCard(cardId, filePath, lineCount, opType) {
     console.log('[FileOpCard] completeFileOperationCard called:', cardId, filePath, lineCount, opType);
@@ -9548,38 +9634,26 @@ function completeFileOperationCard(cardId, filePath, lineCount, opType) {
     if (!card) { console.error('[FileOpCard] Card NOT FOUND by id:', cardId); return; }
 
     var isCreate = opType === 'create';
-    var fileName = filePath.split(/[\\/]/).pop() || filePath;
-    var escapedPath = filePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    var cardType = isCreate ? 'create' : 'edit';
-    
-    // Icons for the new design
-    var icons = {
-        create: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>',
-        edit: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>'
-    };
-
-    // Transform to completed state using NEW design
-    card.className = 'tool-operation-card ' + cardType + ' collapsed';
-    card.innerHTML =
-        '<div class="tool-card-header" onclick="toggleToolCardById(\'' + cardId + '\')">' +
-            '<svg class="tool-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
-            '<div class="tool-card-icon">' + icons[cardType] + '</div>' +
-            '<div class="tool-card-info">' +
-                '<div class="tool-card-title">' + (isCreate ? 'Create' : 'Edit') + '</div>' +
-                '<div class="tool-card-file" onclick="openFileInEditor(\'' + escapedPath + '\'); event.stopPropagation();" style="cursor:pointer;">' + escapeHtml(fileName) + '</div>' +
-            '</div>' +
-            '<div class="tool-card-status completed">' + (isCreate ? 'Created' : 'Modified') + '</div>' +
-        '</div>' +
-        '<div class="tool-card-content">' +
-            '<div class="tool-card-scrollable">' + escapeHtml(filePath) + '\n' + lineCount + ' lines</div>' +
-        '</div>';
-
+    var badge = card.querySelector('.ca-card-badge');
+    if (badge) {
+        badge.className = 'ca-card-badge complete';
+        badge.textContent = 'done';
+    }
+    var muted = card.querySelector('.ca-muted');
+    if (muted) {
+        muted.textContent = isCreate ? '  Created' : '  Modified';
+        muted.style.opacity = '0.4';
+    }
+    // Populate body with file info
+    var body = card.querySelector('.ca-card-body');
+    if (body) {
+        body.textContent = filePath + '\n' + lineCount + ' lines';
+    }
     delete _fileOpCards[cardId];
 }
 
 /**
- * Show file creation card - starts with animation, completes when done
- * Called from Python when Write tool starts
+ * Show file creation card — flat ca-card. Called from Python when Write tool starts.
  */
 function showFileCreatingCard(filePath) {
     var cardId = 'file-op-' + Date.now();
@@ -9588,8 +9662,7 @@ function showFileCreatingCard(filePath) {
 }
 
 /**
- * Show file editing card - starts with animation, completes when done
- * Called from Python when Edit tool starts
+ * Show file editing card — flat ca-card. Called from Python when Edit tool starts.
  */
 function showFileEditingCard(filePath) {
     var cardId = 'file-op-' + Date.now();
@@ -9598,8 +9671,7 @@ function showFileEditingCard(filePath) {
 }
 
 /**
- * Complete file creation - transform card to show created file
- * Called from Python when Write tool completes
+ * Complete file creation — update flat ca-card. Called from Python when Write tool completes.
  */
 function completeFileCreatingCard(cardId, filePath, content) {
     console.log('[FileOpCard] completeFileCreatingCard called:', cardId, filePath, 'contentLen:', (content||'').length);
@@ -9608,8 +9680,7 @@ function completeFileCreatingCard(cardId, filePath, content) {
 }
 
 /**
- * Complete file editing - transform card to show edited file
- * Called from Python when Edit tool completes
+ * Complete file editing — update flat ca-card. Called from Python when Edit tool completes.
  */
 function completeFileEditingCard(cardId, filePath, original, newContent) {
     console.log('[FileOpCard] completeFileEditingCard called:', cardId, filePath, 'newContentLen:', (newContent||'').length);
@@ -9638,18 +9709,12 @@ window.dismissFileOpCard = dismissFileOpCard;
 console.log('[FileOpCard] Window functions exposed:', typeof window.showFileOperationCard, typeof window.completeFileCreatingCard, typeof window.completeFileEditingCard);
 
 // ============================================================
-// DIFF VIEWER CARD  (shown in chat after AI edits a file)
-// Reference design: test_aichat.html section 5
+// DIFF VIEWER CARD  (flat ca-card — no group wrapper)
 // ============================================================
 
 /**
- * Show a diff viewer card in chat after AI edits a file.
+ * Show a diff viewer card — FLAT ca-card directly in the message container.
  * Called from Python via runJavaScript.
- * @param {string} cardId     - Unique DOM id
- * @param {string} filePath   - Full file path
- * @param {Array}  diffLines  - [{type:'added'|'removed'|'context'|'info', text:string}]
- * @param {number} added      - Number of added lines
- * @param {number} removed    - Number of removed lines
  */
 function showDiffCard(cardId, filePath, diffLines, added, removed) {
     try {
@@ -9692,130 +9757,88 @@ function showDiffCard(cardId, filePath, diffLines, added, removed) {
             linesHtml += '<div class="diff-line" style="color:var(--text-dim);">' + (diffLines.length - MAX_LINES) + ' more lines…</div>';
         }
 
-        // ---- Get or create a group container for this AI turn ----
-        if (!_currentDiffGroup) {
-            var groupId = 'diff-group-' + Date.now();
-            var groupEl = document.createElement('div');
-            groupEl.className = 'diff-group-container';
-            groupEl.id = groupId;
-            groupEl.innerHTML =
-                '<div class="diff-group-header">' +
-                    '<div class="diff-group-header-left">' +
-                        '<span class="diff-group-chevron">&#9654;</span>' +
-                        '<span class="diff-group-label">AI Edits</span>' +
-                        '<span class="diff-group-count">0 files</span>' +
-                    '</div>' +
-                    '<div class="diff-group-actions">' +
-                        '<button class="btn-group-accept">&#10003; Accept All</button>' +
-                        '<button class="btn-group-reject">&#10007; Reject All</button>' +
-                    '</div>' +
-                '</div>' +
-                '<div class="diff-group-children"></div>';
-
-            groupEl.querySelector('.diff-group-header').addEventListener('click', function(e) {
-                if (e.target.closest('.btn-group-accept') || e.target.closest('.btn-group-reject')) return;
-                groupEl.classList.toggle('collapsed');
-            });
-            var _gId = groupId;
-            groupEl.querySelector('.btn-group-accept').addEventListener('click', function(e) {
-                e.stopPropagation(); _groupAcceptAll(_gId);
-            });
-            groupEl.querySelector('.btn-group-reject').addEventListener('click', function(e) {
-                e.stopPropagation(); _groupRejectAll(_gId);
-            });
-
-            messages.appendChild(groupEl);
-            _currentDiffGroup = { id: groupId, el: groupEl };
-        }
-
-        // ---- Build the child diff card ----
+        // Build flat ca-card style diff card — no group wrapper
         var card = document.createElement('div');
-        card.className = 'diff-viewer-card';
+        card.className = 'ca-card edit collapsed';
         card.id = cardId;
+        card.dataset.caType = 'diff';
         card.dataset.filePath = filePath;
-        card.dataset.groupId = _currentDiffGroup.id;
-
         card.innerHTML =
-            '<div class="diff-header">' +
-                '<div class="diff-header-left">' +
-                    '<span class="diff-chevron">&#9654;</span>' +
-                    '<span class="diff-filename">' + escapeHtml(fileName) + '</span>' +
-                    '<div class="diff-stats">' + statsHtml + '</div>' +
-                '</div>' +
-                '<div class="diff-actions">' +
-                    '<button class="btn-accept">&#10003; Accept</button>' +
-                    '<button class="btn-reject">&#10007; Reject</button>' +
-                '</div>' +
+            '<div class="ca-card-header">' +
+                '<svg class="ca-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
+                '<span class="ca-card-icon">' + _caExtBadge(fileName.includes('.') ? fileName.split('.').pop().toLowerCase() : '') + '</span>' +
+                '<span class="ca-card-label">' +
+                    '<span class="ca-highlight" title="' + escapeHtml(filePath) + '">' + escapeHtml(fileName) + '</span>' +
+                    '<span class="ca-muted">  Diff ' + statsHtml + '</span>' +
+                '</span>' +
+                '<span class="ca-card-badge complete">done</span>' +
             '</div>' +
-            '<div class="diff-content">' + linesHtml + '</div>';
+            '<div class="ca-card-preview">' + escapeHtml(filePath) + '  +' + added + ' / -' + removed + '</div>' +
+            '<div class="ca-card-body">' + linesHtml + '</div>';
 
-        card.querySelector('.diff-header').addEventListener('click', function(e) {
-            if (e.target.closest('.btn-accept') || e.target.closest('.btn-reject')) return;
-            card.classList.toggle('collapsed');
-        });
-        card.querySelector('.btn-accept').addEventListener('click', function(e) {
+        // Accept/Reject buttons appended below body
+        var actionsRow = document.createElement('div');
+        actionsRow.className = 'diff-actions';
+        actionsRow.style.cssText = 'padding:6px 16px 8px 30px;display:flex;gap:8px;';
+        actionsRow.innerHTML =
+            '<button class="btn-accept" style="font-size:11px;padding:3px 12px;border-radius:4px;border:1px solid rgba(74,222,128,0.3);background:rgba(74,222,128,0.1);color:#4ade80;cursor:pointer;">Accept</button>' +
+            '<button class="btn-reject" style="font-size:11px;padding:3px 12px;border-radius:4px;border:1px solid rgba(248,113,113,0.3);background:rgba(248,113,113,0.1);color:#f87171;cursor:pointer;">Reject</button>';
+        card.appendChild(actionsRow);
+
+        card.querySelector('.ca-card-header').onclick = function(e) {
+            e.stopPropagation();
+            var body = card.querySelector('.ca-card-body');
+            if (card.classList.contains('expanded')) {
+                if (body) {
+                    body.style.maxHeight = body.scrollHeight + 'px';
+                    body.offsetHeight;
+                    body.style.maxHeight = '0px';
+                }
+                card.classList.remove('expanded');
+                card.classList.add('collapsed');
+            } else {
+                card.classList.remove('collapsed');
+                card.classList.add('expanded');
+                if (body) {
+                    body.style.maxHeight = '0px';
+                    body.offsetHeight;
+                    body.style.maxHeight = body.scrollHeight + 'px';
+                    var onTransitionEnd = function() {
+                        body.style.maxHeight = '';
+                        body.removeEventListener('transitionend', onTransitionEnd);
+                    };
+                    body.addEventListener('transitionend', onTransitionEnd);
+                }
+            }
+        };
+        actionsRow.querySelector('.btn-accept').addEventListener('click', function(e) {
             e.stopPropagation(); onDiffAccept(cardId, filePath);
         });
-        card.querySelector('.btn-reject').addEventListener('click', function(e) {
+        actionsRow.querySelector('.btn-reject').addEventListener('click', function(e) {
             e.stopPropagation(); onDiffReject(cardId, filePath);
         });
 
-        // Append to group children and update badge
-        var children = _currentDiffGroup.el.querySelector('.diff-group-children');
-        children.appendChild(card);
-        var count = children.querySelectorAll('.diff-viewer-card').length;
-        var countEl = _currentDiffGroup.el.querySelector('.diff-group-count');
-        if (countEl) countEl.textContent = count + (count === 1 ? ' file' : ' files');
-
+        card.style.animationDelay = (_caCardStagger++ * 0.08) + 's';
+        messages.appendChild(card);
         messages.scrollTop = messages.scrollHeight;
     } catch(e) {
         console.error('[DiffCard] Fatal error in showDiffCard:', e);
     }
 }
 
-function _groupAcceptAll(groupId) {
-    var groupEl = document.getElementById(groupId);
-    if (!groupEl) return;
-    groupEl.querySelectorAll('.diff-viewer-card').forEach(function(card) {
-        if (card.dataset.resolved) return;
-        onDiffAccept(card.id, card.dataset.filePath);
-    });
-}
-
-function _groupRejectAll(groupId) {
-    var groupEl = document.getElementById(groupId);
-    if (!groupEl) return;
-    groupEl.querySelectorAll('.diff-viewer-card').forEach(function(card) {
-        if (card.dataset.resolved) return;
-        onDiffReject(card.id, card.dataset.filePath);
-    });
-}
-
-function _updateGroupStatus(groupId) {
-    var groupEl = document.getElementById(groupId);
-    if (!groupEl) return;
-    var cards = groupEl.querySelectorAll('.diff-viewer-card');
-    var total = cards.length;
-    var resolved = 0;
-    cards.forEach(function(c) { if (c.dataset.resolved) resolved++; });
-    if (total > 0 && resolved >= total) {
-        var actionsEl = groupEl.querySelector('.diff-group-actions');
-        if (actionsEl) actionsEl.innerHTML = '<span class="diff-group-status" style="color:var(--text-dim);">All resolved</span>';
-    }
-}
-
 function _updateDiffCardStatus(filePath, status) {
-    document.querySelectorAll('.diff-viewer-card').forEach(function(card) {
+    // Find flat diff ca-cards (not grouped wrappers)
+    var allDiffCards = document.querySelectorAll('.ca-card[data-ca-type="diff"]');
+    allDiffCards.forEach(function(card) {
         if (card.dataset.filePath !== filePath || card.dataset.resolved) return;
         card.dataset.resolved = '1';
         card.classList.add('collapsed');
         var actions = card.querySelector('.diff-actions');
         if (actions) {
             actions.innerHTML = status === 'accepted'
-                ? '<span class="diff-status-text" style="color:var(--green-bright);">&#10003; Accepted</span>'
-                : '<span class="diff-status-text" style="color:var(--red);">&#10007; Rejected</span>';
+                ? '<span style="color:#4ade80;font-size:11px;padding:6px 16px 8px 30px;">&#10003; Accepted</span>'
+                : '<span style="color:#f87171;font-size:11px;padding:6px 16px 8px 30px;">&#10007; Rejected</span>';
         }
-        if (card.dataset.groupId) _updateGroupStatus(card.dataset.groupId);
     });
 }
 
@@ -9827,13 +9850,11 @@ function onDiffAccept(cardId, filePath) {
         card.dataset.resolved = '1';
         card.classList.add('collapsed');
         var actions = card.querySelector('.diff-actions');
-        if (actions) actions.innerHTML = '<span class="diff-status-text" style="color:var(--green-bright);">&#10003; Accepted</span>';
-        if (card.dataset.groupId) _updateGroupStatus(card.dataset.groupId);
+        if (actions) actions.innerHTML = '<span style="color:#4ade80;font-size:11px;padding:6px 16px 8px 30px;">&#10003; Accepted</span>';
     }
     if (_changedFiles[filePath] && _changedFiles[filePath].status === 'pending') {
         acceptChangedFile(filePath, null);
     } else if (!_changedFiles[filePath]) {
-        // Normalize path to forward slashes (consistent with acceptChangedFile)
         var safePath = filePath.replace(/\\/g, '/');
         if (window.bridge && window.bridge.on_accept_file_edit) window.bridge.on_accept_file_edit(safePath);
     }
@@ -9847,13 +9868,11 @@ function onDiffReject(cardId, filePath) {
         card.dataset.resolved = '1';
         card.classList.add('collapsed');
         var actions = card.querySelector('.diff-actions');
-        if (actions) actions.innerHTML = '<span class="diff-status-text" style="color:var(--red);">&#10007; Rejected</span>';
-        if (card.dataset.groupId) _updateGroupStatus(card.dataset.groupId);
+        if (actions) actions.innerHTML = '<span style="color:#f87171;font-size:11px;padding:6px 16px 8px 30px;">&#10007; Rejected</span>';
     }
     if (_changedFiles[filePath] && _changedFiles[filePath].status === 'pending') {
         rejectChangedFile(filePath, null);
     } else if (!_changedFiles[filePath]) {
-        // Normalize path to forward slashes (consistent with rejectChangedFile)
         var safePath = filePath.replace(/\\/g, '/');
         if (window.bridge && window.bridge.on_reject_file_edit) window.bridge.on_reject_file_edit(safePath);
     }
@@ -10557,8 +10576,6 @@ window.continueTask = continueTask;
 function _sendNow(text) {
     _isGenerating = true;
     _stopRequested = false;  // Clear any previous stop so the new response is not suppressed
-    _currentDiffGroup = null; // New AI turn — group diffs into a fresh container
-    _currentFileOpGroup = null; // New AI turn — group file ops into a fresh container
     
     // Check if there are attached images
     var hasImages = _attachedImages.length > 0;

@@ -3210,13 +3210,12 @@ Shell: PowerShell (use semicolons ; not &&)
                             elif isinstance(chunk, str) and chunk.startswith("__REASONING_DELTA__:"):
                                 _reason_chunk = chunk[len("__REASONING_DELTA__:"):]
                                 turn_reasoning += _reason_chunk
-                                # Reasoning content is stored in turn_text / full_response
-                                # so it persists in message history and counts for
-                                # force-action exit, but is NOT emitted as response_chunk.
-                                # Reasoning streams to the thought container ONLY (tool_activity).
+                                # Reasoning content is stored in turn_text (message history)
+                                # and streamed to the thought card UI via tool_activity.
+                                # It is NOT added to full_response — the displayed response
+                                # must only contain the actual AI output, not internal monologue.
                                 turn_text     += _reason_chunk
-                                full_response += _reason_chunk
-                                # Stream reasoning/thought updates to UI activity pane in real time.
+                                # Reasoning streams to the thought container ONLY (tool_activity).
                                 try:
                                     self._safe_emit(
                                         self.tool_activity,

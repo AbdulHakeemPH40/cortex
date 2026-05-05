@@ -74,7 +74,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <!-- Cursor IDE Fonts: Geist Sans (UI), Geist Mono (Code) -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Geist+Mono:wght@400;500;600&family=Fira+Code:wght@400;500&family=JetBrains+Mono:wght@400;500&family=Outfit:wght@400;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@300;400;500;600&family=Inter:wght@300;400;500;600&family=Fira+Code:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     
     <script src="../../components/assets/marked.min.js"></script>
     <script src="../../components/assets/highlight.min.js"></script>
@@ -271,10 +271,79 @@
         }
       };
     </script>
-    <!-- PyQt6 WebView viewport fix -->
+    <!-- Cursor-Style Design Tokens (Unified Theming) -->
     <style>
-      /* CRITICAL: Viewport and container fixes - MUST stay inline for PyQt6 loading order */
-      html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; }
+      *, *::before, *::after { box-sizing: border-box; }
+    
+      :root {
+        /* Backgrounds */
+        --c-bg:          #1a1a1a;
+        --c-bg-panel:    #1e1e1e;
+        --c-bg-input:    #2a2a2a;
+        --c-bg-hover:    #2e2e2e;
+        --c-bg-active:   #333333;
+        --c-bg-code:     #141414;
+        --c-bg-chip:     #2a2a2a;
+        --c-bg-user:     #1e1e1e;
+    
+        /* Borders */
+        --c-border:      #333333;
+        --c-border-sub:  #2a2a2a;
+        --c-border-chip: #3a3a3a;
+    
+        /* Text */
+        --c-text-1:      #e8e8e8;
+        --c-text-2:      #a0a0a0;
+        --c-text-3:      #666666;
+        --c-text-4:      #444444;
+    
+        /* Accent - muted blue-gray */
+        --c-accent:      #7b94b5;
+        --c-accent-dim:  rgba(123,148,181,0.12);
+        --c-accent-mid:  rgba(123,148,181,0.25);
+    
+        /* Step block accent colors */
+        --c-think:       #9d8f6e;
+        --c-think-bg:    rgba(157,143,110,0.08);
+        --c-explore:     #6e9d8a;
+        --c-explore-bg:  rgba(110,157,138,0.08);
+        --c-run:         #7a9d6e;
+        --c-run-bg:      rgba(122,157,110,0.08);
+        --c-edit:        #6e84ad;
+        --c-edit-bg:     rgba(110,132,173,0.08);
+        --c-mem:         #9d7e6e;
+        --c-mem-bg:      rgba(157,126,110,0.08);
+    
+        /* Syntax */
+        --s-kw:   #7fb8d4;
+        --s-fn:   #dcdcaa;
+        --s-str:  #ce9178;
+        --s-cm:   #608060;
+        --s-num:  #b5cea8;
+        --s-var:  #9cdcfe;
+        --s-type: #4ec9b0;
+    
+        /* Fonts */
+        --font: 'Geist', -apple-system, sans-serif;
+        --mono: 'Geist Mono', 'Fira Code', monospace;
+    
+        /* Radii */
+        --r: 6px;
+        --r-sm: 4px;
+        --r-lg: 8px;
+    
+        /* Animations */
+        --fade: fadeUp .2s ease forwards;
+      }
+    
+      @keyframes fadeUp {
+        from { opacity:0; transform:translateY(6px); }
+        to   { opacity:1; transform:translateY(0); }
+      }
+      .fade-in { animation: fadeUp .2s ease forwards; }
+    
+      /* PyQt6 WebView viewport fix */
+      html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; background: var(--c-bg); font-family: var(--font); font-size: 13px; color: var(--c-text-1); }
       #app-container { height: 100%; display: flex; }
       #chat-container { height: 100%; display: flex; flex-direction: column; flex: 1; min-width: 0; }
       #chatMessages { 
@@ -282,22 +351,24 @@
           overflow-y: auto; 
           min-height: 0; 
           position: relative;
-          padding: 0 16px;
+          padding: 0;
           display: flex;
           flex-direction: column;
           overflow-x: hidden;
           scroll-behavior: smooth;
+          scrollbar-width: thin;
+          scrollbar-color: #333 transparent;
       }
-      
+      #chatMessages::-webkit-scrollbar { width: 4px; }
+      #chatMessages::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+          
       #chatMessages > * {
           overflow: visible;
       }
-      
+          
       #chatMessages > .message-bubble {
           overflow: visible !important;
       }
-      
-      /* NOTE: All other styles moved to style.css and features.css */
     </style>
     
     <!-- Math rendering (MathJax 3 — full TeX support) -->
@@ -774,23 +845,6 @@
                 </div>
             </div>
 
-
-            <!-- Message Queue Bar (above input) -->
-            <div id="msg-queue-bar" class="msg-queue-bar" style="display:none;">
-                <div class="mq-header">
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="8" y1="6" x2="21" y2="6"/>
-                        <line x1="8" y1="12" x2="21" y2="12"/>
-                        <line x1="8" y1="18" x2="21" y2="18"/>
-                        <line x1="3" y1="6" x2="3.01" y2="6"/>
-                        <line x1="3" y1="12" x2="3.01" y2="12"/>
-                        <line x1="3" y1="18" x2="3.01" y2="18"/>
-                    </svg>
-                    <span class="mq-label">Queued</span>
-                    <span class="mq-count" id="mq-count">0</span>
-                </div>
-                <div class="mq-list" id="mq-list"></div>
-            </div>
 
             <!-- Context Bar (shows active context like @mentions) -->
             <div id="context-bar" class="context-bar" style="display: none;">
