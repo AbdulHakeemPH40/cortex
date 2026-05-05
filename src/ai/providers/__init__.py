@@ -4,11 +4,9 @@ Provides unified interface for multiple LLM providers
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Any, Generator, Callable
+from typing import Dict, List, Optional, Any, Generator
 from dataclasses import dataclass
 from enum import Enum
-import time
-import json
 from src.utils.logger import get_logger
 
 log = get_logger("provider_registry")
@@ -16,9 +14,10 @@ log = get_logger("provider_registry")
 
 class ProviderType(Enum):
     """Supported LLM providers."""
-    DEEPSEEK = "deepseek"
-    TOGETHER = "together"  # Qwen, Kimi, MiniMax, DeepSeek-R1
-    OPENAI = "openai"
+    MISTRAL = "mistral"     # Primary provider for ALL work
+    SILICONFLOW = "siliconflow"  # Vision models
+    DEEPSEEK = "deepseek"   # DeepSeek V4 models (Pro & Flash)
+    KIMI = "kimi"           # Kimi/Moonshot AI (K2.6 multimodal)
 
 
 @dataclass
@@ -43,6 +42,7 @@ class ChatMessage:
     name: Optional[str] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_call_id: Optional[str] = None
+    reasoning_content: Optional[str] = None
 
 
 @dataclass
@@ -85,16 +85,6 @@ class BaseProvider(ABC):
              tool_choice: Optional[str] = None) -> ChatResponse:
         """
         Send a chat completion request.
-        
-        Args:
-            messages: List of chat messages
-            model: Model ID to use
-            temperature: Sampling temperature
-            max_tokens: Maximum tokens to generate
-            stream: Whether to stream the response
-            
-        Returns:
-            ChatResponse object
         """
         pass
     
@@ -103,18 +93,10 @@ class BaseProvider(ABC):
                    model: str,
                    temperature: float = 0.7,
                    max_tokens: int = 2000,
-                   tools: Optional[List[Dict[str, Any]]] = None) -> Generator[str, None, None]:
+                   tools: Optional[List[Dict[str, Any]]] = None,
+                   **kwargs: Any) -> Generator[str, None, None]:
         """
         Stream chat completion response.
-        
-        Args:
-            messages: List of chat messages
-            model: Model ID to use
-            temperature: Sampling temperature
-            max_tokens: Maximum tokens to generate
-            
-        Yields:
-            String chunks of the response
         """
         response = self.chat(messages, model, temperature, max_tokens, stream=True, tools=tools)
         yield response.content
@@ -134,214 +116,22 @@ class BaseProvider(ABC):
     
     def _format_messages_for_provider(self, messages: List[ChatMessage]) -> List[Dict[str, Any]]:
         """Convert internal messages to provider-specific format."""
-        formatted = []
+        formatted: List[Dict[str, Any]] = []
         for msg in messages:
-            m = {"role": msg.role, "content": msg.content}
+            m: Dict[str, Any] = {"role": msg.role, "content": msg.content}
             if msg.name:
                 m["name"] = msg.name
             if msg.tool_calls:
                 m["tool_calls"] = msg.tool_calls
+                # When assistant has tool_calls, content can be null
+                if not msg.content:
+                    m["content"] = None
             if msg.tool_call_id:
                 m["tool_call_id"] = msg.tool_call_id
+            if hasattr(msg, "reasoning_content") and getattr(msg, "reasoning_content"):
+                m["reasoning_content"] = getattr(msg, "reasoning_content")
             formatted.append(m)
         return formatted
-
-
-class DeepSeekProvider(BaseProvider):
-    """DeepSeek API provider implementation (OpenAI-compatible)."""
-
-    DEFAULT_BASE_URL = "https://api.deepseek.com"
-
-    def __init__(self):
-        super().__init__(ProviderType.DEEPSEEK)
-        self._client = None
-        self._client_key = None  # Track which key the client was created with
-
-    @property
-    def available_models(self) -> List[ModelInfo]:
-        return [
-            ModelInfo("deepseek-chat", "DeepSeek Chat", "deepseek", 64000, 4096, True, False, 0.0005, 0.0015),
-            ModelInfo("deepseek-coder", "DeepSeek Coder", "deepseek", 64000, 4096, True, False, 0.0005, 0.0015),
-        ]
-
-    def set_api_key(self, api_key: str):
-        """Set the API key and reset client if key changes."""
-        if api_key != self._api_key:
-            self._api_key = api_key
-            self._client = None  # Reset client so it's recreated with new key
-            log.debug(f"DeepSeek API key updated")
-
-    def _get_client(self):
-        """Get or create DeepSeek client."""
-        # Recreate client if key changed or client doesn't exist
-        if self._client is None or self._client_key != self._api_key:
-            try:
-                from openai import OpenAI
-                if not self._api_key:
-                    raise ValueError("API key not set for DeepSeek")
-
-                log.debug(f"Creating DeepSeek client with key: {self._api_key[:10]}...")
-                self._client = OpenAI(
-                    api_key=self._api_key,
-                    base_url=self._base_url or self.DEFAULT_BASE_URL
-                )
-                self._client_key = self._api_key
-            except ImportError:
-                raise ImportError("OpenAI package not installed. Run: pip install openai")
-        return self._client
-    
-    def chat(self, 
-             messages: List[ChatMessage], 
-             model: str = "deepseek-chat",
-             temperature: float = 0.7,
-             max_tokens: int = 2000,
-             stream: bool = False,
-             tools: Optional[List[Dict[str, Any]]] = None,
-             tool_choice: Optional[str] = None) -> ChatResponse:
-        """Send chat completion request to DeepSeek."""
-        start_time = time.time()
-        
-        try:
-            client = self._get_client()
-            formatted_messages = self._format_messages_for_provider(messages)
-            
-            response = client.chat.completions.create(
-                model=model,
-                messages=formatted_messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                stream=stream,
-                tools=tools,
-                tool_choice=tool_choice
-            )
-            
-            duration_ms = (time.time() - start_time) * 1000
-            
-            if stream:
-                # Handle streaming response
-                content = ""
-                for chunk in response:
-                    if chunk.choices[0].delta.content:
-                        content += chunk.choices[0].delta.content
-                
-                return ChatResponse(
-                    content=content,
-                    model=model,
-                    provider="deepseek",
-                    duration_ms=duration_ms
-                )
-            else:
-                # Handle regular response
-                message = response.choices[0].message
-                
-                # Extract tool calls if present
-                tool_calls = None
-                if hasattr(message, 'tool_calls') and message.tool_calls:
-                    tool_calls = []
-                    for tc in message.tool_calls:
-                        tool_calls.append({
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments
-                            }
-                        })
-                
-                return ChatResponse(
-                    content=message.content or "",
-                    model=model,
-                    provider="deepseek",
-                    input_tokens=response.usage.prompt_tokens if response.usage else 0,
-                    output_tokens=response.usage.completion_tokens if response.usage else 0,
-                    finish_reason=response.choices[0].finish_reason,
-                    duration_ms=duration_ms,
-                    tool_calls=tool_calls
-                )
-                
-        except Exception as e:
-            self._last_error = str(e)
-            log.error(f"DeepSeek API error: {e}")
-            return ChatResponse(
-                content="",
-                model=model,
-                provider="deepseek",
-                error=str(e),
-                duration_ms=(time.time() - start_time) * 1000
-            )
-    
-    def chat_stream(self,
-                   messages: List[ChatMessage],
-                   model: str = "deepseek-chat",
-                   temperature: float = 0.7,
-                   max_tokens: int = 2000,
-                   tools: Optional[List[Dict[str, Any]]] = None) -> Generator[str, None, None]:
-        """Stream chat completion from DeepSeek."""
-        try:
-            client = self._get_client()
-            formatted_messages = self._format_messages_for_provider(messages)
-            
-            response = client.chat.completions.create(
-                model=model,
-                messages=formatted_messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                stream=True,
-                tools=tools
-            )
-            
-            import json
-            for chunk in response:
-                # Check if chunk has choices
-                if not chunk.choices:
-                    continue
-                
-                delta = chunk.choices[0].delta
-                
-                # Process content first
-                if delta.content:
-                    yield delta.content
-                
-                # Process tool calls - IMPORTANT: process BEFORE checking finish_reason
-                if delta.tool_calls:
-                    # Serialize tool calls to a special string format that worker can detect
-                    # Handle None arguments gracefully
-                    tool_call_data = []
-                    for tc in delta.tool_calls:
-                        tc_info = {
-                            'index': tc.index, 
-                            'id': tc.id or '', 
-                            'function': {
-                                'name': tc.function.name if tc.function else '', 
-                                'arguments': tc.function.arguments if tc.function and tc.function.arguments else ''
-                            }
-                        }
-                        tool_call_data.append(tc_info)
-                    yield f"__TOOL_CALL_DELTA__:{json.dumps(tool_call_data)}"
-                
-                # Check for finish reason AFTER processing - stream is done
-                if chunk.choices[0].finish_reason:
-                    break
-                    
-        except Exception as e:
-            self._last_error = str(e)
-            log.error(f"DeepSeek streaming error: {e}")
-            yield f"[Error: {e}]"
-    
-    def validate_api_key(self) -> bool:
-        """Validate DeepSeek API key by making a test request."""
-        if not self._api_key:
-            return False
-        
-        try:
-            client = self._get_client()
-            # Make a minimal request to validate
-            response = client.models.list()
-            return True
-        except Exception as e:
-            self._last_error = str(e)
-            log.error(f"DeepSeek key validation failed: {e}")
-            return False
 
 
 class ProviderRegistry:
@@ -349,68 +139,81 @@ class ProviderRegistry:
     
     def __init__(self):
         self._providers: Dict[ProviderType, BaseProvider] = {}
-        self._current_provider: ProviderType = ProviderType.DEEPSEEK
+        self._current_provider: ProviderType = ProviderType.MISTRAL
         
-        # Register providers
-        self._register_provider(ProviderType.DEEPSEEK, DeepSeekProvider())
-        
-        # Register Together AI provider
+        # Register Mistral provider (primary provider for ALL work)
         try:
-            from src.ai.providers.together_provider import TogetherProvider
-            self._providers[ProviderType.TOGETHER] = TogetherProvider()
-        except ImportError:
-            log.warning("Together provider not available")
+            from src.ai.providers.mistral_provider import MistralProvider
+            self._register_provider(ProviderType.MISTRAL, MistralProvider())
+            log.info("MistralProvider registered")
+        except (ImportError, Exception) as e:
+            log.warning(f"Could not register MistralProvider: {e}")
         
-        # Register OpenAI provider
+
+        
+        # Lazily register other providers if their modules are available
         try:
-            from src.ai.providers.openai_provider import OpenAIProvider
-            self._providers[ProviderType.OPENAI] = OpenAIProvider()
-        except ImportError:
-            log.warning("OpenAI provider not available")
+            from src.ai.providers.siliconflow_provider import SiliconFlowProvider
+            self._register_provider(ProviderType.SILICONFLOW, SiliconFlowProvider())
+            log.info("SiliconFlowProvider registered")
+        except (ImportError, Exception) as e:
+            log.warning(f"Could not register SiliconFlowProvider: {e}")
         
-        # SiliconFlow provider is available via get_siliconflow_provider() when needed for images
+        # Register DeepSeek provider (V4 models with 1M context)
+        try:
+            from src.ai.providers.deepseek_provider import DeepSeekProvider
+            self._register_provider(ProviderType.DEEPSEEK, DeepSeekProvider())
+            log.info("DeepSeekProvider registered with V4 models")
+        except (ImportError, Exception) as e:
+            log.warning(f"Could not register DeepSeekProvider: {e}")
         
+        # Register Kimi/Moonshot AI provider (K2.6 multimodal model)
+        try:
+            from src.ai.providers.kimi_provider import KimiProvider
+            self._register_provider(ProviderType.KIMI, KimiProvider())
+            log.info("KimiProvider registered with K2.6 model")
+        except (ImportError, Exception) as e:
+            log.warning(f"Could not register KimiProvider: {e}")
+
+            
     def _register_provider(self, provider_type: ProviderType, provider: BaseProvider):
-        """Register a provider."""
         self._providers[provider_type] = provider
+    
+
         
     def get_provider(self, provider_type: Optional[ProviderType] = None) -> BaseProvider:
-        """Get a provider by type."""
         if provider_type is None:
             provider_type = self._current_provider
-        return self._providers.get(provider_type, self._providers[ProviderType.DEEPSEEK])
+        
+        provider = self._providers.get(provider_type)
+        if not provider:
+            log.warning(f"Provider {provider_type} not found, falling back to MISTRAL")
+            return self._providers[ProviderType.MISTRAL]
+        return provider
         
     def set_provider(self, provider_type: ProviderType):
-        """Set the current provider."""
         if provider_type in self._providers:
             self._current_provider = provider_type
-        else:
-            log.warning(f"Unknown provider: {provider_type}")
             
     def list_providers(self) -> List[ProviderType]:
-        """List all available provider types."""
         return list(self._providers.keys())
         
     def get_all_models(self) -> List[ModelInfo]:
-        """Get all models from all providers."""
-        models = []
+        models: List[ModelInfo] = []
         for provider in self._providers.values():
             models.extend(provider.available_models)
         return models
         
     def validate_all_keys(self) -> Dict[str, bool]:
-        """Validate API keys for all providers."""
-        results = {}
+        results: Dict[str, bool] = {}
         for provider_type, provider in self._providers.items():
             results[provider_type.value] = provider.validate_api_key()
         return results
 
 
-# Global registry instance
 _registry = None
 
 def get_provider_registry() -> ProviderRegistry:
-    """Get singleton provider registry."""
     global _registry
     if _registry is None:
         _registry = ProviderRegistry()

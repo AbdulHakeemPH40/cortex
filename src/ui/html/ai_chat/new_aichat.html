@@ -1,0 +1,991 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cursor – AI Chat</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* Cursor exact colors */
+  --c-bg:          #1a1a1a;
+  --c-bg-panel:    #1e1e1e;
+  --c-bg-input:    #2a2a2a;
+  --c-bg-hover:    #2e2e2e;
+  --c-bg-active:   #333333;
+  --c-bg-code:     #141414;
+  --c-bg-chip:     #2a2a2a;
+  --c-bg-user:     #1e1e1e;
+
+  --c-border:      #333333;
+  --c-border-sub:  #2a2a2a;
+  --c-border-chip: #3a3a3a;
+
+  --c-text-1:      #e8e8e8;
+  --c-text-2:      #a0a0a0;
+  --c-text-3:      #666666;
+  --c-text-4:      #444444;
+
+  /* Cursor accent — that exact muted blue-gray */
+  --c-accent:      #7b94b5;
+  --c-accent-dim:  rgba(123,148,181,0.12);
+  --c-accent-mid:  rgba(123,148,181,0.25);
+
+  /* Step block accent colors — Cursor uses these exact muted tones */
+  --c-think:       #9d8f6e;
+  --c-think-bg:    rgba(157,143,110,0.08);
+  --c-explore:     #6e9d8a;
+  --c-explore-bg:  rgba(110,157,138,0.08);
+  --c-run:         #7a9d6e;
+  --c-run-bg:      rgba(122,157,110,0.08);
+  --c-edit:        #6e84ad;
+  --c-edit-bg:     rgba(110,132,173,0.08);
+  --c-mem:         #9d7e6e;
+  --c-mem-bg:      rgba(157,126,110,0.08);
+
+  /* Syntax */
+  --s-kw:   #7fb8d4;
+  --s-fn:   #dcdcaa;
+  --s-str:  #ce9178;
+  --s-cm:   #608060;
+  --s-num:  #b5cea8;
+  --s-var:  #9cdcfe;
+  --s-type: #4ec9b0;
+
+  --font: 'Geist', -apple-system, sans-serif;
+  --mono: 'Geist Mono', 'Fira Code', monospace;
+  --r: 6px;
+  --r-sm: 4px;
+  --r-lg: 8px;
+}
+
+html, body {
+  height: 100%;
+  background: var(--c-bg);
+  font-family: var(--font);
+  font-size: 13px;
+  color: var(--c-text-1);
+  overflow: hidden;
+}
+
+/* ─── Layout ─────────────────────────────── */
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  max-width: 460px;
+  margin: 0 auto;
+  background: var(--c-bg-panel);
+  border-left: 1px solid var(--c-border-sub);
+  border-right: 1px solid var(--c-border-sub);
+}
+
+/* ─── Top Bar ────────────────────────────── */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  height: 40px;
+  border-bottom: 1px solid var(--c-border-sub);
+  flex-shrink: 0;
+  background: var(--c-bg);
+}
+.topbar-title {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--c-text-2);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.topbar-title svg { opacity: .6; }
+.topbar-spacer { flex: 1; }
+.topbar-btn {
+  background: none;
+  border: none;
+  color: var(--c-text-3);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--r-sm);
+  display: flex;
+  align-items: center;
+  transition: color .12s, background .12s;
+}
+.topbar-btn:hover { color: var(--c-text-2); background: var(--c-bg-hover); }
+
+/* Mode tabs */
+.mode-tabs {
+  display: flex;
+  gap: 2px;
+  background: var(--c-bg-input);
+  border-radius: var(--r-sm);
+  padding: 2px;
+}
+.mode-tab {
+  padding: 3px 10px;
+  border-radius: 3px;
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--c-text-3);
+  cursor: pointer;
+  transition: all .12s;
+  background: none;
+  border: none;
+  font-family: var(--font);
+}
+.mode-tab.active {
+  background: var(--c-bg-active);
+  color: var(--c-text-1);
+}
+.mode-tab:hover:not(.active) { color: var(--c-text-2); }
+
+/* ─── Messages ───────────────────────────── */
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  scrollbar-width: thin;
+  scrollbar-color: #333 transparent;
+}
+.messages::-webkit-scrollbar { width: 4px; }
+.messages::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+
+/* separator between exchanges */
+.msg-sep {
+  height: 1px;
+  background: var(--c-border-sub);
+  margin: 0;
+}
+
+/* ─── User Message ───────────────────────── */
+.user-msg {
+  padding: 14px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--c-bg);
+}
+.user-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.user-avatar {
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: #3d5a80;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 600;
+  color: #a8c4e0;
+  flex-shrink: 0;
+}
+.user-name { font-size: 12px; font-weight: 500; color: var(--c-text-2); }
+.user-body {
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--c-text-1);
+  padding-left: 25px;
+}
+.user-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding-left: 25px;
+}
+.file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--c-bg-chip);
+  border: 1px solid var(--c-border-chip);
+  border-radius: var(--r-sm);
+  padding: 2px 8px 2px 6px;
+  font-size: 11.5px;
+  color: var(--c-accent);
+  font-family: var(--mono);
+  cursor: pointer;
+  transition: background .12s;
+}
+.file-chip:hover { background: var(--c-bg-hover); }
+.file-chip svg { opacity: .7; flex-shrink: 0; }
+
+/* ─── AI Message ─────────────────────────── */
+.ai-msg {
+  padding: 12px 0 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* ─── Step Block (Thought/Explore/Run/Edit) ─ */
+.step-block {
+  border-bottom: 1px solid var(--c-border-sub);
+}
+.step-block:last-of-type { border-bottom: none; }
+
+.step-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 16px;
+  cursor: pointer;
+  transition: background .1s;
+  min-height: 34px;
+  user-select: none;
+}
+.step-header:hover { background: var(--c-bg-hover); }
+
+.step-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.step-label {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--c-text-2);
+}
+.step-meta {
+  font-size: 11px;
+  color: var(--c-text-3);
+  font-family: var(--mono);
+}
+.step-time {
+  font-size: 11px;
+  color: var(--c-text-4);
+  font-family: var(--mono);
+  margin-left: auto;
+}
+.step-chevron {
+  color: var(--c-text-4);
+  display: flex;
+  align-items: center;
+  transition: transform .18s;
+  flex-shrink: 0;
+}
+.step-chevron.open { transform: rotate(90deg); }
+
+.step-body {
+  display: none;
+  padding: 0 16px 10px 30px;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.step-body.open { display: block; }
+
+/* dot colors */
+.dot-think  { background: var(--c-think); }
+.dot-explore{ background: var(--c-explore); }
+.dot-run    { background: var(--c-run); }
+.dot-edit   { background: var(--c-edit); }
+.dot-mem    { background: var(--c-mem); }
+
+/* body text colors */
+.body-think  { color: #c8b87e; font-style: italic; }
+.body-explore{ color: #7dbaaa; font-family: var(--mono); font-size: 11.5px; }
+.body-run    { color: #8dc08a; font-family: var(--mono); font-size: 11.5px; }
+.body-mem    { color: #c89e84; font-size: 12px; }
+
+/* ─── AI prose text ──────────────────────── */
+.ai-prose {
+  padding: 10px 16px;
+  font-size: 13px;
+  line-height: 1.75;
+  color: var(--c-text-1);
+}
+.ai-prose p { margin-bottom: 8px; }
+.ai-prose p:last-child { margin-bottom: 0; }
+.ai-prose strong { color: #f0f0f0; font-weight: 500; }
+.ai-prose code {
+  background: var(--c-bg-input);
+  border: 1px solid var(--c-border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--s-var);
+}
+.ai-prose a { color: var(--c-accent); text-decoration: none; }
+
+/* ─── Code Block ─────────────────────────── */
+.code-wrap {
+  margin: 2px 16px 4px;
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  border: 1px solid var(--c-border-sub);
+}
+.code-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  background: var(--c-bg);
+  border-bottom: 1px solid var(--c-border-sub);
+}
+.code-lang {
+  font-size: 10.5px;
+  font-family: var(--mono);
+  color: var(--c-text-3);
+  background: var(--c-bg-input);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+.code-file {
+  font-size: 11px;
+  font-family: var(--mono);
+  color: #7aa4cf;
+}
+.code-loc {
+  font-size: 10.5px;
+  font-family: var(--mono);
+  color: var(--c-text-4);
+  margin-left: auto;
+}
+.code-copy-btn {
+  background: none;
+  border: none;
+  color: var(--c-text-3);
+  font-size: 10.5px;
+  font-family: var(--font);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 3px;
+  transition: all .12s;
+}
+.code-copy-btn:hover { background: var(--c-bg-hover); color: var(--c-text-2); }
+.code-pre {
+  background: var(--c-bg-code);
+  padding: 10px 14px;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.8;
+  scrollbar-width: thin;
+}
+
+/* syntax */
+.kw  { color: var(--s-kw); }
+.fn  { color: var(--s-fn); }
+.str { color: var(--s-str); }
+.cm  { color: var(--s-cm); font-style: italic; }
+.num { color: var(--s-num); }
+.vr  { color: var(--s-var); }
+.tp  { color: var(--s-type); }
+
+/* ─── File diff rows ─────────────────────── */
+.diff-list {
+  padding: 4px 0;
+}
+.diff-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0 3px 0;
+}
+.diff-row + .diff-row {
+  border-top: 1px solid var(--c-border-sub);
+  margin-top: 3px;
+  padding-top: 6px;
+}
+.diff-name {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: #1c2840;
+  border: 1px solid #273850;
+  border-radius: 3px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-family: var(--mono);
+  color: #7db8f0;
+}
+.diff-add  { color: #6adb8a; font-size: 10.5px; font-family: var(--mono); }
+.diff-rm   { color: #f87171; font-size: 10.5px; font-family: var(--mono); }
+.diff-tag  {
+  font-size: 10px;
+  font-family: var(--mono);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+.diff-tag-m { background: #282828; color: #888; }
+.diff-tag-a { background: #162416; color: #4ade80; }
+.diff-status { color: var(--c-text-3); font-size: 10.5px; margin-left: auto; }
+
+/* ─── Terminal ───────────────────────────── */
+.term-wrap {
+  background: #111;
+  border-radius: var(--r-sm);
+  padding: 6px 10px;
+}
+.term-cmd {
+  display: block;
+  color: var(--s-var);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow-x: auto;
+  margin-bottom: 4px;
+}
+.term-out { color: #6adb8a; font-family: var(--mono); font-size: 11px; }
+.term-link { color: var(--c-text-3); font-size: 10.5px; text-decoration: none; float: right; }
+.term-link:hover { color: var(--c-text-2); }
+
+/* ─── Suggestion pills ───────────────────── */
+.suggestion-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 6px 16px 10px;
+}
+.sug-pill {
+  background: none;
+  border: 1px solid var(--c-border);
+  border-radius: 20px;
+  padding: 4px 12px;
+  font-size: 11.5px;
+  font-family: var(--font);
+  color: var(--c-text-2);
+  cursor: pointer;
+  transition: all .12s;
+}
+.sug-pill:hover { background: var(--c-bg-hover); border-color: #444; color: var(--c-text-1); }
+
+/* ─── Input Area ─────────────────────────── */
+.input-area {
+  border-top: 1px solid var(--c-border-sub);
+  padding: 8px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+  background: var(--c-bg);
+}
+
+.input-box {
+  background: var(--c-bg-input);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  transition: border-color .15s;
+}
+.input-box:focus-within { border-color: #445566; }
+
+.chips-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 7px 10px 4px;
+  border-bottom: 1px solid var(--c-border-sub);
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #222;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-sm);
+  padding: 2px 7px 2px 6px;
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--c-accent);
+  cursor: default;
+  user-select: none;
+}
+.chip-x {
+  color: var(--c-text-4);
+  cursor: pointer;
+  font-size: 9px;
+  line-height: 1;
+  margin-left: 1px;
+  padding: 1px;
+  border-radius: 2px;
+}
+.chip-x:hover { color: var(--c-text-2); background: var(--c-bg-hover); }
+
+.ta-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 6px 8px 7px 10px;
+}
+textarea {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  resize: none;
+  font-family: var(--font);
+  font-size: 13px;
+  color: var(--c-text-1);
+  line-height: 1.6;
+  min-height: 22px;
+  max-height: 140px;
+  scrollbar-width: none;
+}
+textarea::placeholder { color: var(--c-text-4); }
+textarea::-webkit-scrollbar { display: none; }
+
+.send-btn {
+  width: 26px; height: 26px;
+  border-radius: var(--r-sm);
+  background: var(--c-bg-active);
+  border: 1px solid #444;
+  color: var(--c-text-2);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  margin-bottom: 1px;
+  transition: all .12s;
+}
+.send-btn:hover { background: #3a3a3a; color: var(--c-text-1); border-color: #555; }
+.send-btn:active { transform: scale(.95); }
+
+/* input toolbar */
+.input-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 2px;
+}
+.it-btn {
+  background: none;
+  border: none;
+  color: var(--c-text-3);
+  font-size: 11.5px;
+  font-family: var(--font);
+  cursor: pointer;
+  padding: 3px 6px;
+  border-radius: var(--r-sm);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all .12s;
+}
+.it-btn:hover { color: var(--c-text-2); background: var(--c-bg-hover); }
+.it-btn svg { opacity: .7; }
+.it-spacer { flex: 1; }
+.it-model {
+  background: none;
+  border: 1px solid var(--c-border-sub);
+  border-radius: var(--r-sm);
+  color: var(--c-text-3);
+  font-size: 11px;
+  font-family: var(--mono);
+  padding: 2px 8px;
+  cursor: pointer;
+  display: flex; align-items: center; gap: 5px;
+  transition: all .12s;
+}
+.it-model:hover { border-color: var(--c-border); color: var(--c-text-2); }
+
+/* thinking state */
+.thinking-row {
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--c-text-3);
+  font-size: 12px;
+}
+.thinking-dots {
+  display: flex; gap: 3px;
+}
+.thinking-dots span {
+  width: 4px; height: 4px;
+  border-radius: 50%;
+  background: var(--c-text-3);
+  animation: blink 1.2s ease-in-out infinite;
+}
+.thinking-dots span:nth-child(2) { animation-delay: .2s; }
+.thinking-dots span:nth-child(3) { animation-delay: .4s; }
+@keyframes blink {
+  0%,80%,100% { opacity:.2; }
+  40% { opacity:1; }
+}
+
+/* entry anim */
+@keyframes fadeUp {
+  from { opacity:0; transform:translateY(6px); }
+  to   { opacity:1; transform:translateY(0); }
+}
+.fade-in { animation: fadeUp .2s ease forwards; }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- Top bar -->
+  <div class="topbar">
+    <!-- Chat icon -->
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+      <path d="M14 2H2a1 1 0 00-1 1v8a1 1 0 001 1h2v2l3-2h7a1 1 0 001-1V3a1 1 0 00-1-1z" stroke="#888" stroke-width="1.2"/>
+    </svg>
+    <span class="topbar-title">Chat</span>
+    <div class="mode-tabs">
+      <button class="mode-tab" onclick="setMode(this)">Ask</button>
+      <button class="mode-tab active" onclick="setMode(this)">Agent</button>
+    </div>
+    <div class="topbar-spacer"></div>
+    <!-- new chat -->
+    <button class="topbar-btn" title="New chat">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+    </button>
+    <!-- history -->
+    <button class="topbar-btn" title="History">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.2"/><path d="M8 5v3.5L10 10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+
+  <!-- Messages -->
+  <div class="messages" id="messages">
+
+    <!-- ── Exchange 1 ───────────────────────── -->
+    <div class="user-msg fade-in">
+      <div class="user-header">
+        <div class="user-avatar">AH</div>
+        <span class="user-name">You</span>
+      </div>
+      <div class="user-body">
+        compared to mistral &amp; deepseek, kimi k2.6 is way too slow for agentic tasks — keeps trying to answer conversationally and exit instead of using tools
+      </div>
+      <div class="user-chips">
+        <span class="file-chip">
+          <svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M4 2h6l4 4v9H4V2z" stroke="currentColor" stroke-width="1.2"/><path d="M10 2v4h4" stroke="currentColor" stroke-width="1.2"/></svg>
+          terminal.log
+          <span style="color:var(--c-text-3);font-size:10px">1–172</span>
+        </span>
+        <span class="file-chip">
+          <svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M4 2h6l4 4v9H4V2z" stroke="currentColor" stroke-width="1.2"/><path d="M10 2v4h4" stroke="currentColor" stroke-width="1.2"/></svg>
+          agent_bridge.py
+        </span>
+      </div>
+    </div>
+
+    <div class="msg-sep"></div>
+
+    <!-- AI response -->
+    <div class="ai-msg fade-in">
+
+      <!-- Thought -->
+      <div class="step-block">
+        <div class="step-header" onclick="toggle(this)">
+          <div class="step-dot dot-think"></div>
+          <span class="step-label">Thought</span>
+          <span class="step-time">11s</span>
+          <span class="step-chevron open">
+            <svg width="9" height="9" viewBox="0 0 10 10" fill="none"><path d="M3 2l4 3-4 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </span>
+        </div>
+        <div class="step-body body-think open">
+          Kimi K2.6 is trying to answer conversationally rather than invoke tools — each turn is only 3s but the force-action loop restarts it. The bug is a missing <code style="background:#2a2010;border:1px solid #3a3010;font-family:var(--mono);font-size:11px;color:#d4a84a;padding:1px 4px;border-radius:3px">_has_text_response</code> guard on line 3336 of <code style="background:#1a1a2a;border:1px solid #2a2a3a;font-family:var(--mono);font-size:11px;color:#9cdcfe;padding:1px 4px;border-radius:3px">agent_bridge.py</code>. Need to add the check so legitimate informational responses skip the force-action loop.
+        </div>
+      </div>
+
+      <!-- Explored searches -->
+      <div class="step-block">
+        <div class="step-header" onclick="toggle(this)">
+          <div class="step-dot dot-explore"></div>
+          <span class="step-label">Searched codebase</span>
+          <span class="step-meta" style="margin-left:6px">3 results</span>
+          <span class="step-time">4s</span>
+          <span class="step-chevron open">
+            <svg width="9" height="9" viewBox="0 0 10 10" fill="none"><path d="M3 2l4 3-4 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </span>
+        </div>
+        <div class="step-body body-explore open">
+          <div style="display:flex;flex-direction:column;gap:3px">
+            <div><span style="color:var(--c-text-3)">›</span> agent_bridge.py <span style="color:var(--c-text-4)">force_action · mutation_turns · exit_condition</span></div>
+            <div><span style="color:var(--c-text-3)">›</span> kimi_k2.6_tool_schema <span style="color:var(--c-text-4)">tool_use vs text response</span></div>
+            <div><span style="color:var(--c-text-3)">›</span> terminal.log:48–54 <span style="color:var(--c-text-4)">loop trace</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Read file -->
+      <div class="step-block">
+        <div class="step-header" onclick="toggle(this)">
+          <div class="step-dot dot-explore"></div>
+          <span class="step-label">Read</span>
+          <span class="step-meta" style="margin-left:6px">agent_bridge.py:3330–3345</span>
+          <span class="step-time">2s</span>
+          <span class="step-chevron">
+            <svg width="9" height="9" viewBox="0 0 10 10" fill="none"><path d="M3 2l4 3-4 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </span>
+        </div>
+        <div class="step-body body-explore">
+          Force-loops even on meaningful text responses — <code style="background:#1a1a2a;font-family:var(--mono);font-size:11px;color:#9cdcfe;padding:1px 4px;border-radius:3px">_has_text_response</code> guard missing.
+        </div>
+      </div>
+
+      <!-- prose -->
+      <div class="ai-prose">
+        <p>Found it. The bug is at <strong>line 3336</strong> — it force-loops the AI even when it produced a meaningful text response. The fix: if the AI actually <strong>said something</strong> (not just "done"), it's a legitimate informational response.</p>
+      </div>
+
+      <!-- Code block -->
+      <div class="code-wrap">
+        <div class="code-bar">
+          <span class="code-lang">python</span>
+          <span class="code-file">agent_bridge.py</span>
+          <span class="code-loc">3338–3339</span>
+          <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+        </div>
+        <div class="code-pre" id="codeblock"><span class="cm"># NEW: Check if AI actually responded with meaningful text</span>
+<span class="vr">_has_text_response</span> = <span class="fn">len</span>(<span class="vr">turn_text</span>.<span class="fn">strip</span>()) &gt; <span class="num">20</span>
+<span class="kw">if</span> <span class="vr">_mutation_turns</span> == <span class="num">0</span> <span class="kw">and</span> (<span class="vr">turn</span> + <span class="num">1</span>) &lt;= <span class="num">5</span> <span class="kw">and</span> <span class="vr">active_tool_defs</span>
+    <span class="kw">and not</span> <span class="vr">_has_text_response</span>:  <span class="cm"># ← THIS WAS MISSING</span></div>
+      </div>
+
+      <!-- Edited files -->
+      <div class="step-block" style="margin-top:4px">
+        <div class="step-header" onclick="toggle(this)">
+          <div class="step-dot dot-edit"></div>
+          <span class="step-label">Edited</span>
+          <span class="step-meta" style="margin-left:6px">2 files</span>
+          <span class="step-time">3s</span>
+          <span class="step-chevron open">
+            <svg width="9" height="9" viewBox="0 0 10 10" fill="none"><path d="M3 2l4 3-4 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </span>
+        </div>
+        <div class="step-body open">
+          <div class="diff-list">
+            <div class="diff-row">
+              <span class="diff-name">
+                <svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M4 2h6l4 4v9H4V2z" stroke="currentColor" stroke-width="1.2"/></svg>
+                agent_bridge.py
+              </span>
+              <span class="diff-add">+5</span>
+              <span class="diff-rm">-2</span>
+              <span class="diff-tag diff-tag-m">M</span>
+              <span class="diff-status">Applied</span>
+            </div>
+            <div class="diff-row">
+              <span class="diff-name">
+                <svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M4 2h6l4 4v9H4V2z" stroke="#e2b347" stroke-width="1.2"/></svg>
+                script.js
+              </span>
+              <span class="diff-add">+11</span>
+              <span class="diff-rm">-2</span>
+              <span class="diff-tag diff-tag-m">M</span>
+              <span class="diff-status">Applied</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Run terminal -->
+      <div class="step-block">
+        <div class="step-header" onclick="toggle(this)">
+          <div class="step-dot dot-run"></div>
+          <span class="step-label">Run terminal</span>
+          <span class="step-time">1s</span>
+          <span class="step-chevron open">
+            <svg width="9" height="9" viewBox="0 0 10 10" fill="none"><path d="M3 2l4 3-4 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </span>
+        </div>
+        <div class="step-body open">
+          <div class="term-wrap">
+            <code class="term-cmd">python "...\Cortex\tmp\fix_script_js.py"</code>
+            <span class="term-out">exit 0 · no errors</span>
+            <a href="#" class="term-link">View in terminal ↗</a>
+          </div>
+        </div>
+      </div>
+
+      <!-- Memory -->
+      <div class="step-block">
+        <div class="step-header" onclick="toggle(this)">
+          <div class="step-dot dot-mem"></div>
+          <span class="step-label">Updated memory</span>
+          <span class="step-meta" style="margin-left:auto;margin-right:8px;font-family:var(--font);font-size:11px;color:var(--c-accent)">View</span>
+          <span class="step-chevron">
+            <svg width="9" height="9" viewBox="0 0 10 10" fill="none"><path d="M3 2l4 3-4 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </span>
+        </div>
+        <div class="step-body body-mem">
+          Kimi K2.6 skips tool calls in agentic loops — use <code style="background:#2a1810;border:1px solid #3a2810;font-family:var(--mono);font-size:11px;color:#d4a070;padding:1px 4px;border-radius:3px">_has_text_response</code> guard. Mistral / DeepSeek preferred for coding tasks.
+        </div>
+      </div>
+
+      <!-- Final prose -->
+      <div class="ai-prose">
+        <p>Now if the AI produces a real response (&gt;20 chars), the force-action loop is skipped and the task completes normally.</p>
+      </div>
+
+      <!-- Suggestion pills -->
+      <div class="suggestion-row">
+        <button class="sug-pill" onclick="useSuggestion(this)">Why does Kimi skip tools?</button>
+        <button class="sug-pill" onclick="useSuggestion(this)">Show full diff</button>
+        <button class="sug-pill" onclick="useSuggestion(this)">Test the fix</button>
+      </div>
+
+    </div><!-- /ai-msg -->
+
+  </div><!-- /messages -->
+
+  <!-- Input area -->
+  <div class="input-area">
+    <div class="input-box" id="input-box">
+      <div class="chips-row" id="chips-row">
+        <span class="chip" id="chip1">
+          <svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M4 2h6l4 4v9H4V2z" stroke="currentColor" stroke-width="1.2"/><path d="M10 2v4h4" stroke="currentColor" stroke-width="1.2"/></svg>
+          agent_bridge.py
+          <span class="chip-x" onclick="rmChip('chip1')">✕</span>
+        </span>
+        <span class="chip" id="chip2">
+          <svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M4 2h6l4 4v9H4V2z" stroke="#e2b347" stroke-width="1.2"/><path d="M10 2v4h4" stroke="#e2b347" stroke-width="1.2"/></svg>
+          script.js
+          <span class="chip-x" onclick="rmChip('chip2')">✕</span>
+        </span>
+      </div>
+      <div class="ta-row">
+        <textarea
+          id="chat-ta"
+          rows="1"
+          placeholder="Ask a follow-up… (@ to mention, / for commands)"
+          onkeydown="onKey(event)"
+          oninput="resize(this)"
+        ></textarea>
+        <button class="send-btn" onclick="doSend()" title="Send (Enter)">
+          <svg width="11" height="11" viewBox="0 0 14 14" fill="none"><path d="M7 11.5V2.5M2.5 7L7 2.5 11.5 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="input-toolbar">
+      <button class="it-btn">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.2"/><path d="M8 5v3.5L10 9.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+        Context
+      </button>
+      <button class="it-btn">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M2 4h12M2 8h9M2 12h6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+        Rules
+      </button>
+      <div class="it-spacer"></div>
+      <button class="it-model">
+        <svg width="10" height="10" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1.2"/><circle cx="6" cy="6" r="1.5" fill="currentColor"/></svg>
+        claude-sonnet-4
+        <svg width="8" height="8" viewBox="0 0 10 10" fill="none"><path d="M2 3.5l3 3 3-3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+  </div>
+
+</div><!-- /shell -->
+
+<script>
+// Toggle step blocks
+function toggle(header) {
+  var chevron = header.querySelector('.step-chevron');
+  var body    = header.parentElement.querySelector('.step-body');
+  var open    = body.classList.contains('open');
+  body.classList.toggle('open', !open);
+  chevron.classList.toggle('open', !open);
+}
+
+// Mode tabs
+function setMode(el) {
+  el.closest('.mode-tabs').querySelectorAll('.mode-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+}
+
+// Remove chip
+function rmChip(id) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.style.transition = 'opacity .15s, transform .15s';
+  el.style.opacity = '0';
+  el.style.transform = 'scale(.8)';
+  setTimeout(() => {
+    el.remove();
+    var row = document.getElementById('chips-row');
+    if (row && row.children.length === 0) row.style.display = 'none';
+  }, 150);
+}
+
+// Textarea auto-resize
+function resize(ta) {
+  ta.style.height = 'auto';
+  ta.style.height = Math.min(ta.scrollHeight, 140) + 'px';
+}
+
+// Key handler
+function onKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); }
+}
+
+// Send message
+function doSend() {
+  var ta   = document.getElementById('chat-ta');
+  var text = ta.value.trim();
+  if (!text) return;
+  appendUserMsg(text);
+  ta.value = '';
+  ta.style.height = 'auto';
+  setTimeout(showThinking, 200);
+}
+
+// Use suggestion pill
+function useSuggestion(btn) {
+  appendUserMsg(btn.textContent);
+  setTimeout(showThinking, 200);
+}
+
+function appendUserMsg(text) {
+  var msgs = document.getElementById('messages');
+
+  // separator
+  var sep = document.createElement('div');
+  sep.className = 'msg-sep';
+  msgs.appendChild(sep);
+
+  var d = document.createElement('div');
+  d.className = 'user-msg fade-in';
+  d.innerHTML = `
+    <div class="user-header">
+      <div class="user-avatar">AH</div>
+      <span class="user-name">You</span>
+    </div>
+    <div class="user-body">${esc(text)}</div>`;
+  msgs.appendChild(d);
+  scrollBottom();
+}
+
+function showThinking() {
+  var msgs = document.getElementById('messages');
+  var div  = document.createElement('div');
+  div.id   = 'thinking-indicator';
+  div.className = 'thinking-row fade-in';
+  div.innerHTML = `<div class="thinking-dots"><span></span><span></span><span></span></div><span>Thinking…</span>`;
+  msgs.appendChild(div);
+  scrollBottom();
+  setTimeout(removeThinking, 2000);
+}
+
+function removeThinking() {
+  var el = document.getElementById('thinking-indicator');
+  if (el) el.remove();
+}
+
+function scrollBottom() {
+  var msgs = document.getElementById('messages');
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function copyCode(btn) {
+  var pre = document.getElementById('codeblock');
+  navigator.clipboard.writeText(pre.innerText).then(() => {
+    btn.textContent = 'Copied!';
+    btn.style.color = '#6adb8a';
+    setTimeout(() => { btn.textContent = 'Copy'; btn.style.color = ''; }, 1600);
+  });
+}
+
+function esc(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>

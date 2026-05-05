@@ -3,6 +3,7 @@ SiliconFlow Provider - Supports vision models like Qwen-VL
 """
 import os
 import json
+import random
 import time
 import requests
 from typing import List, Dict, Any, Optional, Generator
@@ -15,14 +16,18 @@ log = get_logger("siliconflow_provider")
 
 class SiliconFlowProvider(BaseProvider):
     """SiliconFlow API provider with vision support."""
-    
+
     BASE_URL = "https://api.siliconflow.com/v1"
-    
+
     def __init__(self):
-        super().__init__(ProviderType.OPENAI)  # Uses OpenAI-compatible API
+        super().__init__(ProviderType.SILICONFLOW)
         self._api_key = os.getenv("SILICONFLOW_API_KEY", "")
         if not self._api_key:
             log.warning("SiliconFlow API key not configured")
+        self._session = requests.Session()
+        self._max_retries = 2
+        self._retry_delay = 1.0
+        self._timeout = 120.0
     
     @property
     def available_models(self) -> List[ModelInfo]:
@@ -80,57 +85,80 @@ class SiliconFlowProvider(BaseProvider):
              max_tokens: int = 2000,
              stream: bool = False,
              tools: Optional[List[Dict[str, Any]]] = None,
-             images: Optional[List[Dict[str, Any]]] = None) -> ChatResponse:
+             images: Optional[List[Dict[str, Any]]] = None,
+             **kwargs: Any) -> ChatResponse:
         """Send chat completion request."""
         start_time = time.time()
-        
-        try:
-            headers = {
-                "Authorization": f"Bearer {self._api_key}",
-                "Content-Type": "application/json"
-            }
-            
-            formatted_messages = self._format_messages_for_api(messages, images)
-            
-            payload = {
-                "model": model,
-                "messages": formatted_messages,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "stream": stream,
-            }
-            
-            if tools:
-                payload["tools"] = tools
-            
-            url = f"{self.BASE_URL}/chat/completions"
-            response = requests.post(url, headers=headers, json=payload, timeout=120)
-            response.raise_for_status()
-            result = response.json()
-            
-            duration_ms = (time.time() - start_time) * 1000
-            
-            content = result['choices'][0]['message']['content'] or ""
-            
-            return ChatResponse(
-                content=content,
-                model=model,
-                provider="siliconflow",
-                input_tokens=result.get('usage', {}).get('prompt_tokens', 0),
-                output_tokens=result.get('usage', {}).get('completion_tokens', 0),
-                finish_reason=result['choices'][0].get('finish_reason'),
-                duration_ms=duration_ms
-            )
-            
-        except Exception as e:
-            log.error(f"SiliconFlow API error: {e}")
-            return ChatResponse(
-                content="",
-                model=model,
-                provider="siliconflow",
-                error=str(e),
-                duration_ms=(time.time() - start_time) * 1000
-            )
+
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json"
+        }
+
+        formatted_messages = self._format_messages_for_api(messages, images)
+
+        payload: Dict[str, Any] = {
+            "model": model,
+            "messages": formatted_messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": stream,
+        }
+
+        if tools:
+            payload["tools"] = tools
+
+        url = f"{self.BASE_URL}/chat/completions"
+
+        last_error: Optional[Exception] = None
+        for attempt in range(self._max_retries + 1):
+            if attempt > 0:
+                backoff = self._retry_delay * (2 ** (attempt - 1)) + random.random()
+                time.sleep(backoff)
+
+            try:
+                response = self._session.post(url, headers=headers, json=payload, timeout=self._timeout)
+                response.raise_for_status()
+                result = response.json()
+
+                duration_ms = (time.time() - start_time) * 1000
+                content = result['choices'][0]['message']['content'] or ""
+
+                return ChatResponse(
+                    content=content,
+                    model=model,
+                    provider="siliconflow",
+                    input_tokens=result.get('usage', {}).get('prompt_tokens', 0),
+                    output_tokens=result.get('usage', {}).get('completion_tokens', 0),
+                    finish_reason=result['choices'][0].get('finish_reason'),
+                    duration_ms=duration_ms
+                )
+
+            except requests.exceptions.Timeout:
+                last_error = Exception(f"SiliconFlow timeout after {self._timeout}s (attempt {attempt + 1})")
+                log.warning(str(last_error))
+                continue
+            except requests.exceptions.HTTPError as e:
+                status = e.response.status_code if e.response is not None else 0
+                if status in (429, 502, 503, 504) and attempt < self._max_retries:
+                    log.warning(f"SiliconFlow transient HTTP {status} (attempt {attempt + 1})")
+                    time.sleep(self._retry_delay * (2 ** attempt))
+                    continue
+                log.error(f"SiliconFlow HTTP {status}: {e}")
+                return ChatResponse(
+                    content="", model=model, provider="siliconflow",
+                    error=f"HTTP {status}: {e}", duration_ms=(time.time() - start_time) * 1000
+                )
+            except requests.exceptions.RequestException as e:
+                last_error = e
+                log.warning(f"SiliconFlow request error (attempt {attempt + 1}): {e}")
+                continue
+
+        log.error(f"SiliconFlow API error after all retries: {last_error}")
+        return ChatResponse(
+            content="", model=model, provider="siliconflow",
+            error=str(last_error), duration_ms=(time.time() - start_time) * 1000
+        )
     
     def chat_stream(self,
                    messages: List[ChatMessage],
@@ -138,60 +166,96 @@ class SiliconFlowProvider(BaseProvider):
                    temperature: float = 0.7,
                    max_tokens: int = 2000,
                    tools: Optional[List[Dict[str, Any]]] = None,
-                   images: Optional[List[Dict[str, Any]]] = None) -> Generator[str, None, None]:
-        """Stream chat completion."""
-        try:
-            headers = {
-                "Authorization": f"Bearer {self._api_key}",
-                "Content-Type": "application/json"
-            }
-            
-            formatted_messages = self._format_messages_for_api(messages, images)
-            
-            payload = {
-                "model": model,
-                "messages": formatted_messages,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "stream": True,
-            }
-            
-            if tools:
-                payload["tools"] = tools
-            
-            url = f"{self.BASE_URL}/chat/completions"
-            response = requests.post(url, headers=headers, json=payload, stream=True, timeout=120)
-            response.raise_for_status()
-            
-            for line in response.iter_lines():
-                if line:
-                    line_text = line.decode('utf-8').strip()
-                    if line_text.startswith('data: '):
-                        data_str = line_text[6:]
-                        if data_str.strip() == '[DONE]':
-                            break
+                   images: Optional[List[Dict[str, Any]]] = None,
+                   retry_callback=None,
+                   **kwargs: Any) -> Generator[str, None, None]:
+        """Stream chat completion with retry support."""
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json"
+        }
+
+        formatted_messages = self._format_messages_for_api(messages, images)
+
+        payload: Dict[str, Any] = {
+            "model": model,
+            "messages": formatted_messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+
+        if tools:
+            payload["tools"] = tools
+
+        url = f"{self.BASE_URL}/chat/completions"
+
+        last_error: Optional[Exception] = None
+        for attempt in range(self._max_retries + 1):
+            if attempt > 0:
+                backoff = self._retry_delay * (2 ** (attempt - 1)) + random.random()
+                if retry_callback:
+                    try:
+                        retry_callback(attempt + 1, self._max_retries + 1, 'error')
+                    except Exception:
+                        pass
+                time.sleep(backoff)
+
+            try:
+                response = self._session.post(url, headers=headers, json=payload, stream=True, timeout=self._timeout)
+                response.raise_for_status()
+
+                for line in response.iter_lines():
+                    if line:
+                        line_text = line.decode('utf-8').strip()
+                        if line_text.startswith('data: '):
+                            data_str = line_text[6:]
+                            if data_str.strip() == '[DONE]':
+                                return
+                            try:
+                                data = json.loads(data_str)
+                                if 'choices' in data and len(data['choices']) > 0:
+                                    delta = data['choices'][0].get('delta', {})
+                                    content = delta.get('content', '')
+                                    if content:
+                                        yield content
+                            except json.JSONDecodeError:
+                                continue
+                return  # Successfully streamed
+
+            except requests.exceptions.Timeout:
+                last_error = Exception(f"SiliconFlow timeout after {self._timeout}s (attempt {attempt + 1})")
+                log.warning(str(last_error))
+                continue
+            except requests.exceptions.HTTPError as e:
+                status = e.response.status_code if e.response is not None else 0
+                if status in (429, 502, 503, 504) and attempt < self._max_retries:
+                    log.warning(f"SiliconFlow transient HTTP {status} (attempt {attempt + 1})")
+                    if retry_callback:
                         try:
-                            data = json.loads(data_str)
-                            if 'choices' in data and len(data['choices']) > 0:
-                                delta = data['choices'][0].get('delta', {})
-                                content = delta.get('content', '')
-                                if content:
-                                    yield content
-                        except json.JSONDecodeError:
-                            continue
-                            
-        except Exception as e:
-            log.error(f"SiliconFlow stream error: {e}")
-            yield f"[Error: {str(e)}]"
+                            retry_callback(attempt + 1, self._max_retries + 1, str(status))
+                        except Exception:
+                            pass
+                    time.sleep(self._retry_delay * (2 ** attempt))
+                    continue
+                log.error(f"SiliconFlow stream HTTP {status}: {e}")
+                yield f"[Error: HTTP {status}]"
+                return
+            except requests.exceptions.RequestException as e:
+                last_error = e
+                log.warning(f"SiliconFlow stream error (attempt {attempt + 1}): {e}")
+                continue
+
+        log.error(f"SiliconFlow stream failed after all retries: {last_error}")
+        yield f"[Error: stream failed after retries]"
     
     def validate_api_key(self) -> bool:
         """Validate the SiliconFlow API key."""
         if not self._api_key:
             return False
         try:
-            import requests
             headers = {"Authorization": f"Bearer {self._api_key}"}
-            response = requests.get(
+            response = self._session.get(
                 "https://api.siliconflow.com/v1/models",
                 headers=headers,
                 timeout=10

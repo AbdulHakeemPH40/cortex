@@ -1,0 +1,194 @@
+{
+  "name": "cortexdesktop-vscode",
+  "displayName": "Cortex Desktop",
+  "description": "VS Code companion for Cortex Desktop with project-aware launch behavior and a Control Center.",
+  "version": "0.2.0",
+  "publisher": "devnull-bootloader",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Themes",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:cortexdesktop.start",
+    "onCommand:cortexdesktop.startInWorkspaceRoot",
+    "onCommand:cortexdesktop.openDocs",
+    "onCommand:cortexdesktop.openSetupDocs",
+    "onCommand:cortexdesktop.openWorkspaceProfile",
+    "onCommand:cortexdesktop.openControlCenter",
+    "onCommand:cortexdesktop.newChat",
+    "onCommand:cortexdesktop.openChat",
+    "onCommand:cortexdesktop.resumeSession",
+    "onCommand:cortexdesktop.abortChat",
+    "onView:cortexdesktop.controlCenter",
+    "onView:cortexdesktop.chat"
+  ],
+  "main": "./src/extension.js",
+  "files": [
+    "README.md",
+    "media/**",
+    "src/extension.js",
+    "src/presentation.js",
+    "src/state.js",
+    "src/chat/**",
+    "themes/**"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "cortexdesktop.start",
+        "title": "Cortex Desktop: Launch in Terminal",
+        "category": "Cortex Desktop"
+      },
+      {
+        "command": "cortexdesktop.startInWorkspaceRoot",
+        "title": "Cortex Desktop: Launch in Workspace Root",
+        "category": "Cortex Desktop"
+      },
+      {
+        "command": "cortexdesktop.openDocs",
+        "title": "Cortex Desktop: Open Repository",
+        "category": "Cortex Desktop"
+      },
+      {
+        "command": "cortexdesktop.openSetupDocs",
+        "title": "Cortex Desktop: Open Setup Guide",
+        "category": "Cortex Desktop"
+      },
+      {
+        "command": "cortexdesktop.openWorkspaceProfile",
+        "title": "Cortex Desktop: Open Workspace Profile",
+        "category": "Cortex Desktop"
+      },
+      {
+        "command": "cortexdesktop.openControlCenter",
+        "title": "Cortex Desktop: Open Control Center",
+        "category": "Cortex Desktop"
+      },
+      {
+        "command": "cortexdesktop.newChat",
+        "title": "Cortex Desktop: New Chat",
+        "category": "Cortex Desktop"
+      },
+      {
+        "command": "cortexdesktop.openChat",
+        "title": "Cortex Desktop: Open Chat Panel",
+        "category": "Cortex Desktop"
+      },
+      {
+        "command": "cortexdesktop.resumeSession",
+        "title": "Cortex Desktop: Resume Session",
+        "category": "Cortex Desktop"
+      },
+      {
+        "command": "cortexdesktop.abortChat",
+        "title": "Cortex Desktop: Abort Generation",
+        "category": "Cortex Desktop"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "cortexdesktop",
+          "title": "Cortex Desktop",
+          "icon": "media/cortexcli.svg"
+        }
+      ]
+    },
+    "views": {
+      "cortexdesktop": [
+        {
+          "id": "cortexdesktop.chat",
+          "name": "Chat",
+          "type": "webview"
+        },
+        {
+          "id": "cortexdesktop.controlCenter",
+          "name": "Control Center",
+          "type": "webview"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "cortexdesktop.openChat",
+        "key": "ctrl+shift+l",
+        "mac": "cmd+shift+l"
+      }
+    ],
+    "configuration": {
+      "title": "Cortex Desktop",
+      "properties": {
+        "cortexdesktop.launchCommand": {
+          "type": "string",
+          "default": "cortex",
+          "description": "Command run in the integrated terminal when launching Cortex Desktop."
+        },
+        "cortexdesktop.terminalName": {
+          "type": "string",
+          "default": "Cortex Desktop",
+          "description": "Integrated terminal tab name for Cortex Desktop sessions."
+        },
+        "cortexdesktop.useOpenAIShim": {
+          "type": "boolean",
+          "default": false,
+          "description": "Optionally set CORTEX_CODE_USE_OPENAI=1 in launched Cortex Desktop terminals."
+        },
+        "cortexdesktop.permissionMode": {
+          "type": "string",
+          "default": "acceptEdits",
+          "enum": ["default", "acceptEdits", "bypassPermissions", "plan"],
+          "enumDescriptions": [
+            "Prompt for permission on each tool use (requires manual approval)",
+            "Auto-approve file edits, prompt for other operations (recommended)",
+            "Auto-approve all operations without prompting",
+            "Read-only mode — no file modifications allowed"
+          ],
+          "description": "Permission mode for chat sessions. Controls which tool operations are auto-approved."
+        },
+        "cortexdesktop.lspBridge.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Expose VS Code language features (LSP-backed) over a local HTTP bridge so Cortex Desktop can request symbols/definitions/diagnostics."
+        },
+        "cortexdesktop.lspBridge.port": {
+          "type": "number",
+          "default": 53999,
+          "description": "Localhost port for the LSP bridge HTTP server (127.0.0.1)."
+        },
+        "cortexdesktop.lspBridge.authToken": {
+          "type": "string",
+          "default": "",
+          "description": "Optional bearer token required by the LSP bridge. If set, requests must include Authorization: Bearer <token>."
+        }
+      }
+    },
+    "themes": [
+      {
+        "label": "OpenClaude Terminal Black",
+        "uiTheme": "vs-dark",
+        "path": "./themes/OpenClaude-Terminal-Black.json"
+      }
+    ]
+  },
+  "scripts": {
+    "test": "node --test ./src/extension.test.js ./src/presentation.test.js ./src/state.test.js",
+    "lint": "node scripts/lint.js",
+    "package": "npx @vscode/vsce package --no-dependencies"
+  },
+  "keywords": [
+    "cortex",
+    "terminal",
+    "theme",
+    "cli",
+    "llm"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/"
+  },
+  "license": "MIT"
+}
