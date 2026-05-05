@@ -61,6 +61,7 @@ class LLMProvider(str, Enum):
     BEDROCK = "bedrock"  # AWS
     VERTEX = "vertex"  # Google Cloud
     FOUNDRY = "foundry"  # Azure
+    KIMI = "kimi"  # Moonshot AI
 
 
 # Provider environment variable mapping
@@ -73,6 +74,7 @@ PROVIDER_ENV_VARS = {
     LLMProvider.BEDROCK: "CORTEX_USE_BEDROCK",
     LLMProvider.VERTEX: "CORTEX_USE_VERTEX",
     LLMProvider.FOUNDRY: "CORTEX_USE_FOUNDRY",
+    LLMProvider.KIMI: "MOONSHOT_API_KEY",
 }
 
 # Server configuration

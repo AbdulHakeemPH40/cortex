@@ -250,6 +250,10 @@ _REGISTRY: List[Tuple[str, int, int]] = [
     ("yi-medium",             16_000,   4_096),
     ("yi",                   200_000,   4_096),
 
+    # ── Kimi / Moonshot AI ───────────────────────────────────────────────────
+    ("kimi-k2.6",             262_144,  32_768),
+    ("kimi",                   262_144,  32_768),   # generic kimi fallback
+
     # ── SiliconFlow generic ───────────────────────────────────────────────────
     ("pro/deepseek",         128_000,   8_000),
     ("free/deepseek",        128_000,   8_000),

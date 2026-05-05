@@ -857,6 +857,43 @@ class BridgeBashTool:
         timeout: int = int(args.get("timeout", 30))
         cwd = self._bridge.project_root or os.getcwd()
 
+        # ── Block Start-Process that launches persistent servers ────────────
+        # The AI often tries to "verify" by starting http.server / live-server
+        # via Start-Process. These spawn background processes that never exit,
+        # waste time, leak ports, and the system cannot recognize the output
+        # as valid verification anyway.  Block them and suggest alternatives.
+        _cmd_lower = command.lower()
+        if "start-process" in _cmd_lower:
+            _server_patterns = [
+                "http.server", "http.server", "live-server", "npx serve",
+                "npx http-server", "node server", "npm start", "npm run dev",
+                "npm run serve", "yarn start", "yarn dev", "python -m http",
+                "php -s", "php -S", "flask run", "uvicorn", "gunicorn",
+            ]
+            if any(pat in _cmd_lower for pat in _server_patterns):
+                log.warning(
+                    f"[BRIDGE] Blocked Start-Process server command: "
+                    f"{command[:150].replace(chr(10), ' ')}"
+                )
+                return ToolResult(
+                    tool_id="", result=None, success=False,
+                    error=(
+                        "BLOCKED: Do NOT use Start-Process to launch persistent "
+                        "servers (http.server, live-server, npm start, etc.). "
+                        "These background processes waste time and leak ports.\n\n"
+                        "For verification, use DIRECT commands instead:\n"
+                        "• python -c \"print(open('index.html').read()[:500])\"\n"
+                        "• curl http://localhost:PORT (if server already running)\n"
+                        "• Test-Connection localhost -Port PORT\n"
+                        "• python -m pytest  (or other test framework)\n"
+                        "• npm test\n"
+                        "• npx eslint .  (lint checks)\n\n"
+                        "The Bash tool has a {timeout}s timeout — servers will "
+                        "time out and waste turns.  Use targeted verification instead."
+                    ),
+                )
+        # ───────────────────────────────────────────────────────────────
+
         # ── Dangerous-command permission gate ────────────────────────────────
         warning = _get_destructive_warning(command)
         if warning and self._bridge.always_allowed:
@@ -981,6 +1018,9 @@ class BridgeLSTool:
 
 # ============================================================
 # TOOL DEFINITIONS  (OpenAI-compatible function schemas)
+# Lean set: 11 core tools (reduced from 17). Rarely-used tools
+# (LSP, MCP, TaskCreate/Update/List/Get/Stop, TeamCreate/Delete)
+# are removed to minimize context overhead per turn.
 # ============================================================
 
 _TOOL_SCHEMAS: List[Dict[str, Any]] = [
@@ -988,14 +1028,11 @@ _TOOL_SCHEMAS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "Read",
-            "description": (
-                "Read the contents of a file. Supports text files, images, "
-                "PDFs, and Jupyter notebooks. Use for exploring any file in the project."
-            ),
+            "description": "Read file contents. Supports text, images, PDFs, Jupyter notebooks.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "file_path": {"type": "string", "description": "Absolute or project-relative path"},
+                    "file_path": {"type": "string", "description": "File path"},
                     "offset":    {"type": "integer", "description": "Start line (1-indexed, optional)"},
                     "limit":     {"type": "integer", "description": "Max lines to read (optional)"},
                 },
@@ -1007,11 +1044,11 @@ _TOOL_SCHEMAS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "Write",
-            "description": "Create a new file or completely overwrite an existing file with content.",
+            "description": "Create a new file or overwrite an existing one.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "file_path": {"type": "string", "description": "Path to the file"},
+                    "file_path": {"type": "string", "description": "File path"},
                     "content":   {"type": "string", "description": "Full content to write"},
                 },
                 "required": ["file_path", "content"],
@@ -1022,14 +1059,11 @@ _TOOL_SCHEMAS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "Edit",
-            "description": (
-                "Replace a specific exact string in a file with new text. "
-                "old_string must appear exactly once unless replace_all is true."
-            ),
+            "description": "Replace exact string in a file with new text. Set replace_all=true to replace all occurrences.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "file_path":   {"type": "string", "description": "Path to the file"},
+                    "file_path":   {"type": "string", "description": "File path"},
                     "old_string":  {"type": "string", "description": "Exact text to find"},
                     "new_string":  {"type": "string", "description": "Replacement text"},
                     "replace_all": {"type": "boolean", "description": "Replace all occurrences (default false)"},
@@ -1042,10 +1076,7 @@ _TOOL_SCHEMAS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "Bash",
-            "description": (
-                "Execute a shell / PowerShell command and return its output. "
-                "Commands run in the project root by default."
-            ),
+            "description": "Execute a shell command. Runs in the project root.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1060,15 +1091,12 @@ _TOOL_SCHEMAS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "Glob",
-            "description": (
-                "Find files matching a glob pattern (e.g. **/*.py). "
-                "Use this to discover files in the project."
-            ),
+            "description": "Find files matching a glob pattern (e.g. **/*.py).",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "pattern": {"type": "string", "description": "Glob pattern"},
-                    "path":    {"type": "string", "description": "Directory to search in (default: project root)"},
+                    "path":    {"type": "string", "description": "Directory to search (default: project root)"},
                 },
                 "required": ["pattern"],
             },
@@ -1078,18 +1106,14 @@ _TOOL_SCHEMAS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "Grep",
-            "description": (
-                "Search for a regex or literal pattern inside files using ripgrep. "
-                "Returns matching lines with file names and line numbers."
-            ),
+            "description": "Search file contents with regex. Returns matching lines with file names and line numbers.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "pattern":          {"type": "string",  "description": "Regex/text pattern to search"},
+                    "pattern":          {"type": "string",  "description": "Regex/text pattern"},
                     "path":             {"type": "string",  "description": "Directory or file to search"},
                     "glob":             {"type": "string",  "description": "File glob filter e.g. *.py"},
-                    "case_insensitive": {"type": "boolean", "description": "Case-insensitive search (default false)"},
-                    "multiline":        {"type": "boolean", "description": "Enable multiline regex (default false)"},
+                    "case_insensitive": {"type": "boolean", "description": "Case-insensitive (default false)"},
                 },
                 "required": ["pattern"],
             },
@@ -1099,7 +1123,7 @@ _TOOL_SCHEMAS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "LS",
-            "description": "List the contents of a directory. Shows files and subdirectories.",
+            "description": "List directory contents.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1112,24 +1136,20 @@ _TOOL_SCHEMAS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "TodoWrite",
-            "description": (
-                "Update the todo list for the current session. Use proactively for complex multi-step tasks "
-                "(3+ steps). Mark tasks in_progress BEFORE starting, completed IMMEDIATELY after finishing. "
-                "Always provide both content (imperative) and activeForm (present continuous) for each task."
-            ),
+            "description": "Update the todo list. Call FIRST for 3+ step tasks. Mark in_progress BEFORE starting, completed AFTER finishing.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "todos": {
                         "type": "array",
-                        "description": "The updated list of todo items.",
+                        "description": "Todo items.",
                         "items": {
                             "type": "object",
                             "properties": {
-                                "id":         {"type": "string",  "description": "Unique identifier for the task"},
-                                "content":    {"type": "string",  "description": "Task description in imperative form (e.g. 'Run tests')"},
-                                "activeForm": {"type": "string",  "description": "Task in present continuous form (e.g. 'Running tests')"},
-                                "status":     {"type": "string",  "enum": ["pending", "in_progress", "completed"], "description": "Current task status"},
+                                "id":         {"type": "string",  "description": "Unique task id"},
+                                "content":    {"type": "string",  "description": "Imperative form (e.g. 'Run tests')"},
+                                "activeForm": {"type": "string",  "description": "Present continuous (e.g. 'Running tests')"},
+                                "status":     {"type": "string",  "enum": ["pending", "in_progress", "completed"], "description": "Status"},
                             },
                             "required": ["id", "content", "activeForm", "status"],
                         },
@@ -1143,31 +1163,27 @@ _TOOL_SCHEMAS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "AskUserQuestion",
-            "description": (
-                "Ask the user a multiple-choice question to gather preferences, clarify requirements, "
-                "or make decisions during execution. Use when you need user input to proceed. "
-                "The user will see the question in the chat UI and can select one or more options."
-            ),
+            "description": "Ask the user a multiple-choice question to gather preferences or clarify requirements.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "questions": {
                         "type": "array",
-                        "description": "List of questions to ask (1-4 questions).",
+                        "description": "Questions (1-4).",
                         "items": {
                             "type": "object",
                             "properties": {
-                                "question":    {"type": "string", "description": "The complete question to ask"},
-                                "header":      {"type": "string", "description": "Short label for chip/tag (max 12 chars)"},
-                                "multiSelect": {"type": "boolean", "description": "Allow multiple selections (default false)"},
+                                "question":    {"type": "string", "description": "The question"},
+                                "header":      {"type": "string", "description": "Short label (max 12 chars)"},
+                                "multiSelect": {"type": "boolean", "description": "Allow multi-select (default false)"},
                                 "options": {
                                     "type": "array",
-                                    "description": "2-4 options for the user to choose from",
+                                    "description": "2-4 options",
                                     "items": {
                                         "type": "object",
                                         "properties": {
-                                            "label":       {"type": "string", "description": "Display text (1-5 words)"},
-                                            "description": {"type": "string", "description": "Explanation of what this option means"},
+                                            "label":       {"type": "string", "description": "Option label"},
+                                            "description": {"type": "string", "description": "What this option means"},
                                         },
                                         "required": ["label", "description"],
                                     },
@@ -1184,58 +1200,13 @@ _TOOL_SCHEMAS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
-            "name": "LSP",
-            "description": (
-                "Language Server Protocol tool for code intelligence. Provides go-to-definition, "
-                "find references, hover info, document symbols, and call hierarchy navigation. "
-                "Use to understand code structure and navigate relationships between symbols."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "operation": {
-                        "type": "string",
-                        "enum": ["goToDefinition", "findReferences", "hover", "documentSymbol", 
-                                 "workspaceSymbol", "goToImplementation", "prepareCallHierarchy", 
-                                 "incomingCalls", "outgoingCalls"],
-                        "description": "The LSP operation to perform"
-                    },
-                    "filePath": {
-                        "type": "string",
-                        "description": "Absolute path to the file"
-                    },
-                    "line": {
-                        "type": "integer",
-                        "description": "1-based line number"
-                    },
-                    "character": {
-                        "type": "integer",
-                        "description": "1-based character/column position"
-                    },
-                },
-                "required": ["operation", "filePath", "line", "character"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "WebFetch",
-            "description": (
-                "Fetch and extract content from a URL. Returns the main content as markdown. "
-                "Use to retrieve documentation, API references, or other web content."
-            ),
+            "description": "Fetch and extract content from a URL as markdown.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "url": {
-                        "type": "string",
-                        "description": "The URL to fetch content from"
-                    },
-                    "query": {
-                        "type": "string",
-                        "description": "Optional search query to find specific content on the page"
-                    },
+                    "url":   {"type": "string", "description": "The URL"},
+                    "query": {"type": "string", "description": "Optional search query for the page"},
                 },
                 "required": ["url"],
             },
@@ -1245,278 +1216,15 @@ _TOOL_SCHEMAS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "WebSearch",
-            "description": (
-                "Search the web for current information. Returns a list of relevant results "
-                "with titles, URLs, and snippets. Use for finding up-to-date information, "
-                "documentation, or solutions to problems."
-            ),
+            "description": "Search the web. Returns titles, URLs, and snippets.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "The search query"
-                    },
-                    "allowed_domains": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Optional list of domains to restrict search to"
-                    },
-                    "blocked_domains": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Optional list of domains to exclude from search"
-                    },
+                    "query":           {"type": "string", "description": "Search query"},
+                    "allowed_domains": {"type": "array", "items": {"type": "string"}, "description": "Restrict to these domains"},
+                    "blocked_domains": {"type": "array", "items": {"type": "string"}, "description": "Exclude these domains"},
                 },
                 "required": ["query"],
-            },
-        },
-    },
-    # ============================================================
-    # TASK V2 TOOLS - Structured task management
-    # ============================================================
-    {
-        "type": "function",
-        "function": {
-            "name": "TaskCreate",
-            "description": (
-                "Create a new task in the task list. Use for complex multi-step tasks "
-                "to track progress and demonstrate thoroughness. Creates structured tasks "
-                "with subject, description, and optional metadata."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "subject": {
-                        "type": "string",
-                        "description": "Brief, actionable title in imperative form (e.g., 'Fix authentication bug')"
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "Detailed description of what needs to be done"
-                    },
-                    "activeForm": {
-                        "type": "string",
-                        "description": "Present continuous form shown when task is in_progress (e.g., 'Fixing authentication bug')"
-                    },
-                    "parentId": {
-                        "type": "string",
-                        "description": "Optional ID of the parent task if this is a subtask"
-                    },
-                    "dependsOn": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Optional list of task IDs that must be completed before this task can start"
-                    },
-                    "estimatedEffort": {
-                        "type": "string",
-                        "description": "Optional estimated effort (e.g., '30min', '2h', '3d')"
-                    },
-                },
-                "required": ["subject", "description"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "TaskUpdate",
-            "description": (
-                "Update an existing task's status, owner, or dependencies. "
-                "Use to mark tasks as in_progress/completed, assign to teammates, or set dependencies."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "taskId": {
-                        "type": "string",
-                        "description": "ID of the task to update"
-                    },
-                    "status": {
-                        "type": "string",
-                        "enum": ["pending", "in_progress", "completed", "cancelled", "blocked"],
-                        "description": "New status for the task"
-                    },
-                    "owner": {
-                        "type": "string",
-                        "description": "Agent ID to assign as owner"
-                    },
-                    "blocks": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Task IDs that this task blocks"
-                    },
-                    "blockedBy": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Task IDs that block this task"
-                    },
-                    "parentId": {
-                        "type": "string",
-                        "description": "Update the parent task ID (or empty string to remove parent)"
-                    },
-                    "dependsOn": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Replace the list of dependency task IDs"
-                    },
-                    "estimatedEffort": {
-                        "type": "string",
-                        "description": "Update estimated effort (e.g., '30min', '2h', '3d')"
-                    },
-                },
-                "required": ["taskId"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "TaskList",
-            "description": (
-                "List all tasks in the current session. Shows task status, owners, "
-                "and dependencies. Use to understand current work state before creating new tasks."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "status": {
-                        "type": "string",
-                        "enum": ["pending", "in_progress", "completed", "cancelled", "all"],
-                        "description": "Filter tasks by status (default: all)"
-                    },
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "TaskGet",
-            "description": (
-                "Get details of a specific task by ID. Returns full task information "
-                "including description, status, owner, and dependencies."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "taskId": {
-                        "type": "string",
-                        "description": "ID of the task to retrieve"
-                    },
-                },
-                "required": ["taskId"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "TaskStop",
-            "description": (
-                "Stop a running task. Marks the task as cancelled and cleans up any "
-                "running processes associated with it."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "taskId": {
-                        "type": "string",
-                        "description": "ID of the task to stop"
-                    },
-                },
-                "required": ["taskId"],
-            },
-        },
-    },
-    # ============================================================
-    # MCP TOOL - Model Context Protocol
-    # ============================================================
-    {
-        "type": "function",
-        "function": {
-            "name": "MCP",
-            "description": (
-                "Execute a tool from an MCP (Model Context Protocol) server. "
-                "MCP servers provide external tools for databases, APIs, and custom integrations. "
-                "Use to interact with external systems beyond the built-in tools."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "serverName": {
-                        "type": "string",
-                        "description": "Name of the MCP server to use"
-                    },
-                    "toolName": {
-                        "type": "string",
-                        "description": "Name of the tool on the MCP server"
-                    },
-                    "arguments": {
-                        "type": "object",
-                        "description": "Arguments to pass to the MCP tool"
-                    },
-                },
-                "required": ["serverName", "toolName"],
-            },
-        },
-    },
-    # ============================================================
-    # TEAM/SWARM TOOLS - Multi-agent orchestration
-    # ============================================================
-    {
-        "type": "function",
-        "function": {
-            "name": "TeamCreate",
-            "description": (
-                "Create a new team of AI agents for parallel task execution. "
-                "Teams can work on different parts of a project simultaneously, "
-                "with a team lead coordinating work distribution."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "description": "Name for the team"
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "Purpose/goal of the team"
-                    },
-                    "teammates": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "name": {"type": "string", "description": "Name for this teammate"},
-                                "role": {"type": "string", "description": "Role/specialization (e.g., 'frontend', 'backend', 'testing')"},
-                            },
-                        },
-                        "description": "List of teammates to create"
-                    },
-                },
-                "required": ["name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "TeamDelete",
-            "description": (
-                "Delete a team and stop all its agents. "
-                "Cleans up team resources and terminates running processes."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "teamName": {
-                        "type": "string",
-                        "description": "Name of the team to delete"
-                    },
-                },
-                "required": ["teamName"],
             },
         },
     },
@@ -2235,9 +1943,6 @@ class CortexAgentBridge(QObject):
         # ── Auto-discover project structure (cached) ──────────
         project_info = self._get_project_summary(project_root)
 
-        # ── File state awareness ──────────────────────────────
-        known_files = self._tool_ctx.get_known_files_summary()
-
         # ── Persistent memory (project-scoped, loaded once per session) ──
         memory_section = ''
         _mem_enabled: bool = True
@@ -2257,8 +1962,7 @@ class CortexAgentBridge(QObject):
             self._ensure_memory_dir(memory_dir)
             memory_section = self._load_memory_section(memory_dir)
 
-        prompt = f"""You are Cortex AI Agent, an autonomous coding assistant integrated into Cortex AI Agent.
-You are a world-class software engineer who writes clean, efficient, well-tested code.
+        prompt = f"""You are Cortex AI Agent, an autonomous coding assistant. Write clean, efficient, well-tested code.
 
 ## Environment
 Project Root: {project_root}
@@ -2269,135 +1973,19 @@ Shell: PowerShell (use semicolons ; not &&)
 ## Project Context
 {project_info}
 
-## Files You Know About This Session
-{known_files}
-
 {memory_section}
 
 ## Task Graph
-{self._task_graph.build_prompt_section() if self._task_graph and self._task_graph.get_task_count() > 0 else "No tasks created yet. Use TaskCreate to create structured tasks with optional parent/child relationships and dependencies."}
+{self._task_graph.build_prompt_section() if self._task_graph and self._task_graph.get_task_count() > 0 else "No tasks yet. Use TodoWrite to plan multi-step work."}
 
-## Tools Available
-You MUST call tools to take real action. Never describe what you "would" do — actually do it.
-
-## Performance Rules
-- Minimize tool calls. Prefer 1–2 high-signal reads over repeated directory listings.
-- Batch independent tool calls in the SAME turn when possible (e.g., multiple Reads), instead of a back-and-forth loop.
-- Avoid repeating the same tool call (especially `LS`) unless the filesystem likely changed.
-
-### TodoWrite(todos)
-Plan and track multi-step tasks in the UI. **CALL THIS FIRST** — before any other tool — whenever you start a task with 3+ steps. Use it to immediately show your plan in the sidebar. Mark tasks in_progress BEFORE starting them, completed IMMEDIATELY after finishing each one. Provide both content (imperative, e.g. 'Run tests') and activeForm (present continuous, e.g. 'Running tests') for every item.
-
-**IMPORTANT**: Call TodoWrite ONCE to set up your plan, then START WORKING immediately. Do NOT call TodoWrite again until a task status actually changes (e.g. moving a task to in_progress or completed). Never call TodoWrite twice in a row with the same data.
-
-### Read(file_path, offset?, limit?)
-Read file contents. Always Read a file BEFORE editing it.
-**SMART READING**: Files >250 lines automatically return a SKELETON (structure + line numbers)
-instead of full content. Use line numbers from the skeleton for targeted reads.
-**WORKFLOW for any file**:
-  1. Read(file_path="file.py") → if small: full content; if large: skeleton with line numbers
-  2. Find the section you need from the skeleton
-  3. Read(file_path="file.py", offset=LINE, limit=80) → get just that section
-  4. OR use Grep(pattern="keyword") first to find exact line numbers
-NEVER try to read an entire large file at once — it wastes your context budget.
-Example: Read(file_path="src/main.py", offset=100, limit=50)  # lines 100-149
-
-### Edit(file_path, old_string, new_string)
-Surgical text replacement. old_string must match EXACTLY (including whitespace).
-ALWAYS Read the file first to get the exact text.
-Example: Edit(file_path="src/main.py", old_string="def old():", new_string="def new():")
-
-### Write(file_path, content)
-Create a new file or fully overwrite an existing one. Use Edit for partial changes.
-Example: Write(file_path="src/new_module.py", content="# New module\n...")
-
-### Bash(command, timeout?)
-Execute a shell command. Use for: running code, installing packages, git, tests.
-Example: Bash(command="python -m pytest tests/ -v")
-Example: Bash(command="pip install requests")
-
-### Glob(pattern, path?)
-Find files matching a glob pattern. Great for discovering project structure.
-Example: Glob(pattern="**/*.py")
-Example: Glob(pattern="**/test_*.py", path="tests/")
-
-### Grep(pattern, path?, glob?, case_insensitive?)
-Search file contents with regex. Find definitions, usages, imports.
-BEST PRACTICE: Use Grep BEFORE Read to find exact line numbers, then Read with offset/limit.
-This avoids wasting context on irrelevant code. Do NOT call Grep more than 2-3 times in a row.
-Example: Grep(pattern="def process_message", glob="*.py")
-Example: Grep(pattern="import requests", path="src/")
-
-### LS(path?)
-List directory contents. Quick overview of files and folders.
-Example: LS(path="src/")
-
-## Strategy Rules
-1. TODO FIRST, THEN WORK: For tasks with 3+ steps, call TodoWrite ONCE to show your plan, then immediately start the FIRST task on the next turn. Never call TodoWrite twice in a row.
-2. EXPLORE FIRST: Use Glob/Grep/LS/Read to understand before making changes.
-3. READ BEFORE EDIT: Always Read the file to get exact text before calling Edit.
-4. VERIFY AFTER CHANGES: After editing, re-Read the file or run tests to confirm.
-5. BATCH RELATED EDITS: When multiple edits go to the same file, do them sequentially.
-6. USE EDIT NOT WRITE: For modifying existing files, prefer Edit over Write.
-7. SKIP RE-READING: If you already read a file this session (see 'Files You Know About'),
-   you don't need to read it again unless it was modified.
-8. CHAIN TOOLS: You can call multiple tools in one turn for independent operations.
-9. HANDLE ERRORS: If a tool fails, try an alternative approach rather than giving up.
-10. LARGE FILES — SMART CHUNK-BASED READING:
-    Your IDE uses the SAME strategy as Cursor, VS Code Copilot, and Claude Code:
-    Files >250 lines automatically return a SKELETON (not full content).
-    The skeleton shows class/function signatures with LINE NUMBERS.
-    
-    CRITICAL: Your model has a FIXED context window. Reading entire large files
-    wastes 90%+ of your token budget on irrelevant code.
-    
-    Smart workflow:
-      a) Read(file_path="file.py") → skeleton with line numbers (auto for >250 lines)
-      b) Identify the function/class you need from the skeleton
-      c) Read(file_path="file.py", offset=LINE, limit=80) → just that section
-      d) OR: Grep(pattern="keyword") first, THEN targeted Read with offset/limit
-    
-    NEVER attempt to read the entire content of a file >250 lines at once.
-    Use Grep → Read(offset, limit) pattern for maximum efficiency.
-
-## Content Formatting & Visualization
-When explaining concepts, architectures, or workflows, use visual formats to enhance clarity:
-
-### Mermaid Diagrams
-Use Mermaid syntax for flowcharts, sequence diagrams, state diagrams, and architecture visualizations.
-Wrap Mermaid code in triple backticks with `mermaid` language identifier:
-```mermaid
-graph TD
-    A[Start] --> B[Process]
-    B --> C[End]
-```
-
-Common Mermaid diagram types:
-- **Flowcharts**: `graph TD` (top-down) or `graph LR` (left-right)
-- **Sequence diagrams**: `sequenceDiagram` for interactions between components
-- **State diagrams**: `stateDiagram-v2` for state machines
-- **Class diagrams**: `classDiagram` for software architecture
-- **ER diagrams**: `erDiagram` for database schemas
-- **Gantt charts**: `gantt` for project timelines
-
-Use diagrams when:
-- Explaining system architecture
-- Showing data flow between components
-- Visualizing algorithms or processes
-- Documenting API interactions
-- Planning project structure
-
-### Math & Equations
-Use LaTeX syntax for mathematical expressions:
-- Inline math: `$E = mc^2$`
-- Display math example: integral from 0 to infinity of e^(-x^2) dx = sqrt(pi)/2
-
-### Tables
-Use Markdown tables for structured data comparison:
-| Feature | Option A | Option B |
-|---------|----------|----------|
-| Speed   | Fast     | Slow     |
-| Cost    | High     | Low      |
+## Rules
+1. CALL TOOLS — never just describe what you would do. Tools are defined in the API request.
+2. SKIP TODO for simple tasks: Only use TodoWrite for 3+ complex steps. For straightforward work (create a file, fix a bug), go straight to Write/Edit.
+3. READ BEFORE EDIT: For EXISTING files, Read first to get exact text before Edit. For NEW files, Write immediately — no Read needed.
+4. USE WRITE for new files, Edit for existing ones. Never Read a file that doesn't exist.
+5. VERIFY only for complex changes; skip verification for simple file creation.
+6. BATCH TOOLS: Call multiple independent tools in one turn.
+7. TARGETED READS: Use Grep/Glob to locate code, then Read with offset/limit for the relevant section.
 """
         if context.get("code_context"):
             prompt += f"\n## User's Selected Code\n```\n{context['code_context']}\n```\n"
@@ -3017,6 +2605,7 @@ Use Markdown tables for structured data comparison:
                 ProviderType.MISTRAL,
                 ProviderType.SILICONFLOW,
                 ProviderType.DEEPSEEK,
+                ProviderType.KIMI,
             ]
 
         _attempted_raw = getattr(self, '_failover_attempted', None)
@@ -3089,6 +2678,15 @@ Use Markdown tables for structured data comparison:
             self._auto_continue_cycle = 0
             self._auto_continue_compacted = None
             self._last_cycle_session_mutations = self._session_mutation_count
+            # ── Reset stale-tracking counters so manual Continue gives
+            #     the AI a clean slate rather than re-triggering the
+            #     staleness gate immediately on the next turn limit.
+            self._continue_cycle_count = 0
+            self._last_pending_ids = set()
+            if hasattr(self, '_last_pending_count'):
+                self._last_pending_count = 0
+            # Reset verification-block counter on fresh user requests
+            self._verification_block_count = 0
 
         merged = {**self._enhancement_data, **context}
 
@@ -3147,6 +2745,9 @@ Use Markdown tables for structured data comparison:
             elif model_lower.startswith("mistral") or model_lower.startswith("codestral"):
                 # Mistral models
                 provider_type = ProviderType.MISTRAL
+            elif model_lower.startswith("kimi-"):
+                # Kimi/Moonshot AI models (K2.6)
+                provider_type = ProviderType.KIMI
             elif model_lower.startswith("qwen") or "siliconflow" in model_lower:
                 # SiliconFlow/Qwen vision models
                 provider_type = ProviderType.SILICONFLOW
@@ -3203,11 +2804,20 @@ Use Markdown tables for structured data comparison:
                 system_prompt = merged.get("system_prompt") or self._build_system_prompt(context)
                 messages = [PCM(role="system", content=system_prompt)]
 
-                # Inject conversation history (last 20 turns).
+                # Inject conversation history (last 10 turns, reduced from 20).
                 # Truncate very large messages (e.g. pasted file contents) so the
                 # Continue run does not re-pay the full context cost of the first request.
                 _MAX_HIST_CONTENT = _limits.max_hist_chars  # scaled to model context window
-                for hist_msg in self._conversation_history[-20:]:
+                _all_history = self._conversation_history
+                _hist_turns = _all_history[-10:]
+                
+                # Inject summary if we truncated older messages
+                if len(_all_history) > 10:
+                    _omitted_count = len(_all_history) - 10
+                    _summary = f"[Earlier history: {_omitted_count} messages omitted. Key context from above is preserved below.]"
+                    messages.append(PCM(role="system", content=_summary))
+                
+                for hist_msg in _hist_turns:
                     if hist_msg.role in ("user", "assistant"):
                         hist_content = hist_msg.content or ""
                         has_tool_calls = bool(hist_msg.tool_calls)
@@ -3358,6 +2968,21 @@ Use Markdown tables for structured data comparison:
                             )
                             messages = self._compact_messages(messages, PCM)
 
+                # ── Periodic progressive summarization (every 3 turns) ────
+                if turn > 0 and turn % 3 == 0 and not _compacted_once:
+                    try:
+                        from src.ai.conversation_compactor import compact_if_needed
+                        messages, _was_compacted = compact_if_needed(
+                            messages, _est_tokens, _budget,
+                            self._compact_messages, PCM,
+                            state=_auto_compact_state, keep_recent=8
+                        )
+                        if _was_compacted:
+                            _compacted_once = True
+                            log.info(f"[BRIDGE] Periodic compact on turn {turn + 1}")
+                    except Exception as _pc_err:
+                        log.debug(f"[BRIDGE] Periodic compact skipped: {_pc_err}")
+
                 # ── Stream LLM response (with context-compaction retry) ────
                 tool_acc: Dict[int, Dict[str, Any]] = {}   # idx -> {id, name, arguments}
                 turn_text  = ""
@@ -3411,6 +3036,10 @@ Use Markdown tables for structured data comparison:
 
                 for _compact_attempt in range(3):  # attempt 0, 1, 2
                     tool_acc  = {}
+                    # Track which Write/Edit streaming cards have been shown to UI
+                    _streaming_write_announced: set = set()
+                    # Track last announced arg sizes for progress updates (idx → last_size)
+                    _streaming_last_size: Dict[int, int] = {}
                     turn_text = ""
                     turn_reasoning = ""
                     try:
@@ -3524,9 +3153,69 @@ Use Markdown tables for structured data comparison:
                                         tool_acc[idx]["name"] = td["function"]["name"]
                                     if td.get("function", {}).get("arguments"):
                                         tool_acc[idx]["arguments"] += td["function"]["arguments"]
+                                    
+                                    # ── Streaming Write/Edit: show live file-creation card ──
+                                    _tname = tool_acc[idx].get("name", "")
+                                    if _tname in ("Write", "Edit") and idx not in _streaming_write_announced:
+                                        _streaming_write_announced.add(idx)
+                                        # Try to extract file_path from partial args
+                                        _partial_args = tool_acc[idx].get("arguments", "")
+                                        _fp = ""
+                                        try:
+                                            _fp_match = re.search(r'"file_path"\s*:\s*"([^"]+)"', _partial_args)
+                                            if _fp_match:
+                                                _fp = _fp_match.group(1)
+                                        except Exception:
+                                            pass
+                                        _activity_type = "write_file_streaming" if _tname == "Write" else "edit_file_streaming"
+                                        _info = json.dumps({
+                                            "file_path": _fp or "(streaming)",
+                                            "tool": _tname,
+                                            "size": len(_partial_args),
+                                        })
+                                        try:
+                                            self._safe_emit(self.tool_activity, _activity_type, _info, "streaming")
+                                        except Exception:
+                                            pass
+                                        _streaming_last_size[idx] = len(_partial_args)
+                                        log.info(
+                                            f"[STREAM-WRITE] Started streaming card for {_tname}: "
+                                            f"fp={_fp or '?unknown?'}, initial_size={len(_partial_args)}"
+                                        )
+                                    elif _tname in ("Write", "Edit") and idx in _streaming_write_announced:
+                                        # Periodic progress update every ~8KB of new content
+                                        _cur_size = len(tool_acc[idx].get("arguments", ""))
+                                        _last_size = _streaming_last_size.get(idx, 0)
+                                        if _cur_size - _last_size >= 2048:
+                                            _streaming_last_size[idx] = _cur_size
+                                            _partial_args = tool_acc[idx].get("arguments", "")
+                                            _fp = ""
+                                            try:
+                                                _fp_match = re.search(r'"file_path"\s*:\s*"([^"]+)"', _partial_args)
+                                                if _fp_match:
+                                                    _fp = _fp_match.group(1)
+                                            except Exception:
+                                                pass
+                                            _activity_type = "write_file_streaming" if _tname == "Write" else "edit_file_streaming"
+                                            _info = json.dumps({
+                                                "file_path": _fp or "(streaming)",
+                                                "tool": _tname,
+                                                "size": _cur_size,
+                                                "progress": True,
+                                            })
+                                            try:
+                                                self._safe_emit(self.tool_activity, _activity_type, _info, "streaming")
+                                            except Exception:
+                                                pass
                             elif isinstance(chunk, str) and chunk.startswith("__REASONING_DELTA__:"):
                                 _reason_chunk = chunk[len("__REASONING_DELTA__:"):]
                                 turn_reasoning += _reason_chunk
+                                # Reasoning content is stored in turn_text / full_response
+                                # so it persists in message history and counts for
+                                # force-action exit, but is NOT emitted as response_chunk.
+                                # Reasoning streams to the thought container ONLY (tool_activity).
+                                turn_text     += _reason_chunk
+                                full_response += _reason_chunk
                                 # Stream reasoning/thought updates to UI activity pane in real time.
                                 try:
                                     self._safe_emit(
@@ -3650,7 +3339,10 @@ Use Markdown tables for structured data comparison:
                     # Case 1: No mutations yet and early turns - FORCE ACTION
                     # SKIP if no tools were provided (simple-query fast path) — the AI
                     # can't take action when it has no tools available.
-                    if _mutation_turns == 0 and (turn + 1) <= 5 and active_tool_defs:
+                    # ALSO skip if AI already produced a meaningful text response
+                    # (read-only/informational tasks like "read this file").
+                    _has_text_response = len(turn_text.strip()) > 20
+                    if _mutation_turns == 0 and (turn + 1) <= 5 and active_tool_defs and not _has_text_response:
                         log.warning(
                             f"[BRIDGE] AI attempted to exit on turn {turn + 1} without making any changes. " +
                             "Forcing action mode - injecting strong directive."
@@ -3832,6 +3524,11 @@ Use Markdown tables for structured data comparison:
                             f"{', '.join(sorted(_re_enabled))}"
                         )
                     
+                    # Reset verification-block counter — fresh mutation = new verification cycle
+                    self._verification_block_count = 0
+                    # Reset aggressive read counter — mutation breaks the read-only streak
+                    self._aggressive_read_count = 0
+                    
                     # Track which todo this mutation corresponds to
                     if self._current_todos:
                         # Credit ALL IN_PROGRESS todos — a single Write/Edit/Bash often
@@ -3862,9 +3559,9 @@ Use Markdown tables for structured data comparison:
                 # ── Post-mutation enforcement ─────────────────────────────────
                 # After mutation, limit how many turns can be pure reading
                 # This prevents AI from going backwards after making changes
+                _read_only_tools = {"Read", "Grep", "Glob", "LS"}
+                _turn_is_read_only = all(t_name in _read_only_tools for t_name, _, _ in parsed_calls)
                 if _has_mutated:
-                    _read_only_tools = {"Read", "Grep", "Glob", "LS"}
-                    _turn_is_read_only = all(t_name in _read_only_tools for t_name, _, _ in parsed_calls)
                     if _turn_is_read_only:
                         _post_mutation_read_count = getattr(self, '_post_mutation_read_count', 0) + 1
                         self._post_mutation_read_count = _post_mutation_read_count
@@ -3893,6 +3590,12 @@ Use Markdown tables for structured data comparison:
                 if turn + 1 >= _READONLY_FORCE_ACTION_TURN and _mutation_turns == 0:
                     _severity = "AGGRESSIVE" if (turn + 1 >= _AGGRESSIVE_NUDGE_TURN) else "STRONG"
                     if _severity == "AGGRESSIVE":
+                        # ── Track how many turns we've been in AGGRESSIVE without mutation ──
+                        _agg_reads = getattr(self, '_aggressive_read_count', 0)
+                        if _turn_is_read_only and any(t_name == "Read" for t_name, _, _ in parsed_calls):
+                            _agg_reads += 1
+                        self._aggressive_read_count = _agg_reads
+                        
                         _action_nudge = (
                             f"CRITICAL: You have spent {turn + 1} turns ONLY reading files without making ANY changes. "
                             f"This is unacceptable. You MUST take action NOW:\n"
@@ -3902,16 +3605,32 @@ Use Markdown tables for structured data comparison:
                             f"4. Do NOT read unrelated files — only read the file you're actively editing\n"
                             f"5. Use Edit for targeted changes. NEVER rewrite an entire large file with Write — you WILL destroy existing code."
                         )
-                        # ── FORCE ACTION: Disable analysis tools but KEEP Read enabled ──
-                        # Read is essential for editing — writing blind causes mass deletion.
-                        # Only block Grep/Glob/LS which encourage endless searching.
+                        # ── FORCE ACTION: Disable analysis tools ──
                         _readonly_tools_to_block = {"Grep", "Glob", "LS"}
                         _disabled_any = False
                         for _rt in _readonly_tools_to_block:
                             if _rt not in self._disabled_tools:
                                 self._disabled_tools.add(_rt)
                                 _disabled_any = True
-                        if _disabled_any:
+                        
+                        # ── ESCALATION: After 2+ Read calls in AGGRESSIVE mode,
+                        #     ALSO disable Read. The AI has had enough chances;
+                        #     it MUST use Write/Edit or Bash now. ──────────────
+                        if _agg_reads >= 2:
+                            if "Read" not in self._disabled_tools:
+                                self._disabled_tools.add("Read")
+                                _disabled_any = True
+                            _action_nudge += (
+                                f"\n\n⛔ READ IS NOW DISABLED — you've read files {_agg_reads} times in AGGRESSIVE mode "
+                                f"without making a single change. You have enough context. "
+                                f"ONLY Write, Edit, and Bash are available. "
+                                f"Make your changes NOW. Tools will be re-enabled after your first file mutation."
+                            )
+                            log.warning(
+                                f"[BRIDGE] AGGRESSIVE ESCALATION: Read disabled after "
+                                f"{_agg_reads} reads with no mutation"
+                            )
+                        elif _disabled_any:
                             _action_nudge += (
                                 f"\n\nTOOLS LIMITED: Grep, Glob, LS are now DISABLED to prevent analysis paralysis. "
                                 f"Read is still available — use it ONCE to see the file, then Edit/Write immediately. "
@@ -4126,25 +3845,45 @@ Use Markdown tables for structured data comparison:
                         )
                     elif _mutations_this_cycle > 0 and self._auto_continue_cycle < self._MAX_AUTO_CONTINUE_CYCLES:
                         # ── AUTO-CONTINUE: Agent made progress, compact + restart ──
-                        self._auto_continue_cycle += 1
-                        log.info(
-                            f'[BRIDGE] Auto-continue cycle {self._auto_continue_cycle}/{self._MAX_AUTO_CONTINUE_CYCLES}: '
-                            + f'{len(_pending_todos)} todo(s) remaining, {_mutations_this_cycle} mutations this cycle '
-                            + f'(session total: {_current_session_mutations})'
-                        )
-                        self._safe_emit(
-                            self.agent_status_update,
-                            'auto-continue',
-                            f'Auto-compacting conversation — continuing task (cycle {self._auto_continue_cycle}/{self._MAX_AUTO_CONTINUE_CYCLES})...'
-                        )
-                        # Compact conversation and save checkpoint to MEMORY.md
-                        messages = self._compact_messages(messages, PCM)
-                        # Store compacted messages for next _call_llm entry
-                        self._auto_continue_compacted = list(messages)
-                        self._auto_continue_requested = True
-                        # Reset stale tracking for new cycle
-                        self._continue_cycle_count = 0
-                        self._last_pending_ids = set()
+                        # ── Staleness gate: don't auto-continue if the exact same
+                        #     todos have been pending across cycles.  Mutations
+                        #     without todo resolution = busywork, not progress.
+                        if self._continue_cycle_count >= 2:
+                            log.info(
+                                f'[BRIDGE] Stale continue blocked: same {len(_pending_todos)} todo(s) '
+                                f'pending for {self._continue_cycle_count} cycles despite {_mutations_this_cycle} '
+                                f'mutations — falling back to manual'
+                            )
+                            try:
+                                _checkpoint = self._create_context_checkpoint(messages)
+                            except Exception:
+                                _checkpoint = "Context checkpoint unavailable."
+                            self._safe_emit(self.turn_limit_hit, _pending_todos, _checkpoint)
+                        else:
+                            self._auto_continue_cycle += 1
+                            log.info(
+                                f'[BRIDGE] Auto-continue cycle {self._auto_continue_cycle}/{self._MAX_AUTO_CONTINUE_CYCLES}: '
+                                + f'{len(_pending_todos)} todo(s) remaining, {_mutations_this_cycle} mutations this cycle '
+                                + f'(session total: {_current_session_mutations})'
+                            )
+                            self._safe_emit(
+                                self.agent_status_update,
+                                'auto-continue',
+                                f'Auto-compacting conversation — continuing task (cycle {self._auto_continue_cycle}/{self._MAX_AUTO_CONTINUE_CYCLES})...'
+                            )
+                            # Compact conversation and save checkpoint to MEMORY.md
+                            messages = self._compact_messages(messages, PCM)
+                            # Store compacted messages for next _call_llm entry
+                            self._auto_continue_compacted = list(messages)
+                            self._auto_continue_requested = True
+                            # ── DO NOT reset stale tracking here — the counter
+                            #     must persist across cycles so auto-cancel can
+                            #     eventually fire when the AI spins on the same
+                            #     todos without resolving them.
+                            #
+                            #     _continue_cycle_count and _last_pending_ids
+                            #     are only reset when the fingerprint changes
+                            #     (see else-branch at line ~3660).
                         # ── Reset circuit breaker state between cycles ──
                         # Tool failures in previous cycle are often due to context
                         # exhaustion, not real tool problems. A fresh cycle with
@@ -4611,6 +4350,20 @@ Use Markdown tables for structured data comparison:
                 if not os.path.isabs(_wp) and self._project_root:
                     _wp = os.path.join(self._project_root, _wp)
                 self._tool_ctx.file_cache_invalidate(_wp)
+            
+            # ── Write Chunking Nudge ──────────────────────────────────
+            # Large single Write calls (34K+ chars) cause 5+ minute stalls
+            # as DeepSeek generates the entire content. Nudge the AI to
+            # split large writes into smaller chunks for faster streaming.
+            _content_arg = args.get("content", "")
+            if isinstance(_content_arg, str) and len(_content_arg) > 20_000:
+                _chunk_nudge = (
+                    f"[System: You just wrote {len(_content_arg):,} chars to {_wp}. "
+                    f"For large files like this, prefer to create a skeleton first "
+                    f"with the structure, then add sections incrementally with Edit. "
+                    f"This approach is faster and avoids 5+ minute single-write stalls.]"
+                )
+                messages.append(PCM(role="user", content=_chunk_nudge))
 
     # ── Test framework detection and verification ─────────────────
     # Phase 1: Replace keyword-nudge verification with actual test
@@ -4699,7 +4452,18 @@ Use Markdown tables for structured data comparison:
                 re.search(pat, preview_lower)
                 for pat in [r"\bpytest\b", r"python\s+-m\s+pytest", r"python\s+-m\s+unittest",
                             r"\bnpm\s+test", r"\byarn\s+test", r"go\s+test", r"cargo\s+test",
-                            r"\bnpx\s+jest", r"\brun\s+test", r"verify"]
+                            r"\bnpx\s+jest", r"\brun\s+test", r"verify",
+                            # ── Web / script verification patterns ──────────
+                            r"python\s+-m\s+http\.server",
+                            r"\bcurl\b", r"\bwget\b",
+                            r"node\s+-e\s+", r"\bstart\s+http",
+                            r"invoke-webrequest", r"invoke-restmethod",
+                            r"\bopen\s+http", r"\bxdg-open\s+http",
+                            r"live-server", r"\bnpx\s+serve",
+                            # ── Build / lint as verification ───────────────
+                            r"\bnpm\s+run\s+build", r"\bnpm\s+run\s+dev",
+                            r"\bnpx\s+eslint", r"\bpylint\b", r"\bflake8\b",
+                            r"\bblack\s+--check", r"\bmypy\b", r"\bpyright\b"]
             )
             if is_test:
                 test_runs.append((t_name, success, preview[:150], exit_code))
@@ -6009,13 +5773,31 @@ Use Markdown tables for structured data comparison:
             _verification_msg = self._build_verification_message()
 
             if _verification_msg is not None:
-                log.warning("[TODO] AI trying to complete without passing verification.")
-                return ToolResult(
-                    tool_id=tool_id,
-                    result=None,
-                    success=False,
-                    error=_verification_msg,
-                )
+                # ── VERIFICATION LOOP BREAKER ──────────────────────
+                # If the AI has been blocked 2+ times by verification,
+                # the AI is clearly trying but the system isn't recognizing
+                # its verification commands (e.g., web projects using
+                # curl/http.server that don't match test patterns).
+                # Allow completion rather than trapping the AI in an
+                # infinite verification → TodoWrite → blocked → verify loop.
+                _block_count = getattr(self, '_verification_block_count', 0) + 1
+                self._verification_block_count = _block_count
+                if _block_count >= 2:
+                    log.warning(
+                        f"[TODO] Verification blocked {_block_count} times — "
+                        f"allowing completion despite unrecognized verification. "
+                        f"AI has made {self._session_mutation_count} mutation(s)."
+                    )
+                    self._verification_block_count = 0
+                    # Fall through to allow completion
+                else:
+                    log.warning("[TODO] AI trying to complete without passing verification.")
+                    return ToolResult(
+                        tool_id=tool_id,
+                        result=None,
+                        success=False,
+                        error=_verification_msg,
+                    )
             
             # If AI claims tasks are done but hasn't made enough mutations, BLOCK IT
             if _required_mutations > 0 and self._session_mutation_count < _required_mutations:
@@ -7124,32 +6906,49 @@ Use Markdown tables for structured data comparison:
     
     def _is_simple_query(self, text: str) -> bool:
         """Check if query is a pure greeting/ack that needs no tools.
-        
-        CONSERVATIVE: Only skip tools for pure social messages (hi, thanks, bye).
+            
+        CONSERVATIVE: Only skip tools for pure social messages (hi, thanks, bye)
+        and capability questions about the AI itself.
         Any message that MIGHT involve coding, files, or project work MUST get
         the full agentic loop with tools enabled.
-        
+            
         Returns:
             True if pure greeting/ack (skip tools), False otherwise (load tools)
         """
         import re
         text_lower = text.strip().lower()
-        
+            
         # Only exact greetings and social messages skip tools
         greeting_patterns = [
-            r'^(hi|hello|hey|yo|sup|greetings)[!.\s]*$',
-            r'^(thanks?|thank you|thx)[!.\s]*$',
-            r'^(ok|okay|got it|sure|alright)[!.\s]*$',
-            r'^(bye|goodbye|see you|good night)[!.\s]*$',
-            r'^(good (morning|afternoon|evening))[!.\s]*$',
-            r'^how are you[?!.\s]*$',
-            r'^what\'?s up[?!.\s]*$',
+            r'^(hi|hello|hey|yo|sup|greetings)[!.s]*$',
+            r'^(thanks?|thank you|thx)[!.s]*$',
+            r'^(ok|okay|got it|sure|alright)[!.s]*$',
+            r'^(bye|goodbye|see you|good night)[!.s]*$',
+            r'^(good (morning|afternoon|evening))[!.s]*$',
+            r'^how are you[?!.s]*$',
+            r'^what\'?s up[?!.s]*$',
         ]
-        
+            
         for pattern in greeting_patterns:
             if re.match(pattern, text_lower):
                 return True
-        
+            
+        # Capability questions about the AI itself (no tools needed)
+        # These are meta-questions, not coding tasks
+        capability_patterns = [
+            r'^what (can|do) you do',
+            r'^what (are|r) your capabilities',
+            r'^what can you (help |assist )?(me )?with',
+            r'^what you can (do|help)',
+            r'^(who|what) are you',
+            r'^(how (do|can) )?you (work|help|assist|operate)',
+            r'^tell me about yourself',
+        ]
+            
+        for pattern in capability_patterns:
+            if re.match(pattern, text_lower):
+                return True
+            
         # Everything else gets full agentic capabilities
         return False
 

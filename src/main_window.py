@@ -5773,6 +5773,9 @@ class CortexMainWindow(QMainWindow):
         elif model_id.startswith("deepseek"):
             # DeepSeek V4 models (V4-Pro, V4-Flash)
             provider = "deepseek"
+        elif model_id.startswith("kimi-"):
+            # Kimi/Moonshot AI models (K2.6)
+            provider = "kimi"
         elif model_id.startswith(("gpt-", "o1", "o3")):
             # OpenAI models - determine which API to use
             # Chat Completions: gpt-4o, gpt-4.1-*
@@ -6945,8 +6948,8 @@ class CortexMainWindow(QMainWindow):
                 summary = response[:150].replace('\n', ' ').strip()
                 msg = summary
                 if progress_msg:
-                    msg = f"{progress_msg} ? {summary}"
-                show_toast_notification('? Cortex AI - Task Complete', msg)
+                    msg = f"{progress_msg}  |  {summary}"
+                show_toast_notification('Cortex AI - Task Complete', msg)
                 log.info(f"[MainWindow] Windows notification shown: {msg[:60]}...")
 
             # TODO: POINTS SYSTEM - Disabled for development

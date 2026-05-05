@@ -555,7 +555,7 @@ def process_images_for_api(
     }
     
     # Check provider vision support
-    vision_providers = {"mistral"}
+    vision_providers = {"mistral", "kimi"}
     if provider.lower() not in vision_providers:
         result["errors"].append(
             f"Provider '{provider}' does not support vision/OCR. "

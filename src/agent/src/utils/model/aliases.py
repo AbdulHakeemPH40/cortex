@@ -94,6 +94,11 @@ ALIAS_MAP: Dict[str, str] = {
     'siliconflow':  'Qwen/Qwen2.5-72B-Instruct',
     'qwen72b':      'Qwen/Qwen2.5-72B-Instruct',
 
+    # ── Kimi/Moonshot AI ──────────────────────────────────────────────────
+    'kimi':         'kimi-k2.6',
+    'kimik26':      'kimi-k2.6',
+    'moonshot':     'kimi-k2.6',
+
     # ── Smart aliases (provider-agnostic) ─────────────────────────────────
     'best':         'claude-opus-4-20250514',     # best available model
     'fast':         'claude-3-5-haiku-4-20250514', # fastest/cheapest
@@ -129,6 +134,8 @@ MODEL_FAMILY_ALIASES: Tuple[str, ...] = (
     'llama3', 'groq',
     # Local
     'ollama',
+    # Kimi/Moonshot AI families
+    'kimi',
 )
 
 

@@ -17,6 +17,7 @@ class ProviderType(Enum):
     MISTRAL = "mistral"     # Primary provider for ALL work
     SILICONFLOW = "siliconflow"  # Vision models
     DEEPSEEK = "deepseek"   # DeepSeek V4 models (Pro & Flash)
+    KIMI = "kimi"           # Kimi/Moonshot AI (K2.6 multimodal)
 
 
 @dataclass
@@ -166,6 +167,13 @@ class ProviderRegistry:
         except (ImportError, Exception) as e:
             log.warning(f"Could not register DeepSeekProvider: {e}")
         
+        # Register Kimi/Moonshot AI provider (K2.6 multimodal model)
+        try:
+            from src.ai.providers.kimi_provider import KimiProvider
+            self._register_provider(ProviderType.KIMI, KimiProvider())
+            log.info("KimiProvider registered with K2.6 model")
+        except (ImportError, Exception) as e:
+            log.warning(f"Could not register KimiProvider: {e}")
 
             
     def _register_provider(self, provider_type: ProviderType, provider: BaseProvider):

@@ -1245,6 +1245,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 'Qwen', 'VL', 'Vision',  // Qwen-VL family (includes SiliconFlow)
                 'GPT-4', 'Claude', 'gemini',
                 'Mistral', 'Pixtral',    // Mistral vision models (OCR supported)
+                'Kimi',                  // Kimi K2.6 multimodal (OCR supported)
             ];
             
             // Models that explicitly do NOT support vision
@@ -3389,6 +3390,8 @@ function showToolActivity(type, info, status) {
         else if (type === 'run_command') activityText = 'Running: ' + (data.command || '').substring(0, 60);
         else if (type === 'team_create') activityText = 'Creating team: ' + (data.team_name || '');
         else if (type === 'team_delete') activityText = 'Deleting team: ' + (data.team_name || '');
+        else if (type === 'write_file_streaming') activityText = 'Creating: ' + (data.file_path || 'file');
+        else if (type === 'edit_file_streaming') activityText = 'Editing: ' + (data.file_path || 'file');
         else if (type.startsWith('task_')) activityText = 'Managing task: ' + (data.subject || data.task_id || '');
         else activityText = type + '...';
         statusEl.textContent = activityText;
@@ -3404,6 +3407,10 @@ function showToolActivity(type, info, status) {
         _caRenderRead(data, status);
     } else if (type === 'edit_file' || type === 'write_file' || type === 'create_file') {
         _caRenderEdit(data, status, type);
+        // Hide streaming card when real write/edit completes
+        if (status === 'complete' && data.file_path) {
+            _caHideStreamingCard(data.file_path);
+        }
     } else if (type === 'search') {
         var searchType = (data.search_type || 'grep').toLowerCase();
         if (searchType === 'grep') {
@@ -3429,6 +3436,8 @@ function showToolActivity(type, info, status) {
         _caRenderWebSearch(data, status);
     } else if (type === 'web_fetch') {
         _caRenderWebFetch(data, status);
+    } else if (type === 'write_file_streaming' || type === 'edit_file_streaming') {
+        _caRenderStreamingWrite(data, status, type);
     } else {
         _caRenderGeneric(data, status, type);
     }
@@ -4060,6 +4069,147 @@ function _caRenderTask(data, status, type) {
         '<div class="ca-card-preview">' + escapeHtml(label) + '</div>' +
         '<div class="ca-card-body"></div>';
     cardsHost.appendChild(card);
+}
+
+// ── Render: Streaming Write/Edit (Windows 11 purple progress card) ──
+function _caRenderStreamingWrite(data, status, type) {
+    var group = _caGroup;
+    if (!group) return;
+    var cardsHost = group.querySelector('.ca-group-cards');
+    if (!cardsHost) return;
+
+    var toolName = (type === 'write_file_streaming') ? 'Creating' : 'Editing';
+    var fp = data.file_path || '(file)';
+    var fileName = fp.replace(/^.*[\\\/]/, '');
+    var size = data.size || 0;
+    var sizeKB = size > 0 ? (size / 1024).toFixed(0) + ' KB' : '';
+    var isComplete = (status === 'complete');
+
+    var cardKey = 'stream-write-' + toolName + '-' + fileName;
+    var placeholderKey = (fileName !== '(streaming)') ? ('stream-write-' + toolName + '-(streaming)') : null;
+
+    var existing = null;
+    // Try real key first
+    existing = cardsHost.querySelector('.ca-card[data-ca-key="' + cardKey.replace(/"/g, '\\"') + '"]');
+    // Fallback: placeholder key from initial creation (file_path unknown at first delta)
+    if (!existing && placeholderKey) {
+        existing = cardsHost.querySelector('.ca-card[data-ca-key="' + placeholderKey.replace(/"/g, '\\"') + '"]');
+        if (existing) {
+            // Rename key to real filename so cleanup finds it later
+            existing.setAttribute('data-ca-key', cardKey);
+            // Update displayed filename from "(streaming)" to real name
+            var labelEl = existing.querySelector('.ca-card-label');
+            if (labelEl) {
+                labelEl.innerHTML = '<span class="ca-highlight">' + escapeHtml(toolName) + '</span>' +
+                    '<span class="ca-muted">  ' + escapeHtml(fileName) + '</span>';
+            }
+        }
+    }
+
+    // ── Completion: fill 100%, flash Done, then collapse ──
+    if (isComplete && existing) {
+        var doneBar = existing.querySelector('.ca-stream-bar-fill');
+        var doneBadge = existing.querySelector('.ca-stream-size');
+        if (doneBar) {
+            doneBar.style.width = '100%';
+            doneBar.classList.remove('ca-stream-active');
+        }
+        if (doneBadge) {
+            doneBadge.textContent = 'Done';
+            doneBadge.style.color = '#4ade80';
+        }
+        setTimeout(function() {
+            if (existing && existing.parentNode) {
+                existing.classList.add('ca-stream-done');
+                setTimeout(function() {
+                    if (existing && existing.parentNode) {
+                        existing.parentNode.removeChild(existing);
+                    }
+                }, 350);
+            }
+        }, 600);
+        return;
+    }
+    if (isComplete && !existing) return;
+
+    // ── Calculate percentage fill (Windows 11 style) ──
+    var estimatedTotal = Math.max(size * 1.4, 16384);
+    var pct = size > 200 ? Math.min(Math.round((size / estimatedTotal) * 100), 95) : 0;
+    var pctStr = pct + '%';
+    // Indeterminate when no real data yet (size < 200 → streaming just started)
+    var isIndeterminate = (size < 200);
+
+    // ── Update existing card ──
+    if (existing) {
+        var barEl = existing.querySelector('.ca-stream-bar-fill');
+        var statusEl = existing.querySelector('.ca-stream-size');
+        if (barEl) {
+            if (isIndeterminate) {
+                barEl.classList.add('ca-stream-indeterminate');
+                barEl.classList.remove('ca-stream-active');
+                barEl.style.width = '100%';
+            } else {
+                barEl.classList.remove('ca-stream-indeterminate');
+                barEl.classList.add('ca-stream-active');
+                barEl.style.width = pctStr;
+            }
+        }
+        if (statusEl && sizeKB) {
+            statusEl.textContent = sizeKB;
+        }
+        return;
+    }
+
+    // ── Create new card ──
+    var icon = (type === 'write_file_streaming')
+        ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>'
+        : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>';
+
+    var card = document.createElement('div');
+    card.className = 'ca-card ca-stream-write';
+    card.dataset.caType = type;
+    card.dataset.caKey = cardKey;
+    var barClass = isIndeterminate ? 'ca-stream-bar-fill ca-stream-indeterminate' : 'ca-stream-bar-fill ca-stream-active';
+    var barStyle = isIndeterminate ? '' : (' style="width:' + pctStr + '"');
+    card.innerHTML =
+        '<div class="ca-card-header">' +
+            '<span class="ca-card-icon">' + icon + '</span>' +
+            '<span class="ca-card-label">' +
+                '<span class="ca-highlight">' + escapeHtml(toolName) + '</span>' +
+                '<span class="ca-muted">  ' + escapeHtml(fileName) + '</span>' +
+            '</span>' +
+            '<span class="ca-card-badge running ca-stream-size">' + (sizeKB || 'streaming') + '</span>' +
+        '</div>' +
+        '<div class="ca-stream-progress">' +
+            '<div class="' + barClass + '"' + barStyle + '></div>' +
+        '</div>';
+    cardsHost.appendChild(card);
+}
+
+// ── Cleanup: hide streaming card when real write/edit completes ──
+function _caHideStreamingCard(filePath) {
+    var group = _caGroup;
+    if (!group) return;
+    var cardsHost = group.querySelector('.ca-group-cards');
+    if (!cardsHost) return;
+    var fileName = filePath ? filePath.replace(/^.*[\\\/]/, '') : '';
+    if (!fileName) return;
+    // Try both Creating and Editing prefixes, plus (streaming) placeholder fallback
+    var keys = [
+        'stream-write-Creating-' + fileName,
+        'stream-write-Editing-' + fileName,
+        'stream-write-Creating-(streaming)',
+        'stream-write-Editing-(streaming)',
+    ];
+    for (var k = 0; k < keys.length; k++) {
+        var card = cardsHost.querySelector('.ca-card[data-ca-key="' + keys[k].replace(/"/g, '\\"') + '"]');
+        if (card) {
+            card.classList.add('ca-stream-done');
+            setTimeout((function(c) { return function() {
+                if (c && c.parentNode) c.parentNode.removeChild(c);
+            }; })(card), 350);
+        }
+    }
 }
 
 // ── Render: Generic / Fallback ───────────────────────────
@@ -5640,6 +5790,7 @@ function normalizeMarkdownText(text) {
     if (text.length > 200000) {
         text = text.replace(/\r\n/g, '\n');
         text = text.replace(/\n{4,}/g, '\n\n\n');
+
         return text;
     }
 
@@ -5756,7 +5907,7 @@ function normalizeMarkdownText(text) {
     }
 
     // Limit blank lines.
-    text = text.replace(/\n{4,}/g, '\n\n\n');
+   text = text.replace(/\n{4,}/g, '\n\n\n');
 
     return text;
 }

@@ -50,6 +50,7 @@ class Provider(str, Enum):
     MISTRAL     = "mistral"
     GROQ        = "groq"
     OLLAMA      = "ollama"
+    KIMI        = "kimi"
     CUSTOM      = "custom"   # any OpenAI-compatible endpoint
 
 
@@ -259,6 +260,7 @@ class OpenAICompatibleClient(BaseProviderClient):
         Provider.OPENAI:   "https://api.openai.com/v1",
         Provider.GROQ:     "https://api.groq.com/openai/v1",
         Provider.OLLAMA:   "http://localhost:11434/v1",
+        Provider.KIMI:     "https://api.moonshot.ai/v1",
     }
 
     def __init__(self, provider: Provider, api_key: str = "", base_url: str = ""):
@@ -977,6 +979,9 @@ class LLMClient:
                 Provider.MISTRAL, base_url="https://api.mistral.ai/v1"
             ),
             Provider.OLLAMA:    OpenAICompatibleClient(Provider.OLLAMA),
+            Provider.KIMI:      OpenAICompatibleClient(
+                Provider.KIMI, base_url="https://api.moonshot.ai/v1"
+            ),
         }
 
     def get_client(self, provider: Provider) -> BaseProviderClient:

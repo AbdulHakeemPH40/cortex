@@ -315,6 +315,7 @@ def _write_chat_summary_memory(project_root: str, conversation_id: str, title: s
             "mistral": ProviderType.MISTRAL,
             "deepseek": ProviderType.DEEPSEEK,
             "siliconflow": ProviderType.SILICONFLOW,
+            "kimi": ProviderType.KIMI,
         }
         provider_type = provider_map.get(provider_name, ProviderType.MISTRAL)
         
@@ -2283,6 +2284,45 @@ class AIChatWidget(QWidget):
         else:
             return f"SiliconFlow API error {response.status_code}: {response.text[:200]}"
     
+    def _call_kimi_with_context(self, messages, temperature, max_tokens, model_id):
+        """Call Kimi/Moonshot API with vision context.
+        
+        Kimi K2.6 natively supports multimodal input (images, video).
+        Messages should include image_url content blocks.
+        """
+        api_key = os.getenv("MOONSHOT_API_KEY", "")
+        if not api_key:
+            return "Error: MOONSHOT_API_KEY not set"
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        # Kimi K2.6 only accepts temperature=1.0
+        payload = {
+            "model": model_id or "kimi-k2.6",
+            "messages": messages,
+            "temperature": 1.0,
+            "max_tokens": max_tokens or 4096
+        }
+        
+        response = requests.post(
+            "https://api.moonshot.ai/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=(30, 180)
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            message = data.get('choices', [{}])[0].get('message', {})
+            # Kimi K2.6 thinking model: content may be empty,
+            # actual response is in reasoning_content
+            content = message.get('content') or message.get('reasoning_content') or ''
+            return content
+        else:
+            return f"Kimi API error {response.status_code}: {response.text[:200]}"
+    
     # ==================== PERFORMANCE MODE METHODS ====================
     
     def _get_performance_mode_from_settings(self) -> str:
@@ -2321,7 +2361,25 @@ class AIChatWidget(QWidget):
             settings = get_settings()
             
             has_images = images and len(images) > 0
-            provider_name = "mistral"
+            
+            # Detect which provider is currently selected in the model dropdown
+            _selected_model_id = ""
+            _is_kimi = False
+            try:
+                # Read from bridge if available (most up-to-date)
+                if hasattr(self, '_bridge') and self._bridge:
+                    _selected_model_id = getattr(self._bridge, '_current_model_id', '') or ''
+                # Fallback: read from settings
+                if not _selected_model_id:
+                    from src.config.settings import get_settings
+                    _stg = get_settings()
+                    _selected_model_id = _stg.get('model_id', '') or _stg.get('ai_model', '') or ''
+                _is_kimi = _selected_model_id.lower().startswith('kimi-')
+            except Exception:
+                pass
+            
+            # Use Kimi for vision if Kimi is selected; otherwise default to Mistral
+            provider_name = "kimi" if _is_kimi else "mistral"
             
             if not has_images:
                 # Text-only: standard agentic loop
@@ -2332,11 +2390,11 @@ class AIChatWidget(QWidget):
                 return
             
             # ── IMAGE PATH: Analyze image first, then route to agentic loop ──
-            vision_model = config.vision_model or "mistral-medium-latest"
-            agent_model = config.main_agent_model or "mistral-small-latest"
-            log.info(f"[AIChat] Vision Step 1: Analyzing image with {vision_model}")
+            vision_model = config.vision_model or ("kimi-k2.6" if _is_kimi else "mistral-medium-latest")
+            agent_model = config.main_agent_model or ("kimi-k2.6" if _is_kimi else "mistral-small-latest")
+            log.info(f"[AIChat] Vision Step 1: Analyzing image with {vision_model} (provider={provider_name})")
             
-            # Step 1: Call Mistral Vision to get detailed image description
+            # Step 1: Call vision provider to get detailed image description
             pipeline_result = process_images_for_api(images, text, provider=provider_name)
             
             for warn in pipeline_result.get("warnings", []):
@@ -2348,11 +2406,16 @@ class AIChatWidget(QWidget):
             img_count = pipeline_result.get("image_count", 0)
             log.info(f"[AIChat] Vision: {img_count} image(s) processed")
             
-            # Direct Mistral vision call to describe the image
+            # Route vision call to the correct provider
             max_tokens_vision = 4096  # Enough for a detailed description
-            image_description = self._call_mistral_with_context(
-                messages, config.temperature, max_tokens_vision, vision_model
-            )
+            if _is_kimi:
+                image_description = self._call_kimi_with_context(
+                    messages, config.temperature, max_tokens_vision, vision_model
+                )
+            else:
+                image_description = self._call_mistral_with_context(
+                    messages, config.temperature, max_tokens_vision, vision_model
+                )
             
             if not image_description or image_description.startswith("Error"):
                 log.warning(f"[AIChat] Vision analysis failed: {image_description}")
@@ -2376,7 +2439,7 @@ class AIChatWidget(QWidget):
             
             # Step 3: Route to agentic tool loop with mode's model
             max_tokens = calculate_max_tokens_for_mode(agent_model, config)
-            log.info(f"[AIChat] Vision Step 2: Routing to agentic loop with {agent_model}")
+            log.info(f"[AIChat] Vision Step 2: Routing to agentic loop with {agent_model} (provider={provider_name})")
             
             # Inject vision context into agent_bridge history for follow-ups
             if hasattr(self, '_bridge') and hasattr(self._bridge, 'inject_vision_history'):

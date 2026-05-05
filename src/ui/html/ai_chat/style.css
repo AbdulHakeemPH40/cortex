@@ -4246,6 +4246,101 @@ body.loaded #loading-overlay {
     color: #f87171;
 }
 
+/* ── Streaming Write/Edit Card (Windows 11 purple progress style) ── */
+.ca-card.ca-stream-write {
+    border-left: 3px solid #a78bfa !important;
+    background: rgba(139, 92, 246, 0.04);
+    padding: 4px 12px !important;
+    min-height: 46px;
+    max-height: 52px;
+    overflow: hidden;
+    transition: opacity 0.3s ease, max-height 0.3s ease;
+}
+.ca-card.ca-stream-write.ca-stream-done {
+    opacity: 0;
+    max-height: 0 !important;
+    min-height: 0 !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    border-left-width: 0 !important;
+    margin: 0;
+    pointer-events: none;
+}
+.ca-card.ca-stream-write::before {
+    display: none !important;
+}
+.ca-card.ca-stream-write .ca-card-header {
+    padding: 3px 0 !important;
+    min-height: unset !important;
+    gap: 5px;
+    cursor: default;
+}
+.ca-card.ca-stream-write .ca-card-header:hover {
+    background: transparent !important;
+}
+.ca-card.ca-stream-write .ca-card-icon {
+    width: 15px !important;
+    color: #a78bfa !important;
+    flex-shrink: 0;
+    opacity: 0.9;
+}
+.ca-card.ca-stream-write .ca-card-label {
+    font-size: 11px !important;
+    line-height: 1;
+}
+/* Windows 11 style progress track */
+.ca-stream-progress {
+    margin-top: 4px;
+    height: 5px;
+    background: rgba(167, 139, 250, 0.1);
+    border-radius: 3px;
+    overflow: hidden;
+    position: relative;
+}
+/* Windows 11 style fill bar — purple gradient with smooth transition */
+.ca-stream-bar-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #8b5cf6 0%, #a78bfa 40%, #c4b5fd 100%);
+    border-radius: 3px;
+    transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+}
+/* Shine overlay on the fill bar */
+.ca-stream-bar-fill::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 50%;
+    background: linear-gradient(180deg, rgba(255,255,255,0.25) 0%, transparent 100%);
+    border-radius: 3px 3px 0 0;
+}
+/* Glow pulse when streaming */
+.ca-stream-bar-fill.ca-stream-active {
+    box-shadow: 0 0 6px rgba(139, 92, 246, 0.5);
+    animation: caStreamGlow 1.5s ease-in-out infinite;
+}
+/* Indeterminate shimmer — slides while waiting for real content */
+.ca-stream-bar-fill.ca-stream-indeterminate {
+    width: 100% !important;
+    background: linear-gradient(90deg, transparent 0%, #a78bfa 50%, transparent 100%);
+    animation: caStreamShimmer 1.2s linear infinite;
+}
+.ca-stream-size {
+    font-size: 9px;
+    color: #a78bfa;
+    font-family: var(--font-mono, monospace);
+    flex-shrink: 0;
+}
+@keyframes caStreamGlow {
+    0%, 100% { box-shadow: 0 0 4px rgba(139, 92, 246, 0.3); }
+    50%      { box-shadow: 0 0 10px rgba(167, 139, 250, 0.6); }
+}
+@keyframes caStreamShimmer {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(250%);  }
+}
+
 /* ── Card Preview (compact summary line) ────────────────── */
 .ca-card-preview {
     font-size: 11px;

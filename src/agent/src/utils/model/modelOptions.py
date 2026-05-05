@@ -67,6 +67,8 @@ MODEL_PRICING = {
     'codestral-latest': {'input': 0.30, 'output': 0.90, 'currency': 'USD'},
     # Groq (free tier available)
     'llama-3.3-70b-versatile': {'input': 0.59, 'output': 0.79, 'currency': 'USD'},
+    # Kimi/Moonshot AI (K2.6)
+    'kimi-k2.6': {'input': 0.95, 'output': 4.00, 'cache_hit': 0.16, 'currency': 'USD'},
 }
 
 
@@ -289,6 +291,17 @@ def getOllamaOption() -> ModelOption:
     }
 
 
+def getKimiK26Option() -> ModelOption:
+    """Get Kimi K2.6 option - Multimodal model from Moonshot AI."""
+    pricing = formatPricing('kimi-k2.6')
+    return {
+        'value': 'kimik26',
+        'label': 'Kimi K2.6 (Multimodal)',
+        'description': f'Moonshot AI flagship, 256k context, code+vision{f" · {pricing}" if pricing else ""}',
+        'category': 'recommended',
+    }
+
+
 # ---------------------------------------------------------------------------
 # Main option generator
 # ---------------------------------------------------------------------------
@@ -344,6 +357,9 @@ def getModelOptions(
 
         # ── European/Alternative ──────────────────────────────────────
         getMistralLargeOption(),
+
+        # ── Kimi/Moonshot AI ──────────────────────────────────────────
+        getKimiK26Option(),
 
         # ── Ultra-fast ────────────────────────────────────────────────
         getGroqLlamaOption(),
@@ -452,6 +468,7 @@ __all__ = [
     'getO3Option',
     'getCodexOption',
     'getGemini2FlashOption',
+    'getKimiK26Option',
     'getDeepSeekChatOption',
     'getDeepSeekCoderOption',
     'getMistralLargeOption',
