@@ -1,5 +1,55 @@
-**6 Destination cards:**Santorini, Kyoto, Patagonia, Amalfi Coast, Bali, Iceland
-**9 Blog posts:**Dolomites, Sahara, Sri Lanka, Norway, Mexico City, Croatia, Bhutan, New Zealand, Istanbul
-**8 Photo wall images:**Ocean cliffs, Mountain path, Paris street, Night market, Train window, Portrait travel, Tropical coast, Desert sunset
-**8 Fake authors:**Maria Kim, Elena Kovač, David Osei, Sophie Ray, Lars Nielsen, Carlos Reyes, Ana Marković, Tashi Dorji, James Walker, Yasin Aydın
-**Stats:**94 Countries, 847 Stories, 2.1M Readers, 12 Awards
+<!-- Testimonials Section -->
+    
+
+Voices of Elegance
+<p>Trusted by connoisseurs worldwide.</p>
+        
+<!-- Testimonial 1 -->
+            
+
+<img src="https://randomuser.me/api/portraits/women/68.jpg" alt="Customer Avatar">
+                    
+
+Sophia Laurent
+
+★★★★★
+
+
+<p>
+                    "The Lumi\fe necklace exceeded every expectation. The craftsmanship is unparalleled, and the diamond sparkles like a star in my collection."
+                </p>
+            
+<!-- Testimonial 2 -->
+            
+
+<img src="https://randomuser.me/api/portraits/men/32.jpg" alt="Customer Avatar">
+                    
+
+James Whitmore
+
+★★★★★
+
+
+<p>
+                    "A timeless piece that elevates every outfit. The attention to detail is what sets Lumi\fe apart from other jewelers."
+                </p>
+            
+<!-- Testimonial 3 -->
+            
+
+<img src="https://randomuser.me/api/portraits/women/44.jpg" alt="Customer Avatar">
+                    
+
+Isabella Chen
+
+★★★★★
+
+
+<p>
+                    "The 3D experience on the website made me feel like I was holding the necklace before I even bought it. Truly magical."
+                </p>
+            
+
+
+<!-- Placeholder for Collection Section -->
+    

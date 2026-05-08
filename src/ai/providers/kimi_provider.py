@@ -36,10 +36,40 @@ class KimiProvider(BaseProvider):
         if not self._api_key:
             log.warning("MOONSHOT_API_KEY not configured for Kimi provider")
         self._session = requests.Session()
-        self._max_retries = 2
+        self._max_retries = self._get_int_env("CORTEX_KIMI_MAX_RETRIES", 4, minimum=1, maximum=5)
         self._retry_delay = 1.0
-        self._timeout = 120.0
+        self._connect_timeout = self._get_float_env("CORTEX_KIMI_CONNECT_TIMEOUT_SEC", 20.0, minimum=1.0, maximum=120.0)
+        self._read_timeout = self._get_float_env("CORTEX_KIMI_READ_TIMEOUT_SEC", 40.0, minimum=3.0, maximum=300.0)
+        self._tool_read_timeout = self._get_float_env("CORTEX_KIMI_TOOL_READ_TIMEOUT_SEC", 45.0, minimum=5.0, maximum=300.0)
         self._token_count = {"input": 0, "output": 0}
+
+    @staticmethod
+    def _get_int_env(name: str, default: int, minimum: int = 1, maximum: int = 10) -> int:
+        raw = os.getenv(name, "").strip()
+        if not raw:
+            return default
+        try:
+            value = int(raw)
+            return max(minimum, min(maximum, value))
+        except Exception:
+            return default
+
+    @staticmethod
+    def _get_float_env(name: str, default: float, minimum: float = 1.0, maximum: float = 300.0) -> float:
+        raw = os.getenv(name, "").strip()
+        if not raw:
+            return default
+        try:
+            value = float(raw)
+            return max(minimum, min(maximum, value))
+        except Exception:
+            return default
+
+    def _resolve_read_timeout(self, stream: bool, tools: Optional[List[Dict[str, Any]]]) -> float:
+        """Use a higher read-timeout for tool-heavy streaming first-token latency."""
+        if stream and tools:
+            return max(self._read_timeout, self._tool_read_timeout)
+        return self._read_timeout
 
     @property
     def available_models(self) -> List[ModelInfo]:
@@ -73,7 +103,7 @@ class KimiProvider(BaseProvider):
              messages: List[ChatMessage],
              model: str = "kimi-k2.6",
              temperature: float = 1.0,
-             max_tokens: int = 4096,
+             max_tokens: int = 32768,
              stream: bool = False,
              tools: Optional[List[Dict[str, Any]]] = None,
              tool_choice: Optional[str] = None,
@@ -113,7 +143,8 @@ class KimiProvider(BaseProvider):
                 time.sleep(backoff)
 
             try:
-                response = self._session.post(url, headers=headers, json=payload, timeout=self._timeout)
+                response = self._session.post(url, headers=headers, json=payload,
+                    timeout=(self._connect_timeout, self._read_timeout))
                 response.raise_for_status()
                 result = response.json()
 
@@ -140,7 +171,7 @@ class KimiProvider(BaseProvider):
                 )
 
             except requests.exceptions.Timeout:
-                last_error = Exception(f"Kimi API timeout after {self._timeout}s (attempt {attempt + 1})")
+                last_error = Exception(f"Kimi API timeout after connect={self._connect_timeout}s / read={self._read_timeout}s (attempt {attempt + 1})")
                 log.warning(str(last_error))
                 continue
             except requests.exceptions.HTTPError as e:
@@ -176,7 +207,7 @@ class KimiProvider(BaseProvider):
                    messages: List[ChatMessage],
                    model: str = "kimi-k2.6",
                    temperature: float = 1.0,
-                   max_tokens: int = 4096,
+                   max_tokens: int = 32768,
                    tools: Optional[List[Dict[str, Any]]] = None,
                    retry_callback=None,
                    **kwargs: Any) -> Generator[str, None, None]:
@@ -216,7 +247,9 @@ class KimiProvider(BaseProvider):
                 time.sleep(backoff)
 
             try:
-                response = self._session.post(url, headers=headers, json=payload, stream=True, timeout=self._timeout)
+                _read_to = self._resolve_read_timeout(True, tools)
+                response = self._session.post(url, headers=headers, json=payload, stream=True,
+                    timeout=(self._connect_timeout, _read_to))
                 response.raise_for_status()
 
                 for line in response.iter_lines():
@@ -263,7 +296,7 @@ class KimiProvider(BaseProvider):
                 return  # Successfully streamed
 
             except requests.exceptions.Timeout:
-                last_error = Exception(f"Kimi API timeout after {self._timeout}s (attempt {attempt + 1})")
+                last_error = Exception(f"Kimi API stream timeout after connect={self._connect_timeout}s / read={self._read_timeout}s (attempt {attempt + 1})")
                 log.warning(str(last_error))
                 continue
             except requests.exceptions.HTTPError as e:

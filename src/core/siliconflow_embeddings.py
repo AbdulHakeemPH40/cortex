@@ -125,12 +125,20 @@ class SiliconFlowEmbeddings:
         # Try SiliconFlow API
         if self.api_key and HAS_REQUESTS:
             try:
-                return self._call_api(text)
+                api_result = self._call_api(text)
+                if api_result.success:
+                    return api_result
+                log.warning(f"SiliconFlow API returned an error: {api_result.error}. Using hash fallback.")
             except Exception as e:
                 log.warning(f"SiliconFlow API failed: {e}. Using hash fallback.")
-        
-        # Fallback: hash-based embedding
-        return self._hash_embedding(text)
+
+        # Fallback: hash-based embedding (match model dimensions to avoid mixed-size vectors)
+        return self._hash_embedding(text, dimensions=self._target_dimensions())
+
+    def _target_dimensions(self) -> int:
+        """Return the expected embedding dimensionality for the configured model."""
+        model_info = self.MODELS.get(self.model_name, {})
+        return int(model_info.get("dimensions", self.FALLBACK_DIMENSIONS))
     
     def _call_api(self, text: str) -> EmbeddingResult:
         """Call SiliconFlow embedding API."""
@@ -194,7 +202,7 @@ class SiliconFlowEmbeddings:
         Generate a deterministic embedding using hashing.
         Fallback when API is not available.
         """
-        dimensions = dimensions or self.FALLBACK_DIMENSIONS
+        dimensions = int(dimensions or self.FALLBACK_DIMENSIONS)
         
         embedding = []
         for i in range(dimensions):

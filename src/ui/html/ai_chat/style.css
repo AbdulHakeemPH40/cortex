@@ -1072,34 +1072,41 @@ button svg,
 
 /* --- Image attachment chips (pasted / attached images) --- */
 .image-attachment-preview {
-    margin-top: 8px;
-    padding: 6px 2px 2px;
-    max-height: 120px;
-    overflow-y: auto;
+    margin: 0;
+    padding: 0 10px 0 10px;
+    max-height: 56px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    white-space: nowrap;
 }
 
 .image-chip-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
+    display: inline-flex;
+    flex-wrap: nowrap;
+    gap: 6px;
+    align-items: center;
+    height: 44px;
+    padding: 4px 0;
 }
 
 .image-chip {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    padding: 4px 10px 4px 4px;
+    gap: 5px;
+    padding: 2px 8px 2px 2px;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid var(--border-light);
     border-radius: 999px;
-    max-width: 340px;
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+    max-width: 200px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    flex-shrink: 0;
+    height: 32px;
 }
 
 .image-chip-thumb {
-    width: 34px;
-    height: 34px;
-    border-radius: 9px;
+    width: 26px;
+    height: 26px;
+    border-radius: 7px;
     object-fit: cover;
     flex-shrink: 0;
     background: rgba(255, 255, 255, 0.06);
@@ -1107,12 +1114,12 @@ button svg,
 }
 
 .image-chip-name {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-secondary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 240px;
+    max-width: 120px;
 }
 
 .image-chip-remove {
@@ -1180,18 +1187,19 @@ button svg,
 .message-image-chips {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: 6px;
     margin-bottom: 8px;
 }
 .message-image-chip {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     align-items: center;
+    gap: 6px;
     background: rgba(255,255,255,0.06);
     border: 1px solid rgba(255,255,255,0.12);
     border-radius: 8px;
-    padding: 6px;
-    max-width: 180px;
+    padding: 4px 8px 4px 4px;
+    max-width: 220px;
     cursor: default;
     transition: background 0.15s;
 }
@@ -1199,20 +1207,22 @@ button svg,
     background: rgba(255,255,255,0.10);
 }
 .message-image-thumb {
-    width: 160px;
-    max-height: 120px;
+    width: 40px;
+    height: 40px;
     object-fit: cover;
     border-radius: 6px;
     border: 1px solid rgba(255,255,255,0.08);
+    flex-shrink: 0;
 }
 .message-image-name {
     font-size: 11px;
     color: rgba(255,255,255,0.5);
-    margin-top: 4px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 150px;
+    flex: 1;
+    min-width: 0;
 }
 
 #chatInput {
@@ -1755,6 +1765,9 @@ button svg,
     box-sizing: border-box;
     background: var(--c-bg-code);
     box-shadow: none;
+    word-wrap: normal;
+    overflow-wrap: normal;
+    white-space: normal;
 }
 .code-block-wrapper:hover,
 .code-block-container:hover {
@@ -1837,6 +1850,11 @@ button svg,
     font-family: var(--mono);
     font-size: 12px;
     line-height: 1.8;
+    word-wrap: normal;
+    overflow-wrap: normal;
+    white-space: pre;
+    tab-size: 4;
+    -moz-tab-size: 4;
 }
 .code-block-container pre code,
 .code-block-container pre code.hljs,
@@ -1846,9 +1864,16 @@ button svg,
 .code-block-wrapper .hljs {
     display: block;
     background: transparent !important;
+    border: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
     font-family: var(--mono);
     font-size: 12px;
     line-height: 1.8;
+    color: inherit !important;
+    white-space: pre;
+    word-wrap: normal;
+    overflow-wrap: normal;
 }
 .code-block-wrapper pre[data-lang] {
     border: none;
@@ -3987,12 +4012,12 @@ body.loaded #loading-overlay {
 }
 
 .ca-card-chevron {
-    width: 12px;
-    height: 12px;
-    color: var(--c-text-4);
+    width: 14px;
+    height: 14px;
+    color: var(--c-text-2);
     transition: transform 0.18s;
     flex-shrink: 0;
-    opacity: 0.7;
+    opacity: 0.85;
     display: flex;
     align-items: center;
 }
@@ -4186,6 +4211,14 @@ body.loaded #loading-overlay {
 
 /* ── Card Variant: Edit/Write ────────────────────────────── */
 .ca-card.edit .ca-card-icon { color: var(--c-edit); }
+.ca-card.edit .ca-card-body,
+.ca-card[data-ca-type="diff"] .ca-card-body {
+    border: 2px solid var(--c-border-sub);
+    border-radius: var(--r-sm);
+    margin: 2px 16px 10px 30px;
+    padding: 8px 14px;
+    background: rgba(110, 132, 173, 0.03);
+}
 
 /* ── Card Variant: Terminal ──────────────────────────────── */
 .ca-card.terminal .ca-card-icon { color: var(--c-run); }
@@ -4199,9 +4232,10 @@ body.loaded #loading-overlay {
     border-radius: var(--r-sm);
     white-space: pre-wrap;
     line-height: 1.5;
+    overflow-y: auto;
 }
 .ca-card.terminal.expanded .ca-card-body {
-    max-height: 400px;
+    max-height: 200px;
 }
 
 /* ── Card Variant: Stream Write (progress bar style) ─────── */
@@ -4391,6 +4425,170 @@ body.light-mode .ca-card.terminal .ca-card-body {
 }
 body.light-mode .ca-card-header:hover {
     background: rgba(0, 0, 0, 0.03);
+}
+
+/* ================================================
+   TURN CONTAINER SYSTEM
+   Nested parent-child: each user-prompt-to-AI-response
+   forms one visual turn unit with collapsible processing
+   ================================================ */
+
+/* ── Turn Container: wraps one full user→AI exchange ── */
+.turn-container {
+    margin: 0 0 2px 0;
+    position: relative;
+    animation: turnSlideIn 0.3s ease-out both;
+}
+@keyframes turnSlideIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── User message inside turn ── */
+.turn-container .message-bubble.user {
+    margin-bottom: 0;
+    border-radius: var(--r-sm);
+}
+
+/* ── Processing Block: wraps all tool operations ── */
+.turn-processing-block {
+    position: relative;
+    margin: 0;
+    overflow: hidden;
+    transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+                opacity 0.25s ease;
+}
+
+/* Processing block: subtle left accent line */
+.turn-processing-block::before {
+    content: '';
+    position: absolute;
+    left: 14px;
+    top: 6px;
+    bottom: 6px;
+    width: 1px;
+    background: var(--c-border-sub);
+    opacity: 0.6;
+    border-radius: 1px;
+}
+
+/* ── Processing Summary Header ── */
+.turn-processing-summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 16px 5px 30px;
+    cursor: pointer;
+    user-select: none;
+    font-size: 10.5px;
+    font-family: var(--mono);
+    color: var(--c-text-4);
+    transition: color 0.15s;
+    min-height: 26px;
+}
+.turn-processing-summary:hover {
+    color: var(--c-text-3);
+}
+.turn-processing-summary .summary-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    opacity: 0.7;
+}
+.turn-processing-summary .summary-dot.dot-think  { background: var(--c-think); }
+.turn-processing-summary .summary-dot.dot-read   { background: var(--c-explore); }
+.turn-processing-summary .summary-dot.dot-search { background: var(--c-explore); }
+.turn-processing-summary .summary-dot.dot-grep   { background: var(--c-explore); }
+.turn-processing-summary .summary-dot.dot-edit   { background: var(--c-edit); }
+.turn-processing-summary .summary-dot.dot-run    { background: var(--c-run); }
+.turn-processing-summary .summary-chevron {
+    width: 10px;
+    height: 10px;
+    opacity: 0.5;
+    transition: transform 0.2s ease;
+    flex-shrink: 0;
+}
+.turn-processing-block.expanded .summary-chevron {
+    transform: rotate(90deg);
+    opacity: 0.8;
+}
+.turn-processing-summary .summary-elapsed {
+    margin-left: auto;
+    opacity: 0.55;
+    font-size: 10px;
+}
+
+/* ── Processing Body: contains all ca-cards ── */
+.turn-processing-body {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.turn-processing-block.expanded .turn-processing-body {
+    /* JS sets exact max-height for animation; fall back to none after transitionend clears it */
+    max-height: none;
+    overflow: visible;
+}
+
+/* Cards inside processing body: no left dot (parent line already) */
+.turn-processing-body .ca-card::before {
+    content: '';
+    position: absolute;
+    left: 14px;
+    top: 14px;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+}
+.turn-processing-body .ca-card-header {
+    padding-left: 30px;
+}
+.turn-processing-body .ca-card-preview {
+    padding-left: 30px;
+}
+.turn-processing-body .ca-card-body {
+    padding-left: 30px;
+}
+.turn-processing-body .ca-card:first-of-type {
+    border-top: none;
+}
+
+/* Processing block collapsed: summary visible, body hidden */
+.turn-processing-block:not(.expanded) .turn-processing-body {
+    max-height: 0 !important;
+}
+
+/* Processing block collapsed: hide left accent line */
+.turn-processing-block:not(.expanded)::before {
+    opacity: 0.2;
+}
+
+/* Processing block empty: hide entirely */
+.turn-processing-block.no-cards {
+    display: none;
+}
+.turn-processing-block.no-cards .turn-processing-summary {
+    display: none;
+}
+
+/* ── AI Response inside turn ── */
+.turn-ai-response {
+    margin: 0;
+}
+.turn-ai-response .message-content {
+    padding: 8px 16px 12px 16px;
+}
+
+/* ── Light mode adjustments ── */
+body.light-mode .turn-processing-block::before {
+    background: rgba(0, 0, 0, 0.08);
+}
+body.light-mode .turn-processing-summary {
+    color: #888;
+}
+body.light-mode .turn-processing-summary:hover {
+    color: #555;
 }
 
 /* ================================================

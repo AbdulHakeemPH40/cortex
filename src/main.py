@@ -5,6 +5,8 @@ Run with: python src/main.py
 
 import sys
 import os
+import signal
+import logging
 from pathlib import Path
 
 # Align the embedded agent's memdir base with Cortex's config home.
@@ -168,6 +170,101 @@ def main():
 
     window = CortexMainWindow()
     # window.show() is now called in __init__
+
+    # ═══════════════════════════════════════════════════════════════
+    # SHUTDOWN HARDENING — Emergency save on force-kill / crash
+    # ═══════════════════════════════════════════════════════════════
+    
+    _shutdown_saved = False  # Prevent double-save
+    _auto_save_seq = [0]     # Mutable counter for debounce (skip if unchanged)
+    _last_turn_count = [-1]  # Track turn count to skip redundant saves
+
+    def _emergency_save(reason: str = "unknown") -> None:
+        """Save agent state + settings immediately. Idempotent — skips if already saved."""
+        nonlocal _shutdown_saved
+        if _shutdown_saved:
+            return
+        _shutdown_saved = True
+        try:
+            from src.core.agent_session_manager import save_snapshot
+            from src.ai.agent_bridge import get_agent_bridge
+            bridge = get_agent_bridge()
+            if bridge is not None:
+                save_snapshot(bridge)
+                log.info(f"[SHUTDOWN] Agent state saved (reason: {reason})")
+        except Exception as e:
+            log.warning(f"[SHUTDOWN] Failed to save agent state: {e}")
+        try:
+            # Force settings flush
+            from src.config.settings import get_settings
+            settings = get_settings()
+            if hasattr(settings, 'sync'):
+                settings.sync()
+            elif hasattr(settings, 'save'):
+                settings.save()
+            log.info(f"[SHUTDOWN] Settings flushed (reason: {reason})")
+        except Exception as e:
+            log.warning(f"[SHUTDOWN] Failed to flush settings: {e}")
+        # Persist chat history to SQLite (fire-and-forget via window reference)
+        try:
+            if window and hasattr(window, '_ai_chat') and window._ai_chat:
+                window._ai_chat.run_javascript(
+                    "if(window.saveProjectChats) saveProjectChats(window.chats);"
+                )
+                log.info(f"[SHUTDOWN] Chat persistence triggered (reason: {reason})")
+        except Exception as e:
+            log.warning(f"[SHUTDOWN] Failed to trigger chat persistence: {e}")
+
+    def _auto_save_tick() -> None:
+        """Periodic background save — fires every 30s when IDE is idle."""
+        try:
+            from src.ai.agent_bridge import get_agent_bridge
+            bridge = get_agent_bridge()
+            if bridge is None:
+                return
+            # Skip if an LLM call is in progress (avoid race conditions)
+            if getattr(bridge, '_streaming', None) and getattr(bridge._streaming, '_active', False):
+                return
+            # Skip if no new turns since last save
+            current_turn = getattr(bridge, '_tool_turn_count', 0)
+            if current_turn == _last_turn_count[0]:
+                return
+            _last_turn_count[0] = current_turn
+            _auto_save_seq[0] += 1
+            from src.core.agent_session_manager import save_snapshot
+            save_snapshot(bridge)
+            log.debug(f"[AUTO-SAVE #{_auto_save_seq[0]}] Agent state snapshot saved (turn {current_turn})")
+        except Exception as e:
+            log.debug(f"[AUTO-SAVE] Skipped: {e}")
+
+    # ── Qt aboutToQuit — fires when event loop is ending (catches more scenarios) ──
+    app.aboutToQuit.connect(lambda: _emergency_save("aboutToQuit"))
+
+    # ── Periodic auto-save timer — every 30 seconds ──
+    _auto_save_timer = QTimer()
+    _auto_save_timer.timeout.connect(_auto_save_tick)
+    _auto_save_timer.start(30_000)  # 30 seconds
+    log.info("[AUTO-SAVE] Periodic snapshot timer started (every 30s)")
+
+    # ── OS signal handlers (SIGTERM, SIGINT) for terminal-based kills ──
+    def _signal_handler(signum, frame):
+        sig_name = signal.Signals(signum).name
+        log.warning(f"[SHUTDOWN] Received {sig_name} — performing emergency save...")
+        _emergency_save(sig_name)
+        # Stop the timer to prevent re-entry
+        try:
+            _auto_save_timer.stop()
+        except Exception:
+            pass
+        # Give the save a moment to flush, then exit
+        sys.exit(0)
+
+    try:
+        signal.signal(signal.SIGTERM, _signal_handler)
+        signal.signal(signal.SIGINT, _signal_handler)
+        log.info("[SHUTDOWN] SIGTERM/SIGINT handlers installed")
+    except Exception as e:
+        log.warning(f"[SHUTDOWN] Could not install signal handlers: {e}")
 
     # Handle path argument (from right-click "Open with Cortex IDE" or drag-drop launch)
     if len(sys.argv) > 1:

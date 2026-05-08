@@ -23,7 +23,7 @@ log = logging.getLogger("tool_executor")
 _READ_ONLY_TOOLS: Set[str] = {"Read", "Glob", "Grep", "LS"}
 
 # Maximum consecutive turns with the same read-only tool before nudging
-_CONSECUTIVE_READONLY_LIMIT = 2
+_CONSECUTIVE_READONLY_LIMIT = 3  # was 2 — raised for complex projects that need 2+ plan/code reads before writing
 
 # Tool name → activity name mapping for UI cards
 _TOOL_TO_ACTIVITY: Dict[str, str] = {

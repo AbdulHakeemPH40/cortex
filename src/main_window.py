@@ -757,6 +757,65 @@ class EditorTabWidget(QTabWidget):
                 w.set_theme(is_dark)
 
 
+# ═══════════════════════════════════════════════════════════════
+# NOTIFICATION SUMMARY EXTRACTOR (module-level helper)
+# ═══════════════════════════════════════════════════════════════
+
+def _extract_notification_summary(text: str) -> str:
+    """Extract a clean, minimal task summary from AI response text.
+
+    Skips conversational fluff (greetings, "I think", "Here is", etc.)
+    and returns the first meaningful sentence describing what was done.
+    """
+    import re
+    # Truncate to reasonable length before processing
+    text = text[:500]
+    # Strip markdown formatting
+    cleaned = re.sub(r'#{1,6}\s+', '', text)
+    cleaned = re.sub(r'\*\*([^*]+)\*\*', r'\1', cleaned)     # bold
+    cleaned = re.sub(r'\*([^*]+)\*', r'\1', cleaned)           # italic
+    cleaned = re.sub(r'`{1,3}[^`]*`{1,3}', '', cleaned)         # inline + block code
+    cleaned = re.sub(r'\|[-:\s|]+\|', '', cleaned)             # table separators
+    cleaned = re.sub(r'\|[^|]*\|', '', cleaned)                 # table rows
+    cleaned = re.sub(r'[-*_]{3,}', '', cleaned)                  # horizontal rules
+    cleaned = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', cleaned)  # links
+    cleaned = re.sub(r'[>\-]\s+', '', cleaned)                  # blockquote markers
+    cleaned = re.sub(r'\n{2,}', '. ', cleaned)                  # double newlines → period
+    cleaned = cleaned.replace('\n', ' ').strip()
+    # Collapse multiple spaces
+    cleaned = re.sub(r'\s{2,}', ' ', cleaned)
+    # Split into sentences
+    sentences = re.split(r'(?<=[.!?])\s+', cleaned)
+    # Fluff patterns to skip (conversational intros)
+    skip_starts = {
+        'i think', 'i can', 'i will', 'i would', 'i have', 'i see',
+        'here is', 'here are', 'let me', 'let\'s', 'sure', 'of course',
+        'great question', 'thank', 'hello', 'hi there', 'hi,', 'hey',
+        'certainly', 'absolutely', 'no problem', 'you\'re', 'that\'s a',
+        'based on', 'looking at', 'first', 'now', 'next', 'then',
+        'to start', 'to begin',
+    }
+    for s in sentences:
+        s_clean = s.strip().strip('.,;:!?()[]"\' ')
+        if len(s_clean) < 12:
+            continue
+        s_lower = s_clean.lower()
+        if any(s_lower.startswith(p) for p in skip_starts):
+            continue
+        # Found a meaningful sentence — cap at 100 chars
+        if len(s_clean) > 100:
+            # Try to break at a natural boundary
+            cut = s_clean[:100].rfind(' ')
+            s_clean = s_clean[:cut] if cut > 60 else s_clean[:100]
+        return s_clean
+    # Fallback: first sentence >= 20 chars
+    for s in sentences:
+        s_clean = s.strip().strip('.,;:!?()[]"\' ')
+        if len(s_clean) >= 20:
+            return s_clean[:100]
+    return ""
+
+
 class CortexMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -5751,16 +5810,26 @@ class CortexMainWindow(QMainWindow):
         log.info(f"[MainWindow] DEBUG: model_id='{model_id}'")
         
         # Check if this is a performance mode (not an actual model)
+        # These are kept for backward compatibility with settings but
+        # are no longer shown in the dropdown. They silently map to
+        # the default Auto mode which uses smart routing.
         performance_modes = ["efficient", "auto", "performance", "ultimate"]
         if model_id.lower() in performance_modes:
-            # This is a performance mode, not a model ID
-            # Save it to settings for the performance mode system to use
             try:
                 from src.config.settings import get_settings
                 settings = get_settings()
                 settings.set("ai", "performance_mode", model_id.lower())
-                log.info(f"[MainWindow] Performance mode changed to: {model_id}")
-                # Don't update agent with this - it's not a real model
+                # All modes now default to Auto smart-routing (DeepSeek)
+                _provider, _model = "deepseek", "deepseek-chat"
+                settings.set("ai", "model_id", _model)
+                settings.set("ai", "model", _model)
+                settings.set("ai", "provider", _provider)
+                settings.set("ai", "token_multiplier", "1.0")
+                log.info(
+                    "[MainWindow] Performance mode '%s' → %s/%s (auto-routing)",
+                    model_id, _provider, _model,
+                )
+                self._ai_agent.update_settings(provider=_provider, model_id=_model)
                 return
             except Exception as e:
                 log.error(f"[MainWindow] Failed to save performance mode: {e}")
@@ -5788,7 +5857,7 @@ class CortexMainWindow(QMainWindow):
             # Vendor models via SiliconFlow
             provider = "siliconflow"
         else:
-            provider = "mistral"  # Default to Mistral
+            provider = "deepseek"  # Default to DeepSeek
         
         # CRITICAL: Save model_id and provider to settings so ai_chat.py can read them
         try:
@@ -5811,15 +5880,54 @@ class CortexMainWindow(QMainWindow):
         self._ai_agent.stop()
     
     def _on_toggle_autogen(self):
-        """Toggle AutoGen multi-agent mode."""
+        """Toggle AutoGen multi-agent mode.
+
+        When enabled AND the currently-selected model is Mistral/Codestral,
+        switches the performance mode to "performance" which activates the
+        CoordinationEngine multi-agent path.
+        
+        For non-Mistral models (Kimi, DeepSeek, etc.), the toggle state is
+        stored in the bridge but does NOT change performance_mode — the
+        model routing in ai_chat.py already bypasses performance-mode for
+        non-Mistral models, so forcing it would have no effect.
+        """
         # Get current status
         status = self._ai_agent.get_autogen_status()
         current_enabled = status.get('enabled', False)
-        
-        # Toggle
+
+        # Toggle bridge state
         new_state = not current_enabled
         self._ai_agent.enable_autogen(new_state)
-        
+
+        # ── Sync performance mode with autogen toggle ────────────
+        # Only set performance_mode when using a Mistral model, because
+        # the performance-mode pipeline hardcodes Mistral as the provider.
+        # For non-Mistral models (Kimi, DeepSeek), the routing in ai_chat.py
+        # bypasses performance-mode regardless, so we leave it unchanged.
+        try:
+            from src.config.settings import get_settings
+            settings = get_settings()
+            user_model = (settings.get("ai", "model_id", default="") or "").strip()
+            # Always persist the autogen flag so ai_chat.py can detect it
+            # even when performance_mode is left unchanged for non-Mistral models.
+            settings.set("ai", "autogen_enabled", new_state)
+            _is_mistral = user_model.startswith("mistral") or user_model.startswith("codestral") or not user_model
+            if _is_mistral:
+                _new_perf_mode = "performance" if new_state else "auto"
+                settings.set("ai", "performance_mode", _new_perf_mode)
+                log.info(
+                    f"[AutoGen] Performance mode → {_new_perf_mode} "
+                    f"({'multi-agent' if new_state else 'single-agent'}) "
+                    f"(model={user_model or 'default'})"
+                )
+            else:
+                log.info(
+                    f"[AutoGen] Toggle {'' if new_state else 'DIS'}ABLED "
+                    f"— performance_mode left unchanged (non-Mistral model: {user_model})"
+                )
+        except Exception as _e:
+            log.warning(f"[AutoGen] Failed to sync performance mode: {_e}")
+
         log.info(f"AutoGen {'enabled' if new_state else 'disabled'} via UI toggle")
     
     def _show_command_palette(self):
@@ -6433,18 +6541,62 @@ class CortexMainWindow(QMainWindow):
         
         dialog.exec()
 
-    def closeEvent(self, event: QCloseEvent):
-        """Save session on close, prompt for unsaved files, and kill terminals."""
-        # 0. Save agent session state for resume after restart
+    def _emergency_shutdown_save(self) -> None:
+        """Save agent state + trigger chat persistence immediately.
+        
+        Called from closeEvent, nativeEvent (WM_ENDSESSION), and signal handlers.
+        Idempotent — safe to call multiple times.
+        """
+        if getattr(self, '_shutdown_save_done', False):
+            return
+        self._shutdown_save_done = True
         try:
             from src.core.agent_session_manager import save_snapshot
             from src.ai.agent_bridge import get_agent_bridge
             bridge = get_agent_bridge()
             if bridge is not None:
                 save_snapshot(bridge)
-                log.info("[SESSION] Agent state saved on app close")
+                log.info("[SESSION] Agent state saved on shutdown")
         except Exception as _ses_exc:
-            log.warning(f"[SESSION] Failed to save agent state on close: {_ses_exc}")
+            log.warning(f"[SESSION] Failed to save agent state on shutdown: {_ses_exc}")
+        # Trigger chat persistence (fire-and-forget)
+        try:
+            if hasattr(self, '_ai_chat') and self._ai_chat:
+                self._ai_chat.run_javascript(
+                    "if(window.saveProjectChats) saveProjectChats(window.chats);"
+                )
+        except Exception:
+            pass
+
+    def nativeEvent(self, eventType, message):
+        """Handle Windows session-end messages (shutdown/restart/logoff).
+        
+        WM_QUERYENDSESSION (0x0011): System asks if we can close — allow.
+        WM_ENDSESSION (0x0016): System IS closing — emergency save NOW.
+        """
+        if sys.platform != 'win32':
+            return False, 0
+        try:
+            import ctypes
+            from ctypes import wintypes
+            msg_ptr = int(message)
+            msg = ctypes.cast(msg_ptr, ctypes.POINTER(wintypes.MSG)).contents
+            if msg.message == 0x0011:  # WM_QUERYENDSESSION
+                log.info("[SHUTDOWN] Windows session ending — allowing close")
+                self._emergency_shutdown_save()
+                return False, 1  # Allow shutdown (TRUE)
+            elif msg.message == 0x0016:  # WM_ENDSESSION
+                log.warning("[SHUTDOWN] Windows session END — emergency save")
+                self._emergency_shutdown_save()
+                return False, 0
+        except Exception as e:
+            log.debug(f"[SHUTDOWN] nativeEvent error (non-critical): {e}")
+        return False, 0
+
+    def closeEvent(self, event: QCloseEvent):
+        """Save session on close, prompt for unsaved files, and kill terminals."""
+        # 0. Save agent session state for resume after restart
+        self._emergency_shutdown_save()
 
         # 1. Check for unsaved files
         modified_files = self._editor_tabs._modified
@@ -6485,34 +6637,18 @@ class CortexMainWindow(QMainWindow):
                             except Exception as e:
                                 log.error(f"Failed to auto-save {filepath}: {e}")
         
-        # 2. Force AI Chat persistence
+        # 2. Force AI Chat persistence (fire-and-forget — don't block close)
+        # The agent snapshot is already saved above; chat DB sync is best-effort.
         if hasattr(self, '_ai_chat') and self._ai_chat:
-            log.info("Persisting AI chat history before close...")
-            # Create a localized event loop to wait for the chat persistence to finish
-            loop = QEventLoop()
-            save_success = [False]
-            
-            def on_save_done(status):
-                log.info(f"AI chat persistence finished with status: {status}")
-                save_success[0] = (status == "OK")
-                loop.quit()
-                
-            # Connect the bridge response signal
-            self._ai_chat.save_finished.connect(on_save_done)
-            
-            # Start timer for timeout (3s max)
-            QTimer.singleShot(3000, loop.quit)
-            
-            # Trigger JS to save its logic to SQLite
-            self._ai_chat.run_javascript("if(window.saveProjectChats) saveProjectChats(window.chats);")
-            
-            # Wait for save or timeout
-            loop.exec()
-            
-            if not save_success[0]:
-                log.warning("AI chat persistence timed out or failed before close.")
-            else:
-                log.info("AI chat persistence confirmed.")
+            log.info("Triggering AI chat persistence (non-blocking)...")
+            try:
+                self._ai_chat.run_javascript(
+                    "if(window.saveProjectChats) saveProjectChats(window.chats);"
+                )
+                # Give JS 500ms to flush to SQLite, then proceed with close
+                QTimer.singleShot(500, lambda: log.debug("Chat persistence grace period ended"))
+            except Exception as e:
+                log.warning(f"Failed to trigger chat persistence: {e}")
         
         # 3. Save IDE UI state
         fps = self._editor_tabs.get_open_files()
@@ -6902,7 +7038,10 @@ class CortexMainWindow(QMainWindow):
             log.debug(f'[MainWindow] Suppressed error: {e}')
 
     def _on_ai_task_complete(self, response: str):
-        """Show Windows toast notification when AI task completes."""
+        """Show Windows toast notification when AI task completes.
+
+        Extracts a clean, minimal task summary — NOT raw AI conversational text.
+        """
         try:
             # Build an up-to-date progress summary from todos when available
             progress_msg = getattr(self, '_last_task_progress_msg', '')
@@ -6925,8 +7064,8 @@ class CortexMainWindow(QMainWindow):
             # If the bridge auto-cancelled remaining todos, never claim completion
             if getattr(self._ai_agent, '_todos_auto_cancelled', False):
                 show_toast_notification(
-                    'Cortex AI - Needs Attention',
-                    'Remaining tasks were auto-cancelled after repeated attempts without progress.'
+                    'Cortex AI — Needs Attention',
+                    'Tasks were auto-cancelled after repeated attempts without progress.'
                 )
                 log.info('[MainWindow] Notification shown: todos auto-cancelled')
                 return
@@ -6937,25 +7076,24 @@ class CortexMainWindow(QMainWindow):
                 _should_notify = self._ai_agent._allow_notification
 
             if not _should_notify:
-                # Don't show a false "task complete" toast. Show progress instead.
                 if progress_msg:
-                    show_toast_notification('Cortex AI - In Progress', progress_msg)
+                    show_toast_notification('Cortex AI — In Progress', progress_msg)
                 log.info('[MainWindow] Completion notification suppressed: tasks not genuinely complete')
                 return
 
             # Only show completion notification if response is meaningful
             if response and len(response) > 10:
-                summary = response[:150].replace('\n', ' ').strip()
-                msg = summary
+                # ── Extract CLEAN, MINIMAL summary — not raw AI text ──
+                summary = _extract_notification_summary(response)
                 if progress_msg:
-                    msg = f"{progress_msg}  |  {summary}"
-                show_toast_notification('Cortex AI - Task Complete', msg)
-                log.info(f"[MainWindow] Windows notification shown: {msg[:60]}...")
+                    msg = f"{progress_msg}  •  {summary}" if summary else progress_msg
+                else:
+                    msg = summary or "Task completed successfully."
+                show_toast_notification('Cortex AI — Task Complete', msg)
+                log.info(f"[MainWindow] Windows notification shown: {msg[:80]}...")
 
             # TODO: POINTS SYSTEM - Disabled for development
-            """
-            self._consume_points_for_response(response)
-            """
+            # self._consume_points_for_response(response)
         except Exception as e:
             log.debug(f'[MainWindow] Suppressed error: {e}')
 

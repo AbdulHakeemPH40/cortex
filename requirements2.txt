@@ -3,3 +3,4 @@ pip install openhands-sdk
 pip install black
 pip install jsbeautifier
 choco install ripgrep
+pip install agent-framework

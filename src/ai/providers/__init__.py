@@ -14,10 +14,11 @@ log = get_logger("provider_registry")
 
 class ProviderType(Enum):
     """Supported LLM providers."""
-    MISTRAL = "mistral"     # Primary provider for ALL work
+    MISTRAL = "mistral"     # Mistral — OCR/vision only (fallback)
     SILICONFLOW = "siliconflow"  # Vision models
-    DEEPSEEK = "deepseek"   # DeepSeek V4 models (Pro & Flash)
+    DEEPSEEK = "deepseek"   # DeepSeek V4 — primary coding/reasoning
     KIMI = "kimi"           # Kimi/Moonshot AI (K2.6 multimodal)
+    OPENAI = "openai"       # OpenAI — GPT-4o/4.1 series
 
 
 @dataclass
@@ -174,6 +175,14 @@ class ProviderRegistry:
             log.info("KimiProvider registered with K2.6 model")
         except (ImportError, Exception) as e:
             log.warning(f"Could not register KimiProvider: {e}")
+
+        # Register OpenAI provider (GPT-4o / 4.1 series — budget-friendly tier)
+        try:
+            from src.ai.providers.openai_provider import OpenAIProvider
+            self._register_provider(ProviderType.OPENAI, OpenAIProvider())
+            log.info("OpenAIProvider registered")
+        except (ImportError, Exception) as e:
+            log.warning(f"Could not register OpenAIProvider: {e}")
 
             
     def _register_provider(self, provider_type: ProviderType, provider: BaseProvider):

@@ -574,6 +574,12 @@ class MistralProvider(BaseProvider):
                                 if 'choices' in data and len(data['choices']) > 0:
                                     delta = data['choices'][0].get('delta', {})
                                     content = delta.get('content', '')
+                                    reasoning = delta.get('reasoning_content', '')
+                                    
+                                    # Stream reasoning into thought card (same as DeepSeek/Kimi)
+                                    if reasoning:
+                                        yield f"__REASONING_DELTA__:{reasoning}"
+                                    
                                     # Mistral can return content as list of blocks for multimodal
                                     if isinstance(content, list):
                                         content = ''.join(
@@ -649,7 +655,11 @@ class MistralProvider(BaseProvider):
                     self._token_count["input"] = result['usage'].get('prompt_tokens', 0)
                     self._token_count["output"] = result['usage'].get('completion_tokens', 0)
                 
-                content = result['choices'][0]['message']['content']
+                message = result['choices'][0]['message']
+                reasoning = message.get('reasoning_content', '')
+                if reasoning:
+                    yield f"__REASONING_DELTA__:{reasoning}"
+                content = message['content']
                 # Mistral can return content as list of blocks for multimodal
                 if isinstance(content, list):
                     content = ''.join(

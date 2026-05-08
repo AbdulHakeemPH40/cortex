@@ -86,40 +86,40 @@ PERFORMANCE_CONFIGS = {
         multi_agent=False,
         parallel_workers=0,
         vision_enabled=True,
-        description="Power saving - Mistral Small (text) / Medium (vision)",
+        description="Power saving - DeepSeek Flash (text) / Mistral Medium (vision OCR)",
         token_multiplier=0.3,
         vision_model="mistral-medium-latest",
-        main_agent_model="mistral-small-latest",
+        main_agent_model="deepseek-v4-flash",
     ),
     PerformanceMode.AUTO: PerformanceConfig(
         temperature=0.7,
         multi_agent=False,
         parallel_workers=0,
         vision_enabled=True,
-        description="Smart routing - Mistral auto-select based on query",
+        description="Smart routing - DeepSeek auto-select based on query",
         token_multiplier=1.0,
         vision_model="mistral-medium-latest",
-        main_agent_model="mistral-small-latest",  # Default, auto-upgraded based on query
+        main_agent_model="deepseek-chat",  # Default, auto-upgraded based on query
     ),
     PerformanceMode.PERFORMANCE: PerformanceConfig(
         temperature=0.7,
         multi_agent=False,
         parallel_workers=0,
         vision_enabled=True,
-        description="Balanced - Mistral Medium",
+        description="Balanced - DeepSeek V4 Pro",
         token_multiplier=1.1,
         vision_model="mistral-medium-latest",
-        main_agent_model="mistral-medium-latest",
+        main_agent_model="deepseek-v4-pro",
     ),
     PerformanceMode.ULTIMATE: PerformanceConfig(
         temperature=0.8,
         multi_agent=False,
         parallel_workers=0,
         vision_enabled=True,
-        description="Best quality - Mistral Large",
+        description="Best quality - DeepSeek Reasoner (R1)",
         token_multiplier=1.6,
         vision_model="mistral-large-latest",
-        main_agent_model="mistral-large-latest",
+        main_agent_model="deepseek-reasoner",
     ),
 }
 
@@ -138,6 +138,27 @@ def get_performance_mode(mode_str: str) -> PerformanceMode:
 def get_mode_config(mode: PerformanceMode) -> PerformanceConfig:
     """Get configuration for performance mode."""
     return PERFORMANCE_CONFIGS[mode]
+
+
+def _get_provider_for_model(model_id: str) -> str:
+    """Map model ID to provider name.
+    
+    ARCHITECTURE: Mistral is ONLY for vision/OCR fallback.
+    DeepSeek and Kimi handle all coding, reasoning, and text tasks.
+    OpenAI provides budget-friendly GPT-4o/4.1 access.
+    """
+    if not model_id:
+        return "deepseek"
+    mid = model_id.lower()
+    if mid.startswith("deepseek"):
+        return "deepseek"
+    if mid.startswith("kimi"):
+        return "kimi"
+    if mid.startswith("mistral") or mid.startswith("codestral"):
+        return "mistral"
+    if mid.startswith("gpt-"):
+        return "openai"
+    return "deepseek"  # default
 
 
 def calculate_max_tokens_for_mode(model_id: str, config: PerformanceConfig) -> int:
@@ -306,9 +327,18 @@ def _write_chat_summary_memory(project_root: str, conversation_id: str, title: s
         from src.ai.providers import ChatMessage, ProviderType, get_provider_registry
 
         settings = get_settings()
-        provider_name = (settings.get("ai", "provider") or "mistral").strip().lower()
-        # Prefer "model_id" (runtime key set by _on_model_changed), fall back to "model" (legacy)
-        _raw_model = (settings.get("ai", "model_id") or settings.get("ai", "model") or "mistral-large-latest")
+        provider_name = (settings.get("ai", "provider") or "deepseek").strip().lower()
+        # Use a lightweight model for summarization to avoid rate-limit conflicts
+        # with the user's active model. deepseek-v4-flash is fast, cheap, and
+        # rarely rate-limited. Fall back to whatever model_id is configured.
+        _raw_model = "deepseek-v4-flash"
+        try:
+            _configured = (settings.get("ai", "model_id") or settings.get("ai", "model") or "")
+            if _configured and "small" not in str(_configured).lower():
+                # Use configured model only if it's a small variant; otherwise stick with small
+                pass
+        except Exception:
+            pass
         model_id = str(_raw_model).strip()
 
         provider_map = {
@@ -316,8 +346,9 @@ def _write_chat_summary_memory(project_root: str, conversation_id: str, title: s
             "deepseek": ProviderType.DEEPSEEK,
             "siliconflow": ProviderType.SILICONFLOW,
             "kimi": ProviderType.KIMI,
+            "openai": ProviderType.OPENAI,
         }
-        provider_type = provider_map.get(provider_name, ProviderType.MISTRAL)
+        provider_type = provider_map.get(provider_name, ProviderType.DEEPSEEK)
         
         # Validate provider availability
         try:
@@ -436,7 +467,8 @@ def _write_chat_summary_memory(project_root: str, conversation_id: str, title: s
                 _write_chat_summary_memory(project_root, conversation_id, title, messages, retry_count + 1)
                 return
             else:
-                log.error(f"[MEMORY] LLM chat failed after {retry_count + 1} attempts: {e}")
+                log.error(f"[MEMORY] LLM summarization FAILED — model={model_id}, provider={provider_name}, error={e}")
+                log.error(f"[MEMORY] → Saving fallback summary (metadata only, no AI-generated content)")
                 _save_fallback_summary(project_root, conversation_id, title, messages)
                 return
         
@@ -1911,6 +1943,137 @@ class AIChatWidget(QWidget):
         self._js_call_pending = False
         _log.info("[AI_CHAT] response complete, buffer cleared")
 
+        # ── MAF multi-agent: Phase 3 — Reviewer ──────────────────────
+        _orch = getattr(self, '_maf_orchestrator', None)
+        _req = getattr(self, '_maf_user_request', None)
+        _plan = getattr(self, '_maf_plan_text', None)
+        if _orch and _req is not None:
+            self._maf_orchestrator = None
+            self._maf_user_request = None
+            self._maf_plan_text = None
+            _executor_output = full_response or ""
+            threading.Thread(
+                target=self._run_maf_reviewer,
+                args=(_orch, _req, _plan or "", _executor_output),
+                daemon=True,
+            ).start()
+
+    # ── MAF Multi-Agent Pipeline ─────────────────────────────────────
+
+    def _start_maf_pipeline(self, text: str, context: str, user_model: str):
+        """Start the MAF multi-agent pipeline: Planner → Executor → Reviewer.
+
+        Phase 1: Runs the Planner in a background thread.  When complete,
+                 the planner output is prepended to the user message and
+                 emitted via message_sent to start the Executor.
+        Phase 2: The existing Cortex agent_bridge tool loop (unchanged).
+        Phase 3: Runs automatically from on_complete() after the executor
+                 finishes (see above).
+        """
+        from src.ai.maf_multi_agent import MafMultiAgentOrchestrator
+        from src.ai.providers import get_provider_registry, ProviderType
+
+        _provider_name = self._resolve_provider_from_model(user_model)
+        _registry = get_provider_registry()
+
+        # Map provider name to ProviderType
+        _ptype_map: Dict[str, ProviderType] = {
+            "kimi": ProviderType.KIMI,
+            "deepseek": ProviderType.DEEPSEEK,
+            "mistral": ProviderType.MISTRAL,
+            "codestral": ProviderType.MISTRAL,
+            "openai": ProviderType.OPENAI,
+        }
+        _ptype = _ptype_map.get(_provider_name, ProviderType.MISTRAL)
+        _provider = _registry.get_provider(_ptype)
+
+        if not _provider or not _provider.validate_api_key():
+            log.warning(
+                "[AIChat] No valid API key for provider=%s model=%s — "
+                "falling back to single-agent", _provider_name, user_model,
+            )
+            self.message_sent.emit(text, context)
+            return
+
+        self._maf_orchestrator = MafMultiAgentOrchestrator(
+            provider=_provider,
+            model_id=user_model,
+            provider_name=_provider_name,
+        )
+        self._maf_user_request = text
+        self._maf_plan_text = None  # filled by planner thread
+
+        # Show thinking indicator during planning
+        self._show_thinking_in_js()
+
+        threading.Thread(
+            target=self._run_maf_planner_phase,
+            args=(text, context),
+            daemon=True,
+        ).start()
+
+    def _run_maf_planner_phase(self, text: str, context: str):
+        """Background thread: run Planner, then emit augmented message."""
+        try:
+            _orch = getattr(self, '_maf_orchestrator', None)
+            if not _orch:
+                self.message_sent.emit(text, context)
+                return
+
+            plan = _orch.run_planner(text)
+            self._maf_plan_text = plan
+
+            if plan:
+                augmented = f"[PLAN]\n{plan}\n\n[USER REQUEST]\n{text}"
+                log.info("[AIChat] MAF Planner: %d-char plan prepended", len(plan))
+            else:
+                augmented = text
+                log.info("[AIChat] MAF Planner: no plan (simple query)")
+
+            self.message_sent.emit(augmented, context)
+        except Exception as exc:
+            log.error("[AIChat] MAF Planner thread error: %s", exc, exc_info=True)
+            self.message_sent.emit(text, context)  # fallback
+
+    def _run_maf_reviewer(
+        self, orchestrator, user_request: str, plan_text: str, executor_output: str
+    ):
+        """Background thread: run Reviewer after executor completes."""
+        try:
+            # Truncate executor output for the reviewer — full output may be huge
+            _output_for_review = executor_output
+            if len(_output_for_review) > 12000:
+                _output_for_review = (
+                    _output_for_review[:6000]
+                    + "\n\n... (truncated) ...\n\n"
+                    + _output_for_review[-6000:]
+                )
+
+            review = orchestrator.run_reviewer(
+                user_request, plan_text, _output_for_review
+            )
+            if review:
+                header = "\n\n---\n**Review (Multi-Agent):**\n"
+                self._vision_response_received.emit(header + review)
+                log.info("[AIChat] MAF Reviewer: %d-char review emitted", len(review))
+            else:
+                log.info("[AIChat] MAF Reviewer: no review output")
+        except Exception as exc:
+            log.error("[AIChat] MAF Reviewer thread error: %s", exc, exc_info=True)
+
+    @staticmethod
+    def _resolve_provider_from_model(model_id: str) -> str:
+        """Map a model ID to a provider name for API key lookup."""
+        _m = (model_id or "").lower()
+        if "kimi" in _m or "moonshot" in _m:
+            return "kimi"
+        if "deepseek" in _m:
+            return "deepseek"
+        if "mistral" in _m or "codestral" in _m:
+            return "mistral"
+        # Default — assume OpenAI-compatible endpoint
+        return "openai"
+
     def _on_mode_changed_internal(self, mode: str):
         """Track the current interaction mode internally."""
         self._current_interaction_mode = mode
@@ -1938,18 +2101,42 @@ class AIChatWidget(QWidget):
         perf_mode = get_performance_mode(perf_mode_str)
         config = get_mode_config(perf_mode)
         
-        # CRITICAL FIX: Check if user selected a non-Mistral model (e.g., DeepSeek)
-        # If so, bypass performance mode and use agent_bridge directly
-        # This respects user's explicit model selection from dropdown
+        # CRITICAL FIX: Always respect the user's explicit model selection.
+        # When the user has chosen a non-Mistral model (Kimi, DeepSeek, etc.),
+        # bypass the performance-mode routing entirely — it hardcodes Mistral
+        # as the only provider and would silently swap the user's model.
+        # The multi-agent (AutoGen) toggle controls whether the system asks
+        # the agent to spawn sub-agents; it does NOT override the model choice.
         try:
             from src.config.settings import get_settings
             settings = get_settings()
             # Check if there's a user-selected model in settings
             user_model = settings.get("ai", "model_id", default="")
+            _autogen_active = (
+                perf_mode in (PerformanceMode.PERFORMANCE, PerformanceMode.ULTIMATE)
+                or bool(settings.get("ai", "autogen_enabled", default=False))
+            )
             if user_model and not user_model.startswith("mistral") and not user_model.startswith("codestral"):
-                # User selected a non-Mistral model (e.g., deepseek-v4-pro)
-                # Bypass performance mode and use agent_bridge directly
-                log.info(f"[AIChat] User selected non-Mistral model: {user_model}, bypassing performance mode")
+                # User explicitly chose a non-Mistral model — always use it directly.
+                # If AutoGen is ON, run through the MAF multi-agent pipeline:
+                #   Phase 1: Planner  (MAF Agent, background thread)
+                #   Phase 2: Executor (Cortex agent_bridge tool loop)
+                #   Phase 3: Reviewer (MAF Agent, on executor completion)
+                if _autogen_active:
+                    log.info(
+                        f"[AIChat] AutoGen ON — starting MAF multi-agent pipeline"
+                        f" for model: {user_model}"
+                    )
+                    context = ""
+                    if self._get_code_context:
+                        context = self._get_code_context()
+                    self._start_maf_pipeline(text, context, user_model)
+                    return
+                # AutoGen OFF — standard single-agent path
+                log.info(
+                    f"[AIChat] User selected non-Mistral model: {user_model}"
+                    f" — bypassing performance-mode routing"
+                )
                 context = ""
                 if self._get_code_context:
                     context = self._get_code_context()
@@ -1999,13 +2186,11 @@ class AIChatWidget(QWidget):
             return
         
         # ── PLAN MODE + IMAGES: analyze image then create .md plan file ───
-        # Trigger if: Plan dropdown selected, OR text mentions "plan" keywords
-        _plan_keywords = ["plan", "design", "blueprint", "architecture", "spec", "wireframe", "mockup", "layout"]
+        # ONLY when Plan dropdown is explicitly selected — NOT from keyword matching
         _is_plan_mode = getattr(self, '_current_interaction_mode', 'Agent') == 'Plan'
-        _text_wants_plan = any(kw in text.lower() for kw in _plan_keywords)
         
-        if _is_plan_mode or _text_wants_plan:
-            log.info(f"[AIChat] Plan mode + images: generating .md plan from image analysis (dropdown={'Plan' if _is_plan_mode else 'Agent'}, text_match={_text_wants_plan})")
+        if _is_plan_mode:
+            log.info(f"[AIChat] Plan mode + images: generating .md plan from image analysis (dropdown=Plan)")
             self._show_thinking_in_js()
             self._vision_user_text = text
             import threading
@@ -2173,13 +2358,14 @@ class AIChatWidget(QWidget):
     def _call_main_agent_with_vision_context(self, prompt, provider_name, model_id, config=None):
         """Call Main Agent with vision-enhanced prompt.
         
-        ARCHITECTURE: Mistral is ALWAYS the main provider.
-        This is the SECOND step in the coordination layer.
-        Main Agent receives vision context and provides informed response.
+        ARCHITECTURE: Dispatches to correct provider based on provider_name.
+        - Mistral: ONLY for vision/OCR fallback
+        - DeepSeek/Kimi: PRIMARY for coding & reasoning
+        - OpenAI: Budget-friendly GPT-4o/4.1 access
         
         Args:
             prompt: Enhanced prompt with vision context
-            provider_name: LLM provider (always 'mistral' per architecture)
+            provider_name: LLM provider ('deepseek', 'kimi', 'mistral', 'openai')
             model_id: Model identifier
             config: PerformanceConfig (optional, for token calculation)
             
@@ -2189,9 +2375,6 @@ class AIChatWidget(QWidget):
         try:
             from src.config.settings import get_settings
             settings = get_settings()
-            
-            # ARCHITECTURE: Force Mistral as provider regardless of what's passed
-            provider_name = "mistral"
             
             # Get API configuration
             temperature = float(settings.get("ai", "temperature", default=0.7) or 0.7)
@@ -2206,10 +2389,20 @@ class AIChatWidget(QWidget):
             # Build messages for Main Agent
             messages = [{"role": "user", "content": prompt}]
             
-            log.info(f"[AIChat] Main Agent: provider=mistral, model={model_id}, max_tokens={max_tokens}")
-            
-            # ALWAYS route to Mistral as the main provider
-            return self._call_mistral_with_context(messages, temperature, max_tokens, model_id)
+            # Dispatch to correct provider
+            if provider_name == "deepseek":
+                log.info(f"[AIChat] Main Agent: provider=deepseek, model={model_id}, max_tokens={max_tokens}")
+                return self._call_deepseek_with_context(messages, temperature, max_tokens, model_id)
+            elif provider_name == "kimi":
+                log.info(f"[AIChat] Main Agent: provider=kimi, model={model_id}, max_tokens={max_tokens}")
+                return self._call_kimi_with_context(messages, temperature, max_tokens, model_id)
+            elif provider_name == "openai":
+                log.info(f"[AIChat] Main Agent: provider=openai, model={model_id}, max_tokens={max_tokens}")
+                return self._call_openai_with_context(messages, temperature, max_tokens, model_id)
+            else:
+                # Mistral or unknown — use Mistral (vision/OCR fallback)
+                log.info(f"[AIChat] Main Agent: provider=mistral, model={model_id}, max_tokens={max_tokens}")
+                return self._call_mistral_with_context(messages, temperature, max_tokens, model_id)
                 
         except Exception as e:
             log.error(f"[AIChat] Main Agent call failed: {e}", exc_info=True)
@@ -2322,6 +2515,74 @@ class AIChatWidget(QWidget):
             return content
         else:
             return f"Kimi API error {response.status_code}: {response.text[:200]}"
+        
+    def _call_deepseek_with_context(self, messages, temperature, max_tokens, model_id):
+        """Call DeepSeek API with context (text-only).
+            
+        DeepSeek is the PRIMARY provider for coding & reasoning.
+        OpenAI-compatible API endpoint.
+        """
+        api_key = os.getenv("DEEPSEEK_API_KEY", "")
+        if not api_key:
+            return "Error: DEEPSEEK_API_KEY not set"
+            
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": model_id or "deepseek-chat",
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens or 4096
+        }
+            
+        response = requests.post(
+            "https://api.deepseek.com/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=(30, 180)
+        )
+            
+        if response.status_code == 200:
+            data = response.json()
+            return data.get('choices', [{}])[0].get('message', {}).get('content', '')
+        else:
+            return f"DeepSeek API error {response.status_code}: {response.text[:200]}"
+    
+    def _call_openai_with_context(self, messages, temperature, max_tokens, model_id):
+        """Call OpenAI API with context.
+        
+        OpenAI provides budget-friendly GPT-4o/4.1 access.
+        Uses standard /v1/chat/completions endpoint.
+        """
+        api_key = os.getenv("OPENAI_API_KEY", "")
+        if not api_key:
+            return "Error: OPENAI_API_KEY not set"
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": model_id or "gpt-4o-mini",
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens or 4096
+        }
+        
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=(30, 180)
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            return data.get('choices', [{}])[0].get('message', {}).get('content', '')
+        else:
+            return f"OpenAI API error {response.status_code}: {response.text[:200]}"
     
     # ==================== PERFORMANCE MODE METHODS ====================
     
@@ -2378,24 +2639,28 @@ class AIChatWidget(QWidget):
             except Exception:
                 pass
             
-            # Use Kimi for vision if Kimi is selected; otherwise default to Mistral
-            provider_name = "kimi" if _is_kimi else "mistral"
+            # ARCHITECTURE: Mistral is ONLY for vision/OCR. DeepSeek/Kimi for coding.
+            vision_provider = "mistral"  # Always Mistral for OCR — DeepSeek/Kimi don't support images
             
             if not has_images:
-                # Text-only: standard agentic loop
-                model_id = self._auto_select_mistral_model(text)
+                # Text-only: standard agentic loop with DeepSeek/Kimi
+                model_id = self._auto_select_model(text)
+                agent_provider = _get_provider_for_model(model_id)
                 max_tokens = calculate_max_tokens_for_mode(model_id, config)
-                log.info(f"[AIChat] Single agent text: {model_id}, max_tokens={max_tokens}")
-                self._call_agent_and_respond(text, provider_name, model_id, max_tokens, config.temperature)
+                log.info(f"[AIChat] Single agent text: {model_id} ({agent_provider}), max_tokens={max_tokens}")
+                self._call_agent_and_respond(text, agent_provider, model_id, max_tokens, config.temperature)
                 return
             
-            # ── IMAGE PATH: Analyze image first, then route to agentic loop ──
-            vision_model = config.vision_model or ("kimi-k2.6" if _is_kimi else "mistral-medium-latest")
-            agent_model = config.main_agent_model or ("kimi-k2.6" if _is_kimi else "mistral-small-latest")
-            log.info(f"[AIChat] Vision Step 1: Analyzing image with {vision_model} (provider={provider_name})")
+            # ── IMAGE PATH: Analyze image first (Mistral OCR), then route to coding agent (DeepSeek/Kimi) ──
+            # Step 1: Mistral handles vision/OCR ONLY
+            vision_model = config.vision_model or "mistral-medium-latest"
+            # Step 3: DeepSeek/Kimi handles the actual coding with vision context
+            agent_model = config.main_agent_model or "deepseek-chat"
+            agent_provider = _get_provider_for_model(agent_model)
+            log.info(f"[AIChat] Vision Step 1: OCR with {vision_model} (Mistral) | Step 2: Coding with {agent_model} ({agent_provider})")
             
-            # Step 1: Call vision provider to get detailed image description
-            pipeline_result = process_images_for_api(images, text, provider=provider_name)
+            # Step 1: Call Mistral vision to get detailed image description
+            pipeline_result = process_images_for_api(images, text, provider=vision_provider)
             
             for warn in pipeline_result.get("warnings", []):
                 log.warning(f"[AIChat] Image pipeline warning: {warn}")
@@ -2406,16 +2671,11 @@ class AIChatWidget(QWidget):
             img_count = pipeline_result.get("image_count", 0)
             log.info(f"[AIChat] Vision: {img_count} image(s) processed")
             
-            # Route vision call to the correct provider
+            # Route vision call — ALWAYS Mistral for OCR (DeepSeek/Kimi don't support images)
             max_tokens_vision = 4096  # Enough for a detailed description
-            if _is_kimi:
-                image_description = self._call_kimi_with_context(
-                    messages, config.temperature, max_tokens_vision, vision_model
-                )
-            else:
-                image_description = self._call_mistral_with_context(
-                    messages, config.temperature, max_tokens_vision, vision_model
-                )
+            image_description = self._call_mistral_with_context(
+                messages, config.temperature, max_tokens_vision, vision_model
+            )
             
             if not image_description or image_description.startswith("Error"):
                 log.warning(f"[AIChat] Vision analysis failed: {image_description}")
@@ -2437,9 +2697,9 @@ class AIChatWidget(QWidget):
                 f"Create files, write code, or take actions based on what the image shows."
             )
             
-            # Step 3: Route to agentic tool loop with mode's model
+            # Step 3: Route to agentic tool loop with DeepSeek/Kimi
             max_tokens = calculate_max_tokens_for_mode(agent_model, config)
-            log.info(f"[AIChat] Vision Step 2: Routing to agentic loop with {agent_model} (provider={provider_name})")
+            log.info(f"[AIChat] Vision Step 2: Routing to agentic loop with {agent_model} (provider={agent_provider})")
             
             # Inject vision context into agent_bridge history for follow-ups
             if hasattr(self, '_bridge') and hasattr(self._bridge, 'inject_vision_history'):
@@ -2448,7 +2708,7 @@ class AIChatWidget(QWidget):
                     f"[Image analysis: {image_description[:2000]}]"
                 )
             
-            self._call_agent_and_respond(enhanced_prompt, provider_name, agent_model, max_tokens, config.temperature)
+            self._call_agent_and_respond(enhanced_prompt, agent_provider, agent_model, max_tokens, config.temperature)
             
         except Exception as e:
             log.error(f"[AIChat] Single agent error: {e}", exc_info=True)
@@ -2468,8 +2728,7 @@ class AIChatWidget(QWidget):
             from src.coordinator.coordinator_system import CoordinationEngine, get_vision_store
             
             settings = get_settings()
-            # ARCHITECTURE: Mistral is ALWAYS the main provider. Never read provider from settings.
-            provider_name = "mistral"
+            # ARCHITECTURE: DeepSeek/Kimi for coding. Mistral ONLY for vision/OCR fallback.
             session_id = getattr(self, 'current_session_id', None) or "default-session"
             project_path = None
             if hasattr(self, '_pending_project_info') and self._pending_project_info:
@@ -2480,7 +2739,7 @@ class AIChatWidget(QWidget):
             # Create coordination engine
             engine = CoordinationEngine(project_path=project_path, session_id=session_id)
             
-            # Define vision callback (uses image pipeline)
+            # Define vision callback (Mistral OCR ONLY)
             def call_vision(imgs, txt):
                 # First try the VisionAgentTool
                 result = self._execute_vision_agent(imgs, txt, session_id)
@@ -2496,12 +2755,13 @@ class AIChatWidget(QWidget):
                     return {"description": raw_response, "ocr_text": "", "raw": raw_response}
                 return {"error": "Vision not available"}
             
-            # Define main LLM callback — ALWAYS uses Mistral
+            # Define main LLM callback — uses DeepSeek/Kimi for coding (NOT Mistral)
             def call_llm(enhanced_prompt):
-                main_model = config.main_agent_model or "mistral-medium-latest"
-                log.info(f"[AIChat] Performance mode: Main Agent using mistral/{main_model}")
+                main_model = config.main_agent_model or "deepseek-v4-pro"
+                main_provider = _get_provider_for_model(main_model)
+                log.info(f"[AIChat] Performance mode: Main Agent using {main_provider}/{main_model}")
                 return self._call_main_agent_with_vision_context(
-                    enhanced_prompt, "mistral", main_model, config
+                    enhanced_prompt, main_provider, main_model, config
                 )
             
             # Run coordination
@@ -2542,8 +2802,7 @@ class AIChatWidget(QWidget):
             import concurrent.futures
             
             settings = get_settings()
-            # ARCHITECTURE: Mistral is ALWAYS the main provider. Never read provider from settings.
-            provider_name = "mistral"
+            # ARCHITECTURE: DeepSeek/Kimi for coding. Mistral ONLY for vision/OCR fallback.
             session_id = getattr(self, 'current_session_id', None) or "default-session"
             project_path = None
             if hasattr(self, '_pending_project_info') and self._pending_project_info:
@@ -2569,12 +2828,13 @@ class AIChatWidget(QWidget):
                     return {"description": raw_response, "ocr_text": "", "raw": raw_response}
                 return {"error": "Vision not available"}
             
-            # Define main LLM callback — ALWAYS uses Mistral
+            # Define main LLM callback — uses DeepSeek/Kimi for coding (NOT Mistral)
             def call_llm(enhanced_prompt):
-                main_model = config.main_agent_model or "mistral-large-latest"
-                log.info(f"[AIChat] Ultimate mode: Main Agent using mistral/{main_model}")
+                main_model = config.main_agent_model or "deepseek-reasoner"
+                main_provider = _get_provider_for_model(main_model)
+                log.info(f"[AIChat] Ultimate mode: Main Agent using {main_provider}/{main_model}")
                 return self._call_main_agent_with_vision_context(
-                    enhanced_prompt, "mistral", main_model, config
+                    enhanced_prompt, main_provider, main_model, config
                 )
             
             # Run coordination (engine handles parallel workers internally)
@@ -2818,8 +3078,8 @@ class AIChatWidget(QWidget):
     def _process_text_message_through_performance(self, text, config):
         """Process text-only message through performance mode system.
         
-        ARCHITECTURE: Mistral is the ONLY provider.
-        All modes route through single agent with the mode's configured model.
+        ARCHITECTURE: DeepSeek/Kimi for coding & reasoning.
+        Mistral is ONLY for image OCR fallback.
         
         Args:
             text: User message text
@@ -2830,8 +3090,8 @@ class AIChatWidget(QWidget):
             from PyQt6.QtCore import QThread
             
             settings = get_settings()
-            provider_name = "mistral"
-            model_id = config.main_agent_model or "mistral-small-latest"
+            model_id = config.main_agent_model or "deepseek-chat"
+            provider_name = _get_provider_for_model(model_id)
             session_id = (settings.get("ai", "session_id") or "default").strip()
             
             log.info(f"[AIChat] Text routing: provider={provider_name}, model={model_id}, mode={self._get_performance_mode_from_settings()}")
@@ -2857,26 +3117,26 @@ class AIChatWidget(QWidget):
     def _process_text_single_agent(self, text, config, provider_name, model_id, session_id):
         """Process text message with single agent (ALL modes).
         
-        ARCHITECTURE: Mistral is the ONLY provider.
-        - Efficient: Mistral Small
-        - Auto: Mistral Small/Medium/Large auto-select based on query
-        - Performance: Mistral Medium
-        - Ultimate: Mistral Large
+        ARCHITECTURE: DeepSeek/Kimi for coding & reasoning.
+        - Efficient: DeepSeek Flash
+        - Auto: DeepSeek auto-select based on query
+        - Performance: DeepSeek V4 Pro
+        - Ultimate: DeepSeek Reasoner (R1)
         """
         try:
             perf_mode_str = self._get_performance_mode_from_settings()
             perf_mode = get_performance_mode(perf_mode_str)
             
-            provider_name = "mistral"
-            
             if perf_mode == PerformanceMode.AUTO:
-                # Auto mode: smart Mistral model selection based on query complexity
-                model_id = self._auto_select_mistral_model(text)
-                log.info(f"[AIChat] Auto mode text: auto-selected {model_id}")
+                # Auto mode: smart model selection based on query complexity
+                model_id = self._auto_select_model(text)
+                provider_name = _get_provider_for_model(model_id)
+                log.info(f"[AIChat] Auto mode text: auto-selected {model_id} (provider={provider_name})")
             else:
                 # All other modes: use the config's model directly
-                model_id = config.main_agent_model or "mistral-small-latest"
-                log.info(f"[AIChat] {perf_mode.value} mode text: {model_id}")
+                model_id = config.main_agent_model or "deepseek-chat"
+                provider_name = _get_provider_for_model(model_id)
+                log.info(f"[AIChat] {perf_mode.value} mode text: {model_id} (provider={provider_name})")
             
             max_tokens = calculate_max_tokens_for_mode(model_id, config)
             log.info(f"[AIChat] Single agent text: provider={provider_name}, model={model_id}, max_tokens={max_tokens}")
@@ -2890,34 +3150,29 @@ class AIChatWidget(QWidget):
     def _process_text_performance(self, text, config, provider_name, model_id, session_id):
         """Process text message in Performance mode.
         
-        FIXED: No more DeepSeek supporter pre-analysis.
-        The supporter was adding 30-60s overhead and bloating the prompt.
-        
-        Now: User message goes DIRECTLY to Mistral Medium via the agentic
-        tool loop. Performance mode = mistral-medium (faster, cheaper than large).
+        ARCHITECTURE: DeepSeek/Kimi for coding & reasoning. Mistral only for vision.
+        Performance mode uses the config's main_agent_model (DeepSeek V4 Pro).
         """
         try:
-            main_model_id = "mistral-medium-latest"
+            main_model_id = config.main_agent_model or "deepseek-v4-pro"
+            main_provider = _get_provider_for_model(main_model_id)
             max_tokens = calculate_max_tokens_for_mode(main_model_id, config)
-            log.info(f"[AIChat] Performance mode: Direct to agentic loop with {main_model_id}, max_tokens={max_tokens}")
-            self._call_agent_and_respond(text, "mistral", main_model_id, max_tokens, config.temperature)
+            log.info(f"[AIChat] Performance mode: Direct to agentic loop with {main_provider}/{main_model_id}, max_tokens={max_tokens}")
+            self._call_agent_and_respond(text, main_provider, main_model_id, max_tokens, config.temperature)
         except Exception as e:
             log.error(f"[AIChat] Performance mode error: {e}", exc_info=True)
             self._vision_response_received.emit(f"Error: {str(e)}")
     
-    def _auto_select_mistral_model(self, text: str) -> str:
-        """Auto-select Mistral model based on query complexity.
+    def _auto_select_model(self, text: str) -> str:
+        """Auto-select model based on query complexity.
         
-        Auto mode smart routing:
-        - Pure greetings/acks only -> mistral-small-latest (fast, cheap)
-        - Coding / tool-requiring tasks -> mistral-medium-latest minimum
-        - Complex/long queries -> mistral-large-latest (maximum quality)
-        
-        IMPORTANT: mistral-small has only 32K context (hist_cap=4K) which is
-        too small for ANY coding task.  Reserve it ONLY for greetings.
+        Auto mode smart routing (DeepSeek/Kimi for coding, not Mistral):
+        - Pure greetings/acks only -> deepseek-v4-flash (fast, cheap)
+        - Coding / tool-requiring tasks -> deepseek-chat minimum
+        - Complex/long queries -> deepseek-v4-pro (maximum quality)
         
         Returns:
-            Mistral model ID string
+            Model ID string (DeepSeek-based)
         """
         import re
         text_stripped = text.strip()
@@ -2927,7 +3182,7 @@ class AIChatWidget(QWidget):
         # ── "Continue the task" auto-messages always get large model ───────
         # These carry forward accumulated context and need maximum headroom.
         if text_lower.startswith("continue the task") or text_lower.startswith("continue task"):
-            return "mistral-large-latest"
+            return "deepseek-v4-pro"
         
         # ── Pure greetings/acks → small (same patterns as _is_simple_query) ──
         greeting_patterns = [
@@ -2941,11 +3196,11 @@ class AIChatWidget(QWidget):
         ]
         for pattern in greeting_patterns:
             if re.match(pattern, text_lower):
-                return "mistral-small-latest"
+                return "deepseek-v4-flash"
         
         # ── Messages with code blocks or file references → large ──────────
         if '```' in text_stripped or '`' in text_stripped:
-            return "mistral-large-latest"
+            return "deepseek-v4-pro"
         
         # ── Complex indicators: code keywords, debugging, architecture ────
         complex_keywords = [
@@ -2961,15 +3216,15 @@ class AIChatWidget(QWidget):
         
         # High complexity: many keywords or very long query
         if complex_match >= 3 or word_count > 80:
-            return "mistral-large-latest"
+            return "deepseek-v4-pro"
         
         # Medium complexity: any coding keyword or moderate length
         if complex_match >= 1 or word_count > 15:
-            return "mistral-medium-latest"
+            return "deepseek-chat"
         
         # Default: medium for anything that isn't a greeting
         # mistral-small (32K) is too tight for tool-based interactions
-        return "mistral-medium-latest"
+        return "deepseek-chat"
     
     def _is_simple_query(self, text: str) -> bool:
         """Check if query is simple enough to skip multi-agent collaboration.
@@ -3052,16 +3307,17 @@ class AIChatWidget(QWidget):
         The supporter was adding 60s overhead and bloating the prompt,
         causing Mistral API timeouts.
         
-        Now: User message goes DIRECTLY to Mistral Large via the agentic
+        Now: User message goes DIRECTLY to DeepSeek Reasoner (R1) via the agentic
         tool loop (same as Qoder/VS Code architecture).
-        The quality comes from using mistral-large + full tool suite,
+        The quality comes from using deepseek-reasoner + full tool suite,
         NOT from pre-analysis by another LLM.
         """
         try:
-            main_model_id = "mistral-large-latest"
+            main_model_id = config.main_agent_model or "deepseek-reasoner"
+            main_provider = _get_provider_for_model(main_model_id)
             max_tokens = calculate_max_tokens_for_mode(main_model_id, config)
-            log.info(f"[AIChat] Ultimate mode: Direct to agentic loop with {main_model_id}, max_tokens={max_tokens}")
-            self._call_agent_and_respond(text, "mistral", main_model_id, max_tokens, config.temperature)
+            log.info(f"[AIChat] Ultimate mode: Direct to agentic loop with {main_provider}/{main_model_id}, max_tokens={max_tokens}")
+            self._call_agent_and_respond(text, main_provider, main_model_id, max_tokens, config.temperature)
         except Exception as e:
             log.error(f"[AIChat] Ultimate mode error: {e}", exc_info=True)
             self._vision_response_received.emit(f"Error: {str(e)}")

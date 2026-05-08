@@ -50,12 +50,43 @@ class DeepSeekProvider(BaseProvider):
         self._base_url = "https://api.deepseek.com/v1"
         self._token_count = {"input": 0, "output": 0}
         self._session = requests.Session()
-        self._max_retries = 2
+        self._max_retries = self._get_int_env("CORTEX_DEEPSEEK_MAX_RETRIES", 4, minimum=1, maximum=5)
         self._retry_delay = 1.0
-        self._timeout = 120.0
+        self._connect_timeout = self._get_float_env("CORTEX_DEEPSEEK_CONNECT_TIMEOUT_SEC", 20.0, minimum=1.0, maximum=120.0)
+        self._read_timeout = self._get_float_env("CORTEX_DEEPSEEK_READ_TIMEOUT_SEC", 40.0, minimum=3.0, maximum=300.0)
+        self._tool_read_timeout = self._get_float_env("CORTEX_DEEPSEEK_TOOL_READ_TIMEOUT_SEC", 45.0, minimum=5.0, maximum=300.0)
+        self._tool_desc_max_chars = self._get_int_env("CORTEX_DEEPSEEK_TOOL_DESC_MAX_CHARS", 180, minimum=60, maximum=500)
 
         if not self.api_key:
             log.warning("DEEPSEEK_API_KEY not configured")
+
+    @staticmethod
+    def _get_int_env(name: str, default: int, minimum: int = 1, maximum: int = 10) -> int:
+        raw = os.getenv(name, "").strip()
+        if not raw:
+            return default
+        try:
+            value = int(raw)
+            return max(minimum, min(maximum, value))
+        except Exception:
+            return default
+
+    @staticmethod
+    def _get_float_env(name: str, default: float, minimum: float = 1.0, maximum: float = 300.0) -> float:
+        raw = os.getenv(name, "").strip()
+        if not raw:
+            return default
+        try:
+            value = float(raw)
+            return max(minimum, min(maximum, value))
+        except Exception:
+            return default
+
+    def _resolve_read_timeout(self, stream: bool, tools: Optional[List[Dict[str, Any]]]) -> float:
+        """Use a higher read-timeout for tool-heavy streaming first-token latency."""
+        if stream and tools:
+            return max(self._read_timeout, self._tool_read_timeout)
+        return self._read_timeout
     
     # Legacy model routing — auto-map deprecated models to V4 equivalents.
     # deepseek-chat and deepseek-reasoner are retired Jul 24, 2026.
@@ -211,6 +242,15 @@ class DeepSeekProvider(BaseProvider):
 
         return normalized
 
+    @staticmethod
+    def _truncate_text(value: Any, max_chars: int) -> str:
+        if value is None:
+            return ""
+        s = str(value)
+        if len(s) <= max_chars:
+            return s
+        return s[: max_chars - 3].rstrip() + "..."
+
     def _sanitize_tools(self, tools: Optional[List[Any]]) -> Optional[List[Dict[str, Any]]]:
         """Convert tool schema into strict OpenAI tool shape and drop invalid entries."""
         if not tools:
@@ -242,7 +282,7 @@ class DeepSeekProvider(BaseProvider):
                     "type": "function",
                     "function": {
                         "name": str(name),
-                        "description": str(fn.get("description", "")),
+                        "description": self._truncate_text(fn.get("description", ""), self._tool_desc_max_chars),
                         "parameters": params,
                     },
                 }
@@ -336,8 +376,10 @@ class DeepSeekProvider(BaseProvider):
 
             try:
                 if stream:
+                    _read_to = self._resolve_read_timeout(stream, sanitized_tools)
                     response = self._session.post(
-                        url, headers=headers, json=payload, stream=True, timeout=self._timeout,
+                        url, headers=headers, json=payload, stream=True,
+                        timeout=(self._connect_timeout, _read_to),
                     )
                     if not response.ok:
                         try:
@@ -409,7 +451,7 @@ class DeepSeekProvider(BaseProvider):
 
                 else:
                     response = self._session.post(
-                        url, headers=headers, json=payload, timeout=self._timeout,
+                        url, headers=headers, json=payload, timeout=(self._connect_timeout, self._read_timeout),
                     )
                     if not response.ok:
                         try:
@@ -429,7 +471,7 @@ class DeepSeekProvider(BaseProvider):
                     return  # Success — exit retry loop
 
             except requests.exceptions.Timeout:
-                last_error = Exception(f"DeepSeek API timeout after {self._timeout}s")
+                last_error = Exception(f"DeepSeek API timeout after connect={self._connect_timeout}s / read={self._read_timeout}s")
                 log.warning(f"[DeepSeek] Timeout (attempt {attempt + 1}/{max_retries + 1})")
                 if attempt < max_retries:
                     continue

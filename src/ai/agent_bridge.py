@@ -1684,6 +1684,7 @@ class CortexAgentBridge(QObject):
         self._last_cycle_session_mutations: int = 0  # Session mutation count at start of last cycle
         self._auto_continue_compacted: Optional[List[Any]] = None  # Pre-compacted messages for auto-continue
         self._auto_continue_requested: bool = False  # True when _call_llm wants auto-continue
+        self._chat_context_restored: bool = False  # Guard: only restore DB chat messages once per session
         self._consecutive_bash_turns: int = 0  # DEPRECATED — kept for backward compat, see _bash_usage_history
         # Guard against "plan-only" loops where TodoWrite repeats without real action.
         self._todo_write_streak: int = 0
@@ -1699,6 +1700,11 @@ class CortexAgentBridge(QObject):
         # Set by worker thread to control whether Windows notification should show.
         # Only True when ALL todos are genuinely completed with mutations.
         self._allow_notification: bool = True  # Default: allow (for simple Q&A with no todos)
+        # ── AutoGen multi-agent toggle state ────────────────────────
+        # Toggled via the Multi-Agent banner in the model dropdown.
+        # When enabled, the message router prefers the CoordinationEngine
+        # multi-agent path (Performance/Ultimate mode) over single-agent.
+        self._autogen_enabled: bool = False
         # ── Auto-cancel tracking ─────────────────────────────────────
         # Tracks if todos were auto-cancelled (incomplete) vs genuinely completed
         self._todos_auto_cancelled: bool = False
@@ -1840,6 +1846,38 @@ class CortexAgentBridge(QObject):
     @allow_notification.setter
     def allow_notification(self, value: bool) -> None:
         self._allow_notification = value
+
+    # ── AutoGen multi-agent toggle ──────────────────────────────────
+
+    def get_autogen_status(self) -> Dict[str, Any]:
+        """Return current AutoGen multi-agent toggle state.
+
+        Called by main_window._on_toggle_autogen() to read the current
+        state before flipping it.
+        """
+        return {"enabled": self._autogen_enabled}
+
+    def enable_autogen(self, enabled: bool) -> None:
+        """Enable or disable AutoGen multi-agent mode.
+
+        When enabled, the message router in ai_chat.py prefers the
+        CoordinationEngine multi-agent path (Performance/Ultimate mode)
+        over the single-agent agent_bridge path.
+
+        Called by main_window._on_toggle_autogen() on each toggle click.
+        """
+        self._autogen_enabled = bool(enabled)
+        log.info(
+            f"[BRIDGE] AutoGen multi-agent mode {'' if enabled else 'DIS'}ABLED"
+        )
+
+    def is_autogen_enabled(self) -> bool:
+        """Return True if AutoGen multi-agent mode is currently enabled.
+
+        Used by the MAF multi-agent orchestrator and message router to
+        decide whether to run the Planner → Executor → Reviewer pipeline.
+        """
+        return self._autogen_enabled
 
     @staticmethod
     def _connect_qt_signal(signal: Any, slot: Callable[..., Any]) -> None:
@@ -2138,9 +2176,11 @@ Shell: PowerShell (use semicolons ; not &&)
             from src.core.semantic_memory import get_semantic_memory_index
             _sem_idx = get_semantic_memory_index()
             if _sem_idx is not None and _sem_idx.count() > 0:
-                # Use a generic query so we get broad-relevance results
+                # Use the actual user message for relevance-targeted search.
+                # Fall back to a generic query if no message is available.
+                _user_msg = getattr(self, '_last_user_message', '') or "coding project context decisions architecture"
                 semantic_section = _sem_idx.build_prompt_section(
-                    "coding project context decisions architecture",
+                    _user_msg,
                     max_entries=3,
                 )
                 if semantic_section:
@@ -2569,8 +2609,26 @@ Shell: PowerShell (use semicolons ; not &&)
         )
         compacted: List[Any] = [system_msg, summary] + tail
         log.info(
-            f'[BRIDGE] Context compacted: {len(messages)} \u2192 {len(compacted)} messages (dropped {dropped_count} middle messages, summary saved to MEMORY.md)'
+            f'[BRIDGE] Context compacted: {len(messages)} → {len(compacted)} messages (dropped {dropped_count} middle messages, summary saved to MEMORY.md)'
         )
+        
+        # ── CRITICAL: Update _conversation_history with compacted version ──
+        # Without this, the next turn rebuilds from the full (un-compacted)
+        # _conversation_history and the rich checkpoint summary is lost entirely.
+        # We convert compacted PCM objects back to ChatMessage for the history.
+        _new_history: List[Any] = []
+        for cm in compacted:
+            _role = getattr(cm, 'role', None)
+            _content = getattr(cm, 'content', None) or ''
+            _hist_msg = ChatMessage(role=_role, content=_content)
+            _tc = getattr(cm, 'tool_calls', None)
+            if _tc:
+                _hist_msg.tool_calls = _tc
+            if getattr(cm, 'tool_call_id', None):
+                _hist_msg.tool_call_id = cm.tool_call_id
+            _new_history.append(_hist_msg)
+        self._conversation_history = _new_history
+        log.info(f'[BRIDGE] _conversation_history pruned to {len(_new_history)} entries after compaction')
 
         # ── Emit completion status ───────────────────────────────────────
         try:
@@ -2688,7 +2746,7 @@ Shell: PowerShell (use semicolons ; not &&)
             # Reset verification-block counter on fresh user requests
             self._verification_block_count = 0
 
-        merged = {**self._enhancement_data, **context}
+        merged = {**context, **self._enhancement_data}  # Live enhancement_data wins for model/provider mid-switch
 
         try:
             from src.ai.providers import get_provider_registry, ProviderType, ChatMessage as PCM
@@ -2737,20 +2795,18 @@ Shell: PowerShell (use semicolons ; not &&)
             # needs_responses = any(x in model_lower for x in ["codex", "gpt-5", "o1", "o3"])
             
             # Determine provider type based on model ID
-            provider_type = ProviderType.MISTRAL  # Default
+            provider_type = ProviderType.DEEPSEEK  # Default
             
             if model_lower.startswith("deepseek"):
-                # DeepSeek models (V4-Pro, V4-Flash, etc.)
                 provider_type = ProviderType.DEEPSEEK
             elif model_lower.startswith("mistral") or model_lower.startswith("codestral"):
-                # Mistral models
                 provider_type = ProviderType.MISTRAL
             elif model_lower.startswith("kimi-"):
-                # Kimi/Moonshot AI models (K2.6)
                 provider_type = ProviderType.KIMI
             elif model_lower.startswith("qwen") or "siliconflow" in model_lower:
-                # SiliconFlow/Qwen vision models
                 provider_type = ProviderType.SILICONFLOW
+            elif model_lower.startswith("gpt-"):
+                provider_type = ProviderType.OPENAI
             
             provider = registry.get_provider(provider_type)
             model    = model_id
@@ -2766,6 +2822,11 @@ Shell: PowerShell (use semicolons ; not &&)
                 _simple_query = self._is_simple_query(message)
             except Exception:
                 _simple_query = False
+
+            # Store current user message for semantic memory search
+            self._last_user_message = message
+            # Reset per-session Bash nudge flag
+            self._bash_nudge_already_fired = False
 
             messages: List[Any]
             # ── Auto-continue: use pre-compacted messages from previous cycle ──
@@ -2874,8 +2935,8 @@ Shell: PowerShell (use semicolons ; not &&)
             # Track if agent has performed ANY write/edit operation
             # If no mutation after N turns, force aggressive action mode
             _mutation_turns = 0  # Turns with write/edit/bash operations
-            _READONLY_FORCE_ACTION_TURN = 3  # Nudge after 3 turns of no mutation (was 8 — far too permissive)
-            _AGGRESSIVE_NUDGE_TURN = 5  # Aggressive after 5 turns of no mutation (was 12)
+            _READONLY_FORCE_ACTION_TURN = 5  # Nudge after 5 turns of no mutation (was 3 — too aggressive for complex projects)
+            _AGGRESSIVE_NUDGE_TURN = 7  # Aggressive after 7 turns of no mutation (was 5)
             _has_mutated = False  # Track if ANY mutation has occurred this session
             _POST_MUTATION_READ_LIMIT = 2  # Only allow 2 post-mutation reads before forcing verify (was 5)
 
@@ -3044,7 +3105,18 @@ Shell: PowerShell (use semicolons ; not &&)
                     turn_reasoning = ""
                     try:
                         # Get max_tokens from model_limits
-                        max_tokens = _limits.max_output_tokens
+                        # Auto-escalate output cap during auto-continue cycles
+                        # so the agent has more headroom for large code generation.
+                        try:
+                            from src.ai.model_limits import get_escalated_max_output_tokens
+                            _ac_cycle = getattr(self, '_auto_continue_cycle', 0)
+                            # Escalation: 0 cycles = default, 1-2 = moderate, 3+ = full
+                            _esc_level = 0 if _ac_cycle == 0 else (1 if _ac_cycle <= 2 else 2)
+                            max_tokens = get_escalated_max_output_tokens(model_id, _esc_level)
+                            if _esc_level > 0:
+                                log.info(f"[BRIDGE] Escalated output cap to {max_tokens:,} (level {_esc_level}, cycle {_ac_cycle})")
+                        except Exception:
+                            max_tokens = _limits.max_output_tokens
                         
                         # Apply performance mode token multiplier if set
                         try:
@@ -3071,7 +3143,11 @@ Shell: PowerShell (use semicolons ; not &&)
                         _chat_kwargs: Dict[str, Any] = {
                             "retry_callback": _retry_notify
                         }
-                        if provider_type == ProviderType.MISTRAL and active_tool_defs:
+                        # Per-provider retry config — ensures DeepSeek/Kimi get
+                        # the same retry resilience as Mistral.
+                        if active_tool_defs:
+                            _chat_kwargs["max_retries"] = 3
+                        elif provider_type == ProviderType.MISTRAL:
                             _chat_kwargs["max_retries"] = 3
 
                         # Adaptive output budget:
@@ -3117,6 +3193,10 @@ Shell: PowerShell (use semicolons ; not &&)
 
                         log.debug(f"[BRIDGE] Adaptive stream cap: {stream_max_tokens} (tool_turn={bool(active_tool_defs)}, est={_est_tokens}, budget={_budget}, base_max={max_tokens})")
 
+                        # Batch event-loop yields: only yield every N chunks to
+                        # reduce overhead while still delivering stop/cancel signals.
+                        _chunk_batch = 0
+                        _CHUNK_BATCH_SIZE = 5
                         for chunk in provider.chat_stream(
                             messages, model=model, max_tokens=stream_max_tokens, tools=active_tool_defs, **_chat_kwargs
                         ):
@@ -3124,9 +3204,12 @@ Shell: PowerShell (use semicolons ; not &&)
                             if self._stop_requested:
                                 log.info("[BRIDGE] Stream interrupted by stop request")
                                 break
-                            # Yield to the event loop so stop/cancel signals are delivered
-                            # between streaming chunks (chat_stream is a sync generator).
-                            await asyncio.sleep(0)
+                            # Yield to the event loop every N chunks so stop/cancel
+                            # signals are delivered without per-chunk overhead.
+                            _chunk_batch += 1
+                            if _chunk_batch >= _CHUNK_BATCH_SIZE:
+                                _chunk_batch = 0
+                                await asyncio.sleep(0)
                             if isinstance(chunk, str) and chunk.startswith("__TOOL_CALL_DELTA__:"):
                                 delta_list = json.loads(chunk[20:])
                                 # DIAGNOSTIC: Log tool call deltas at INFO for Write/Edit, DEBUG for others
@@ -3297,8 +3380,21 @@ Shell: PowerShell (use semicolons ; not &&)
                                 )
                                 continue  # retry with new provider
                             else:
+                                # ── Rate-limit failover exhausted: don't raise —
+                                # set turn_text so bridge lets AI exit gracefully
+                                # instead of forcing action mode (death loop).
                                 self._failover_exhausted = True
-                                raise
+                                _rate_msg = (
+                                    f"[SYSTEM: Provider rate-limited. "
+                                    f"TPD limit reached (current: 1.5M+, limit: 1.5M). "
+                                    f"Please switch to a different model or wait for reset.]"
+                                )
+                                turn_text = _rate_msg
+                                full_response += _rate_msg
+                                self._safe_emit(self.response_chunk, _rate_msg)
+                                # Reset failover flag so next turn can retry fresh
+                                self._failover_exhausted = False
+                                break  # exit compact-attempt loop gracefully
                         else:
                             raise      # non-context error or exhausted retries
 
@@ -3672,7 +3768,9 @@ Shell: PowerShell (use semicolons ; not &&)
                 if len(self._bash_usage_history) >= 5:
                     _bash_ratio = sum(self._bash_usage_history) / len(self._bash_usage_history)
                     _bash_count = sum(self._bash_usage_history)
-                    if _bash_ratio >= 0.70:
+                    # Only fire once per session to avoid repeated context bloat
+                    _already_fired = getattr(self, '_bash_nudge_already_fired', False)
+                    if _bash_ratio >= 0.70 and not _already_fired:
                         _bash_nudge = (
                             f"WARNING: You have used Bash in {_bash_count} of the last "
                             f"{len(self._bash_usage_history)} turns ({_bash_ratio:.0%}). "
@@ -3685,10 +3783,11 @@ Shell: PowerShell (use semicolons ; not &&)
                         )
                         log.warning(
                             f"[BRIDGE] Bash overuse: {_bash_count}/{len(self._bash_usage_history)} "
-                            f"turns ({_bash_ratio:.0%}) were Bash. Injecting Write/Edit directive."
+                            f"turns ({_bash_ratio:.0%}) were Bash. Injecting Write/Edit directive (once per session)."
                         )
                         messages.append(PCM(role="user", content=_bash_nudge))
-                        # Reset history after firing to avoid repeated nudges
+                        self._bash_nudge_already_fired = True
+                        # Reset history after firing to clean up tracking
                         self._bash_usage_history = []
 
                 # ── Bash circuit-breaker redirect ──────────────────────────
@@ -4485,6 +4584,48 @@ Shell: PowerShell (use semicolons ; not &&)
         # All test runs succeeded
         return True, ""
 
+    def _is_web_or_static_project(self) -> bool:
+        """Detect if the project is a web/static project without a test framework.
+
+        Web projects (HTML/CSS/JS only) typically have no pytest/jest/etc.
+        For these projects, file creation/editing IS the verification —
+        blocking completion to demand test-framework commands wastes turns.
+        """
+        # If a real test framework is detected, it's NOT a pure web project
+        framework = self._detect_test_framework()
+        if framework and framework != "unknown":
+            return False
+
+        # Scan project root for web/static file types
+        root = self._project_root or os.getcwd()
+        try:
+            _web_exts = {'.html', '.htm', '.css', '.js', '.jsx', '.ts', '.tsx', '.vue', '.svelte', '.json'}
+            # Check root-level files
+            for entry in os.listdir(root):
+                fpath = os.path.join(root, entry)
+                if os.path.isfile(fpath):
+                    _, ext = os.path.splitext(entry)
+                    if ext.lower() in _web_exts:
+                        return True
+            # Check common web subdirectories
+            for _sub in ('src', 'public', 'static', 'dist', 'build'):
+                _sub_path = os.path.join(root, _sub)
+                if os.path.isdir(_sub_path):
+                    try:
+                        for entry in os.listdir(_sub_path):
+                            fpath = os.path.join(_sub_path, entry)
+                            if os.path.isfile(fpath):
+                                _, ext = os.path.splitext(entry)
+                                if ext.lower() in _web_exts:
+                                    return True
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+
+        # Fallback: no framework detected at all — likely web/static
+        return framework is None
+
     def _build_verification_message(self) -> Optional[str]:
         """Build a verification-required error message if tests haven't passed.
 
@@ -4492,6 +4633,16 @@ Shell: PowerShell (use semicolons ; not &&)
         """
         # Quick pass: if no mutations were made, verification is not needed
         if self._mutation_success_count == 0 and self._session_mutation_count == 0:
+            return None
+
+        # ── Web/static project fast-path ──────────────────────────
+        # Web projects (HTML/CSS/JS) typically have no test framework.
+        # File creation IS the verification — skip the test-command check.
+        if self._is_web_or_static_project() and self._session_mutation_count > 0:
+            log.info(
+                "[VERIFY] Web/static project detected — "
+                f"skipping test-framework verification ({self._session_mutation_count} mutation(s))"
+            )
             return None
 
         # Check if tests were run and passed
@@ -4656,6 +4807,11 @@ Shell: PowerShell (use semicolons ; not &&)
             ChatMessage(role="system", content=resume_msg)
         )
         log.info(f"[SESSION] Injected resume marker: {resume_msg[:80]}...")
+
+        # ── Chat context restore is deferred to set_project_root() ────
+        # _hydrate_from_snapshot runs during __init__ before the project
+        # root is known. The actual DB message load happens when the
+        # project is opened and set_project_root() is called.
 
     def _rollback_last_change(self) -> Optional[str]:
         """Roll back the last change group via the change orchestrator.
@@ -5588,7 +5744,24 @@ Shell: PowerShell (use semicolons ; not &&)
 
     async def _dispatch_grep(self, tool_id: str, args: Dict[str, Any]) -> ToolResult:
         """Dispatch to real GrepTool or bridge-native fallback."""
-        if _REAL_GREP_TOOL is not None:
+        # ── Pre-flight path normalization ─────────────────────────
+        # The real GrepTool (rust rg) can choke on Windows backslash paths,
+        # trailing spaces, or non-existent directories. Normalize and validate
+        # before calling so we can fall back cleanly instead of crashing.
+        _search_path = args.get("path", "")
+        if _search_path:
+            _search_path = os.path.normpath(_search_path)
+            if self._project_root and not os.path.isabs(_search_path):
+                _search_path = os.path.join(self._project_root, _search_path)
+            if not os.path.exists(_search_path):
+                log.warning(
+                    f"[BRIDGE] GrepTool path not found: {_search_path}, "
+                    f"falling back to pure-Python grep"
+                )
+            else:
+                args["path"] = _search_path
+
+        if _REAL_GREP_TOOL is not None and _search_path and os.path.exists(_search_path):
             try:
                 real_grep_tool = cast(Any, _REAL_GREP_TOOL)
                 raw_any: Any = await real_grep_tool.call(args, self._tool_ctx)
@@ -5773,15 +5946,20 @@ Shell: PowerShell (use semicolons ; not &&)
 
             if _verification_msg is not None:
                 # ── VERIFICATION LOOP BREAKER ──────────────────────
-                # If the AI has been blocked 2+ times by verification,
+                # If the AI has been blocked N+ times by verification,
                 # the AI is clearly trying but the system isn't recognizing
                 # its verification commands (e.g., web projects using
                 # curl/http.server that don't match test patterns).
                 # Allow completion rather than trapping the AI in an
                 # infinite verification → TodoWrite → blocked → verify loop.
+                #
+                # Web/static projects: allow after 1 block (no test framework
+                # exists, so the agent cannot possibly satisfy the requirement).
+                # Other projects: allow after 2 blocks.
                 _block_count = getattr(self, '_verification_block_count', 0) + 1
                 self._verification_block_count = _block_count
-                if _block_count >= 2:
+                _break_threshold = 1 if self._is_web_or_static_project() else 2
+                if _block_count >= _break_threshold:
                     log.warning(
                         f"[TODO] Verification blocked {_block_count} times — "
                         f"allowing completion despite unrecognized verification. "
@@ -6859,16 +7037,22 @@ Shell: PowerShell (use semicolons ; not &&)
     # ── Worker signal handlers ─────────────────────────────────
 
     def _on_response_ready(self, response: str):
-        self.response_complete.emit(response)
-        if self._streaming:
-            try:
-                self._streaming.emit_llm_complete(response)
-            except Exception:
-                pass
-        # Save assistant turn to history
-        self._conversation_history.append(
-            ChatMessage(role="assistant", content=response)
-        )
+        try:
+            self.response_complete.emit(response)
+            if self._streaming:
+                try:
+                    self._streaming.emit_llm_complete(response)
+                except Exception:
+                    pass
+            # Save assistant turn to history
+            self._conversation_history.append(
+                ChatMessage(role="assistant", content=response)
+            )
+        except Exception as exc:
+            log.error(
+                "[BRIDGE] _on_response_ready CRASH: %s\nFULL TRACEBACK:",
+                exc, exc_info=True
+            )
 
     def inject_vision_history(self, user_text: str, assistant_response: str):
         """Inject a vision exchange into conversation history.
@@ -7083,6 +7267,47 @@ Shell: PowerShell (use semicolons ; not &&)
         self._memory_dir   = None  # reset so _get_memory_dir() recomputes for new project
         self._cached_project_summary = None  # reset so _get_project_summary() rebuilds for new project
         log.info(f"[BRIDGE] project root → {path}")
+
+        # ── Restore chat context from DB for conversation continuity ──
+        # This MUST happen here (not in __init__) because _project_root
+        # is None during _hydrate_from_snapshot. Only restore once per
+        # session to avoid duplicate context on project switches.
+        if not self._chat_context_restored:
+            self._chat_context_restored = True
+            try:
+                from src.core.chat_history import get_chat_history
+                _history_mgr = get_chat_history()
+                _conversations = _history_mgr.get_conversations(path)
+                if _conversations:
+                    _latest_conv = _conversations[-1]
+                    _conv_id = _latest_conv.get('conversation_id', '')
+                    if _conv_id:
+                        _msgs = _history_mgr.get_messages(_conv_id, limit=200)
+                        _recent: List[Dict] = []
+                        for _m in reversed(_msgs):
+                            if _m.get('role') in ('user', 'assistant'):
+                                _recent.insert(0, _m)
+                                if len(_recent) >= 20:
+                                    break
+                        if _recent:
+                            _restored_count = 0
+                            for _m in _recent:
+                                _content = (_m.get('content') or '').strip()
+                                if not _content:
+                                    continue
+                                if len(_content) > 4000:
+                                    _content = _content[:4000] + '\n... [truncated on restore]'
+                                self._conversation_history.append(
+                                    ChatMessage(role=_m.get('role', 'user'), content=_content)
+                                )
+                                _restored_count += 1
+                            log.info(
+                                f'[SESSION] Restored {_restored_count} chat messages from DB '
+                                f'for conversation continuity (project: {path})'
+                            )
+            except Exception as _e:
+                log.warning(f'[SESSION] Failed to restore chat messages from DB: {_e}')
+
         try:
             _agent_set_project_root(path)
         except Exception:
@@ -7193,12 +7418,21 @@ Shell: PowerShell (use semicolons ; not &&)
 
 
 # ============================================================
-# FACTORY
+# FACTORY (Singleton)
 # ============================================================
 
-def get_agent_bridge(**kwargs: Any) -> CortexAgentBridge:
-    """Factory function — returns a ready CortexAgentBridge instance."""
-    return CortexAgentBridge(**kwargs)
+_AGENT_BRIDGE_INSTANCE: Optional[CortexAgentBridge] = None
+
+def get_agent_bridge(**kwargs: Any) -> Optional[CortexAgentBridge]:
+    """Return the singleton CortexAgentBridge instance.
+
+    Creates the instance on first call with kwargs (e.g. file_manager=...).
+    Subsequent calls return the same instance — no duplicate bridge init.
+    """
+    global _AGENT_BRIDGE_INSTANCE
+    if _AGENT_BRIDGE_INSTANCE is None:
+        _AGENT_BRIDGE_INSTANCE = CortexAgentBridge(**kwargs)
+    return _AGENT_BRIDGE_INSTANCE
 
 
 __all__ = [

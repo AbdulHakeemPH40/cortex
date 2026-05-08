@@ -20,7 +20,7 @@ Supported families (auto-detected by model_id substring matching):
 
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 import os
 
 # ---------------------------------------------------------------------------
@@ -123,70 +123,35 @@ class ModelLimits:
 # Patterns are tested in order; first match wins.
 # ---------------------------------------------------------------------------
 
-def _deepseek_max_output_tokens() -> int:
-    """Configurable DeepSeek output cap (default: 16384, override via env)."""
-    raw = os.environ.get("CORTEX_DEEPSEEK_MAX_OUTPUT_TOKENS", "32768")
-    try:
-        parsed = int(raw)
-        if parsed > 0:
-            return parsed
-    except Exception:
-        pass
-    return 16_384
-
-
-_DEEPSEEK_MAX_OUTPUT_TOKENS = _deepseek_max_output_tokens()
-
 # fmt: off
 _REGISTRY: List[Tuple[str, int, int]] = [
 
     # ── DeepSeek V4 / legacy aliases ─────────────────────────────────────────
     # DeepSeek V4 supports 1M context across all tiers.
-    ("deepseek-v4-pro",     1_000_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),
-    ("deepseek-v4-flash",   1_000_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),
-    ("deepseek-chat",       1_000_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),  # currently routed to V4 tier
-    ("deepseek-reasoner",   1_000_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),  # currently routed to V4 tier
-    ("deepseek",            1_000_000, _DEEPSEEK_MAX_OUTPUT_TOKENS),  # generic DeepSeek fallback
+    # Operational caps set for production agent systems:
+    #   Pro:   131K output (generous headroom for complex multi-file work)
+    #   Flash:  65K output (balanced speed/capacity for rapid iteration)
+    ("deepseek-v4-pro",     1_000_000, 131_072),
+    ("deepseek-v4-flash",   1_000_000,  65_536),
+    # ("deepseek-v4-pro",   1_000_000, 384_000),
+    # ("deepseek-v4-flash", 1_000_000, 384_000),
+    ("deepseek-chat",       1_000_000,  65_536),  # currently routed to V4 tier
+    ("deepseek-reasoner",   1_000_000,  65_536),  # currently routed to V4 tier
+    ("deepseek",            1_000_000,  65_536),  # generic DeepSeek fallback
 
-    # ── OpenAI GPT-5.x Series (Frontier) ───────────────────────────────────
+    # ── OpenAI GPT-5.4 Series (Budget-Friendly) ──────────────────────────
     ("gpt-5.4-nano",         400_000, 128_000),
     ("gpt-5.4-mini",         400_000, 128_000),
     ("gpt-5.4",            1_000_000, 128_000),
-    ("gpt-5.1-codex-mini",  200_000,  32_000),
-    ("gpt-5.1-codex",       200_000,  32_000),
-    ("gpt-5",               200_000,  32_000),   # generic gpt-5 fallback
 
     # ── OpenAI GPT-4.1 Series ─────────────────────────────────────────
-    ("gpt-4.1-nano",       1_000_000, 128_000),
-    ("gpt-4.1-mini",       1_000_000, 128_000),
-    ("gpt-4.1",            1_000_000, 128_000),
+    # Real output limit is 32,768 (confirmed via API error).
+    ("gpt-4.1-nano",       1_000_000,  32_768),
+    ("gpt-4.1-mini",       1_000_000,  32_768),
+    ("gpt-4.1",            1_000_000,  32_768),
 
-    # ── OpenAI GPT-4o ────────────────────────────────────────────────────────
+    # ── OpenAI GPT-4o Mini (Best Value) ───────────────────────────────────
     ("gpt-4o-mini",          128_000,  16_000),
-    ("gpt-4o",               128_000,  16_000),
-
-    # ── OpenAI GPT-4 Turbo ───────────────────────────────────────────────────
-    ("gpt-4-turbo",          128_000,   4_096),
-    ("gpt-4-32k",             32_000,   4_096),
-    ("gpt-4",                  8_192,   4_096),
-
-    # ── OpenAI GPT-3.5 ───────────────────────────────────────────────────────
-    ("gpt-3.5-turbo-16k",     16_384,   4_096),
-    ("gpt-3.5-turbo",         16_384,   4_096),
-    ("gpt-3.5",               16_384,   4_096),
-
-    # ── OpenAI o-series (reasoning models) ───────────────────────────────────
-    ("o3-mini",              200_000, 100_000),
-    ("o3",                   200_000, 100_000),
-    ("o1-mini",              128_000,  65_536),
-    ("o1-preview",           128_000,  32_768),
-    ("o1",                   200_000, 100_000),
-
-    # ── OpenAI GPT-5 (next-gen) ───────────────────────────────────────────────
-    # (Specific gpt-5.x entries are in the GPT-5.x section above)
-
-    # ── OpenAI Codex ─────────────────────────────────────────────────────────
-    ("codex",                200_000,  32_000),
 
     # ── Anthropic Claude 3.x ─────────────────────────────────────────────────
     ("claude-3-5-haiku",     200_000,   8_192),
@@ -251,8 +216,11 @@ _REGISTRY: List[Tuple[str, int, int]] = [
     ("yi",                   200_000,   4_096),
 
     # ── Kimi / Moonshot AI ───────────────────────────────────────────────────
-    ("kimi-k2.6",             262_144,  32_768),
-    ("kimi",                   262_144,  32_768),   # generic kimi fallback
+    # Kimi K2.6 supports 1M tokens per request with 262,144 context window.
+    # We register the full 1M budget so derived caps (tool/history/file/turns)
+    # are generous enough for complex multi-file agentic workflows.
+    ("kimi-k2.6",             1_000_000,  32_768),
+    ("kimi",                   1_000_000,  32_768),   # generic kimi fallback
 
     # ── SiliconFlow generic ───────────────────────────────────────────────────
     ("pro/deepseek",         128_000,   8_000),
@@ -312,6 +280,47 @@ def get_model_limits(model_id: str) -> ModelLimits:
         context_window=_DEFAULT_LIMITS.context_window,
         max_output_tokens=_DEFAULT_LIMITS.max_output_tokens,
     )
+
+
+# ---------------------------------------------------------------------------
+# Dynamic output cap escalation — auto-raises caps during auto-continue
+# ---------------------------------------------------------------------------
+
+# Escalation tiers per model (levels: 0=default, 1=moderate, 2=full)
+_ESCALATION_TABLE: Dict[str, Tuple[int, int, int]] = {
+    "deepseek-v4-pro":   (131_072, 256_000, 384_000),
+    "deepseek-v4-flash": ( 65_536,  96_000, 131_072),
+    "deepseek-chat":     ( 65_536,  96_000, 131_072),
+    "deepseek-reasoner": ( 65_536,  96_000, 131_072),
+    "deepseek":          ( 65_536,  96_000, 131_072),
+}
+
+
+def get_escalated_max_output_tokens(model_id: str, escalation_level: int = 0) -> int:
+    """Return the max_output_tokens for a model at a given escalation tier.
+
+    Used by agent_bridge to auto-raise output caps during auto-continue
+    cycles when the agent needs more headroom for large code generation.
+
+    Args:
+        model_id:         Model identifier (e.g. 'deepseek-v4-pro').
+        escalation_level: 0 = conservative default, 1 = moderate, 2 = full.
+
+    Returns:
+        Escalated max_output_tokens, clamped to the highest defined tier.
+        Falls back to the conservative base cap for unknown models.
+    """
+    if not model_id:
+        return _DEFAULT_LIMITS.max_output_tokens
+
+    needle = model_id.lower()
+    for pattern, tiers in _ESCALATION_TABLE.items():
+        if pattern in needle:
+            level = min(escalation_level, len(tiers) - 1)
+            return tiers[level]
+
+    # Unknown model — return its base cap from the registry
+    return get_model_limits(model_id).max_output_tokens
 
 
 # ---------------------------------------------------------------------------

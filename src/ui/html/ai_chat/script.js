@@ -1034,6 +1034,11 @@ function initBridge() {
             if (typeof window.syncSandboxToggleState === 'function') {
                 window.syncSandboxToggleState();
             }
+
+            // ── Sync AutoGen multi-agent banner state from bridge ──
+            if (typeof window.syncAutogenToggleState === 'function') {
+                window.syncAutogenToggleState();
+            }
             
             // Expose memory animation functions to bridge
             window.showMemorySaving = showMemorySavingAnimation;
@@ -1365,7 +1370,33 @@ document.addEventListener('DOMContentLoaded', function () {
     } else {
         console.error('[AutoGen] Banner or switch element not found!');
     }
-    
+
+    // ── Sync AutoGen banner state from bridge on page load ──
+    window.syncAutogenToggleState = function() {
+        if (!autogenBanner || !autogenBannerText) {
+            console.warn('[AutoGen] Banner elements not ready for sync');
+            return;
+        }
+        try {
+            if (bridge && typeof bridge.get_autogen_status === 'function') {
+                var status = bridge.get_autogen_status();
+                var enabled = status && status.enabled;
+                console.log('[AutoGen] Syncing banner from bridge: enabled=' + enabled);
+                if (enabled) {
+                    autogenBanner.classList.add('active');
+                    autogenBannerText.textContent = 'Multi-Agent: ON';
+                } else {
+                    autogenBanner.classList.remove('active');
+                    autogenBannerText.textContent = 'Multi-Agent: OFF';
+                }
+            } else {
+                console.warn('[AutoGen] Bridge.get_autogen_status not available');
+            }
+        } catch (e) {
+            console.error('[AutoGen] Sync error:', e);
+        }
+    };
+
     // Unified Security Toggle Handler (Sandbox + Auto Approval together)
     var securityBtn = document.getElementById('security-toggle');
     var containerStatusBadge = document.getElementById('container-status-badge');
@@ -1652,25 +1683,13 @@ document.addEventListener('DOMContentLoaded', function () {
             if (items[i].type && items[i].type.indexOf('image') !== -1) {
                 e.preventDefault();
                 
-                // Check if model supports vision
-                var selectedModel = document.getElementById('selected-model');
-                var modelText = selectedModel ? selectedModel.textContent : '';
-                var nonVisionModels = ['QwQ', 'Coder', 'Codestral'];
-                var isNonVision = nonVisionModels.some(function(m) { 
-                    return modelText.toLowerCase().includes(m.toLowerCase()); 
-                });
-                
-                if (isNonVision) {
-                    alert('NOTE: Image paste requires a vision-capable model.\n\n' +
-                          'Current model: ' + modelText + '\n\n' +
-                          'Please switch to a vision model like Qwen-VL or Mistral.');
-                    return;
-                }
-                
+                // Auto-detect image paste — Mistral handles OCR silently.
+                // Python routing uses Mistral for vision ONLY on this prompt,
+                // then falls back to user's selected model for the next prompt.
                 var file = items[i].getAsFile();
                 if (file) {
                     handleImageAttachment(file);
-                    console.log('[Cortex] Image pasted via Ctrl+V');
+                    console.log('[Cortex] Image pasted via Ctrl+V — Mistral OCR fallback for this prompt only');
                 }
                 break;
             }
@@ -2581,6 +2600,12 @@ function appendMessage(text, sender, shouldSave) {
     var emptyState = document.getElementById('empty-state');
     if (emptyState) emptyState.remove();
 
+    // ── Turn-container aware rendering ──
+    // If this is a user message during active generation, ensure turn exists
+    if (sender === 'user' && !_currentTurn) {
+        _beginTurn();
+    }
+
     // Use DocumentFragment for batch DOM operations
     var fragment = document.createDocumentFragment();
     var bubble = document.createElement('div');
@@ -2594,6 +2619,10 @@ function appendMessage(text, sender, shouldSave) {
         var chipMeta = window._pendingChipMeta || [];
         window._pendingChipMeta = null;
 
+        // ── Column wrapper keeps images + chips + text stacked vertically ──
+        var row = document.createElement('div');
+        row.className = 'user-msg-row';
+
         // Render image thumbnails as chips in the user bubble
         if (pendingImages && pendingImages.length > 0) {
             var imgChipsHtml = '<div class="message-image-chips">';
@@ -2606,7 +2635,7 @@ function appendMessage(text, sender, shouldSave) {
                     '</div>';
             }
             imgChipsHtml += '</div>';
-            bubble.insertAdjacentHTML('beforeend', imgChipsHtml);
+            row.insertAdjacentHTML('beforeend', imgChipsHtml);
         }
 
         if (chipMeta.length > 0) {
@@ -2642,21 +2671,23 @@ function appendMessage(text, sender, shouldSave) {
             chipsHtml += '</div>';
             
             // Use insertAdjacentHTML for better performance than innerHTML
-            bubble.insertAdjacentHTML('beforeend', chipsHtml);
+            row.insertAdjacentHTML('beforeend', chipsHtml);
 
             // Add remaining text if any
             if (displayText) {
                 var content = document.createElement('div');
-                content.className = 'message-content';
+                content.className = 'user-text-wrap';
                 content.textContent = displayText;
-                bubble.appendChild(content);
+                row.appendChild(content);
             }
         } else {
             var content = document.createElement('div');
-            content.className = 'message-content';
+            content.className = 'user-text-wrap';
             content.textContent = text;
-            bubble.appendChild(content);
+            row.appendChild(content);
         }
+
+        bubble.appendChild(row);
     } else {
         var parsedHtml = '';
         try {
@@ -2721,8 +2752,25 @@ function appendMessage(text, sender, shouldSave) {
         }
     }
 
-    fragment.appendChild(bubble);
-    container.appendChild(fragment);
+    // ── Turn-container aware placement ──
+    if (sender === 'user' && _currentTurn && document.body.contains(_currentTurn)) {
+        // Nest user bubble inside the turn container as first child
+        _currentTurn.insertBefore(bubble, _currentTurn.firstChild);
+        bubble.classList.add('turn-user-bubble');
+    } else if (sender === 'assistant' && _currentTurn && document.body.contains(_currentTurn)) {
+        // Nest assistant content inside turn-ai-response
+        var aiResponse = _currentTurn.querySelector('.turn-ai-response');
+        if (aiResponse) {
+            aiResponse.innerHTML = '';
+            aiResponse.appendChild(bubble);
+        } else {
+            container.appendChild(bubble);
+        }
+    } else {
+        // Legacy path: history restore or outside of a turn
+        fragment.appendChild(bubble);
+        container.appendChild(fragment);
+    }
     
     // Defer scroll and MathJax/Mermaid to next frame
     requestAnimationFrame(function() {
@@ -3236,6 +3284,9 @@ function stopGeneration() {
     // Mark stop so the Python-fired onComplete is ignored
     _stopRequested = true;
 
+    // Collapse turn processing block with current stats
+    _endTurn();
+
     // Immediate UI cleanup (don't call onComplete - Python will fire it later)
     removeThinkingIndicator();
     hideThinking();
@@ -3258,18 +3309,21 @@ var currentPlan = "";
 var currentTasks = "";
 var currentWalkthrough = "";
 
-// Cortex Activity Cards - Cursor Step-Block Design
-// Each tool/operation renders as a flat step-block card directly inside the AI message bubble
-// No parent wrapper — cards are flat siblings matching Cursor's .step-block pattern
+// Cortex Activity Cards — Nested Turn-Container System
+// Each user→AI exchange forms a .turn-container with:
+//   .turn-user-bubble → .turn-processing-block → .turn-ai-response
+// Tool cards render inside .turn-processing-body, nested under the AI turn.
 var activityStartTime = null;
 var thinkingInterval = null;
 var currentActivitySection = null; // kept for backward compat, unused by new system
-var _caGroup = null;             // direct reference to the message container (not a wrapper)
+var _caGroup = null;             // points to .turn-processing-body (the card host inside current turn)
+var _currentTurn = null;         // current .turn-container DOM element
 var _caCardStagger = 0;           // cascading entrance delay counter per turn
 var _caStats = { reads: 0, edits: 0, searches: 0, thoughts: 0, commands: 0 };
 var _caFileCount = 0;
 var _caSeenFileKeys = Object.create(null);
 var _caThoughtFlushTimer = null;
+var _turnStartTime = null;        // timestamp when turn began (for elapsed display)
 
 // ── Helpers ──────────────────────────────────────────────
 function _caFindCard(type, key) {
@@ -3317,44 +3371,170 @@ function _caTrackUniqueFile(pathLike) {
     _caFileCount++;
 }
 
-// ── Ensure Activity Container (no wrapper) ────────────────
-function _caEnsureGroup(container) {
-    if (!_caGroup || !document.body.contains(_caGroup)) {
-        _caGroup = null;
-        _caCardStagger = 0;
-        _caFileCount = 0;
-        _caStats = { reads: 0, edits: 0, searches: 0, thoughts: 0, commands: 0 };
-        _caSeenFileKeys = Object.create(null);
+// ── Begin Turn: create .turn-container for a user→AI exchange ──
+function _beginTurn() {
+    var container = document.getElementById('chatMessages');
+    if (!container) return null;
+
+    // Reset tracking for new turn
+    _caCardStagger = 0;
+    _caFileCount = 0;
+    _caStats = { reads: 0, edits: 0, searches: 0, thoughts: 0, commands: 0 };
+    _caSeenFileKeys = Object.create(null);
+    _turnStartTime = Date.now();
+
+    // Create turn container
+    var turn = document.createElement('div');
+    turn.className = 'turn-container';
+
+    // Create processing block (initially empty, hidden)
+    var procBlock = document.createElement('div');
+    procBlock.className = 'turn-processing-block no-cards';
+    procBlock.innerHTML =
+        '<div class="turn-processing-summary">' +
+            '<svg class="summary-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
+            '<span class="summary-text"></span>' +
+            '<span class="summary-elapsed"></span>' +
+        '</div>' +
+        '<div class="turn-processing-body"></div>';
+
+    // Summary click toggles expand/collapse
+    var summary = procBlock.querySelector('.turn-processing-summary');
+    summary.onclick = function(e) {
+        e.stopPropagation();
+        var block = summary.parentElement;
+        var body = block.querySelector('.turn-processing-body');
+        if (block.classList.contains('expanded')) {
+            // Collapse
+            if (body) {
+                body.style.maxHeight = body.scrollHeight + 'px';
+                body.offsetHeight;
+                body.style.maxHeight = '0px';
+            }
+            block.classList.remove('expanded');
+        } else {
+            // Expand
+            block.classList.add('expanded');
+            if (body) {
+                body.style.maxHeight = '0px';
+                body.offsetHeight;
+                body.style.maxHeight = Math.min(body.scrollHeight, 1200) + 'px';
+                var onEnd = function() {
+                    body.style.maxHeight = '';
+                    body.removeEventListener('transitionend', onEnd);
+                };
+                body.addEventListener('transitionend', onEnd);
+            }
+        }
+    };
+
+    // Create AI response placeholder
+    var aiResponse = document.createElement('div');
+    aiResponse.className = 'turn-ai-response';
+
+    turn.appendChild(procBlock);
+    turn.appendChild(aiResponse);
+
+    // Store references
+    _currentTurn = turn;
+    _caGroup = procBlock.querySelector('.turn-processing-body');
+
+    container.appendChild(turn);
+    return turn;
+}
+
+// ── End Turn: collapse processing block, show summary stats ──
+function _endTurn() {
+    if (!_currentTurn) return;
+
+    var procBlock = _currentTurn.querySelector('.turn-processing-block');
+    if (!procBlock) return;
+
+    var summaryText = procBlock.querySelector('.summary-text');
+    var elapsedEl = procBlock.querySelector('.summary-elapsed');
+    var body = procBlock.querySelector('.turn-processing-body');
+
+    // Build summary HTML with colored dot indicators
+    var dotParts = [];
+    var dotType = function(cls, label, count) {
+        return '<span class="summary-dot ' + cls + '"></span> ' + count + ' ' + label;
+    };
+    if (_caStats.reads > 0) dotParts.push(dotType('dot-read', 'file' + (_caStats.reads > 1 ? 's' : '') + ' read', _caStats.reads));
+    if (_caStats.edits > 0) dotParts.push(dotType('dot-edit', 'file' + (_caStats.edits > 1 ? 's' : '') + ' edited', _caStats.edits));
+    if (_caStats.searches > 0) dotParts.push(dotType('dot-search', 'search' + (_caStats.searches > 1 ? 'es' : ''), _caStats.searches));
+    if (_caStats.thoughts > 0) dotParts.push(dotType('dot-think', 'thought' + (_caStats.thoughts > 1 ? 's' : ''), _caStats.thoughts));
+    if (_caStats.commands > 0) dotParts.push(dotType('dot-run', 'command' + (_caStats.commands > 1 ? 's' : ''), _caStats.commands));
+
+    // Elapsed time
+    var elapsedSec = _turnStartTime ? Math.round((Date.now() - _turnStartTime) / 100) / 10 : 0;
+    var elapsedStr = elapsedSec >= 60
+        ? Math.floor(elapsedSec / 60) + 'm ' + Math.round(elapsedSec % 60) + 's'
+        : elapsedSec + 's';
+
+    if (dotParts.length > 0) {
+        if (summaryText) summaryText.innerHTML = dotParts.join('  ·  ');
+        if (elapsedEl) elapsedEl.textContent = elapsedStr;
+        procBlock.classList.remove('no-cards');
+
+        // Collapse processing block
+        procBlock.classList.remove('expanded');
+        if (body) {
+            body.style.maxHeight = '0px';
+        }
+    } else {
+        // No tool cards — keep processing block hidden
+        procBlock.classList.add('no-cards');
     }
+
+    // Clear current turn reference
+    _currentTurn = null;
+    _caGroup = null;
+}
+
+// ── Ensure Activity Container (points to processing body of current turn) ──
+function _caEnsureGroup(container) {
+    // If no current turn or processing body, try to re-resolve from DOM
+    if (!_caGroup || !document.body.contains(_caGroup)) {
+        if (_currentTurn && document.body.contains(_currentTurn)) {
+            _caGroup = _currentTurn.querySelector('.turn-processing-body');
+        }
+    }
+    // If still no group, begin a new turn
     if (!_caGroup) {
-        // No wrapper — _caGroup is just the message container itself
-        _caGroup = container;
+        _beginTurn();
+        _caGroup = _currentTurn ? _currentTurn.querySelector('.turn-processing-body') : null;
     }
     return _caGroup;
 }
 
-// _caCreateGroup removed — cards render directly as flat step-block siblings
-
-// ── No-op header (no parent group header in flat Cursor design) ──
+// ── No-op header (summary is handled by _endTurn) ──
 function _caUpdateGroupHeader() {
-    // No parent group header in flat step-block design
+    // Summary updates happen in _endTurn()
 }
 
-// ── Helper: insert ca-card BEFORE currentAssistantMessage so cards flow above AI text ──
+// ── Helper: insert ca-card into processing body ──
 function _caInsertCard(card) {
-    var container = document.getElementById('chatMessages');
-    if (!container) return;
-    // If an assistant bubble already exists, insert cards above it
-    // so the design flows: cards above → AI response below
-    if (currentAssistantMessage && document.body.contains(currentAssistantMessage) && currentAssistantMessage.parentNode === container) {
-        container.insertBefore(card, currentAssistantMessage);
-    } else {
-        container.appendChild(card);
+    var group = _caGroup;
+    if (!group) return;
+
+    // Show processing block if it was hidden
+    var procBlock = group.closest('.turn-processing-block');
+    if (procBlock && procBlock.classList.contains('no-cards')) {
+        procBlock.classList.remove('no-cards');
+    }
+
+    // Append card into processing body
+    group.appendChild(card);
+
+    // Auto-expand processing block while cards are being added (during streaming)
+    if (procBlock && !procBlock.classList.contains('expanded')) {
+        procBlock.classList.add('expanded');
+        group.style.maxHeight = 'none';
     }
 }
 
 function _caMarkGroupComplete() {
-    // No parent group to mark complete in flat step-block design
+    // Completion is handled by _endTurn()
 }
 
 // ── Main Tool Activity Router ────────────────────────────
@@ -5173,7 +5353,20 @@ function showThinking() {
         content.className = 'message-content';
         currentAssistantMessage.appendChild(content);
         currentContent = '';
-        container.appendChild(currentAssistantMessage);
+        
+        // Place inside turn-ai-response if turn exists
+        if (_currentTurn && document.body.contains(_currentTurn)) {
+            var aiResponse = _currentTurn.querySelector('.turn-ai-response');
+            if (aiResponse) {
+                aiResponse.innerHTML = '';
+                aiResponse.appendChild(currentAssistantMessage);
+            } else {
+                container.appendChild(currentAssistantMessage);
+            }
+        } else {
+            container.appendChild(currentAssistantMessage);
+        }
+        
         var emptyState = document.getElementById('empty-state');
         if (emptyState) emptyState.remove();
     }
@@ -5206,18 +5399,23 @@ function hideThinking() {
 }
 
 function clearActivitySection() {
-    // Remove all activity cards from the flat step-block system
-    if (_caGroup) {
-        _caGroup.remove();
-        _caGroup = null;
+    // Clear tool cards from the current turn's processing body
+    if (_currentTurn && document.body.contains(_currentTurn)) {
+        var body = _currentTurn.querySelector('.turn-processing-body');
+        if (body) body.innerHTML = '';
+        var block = _currentTurn.querySelector('.turn-processing-block');
+        if (block) block.classList.add('no-cards');
     }
+    _caGroup = null;
+    _caStats = { reads: 0, edits: 0, searches: 0, thoughts: 0, commands: 0 };
 }
 
-// Collapse (not remove) activity cards on completion — Cursor flat step-block style
+// Collapse (not remove) activity cards on completion — delegates to turn system
 function collapseActivitySection() {
-    // No wrapper to collapse in flat Cursor step-block design — just null the reference
-    if (_caGroup) {
-        _caMarkGroupComplete();
+    // Delegate to _endTurn if we have an active turn, otherwise just null refs
+    if (_currentTurn && document.body.contains(_currentTurn)) {
+        _endTurn();
+    } else {
         _caGroup = null;
     }
 }
@@ -5402,16 +5600,28 @@ function startStreaming() {
     // NOTE: We no longer clear todos here - todos persist until explicitly completed
     // The AI will send new todos via updateTodos() if needed, which will merge with existing
     
-    // Create new assistant message bubble
+    // ── Turn-container: create assistant content inside turn-ai-response ──
     if (!currentAssistantMessage) {
-        console.log('[JS] Creating new assistant message bubble');
+        console.log('[JS] Creating new assistant message in turn container');
         currentAssistantMessage = document.createElement('div');
         currentAssistantMessage.className = 'message-bubble assistant';
         var content = document.createElement('div');
         content.className = 'message-content';
         currentAssistantMessage.appendChild(content);
-        container.appendChild(currentAssistantMessage);
         currentContent = "";
+        
+        // Place inside turn-ai-response if turn exists, otherwise append to chatMessages
+        if (_currentTurn && document.body.contains(_currentTurn)) {
+            var aiResponse = _currentTurn.querySelector('.turn-ai-response');
+            if (aiResponse) {
+                aiResponse.innerHTML = '';
+                aiResponse.appendChild(currentAssistantMessage);
+            } else {
+                container.appendChild(currentAssistantMessage);
+            }
+        } else {
+            container.appendChild(currentAssistantMessage);
+        }
         
         // Remove empty state if present
         var emptyState = document.getElementById('empty-state');
@@ -5909,8 +6119,7 @@ function normalizeMarkdownText(text) {
     // Guard: skip complex processing for very large text to prevent stack overflow
     if (text.length > 200000) {
         text = text.replace(/\r\n/g, '\n');
-        text = text.replace(/\n{4,}/g, '\n\n\n');
-        return text;
+         text = text.replace(/\n{4,}/g, '\n\n\n');
     }
 
     // ========== STAGE 1: Safe sanitation ==========
@@ -6027,6 +6236,7 @@ function normalizeMarkdownText(text) {
 
     // Limit blank lines.
     text = text.replace(/\n{4,}/g, '\n\n\n');
+  
         
     return text;
 }
@@ -6137,6 +6347,13 @@ function updateStreamingUI() {
 
         // Ensure html is never undefined or null
         if (!html) html = cleanText || '';
+
+        // -- Fallback: catch any **bold** / __bold__ / *italic* that survived
+        //    the markdown pipeline unprocessed (edge cases, content-type routing)
+        html = html.replace(/<p>\*\*(.+?)\*\*<\/p>/g, '<p><strong>$1</strong></p>');
+        html = html.replace(/<li>\*\*(.+?)\*\*<\/li>/g, '<li><strong>$1</strong></li>');
+        html = html.replace(/(?<!<strong>)(?<!<em>)(?<!["=\w>])\*\*(.+?)\*\*(?!<\/strong>)(?!["=])/g, '<strong>$1</strong>');
+        html = html.replace(/(?<!<strong>)(?<!<em>)(?<![\w>])__(.+?)__(?!<\/strong>)/g, '<strong>$1</strong>');
 
         // Highlight file creation mentions
         html = highlightFileCreations(html);
@@ -6559,6 +6776,9 @@ function onComplete(fullText) {
     } else {
         console.warn('[CHAT] onComplete: currentAssistantMessage is null!');
     }
+
+    // -- Collapse turn processing block, show summary stats ---------
+    _endTurn();
 
     // -- Show task completion summary ---------------------------------
     showTaskCompletionSummary();
@@ -7276,7 +7496,8 @@ function renderImageAttachmentChips() {
         preview.className = 'image-attachment-preview';
         preview.setAttribute('role', 'group');
         preview.setAttribute('aria-label', 'Image attachments');
-        inputContainer.parentNode.insertBefore(preview, inputContainer.nextSibling);
+        // Insert INSIDE input-container at the top, above the textarea
+        inputContainer.insertBefore(preview, inputContainer.firstChild);
     }
 
     // Rebuild chips (keeps logic simple and avoids index mismatch on removals).
