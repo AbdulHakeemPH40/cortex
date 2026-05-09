@@ -1490,83 +1490,6 @@ class SearchPanel(QWidget):
             self.file_opened.emit(data[0], data[1])
 
 
-class GitPanel(QWidget):
-    """Full-featured Source Control panel — VS Code standard.
-    Wraps GitPanelWidget from git_ui.py with GitManager for complete
-    git integration: staging, commits, diffs, branches, push/pull.
-    """
-    file_opened = pyqtSignal(str)
-
-    def __init__(self, git_manager=None, parent=None):
-        super().__init__(parent)
-        self._is_dark = True
-        self._git_manager = git_manager
-        self._git_widget = None
-        self._no_repo_label = None
-        self._build_ui()
-
-    def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        if self._git_manager:
-            # Full-featured GitPanelWidget from git_ui.py
-            from src.ui.components.git_ui import GitPanelWidget
-            self._git_widget = GitPanelWidget(self._git_manager, self)
-            layout.addWidget(self._git_widget)
-        else:
-            # Fallback placeholder when no GitManager provided
-            self._no_repo_label = QLabel("No repository detected")
-            self._no_repo_label.setWordWrap(True)
-            self._no_repo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._no_repo_label.setStyleSheet("font-size:12px; color:#858585; padding: 20px;")
-            layout.addWidget(self._no_repo_label)
-
-    def set_git_manager(self, git_manager):
-        """Set or replace the GitManager (called when project opens)."""
-        self._git_manager = git_manager
-        # Rebuild UI with the real widget
-        if self._git_widget is None and git_manager is not None:
-            # Remove placeholder
-            if self._no_repo_label:
-                self._no_repo_label.setParent(None)
-                self._no_repo_label.deleteLater()
-                self._no_repo_label = None
-            from src.ui.components.git_ui import GitPanelWidget
-            self._git_widget = GitPanelWidget(git_manager, self)
-            self.layout().addWidget(self._git_widget)
-            self._git_widget.set_theme(self._is_dark)
-        elif self._git_widget is not None:
-            self._git_widget.git = git_manager
-
-    def refresh(self):
-        """Refresh git status display."""
-        if self._git_widget:
-            self._git_widget.refresh()
-
-    def set_repository(self, path: str) -> bool:
-        """Set repository path and refresh."""
-        if self._git_manager:
-            result = self._git_manager.set_repository(path)
-            if result:
-                self.refresh()
-            return result
-        return False
-
-    def set_theme(self, is_dark: bool):
-        self._is_dark = is_dark
-        if self._git_widget:
-            self._git_widget.set_theme(is_dark)
-        if self._no_repo_label:
-            color = "#858585" if is_dark else "#666666"
-            self._no_repo_label.setStyleSheet(f"font-size:12px; color:{color}; padding: 20px;")
-
-    def set_repo_info(self, branch: str = "", changes: list = None):
-        """Legacy API compat — refresh handles this now."""
-        self.refresh()
-
-
 class AIToolsPanel(QWidget):
     """AI quick-action panel in the sidebar."""
     action_requested = pyqtSignal(str)  # action name
@@ -1909,9 +1832,8 @@ class SidebarWidget(QWidget):
         self._panels_info = [
             ("explorer", "Explorer", 0),
             ("search-panel", "Search", 1),
-            ("source-control", "Source Control", 2),
-            ("ai-panel", "AI Tools", 3),
-            ("changed-files-panel", "Changed Files", 4),
+            ("ai-panel", "AI Tools", 2),
+            ("changed-files-panel", "Changed Files", 3),
         ]
         for icon_name, tooltip, idx in self._panels_info:
             btn = QPushButton()
@@ -1941,15 +1863,13 @@ class SidebarWidget(QWidget):
         self._stack = QStackedWidget()
         self._explorer = FileExplorerPanel(self._file_manager)
         self._search = SearchPanel()
-        self._git_panel = GitPanel(git_manager=self._git_manager)
         self._ai_tools = AIToolsPanel()
         self._changed_files = ChangedFilesPanel()
 
         self._stack.addWidget(self._explorer)       # 0
         self._stack.addWidget(self._search)          # 1
-        self._stack.addWidget(self._git_panel)       # 2
-        self._stack.addWidget(self._ai_tools)        # 3
-        self._stack.addWidget(self._changed_files)   # 4
+        self._stack.addWidget(self._ai_tools)        # 2
+        self._stack.addWidget(self._changed_files)   # 3
         layout.addWidget(self._stack)
 
         # Connect signals
@@ -1979,8 +1899,6 @@ class SidebarWidget(QWidget):
     def set_project(self, folder_path: str):
         self._explorer.set_project(folder_path)
         self._search.set_root(folder_path)
-        # Initialize git for this project
-        self._git_panel.set_repository(folder_path)
 
     def is_explorer_focused(self) -> bool:
         return self._explorer.is_tree_focused()
@@ -1991,7 +1909,6 @@ class SidebarWidget(QWidget):
     def set_theme(self, is_dark: bool):
         self._explorer.set_theme(is_dark)
         self._search.set_theme(is_dark)
-        self._git_panel.set_theme(is_dark)
         self._ai_tools.set_theme(is_dark)
         self._changed_files.set_theme(is_dark)
         
@@ -2044,10 +1961,9 @@ class SidebarWidget(QWidget):
         self._explorer.restore_expanded_paths(paths)
 
     def refresh(self):
-        """Refresh the file explorer and git panel to reflect changes."""
+        """Refresh the file explorer to reflect changes."""
         if hasattr(self._explorer, '_refresh_explorer'):
             self._explorer._refresh_explorer()
-        self._git_panel.refresh()
 
 
     def get_ai_model(self) -> str:

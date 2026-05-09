@@ -1358,12 +1358,11 @@ class CortexMainWindow(QMainWindow):
         # self._command_palette = CommandPalette(self)
         # self._command_palette.command_selected.connect(self._on_command_selected)
 
-        # === KEEP SIDEBAR & OLD COMPONENTS (Hidden but available) ===
-        # These are kept for backward compatibility and can be shown via commands
+        # === SIDEBAR BACKEND COMPONENT (hidden) ===
+        # SidebarWidget provides file explorer, git, search, AI tools signals/methods.
+        # It is NEVER shown directly — the left sidebar in the splitter is the UI.
         self._sidebar = SidebarWidget(self._file_manager, git_manager=self._git_manager)
-        self._sidebar.setVisible(False)  # Hidden by default in AI-first mode
-        self._sidebar.setMinimumWidth(44)
-        self._sidebar.setMaximumWidth(700)
+        self._sidebar.setVisible(False)
 
         # Initialize project info on welcome screen
         self._update_welcome_project_info()
@@ -2652,36 +2651,11 @@ class CortexMainWindow(QMainWindow):
         self._add_action(edit_menu, "Move Line Up", self._move_line_up, "Alt+Up")
         self._add_action(edit_menu, "Move Line Down", self._move_line_down, "Alt+Down")
 
-        # Navigation
-        nav_menu = mb.addMenu("Navigation")
-        self._add_action(nav_menu, "Quick Open File...", self._quick_open, "Ctrl+P")
-        self._add_action(nav_menu, "Go to Symbol...", self._go_to_symbol, "Ctrl+Shift+O")
-        nav_menu.addSeparator()
-        self._add_action(nav_menu, "Close Tab", self._close_current_tab, "Ctrl+W")
-        self._add_action(nav_menu, "Close All Tabs", self._close_all_tabs, "Ctrl+Shift+W")
-        nav_menu.addSeparator()
-        self._add_action(nav_menu, "Next Tab", self._next_tab, "Ctrl+Tab")
-        self._add_action(nav_menu, "Previous Tab", self._prev_tab, "Ctrl+Shift+Tab")
-        nav_menu.addSeparator()
-        self._add_action(nav_menu, "Previous Chat", self._previous_chat, "Ctrl+Shift+[")
-        self._add_action(nav_menu, "Next Chat", self._next_chat, "Ctrl+Shift+]")
-        self._add_action(nav_menu, "Back", self._navigate_back, "Ctrl+[")
-        self._add_action(nav_menu, "Forward", self._navigate_forward, "Ctrl+]")
-        nav_menu.addSeparator()
-        self._add_action(nav_menu, "Keyboard Shortcuts Help", self._show_shortcuts_help, "Ctrl+Alt+K")
-
         # View
         view_menu = mb.addMenu("View")
-        self._add_action(view_menu, "Toggle Theme", self._toggle_theme, "Ctrl+Shift+T")
-        self._add_action(view_menu, "Toggle Terminal", self._toggle_terminal, "Ctrl+J")
-        view_menu.addSeparator()
         self._add_action(view_menu, "Toggle Sidebar", self._toggle_sidebar, "Ctrl+B")
         self._add_action(view_menu, "Toggle File Tree", self._toggle_file_tree, "Ctrl+Shift+I")
         self._add_action(view_menu, "Toggle Review Panel", self._toggle_review_panel_menu, "Alt+Ctrl+B")
-        view_menu.addSeparator()
-        self._add_action(view_menu, "Zoom In", self._zoom_in, "Ctrl++")
-        self._add_action(view_menu, "Zoom Out", self._zoom_out, "Ctrl+-")
-        self._add_action(view_menu, "Reset Zoom", self._zoom_reset, "Ctrl+0")
         view_menu.addSeparator()
         self._add_action(view_menu, "Toggle Full Screen", self._toggle_fullscreen, "F11")
 
@@ -4726,11 +4700,13 @@ class CortexMainWindow(QMainWindow):
         self._left_sidebar_hidden = not show
 
     def _toggle_sidebar(self):
-        """Toggle sidebar visibility (hidden by default in AI-first mode)"""
-        visible = self._sidebar.isVisible()
-        self._sidebar.setVisible(not visible)
-        if self._sidebar.isVisible():
-            self._sidebar.setFocus()
+        """Toggle left sidebar via splitter (Ctrl+B).
+        
+        Toggles the left sidebar panel embedded in the main splitter,
+        matching the toolbar toggle behavior.
+        """
+        hidden = getattr(self, '_left_sidebar_hidden', False)
+        self._toggle_left_sidebar(show=hidden)
 
     def _toggle_file_tree_panel(self, show: bool = True):
         """Toggle file tree panel via splitter (Ctrl+Shift+I)."""
@@ -4750,11 +4726,12 @@ class CortexMainWindow(QMainWindow):
         self._file_tree_hidden = not show
 
     def _toggle_file_tree(self):
-        """Toggle File Tree panel visibility (Ctrl+Shift+I)."""
-        if hasattr(self, '_file_tree_panel'):
-            visible = self._file_tree_panel.isVisible()
-            self._file_tree_panel.setVisible(not visible)
-            self._file_tree_hidden = not visible
+        """Toggle File Tree panel via splitter (Ctrl+Shift+I).
+        
+        Delegates to the splitter-based toggle matching toolbar behavior.
+        """
+        hidden = getattr(self, '_file_tree_hidden', False)
+        self._toggle_file_tree_panel(show=hidden)
 
     def _toggle_ai_chat_panel(self, show: bool = True):
         """Toggle AI chat panel via splitter."""
@@ -4791,11 +4768,12 @@ class CortexMainWindow(QMainWindow):
         self._review_panel_hidden = not show
 
     def _toggle_review_panel_menu(self):
-        """Toggle Review panel visibility (Alt+Ctrl+B) — menu bar action."""
-        if hasattr(self, '_review_panel'):
-            visible = self._review_panel.isVisible()
-            self._review_panel.setVisible(not visible)
-            self._review_panel_hidden = not visible
+        """Toggle Review panel via splitter (Alt+Ctrl+B) — menu bar action.
+        
+        Delegates to the splitter-based toggle matching toolbar behavior.
+        """
+        hidden = getattr(self, '_review_panel_hidden', False)
+        self._toggle_review_panel(show=hidden)
 
     def _toggle_summary_panel(self, show: bool = True):
         """Toggle summary panel visibility (switch between Summary and Review tabs)."""
@@ -4810,16 +4788,8 @@ class CortexMainWindow(QMainWindow):
         self._summary_panel_hidden = not show
 
     def _toggle_git_panel(self, show: bool = True):
-        """Toggle git panel visibility — implemented as a panel-level toggle."""
-        if show:
-            # Expand review panel to show git content
-            if hasattr(self, '_review_panel'):
-                self._review_panel.setVisible(True)
-                self._review_panel_hidden = False
-        else:
-            if hasattr(self, '_review_panel'):
-                self._review_panel.setVisible(False)
-                self._review_panel_hidden = True
+        """Toggle git panel via review panel splitter."""
+        self._toggle_review_panel(show=show)
         self._git_panel_hidden = not show
 
     def _toggle_fullscreen(self):
