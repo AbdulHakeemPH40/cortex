@@ -3293,12 +3293,12 @@ Shell: PowerShell (use semicolons ; not &&)
                             elif isinstance(chunk, str) and chunk.startswith("__REASONING_DELTA__:"):
                                 _reason_chunk = chunk[len("__REASONING_DELTA__:"):]
                                 turn_reasoning += _reason_chunk
-                                # Reasoning content is stored in turn_text (message history)
-                                # and streamed to the thought card UI via tool_activity.
-                                # It is NOT added to full_response — the displayed response
-                                # must only contain the actual AI output, not internal monologue.
-                                turn_text     += _reason_chunk
-                                # Reasoning streams to the thought container ONLY (tool_activity).
+                                # Reasoning is stored in turn_reasoning (→ reasoning_content in
+                                # the assistant message). It is NOT added to turn_text or
+                                # full_response — doing so would leak internal monologue into the
+                                # conversation history, causing the AI to see its own thoughts as
+                                # prior output and hallucinate/repeat them on subsequent turns.
+                                # Reasoning streams to the thought card UI ONLY (tool_activity).
                                 try:
                                     self._safe_emit(
                                         self.tool_activity,
@@ -3427,7 +3427,7 @@ Shell: PowerShell (use semicolons ; not &&)
                     
                     _has_pending_todos = len(self._current_todos) > 0
                     _todos_all_done = all(
-                        t.get("status") in ("completed", "cancelled") 
+                        str(t.get("status", "")).upper() in ("COMPLETE", "CANCELLED") 
                         for t in self._current_todos
                     ) if self._current_todos else True
                     
@@ -3457,7 +3457,7 @@ Shell: PowerShell (use semicolons ; not &&)
                     if _has_mutated and _has_pending_todos and not _todos_all_done:
                         _pending_count = sum(
                             1 for t in self._current_todos 
-                            if t.get("status") not in ("completed", "cancelled")
+                            if str(t.get("status", "")).upper() not in ("COMPLETE", "CANCELLED")
                         )
                         log.warning(
                             f"[BRIDGE] AI tried to exit with {_pending_count} pending todos. " +
@@ -3470,7 +3470,7 @@ Shell: PowerShell (use semicolons ; not &&)
                             "3. Test the result (use Bash to run/test if needed)\n" +
                             "4. Only then can you end the conversation\n\n" +
                             "Pending tasks:\n" +
-                            "\n".join(f"  - {t['content']} [{t.get('status', 'pending')}]" for t in self._current_todos if t.get("status") not in ("completed", "cancelled"))
+                            "\n".join(f"  - {t['content']} [{t.get('status', 'pending')}]" for t in self._current_todos if str(t.get("status", "")).upper() not in ("COMPLETE", "CANCELLED"))
                         )
                         messages.append(PCM(role="user", content=_verify_msg))
                         continue
@@ -4057,13 +4057,14 @@ Shell: PowerShell (use semicolons ; not &&)
         try:
             from PyQt6.sip import isdeleted
             if isdeleted(self):
+                import logging; logging.getLogger('Cortex').warning(f"[BRIDGE] _safe_emit: object deleted, dropping signal")
                 return
         except ImportError:
             pass  # sip not available, assume object is alive
         try:
             signal.emit(*args)
-        except (RuntimeError, AttributeError):
-            pass  # C++ object deleted during emit, or signal not properly bound
+        except (RuntimeError, AttributeError) as exc:
+            import logging; logging.getLogger('Cortex').warning(f"[BRIDGE] _safe_emit failed: {exc}")
 
     def _build_activity_info(
         self, activity: str, tool_name: str, args: Dict[str, Any],
@@ -7038,7 +7039,9 @@ Shell: PowerShell (use semicolons ; not &&)
 
     def _on_response_ready(self, response: str):
         try:
+            log.info(f"[BRIDGE] _on_response_ready: response={repr(response)[:120]}, len={len(response) if response else 0}")
             self.response_complete.emit(response)
+            log.info("[BRIDGE] _on_response_ready: response_complete.emit() DONE")
             if self._streaming:
                 try:
                     self._streaming.emit_llm_complete(response)

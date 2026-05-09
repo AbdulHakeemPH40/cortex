@@ -327,28 +327,15 @@ def _write_chat_summary_memory(project_root: str, conversation_id: str, title: s
         from src.ai.providers import ChatMessage, ProviderType, get_provider_registry
 
         settings = get_settings()
-        provider_name = (settings.get("ai", "provider") or "deepseek").strip().lower()
+        # CRITICAL: Always use DeepSeek provider for chat summarization.
+        # The summarization model is hardcoded to deepseek-v4-flash (fast, cheap,
+        # rarely rate-limited). Using the user's current provider (e.g. Kimi) with
+        # a DeepSeek model ID would cause 404 errors (model not found on that API).
+        provider_type = ProviderType.DEEPSEEK
         # Use a lightweight model for summarization to avoid rate-limit conflicts
         # with the user's active model. deepseek-v4-flash is fast, cheap, and
-        # rarely rate-limited. Fall back to whatever model_id is configured.
-        _raw_model = "deepseek-v4-flash"
-        try:
-            _configured = (settings.get("ai", "model_id") or settings.get("ai", "model") or "")
-            if _configured and "small" not in str(_configured).lower():
-                # Use configured model only if it's a small variant; otherwise stick with small
-                pass
-        except Exception:
-            pass
-        model_id = str(_raw_model).strip()
-
-        provider_map = {
-            "mistral": ProviderType.MISTRAL,
-            "deepseek": ProviderType.DEEPSEEK,
-            "siliconflow": ProviderType.SILICONFLOW,
-            "kimi": ProviderType.KIMI,
-            "openai": ProviderType.OPENAI,
-        }
-        provider_type = provider_map.get(provider_name, ProviderType.DEEPSEEK)
+        # rarely rate-limited.
+        model_id = "deepseek-v4-flash"
         
         # Validate provider availability
         try:
@@ -1878,70 +1865,79 @@ class AIChatWidget(QWidget):
 
     def on_chunk(self, chunk):
         """Handle AI streaming chunk - accumulate buffer and push to JS."""
-        import logging as _log
+        try:
+            _chunk_count = getattr(self, '_chunk_count', 0) + 1
+            self._chunk_count = _chunk_count
+            if _chunk_count == 1 or _chunk_count % 20 == 0:
+                log.info(f"[AI_CHAT] on_chunk #{_chunk_count}: len={len(chunk) if chunk else 0}")
 
-        # Guard: don't push chunks before the page/bridge is ready
-        if not self._page_loaded:
+            # Guard: don't push chunks before the page/bridge is ready
+            if not self._page_loaded:
+                self._response_buffer += chunk
+                log.info(f"[AI_CHAT] page not loaded yet, buffering: {len(chunk)} chars, total: {len(self._response_buffer)}")
+                return
+
             self._response_buffer += chunk
-            _log.debug(f"[AI_CHAT] page not loaded yet, buffering: {len(chunk)} chars")
-            return
 
-        self._response_buffer += chunk
-
-        # Debounce JS calls: batch rapid small chunks to avoid UI flooding.
-        # Always send the full accumulated buffer so JS has complete state.
-        if not self._js_call_pending:
-            self._js_call_pending = True
-            safe = json.dumps(self._response_buffer)
-            self._view.page().runJavaScript(
-                f"if(window.onChunk) window.onChunk({safe});",
-                lambda result: None
-            )
-            _log.debug(f"[AI_CHAT] chunk pushed: {len(chunk)} chars, total: {len(self._response_buffer)}")
-        else:
-            # Debounced — schedule a flush with the full buffer
-            if self._js_call_timer is None:
-                try:
-                    from PyQt6.QtCore import QTimer
-                    self._js_call_timer = QTimer(self)
-                    self._js_call_timer.setSingleShot(True)
-                    self._js_call_timer.timeout.connect(self._flush_chunk_buffer)
-                except Exception:
-                    # Fallback: push full buffer directly if QTimer unavailable
-                    safe = json.dumps(self._response_buffer)
-                    self._view.page().runJavaScript(
-                        f"if(window.onChunk) window.onChunk({safe});",
-                        lambda result: None
-                    )
-                    self._js_call_pending = True
-                    return
-            if not self._js_call_timer.isActive():
-                self._js_call_timer.start(40)  # 40ms coalescing window
+            # Debounce JS calls: batch rapid small chunks to avoid UI flooding.
+            # Always send the full accumulated buffer so JS has complete state.
+            if not self._js_call_pending:
+                self._js_call_pending = True
+                safe = json.dumps(self._response_buffer)
+                self._view.page().runJavaScript(
+                    f"if(window.onChunk) window.onChunk({safe});",
+                    lambda result: None
+                )
+                log.info(f"[AI_CHAT] chunk pushed: {len(chunk)} chars, total: {len(self._response_buffer)}")
+            else:
+                # Debounced — schedule a flush with the full buffer
+                if self._js_call_timer is None:
+                    try:
+                        from PyQt6.QtCore import QTimer
+                        self._js_call_timer = QTimer(self)
+                        self._js_call_timer.setSingleShot(True)
+                        self._js_call_timer.timeout.connect(self._flush_chunk_buffer)
+                    except Exception:
+                        # Fallback: push full buffer directly if QTimer unavailable
+                        safe = json.dumps(self._response_buffer)
+                        self._view.page().runJavaScript(
+                            f"if(window.onChunk) window.onChunk({safe});",
+                            lambda result: None
+                        )
+                        self._js_call_pending = True
+                        return
+                if not self._js_call_timer.isActive():
+                    self._js_call_timer.start(40)  # 40ms coalescing window
+        except Exception as exc:
+            log.error(f"[AI_CHAT] on_chunk CRASH: {exc}", exc_info=True)
 
     def _flush_chunk_buffer(self):
         """Flush accumulated buffer to JS after debounce — sends full text."""
-        import logging as _log
         if self._response_buffer:
             safe = json.dumps(self._response_buffer)
             self._view.page().runJavaScript(
                 f"if(window.onChunk) window.onChunk({safe});",
                 lambda result: None
             )
-            _log.debug(f"[AI_CHAT] debounced flush: {len(self._response_buffer)} chars")
+            log.info(f"[AI_CHAT] debounced flush: {len(self._response_buffer)} chars")
         self._js_call_pending = False
 
     def on_complete(self, full_response=None):
         """Handle completion of the AI response — pass full buffered text to JS."""
-        import logging as _log
-        if full_response is not None:
-            self._response_buffer = full_response
-        safe = json.dumps(self._response_buffer) if self._response_buffer else '""'
-        self._view.page().runJavaScript(
-            f"if(window.onComplete) window.onComplete({safe});"
-        )
-        self._response_buffer = ""
-        self._js_call_pending = False
-        _log.info("[AI_CHAT] response complete, buffer cleared")
+        try:
+            log.info(f"[AI_CHAT] on_complete: full_response={repr(full_response)[:100]}, buffer_len={len(self._response_buffer)}")
+            if full_response is not None:
+                self._response_buffer = full_response
+            safe = json.dumps(self._response_buffer) if self._response_buffer else '""'
+            log.info(f"[AI_CHAT] on_complete: sending to JS, safe_len={len(safe)}, safe_start={safe[:80]}")
+            self._view.page().runJavaScript(
+                f"if(window.onComplete) window.onComplete({safe});"
+            )
+            self._response_buffer = ""
+            self._js_call_pending = False
+            log.info("[AI_CHAT] response complete, buffer cleared")
+        except Exception as exc:
+            log.error(f"[AI_CHAT] on_complete CRASH: {exc}", exc_info=True)
 
         # ── MAF multi-agent: Phase 3 — Reviewer ──────────────────────
         _orch = getattr(self, '_maf_orchestrator', None)
@@ -2623,18 +2619,21 @@ class AIChatWidget(QWidget):
             
             has_images = images and len(images) > 0
             
-            # Detect which provider is currently selected in the model dropdown
+            # Detect which provider is currently selected in the model dropdown.
+            # Read from SETTINGS FIRST (always up-to-date when user changes model),
+            # then fall back to bridge._current_model_id (only set during agent runs).
             _selected_model_id = ""
             _is_kimi = False
             try:
-                # Read from bridge if available (most up-to-date)
-                if hasattr(self, '_bridge') and self._bridge:
-                    _selected_model_id = getattr(self._bridge, '_current_model_id', '') or ''
-                # Fallback: read from settings
+                # Settings is the authoritative source for user model selection
+                _selected_model_id = settings.get("ai", "model_id", default="") or ""
                 if not _selected_model_id:
-                    from src.config.settings import get_settings
-                    _stg = get_settings()
-                    _selected_model_id = _stg.get('model_id', '') or _stg.get('ai_model', '') or ''
+                    # Fallback: bridge may have it from a previous agent run
+                    if hasattr(self, '_bridge') and self._bridge:
+                        _selected_model_id = getattr(self._bridge, '_current_model_id', '') or ''
+                if not _selected_model_id:
+                    # Legacy fallback keys
+                    _selected_model_id = settings.get("ai_model", "") or settings.get("model_id", "") or ''
                 _is_kimi = _selected_model_id.lower().startswith('kimi-')
             except Exception:
                 pass
@@ -2643,19 +2642,31 @@ class AIChatWidget(QWidget):
             vision_provider = "mistral"  # Always Mistral for OCR — DeepSeek/Kimi don't support images
             
             if not has_images:
-                # Text-only: standard agentic loop with DeepSeek/Kimi
-                model_id = self._auto_select_model(text)
+                # Text-only: respect the user's selected model from the UI dropdown.
+                # If no user model is selected, fall back to config default.
+                _sel_lower = _selected_model_id.lower() if _selected_model_id else ''
+                if _selected_model_id and not _sel_lower.startswith('mistral'):
+                    model_id = _selected_model_id
+                else:
+                    model_id = config.main_agent_model or "deepseek-chat"
                 agent_provider = _get_provider_for_model(model_id)
                 max_tokens = calculate_max_tokens_for_mode(model_id, config)
                 log.info(f"[AIChat] Single agent text: {model_id} ({agent_provider}), max_tokens={max_tokens}")
                 self._call_agent_and_respond(text, agent_provider, model_id, max_tokens, config.temperature)
                 return
             
-            # ── IMAGE PATH: Analyze image first (Mistral OCR), then route to coding agent (DeepSeek/Kimi) ──
+            # ── IMAGE PATH: Analyze image first (Mistral OCR), then route to coding agent ──
             # Step 1: Mistral handles vision/OCR ONLY
             vision_model = config.vision_model or "mistral-medium-latest"
-            # Step 3: DeepSeek/Kimi handles the actual coding with vision context
-            agent_model = config.main_agent_model or "deepseek-chat"
+            # Step 2: RESPECT the user's selected model from the UI dropdown.
+            # Only fall back to config default if user selected Mistral (vision-only)
+            # or if no model is selected. This ensures OpenAI, Kimi, DeepSeek, or any
+            # future LLM the user picks is actually used for the coding step.
+            _sel_lower = _selected_model_id.lower() if _selected_model_id else ''
+            if _selected_model_id and not _sel_lower.startswith('mistral'):
+                agent_model = _selected_model_id
+            else:
+                agent_model = config.main_agent_model or "deepseek-chat"
             agent_provider = _get_provider_for_model(agent_model)
             log.info(f"[AIChat] Vision Step 1: OCR with {vision_model} (Mistral) | Step 2: Coding with {agent_model} ({agent_provider})")
             
@@ -2672,7 +2683,8 @@ class AIChatWidget(QWidget):
             log.info(f"[AIChat] Vision: {img_count} image(s) processed")
             
             # Route vision call — ALWAYS Mistral for OCR (DeepSeek/Kimi don't support images)
-            max_tokens_vision = 4096  # Enough for a detailed description
+            # Low max_tokens: OCR should only describe, NOT solve. Coding agent handles the fix.
+            max_tokens_vision = 1500  # Strict OCR cap — prevents Mistral from generating full solutions
             image_description = self._call_mistral_with_context(
                 messages, config.temperature, max_tokens_vision, vision_model
             )
@@ -2729,6 +2741,18 @@ class AIChatWidget(QWidget):
             
             settings = get_settings()
             # ARCHITECTURE: DeepSeek/Kimi for coding. Mistral ONLY for vision/OCR fallback.
+            # Read user's selected model from settings FIRST (authoritative),
+            # then fall back to bridge.
+            _selected_model_id = ""
+            try:
+                _selected_model_id = settings.get("ai", "model_id", default="") or ""
+                if not _selected_model_id:
+                    if hasattr(self, '_bridge') and self._bridge:
+                        _selected_model_id = getattr(self._bridge, '_current_model_id', '') or ''
+                if not _selected_model_id:
+                    _selected_model_id = settings.get("ai_model", "") or settings.get("model_id", "") or ''
+            except Exception:
+                pass
             session_id = getattr(self, 'current_session_id', None) or "default-session"
             project_path = None
             if hasattr(self, '_pending_project_info') and self._pending_project_info:
@@ -2746,18 +2770,22 @@ class AIChatWidget(QWidget):
                 if result.get("success"):
                     return result.get("vision_context", {})
                 # Fallback: direct Mistral vision call with image pipeline
+                # STRICT OCR cap: Mistral must ONLY describe, NOT solve.
                 pipeline_result = process_images_for_api(imgs, txt, provider="mistral")
                 if pipeline_result["provider_supports_vision"]:
                     messages = pipeline_result["messages"]
                     vision_model = config.vision_model or "mistral-medium-latest"
-                    max_tok = calculate_max_tokens_for_mode(vision_model, config)
-                    raw_response = self._call_mistral_with_context(messages, config.temperature, max_tok, vision_model)
+                    raw_response = self._call_mistral_with_context(messages, config.temperature, 1500, vision_model)
                     return {"description": raw_response, "ocr_text": "", "raw": raw_response}
                 return {"error": "Vision not available"}
             
-            # Define main LLM callback — uses DeepSeek/Kimi for coding (NOT Mistral)
+            # Define main LLM callback — respects user's selected model from UI
             def call_llm(enhanced_prompt):
-                main_model = config.main_agent_model or "deepseek-v4-pro"
+                _sel_lower = _selected_model_id.lower() if _selected_model_id else ''
+                if _selected_model_id and not _sel_lower.startswith('mistral'):
+                    main_model = _selected_model_id
+                else:
+                    main_model = config.main_agent_model or "deepseek-v4-pro"
                 main_provider = _get_provider_for_model(main_model)
                 log.info(f"[AIChat] Performance mode: Main Agent using {main_provider}/{main_model}")
                 return self._call_main_agent_with_vision_context(
@@ -2803,6 +2831,18 @@ class AIChatWidget(QWidget):
             
             settings = get_settings()
             # ARCHITECTURE: DeepSeek/Kimi for coding. Mistral ONLY for vision/OCR fallback.
+            # Read user's selected model from settings FIRST (authoritative),
+            # then fall back to bridge.
+            _selected_model_id = ""
+            try:
+                _selected_model_id = settings.get("ai", "model_id", default="") or ""
+                if not _selected_model_id:
+                    if hasattr(self, '_bridge') and self._bridge:
+                        _selected_model_id = getattr(self._bridge, '_current_model_id', '') or ''
+                if not _selected_model_id:
+                    _selected_model_id = settings.get("ai_model", "") or settings.get("model_id", "") or ''
+            except Exception:
+                pass
             session_id = getattr(self, 'current_session_id', None) or "default-session"
             project_path = None
             if hasattr(self, '_pending_project_info') and self._pending_project_info:
@@ -2819,18 +2859,22 @@ class AIChatWidget(QWidget):
                 if result.get("success"):
                     return result.get("vision_context", {})
                 # Fallback: direct Mistral vision via image pipeline
+                # STRICT OCR cap: Mistral must ONLY describe, NOT solve.
                 pipeline_result = process_images_for_api(imgs, txt, provider="mistral")
                 if pipeline_result["provider_supports_vision"]:
                     messages = pipeline_result["messages"]
                     vision_model = config.vision_model or "mistral-large-latest"
-                    max_tok = calculate_max_tokens_for_mode(vision_model, config)
-                    raw_response = self._call_mistral_with_context(messages, config.temperature, max_tok, vision_model)
+                    raw_response = self._call_mistral_with_context(messages, config.temperature, 1500, vision_model)
                     return {"description": raw_response, "ocr_text": "", "raw": raw_response}
                 return {"error": "Vision not available"}
             
-            # Define main LLM callback — uses DeepSeek/Kimi for coding (NOT Mistral)
+            # Define main LLM callback — respects user's selected model from UI
             def call_llm(enhanced_prompt):
-                main_model = config.main_agent_model or "deepseek-reasoner"
+                _sel_lower = _selected_model_id.lower() if _selected_model_id else ''
+                if _selected_model_id and not _sel_lower.startswith('mistral'):
+                    main_model = _selected_model_id
+                else:
+                    main_model = config.main_agent_model or "deepseek-reasoner"
                 main_provider = _get_provider_for_model(main_model)
                 log.info(f"[AIChat] Ultimate mode: Main Agent using {main_provider}/{main_model}")
                 return self._call_main_agent_with_vision_context(

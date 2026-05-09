@@ -576,11 +576,18 @@ def process_images_for_api(
         return result
     
     # Step 2: Build vision messages with auto-compression
+    # CRITICAL: This is STRICTLY an OCR/description step. Mistral must ONLY
+    # transcribe and describe what's visually in the image — it MUST NOT
+    # provide solutions, write code, debug, or analyze beyond visual description.
+    # The full solution will be handled by the coding agent (DeepSeek/Kimi).
     vision_system_prompt = (
-        "You are Cortex AI, a helpful assistant with full vision/image analysis capabilities. "
-        "You CAN see and analyze images. When the user shares an image, examine it carefully and "
-        "provide detailed analysis. Describe what you see, identify text (OCR), UI elements, "
-        "code, diagrams, or any visual content. Never say you cannot see images."
+        "You are an OCR and image description tool. Your ONLY job is to transcribe "
+        "and describe EXACTLY what you see in the image. "
+        "RULES: (1) Transcribe all visible text verbatim. "
+        "(2) Describe visual elements (UI, code, diagrams, error messages). "
+        "(3) DO NOT provide solutions, fixes, code, analysis, or advice. "
+        "(4) DO NOT answer the user's question — only describe the image content. "
+        "(5) Keep descriptions concise and factual. Never say you cannot see images."
     )
     
     messages = build_vision_messages(

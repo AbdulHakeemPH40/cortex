@@ -146,6 +146,10 @@
     /* Step-block dot colors */
     --c-think:       #9d8f6e;
     --c-explore:     #6e9d8a;
+    --c-read:        #6e9d8a;
+    --c-grep:        #d4a853;
+    --c-glob:        #7b94b5;
+    --c-search:      #6e9d8a;
     --c-run:         #7a9d6e;
     --c-edit:        #6e84ad;
     --c-mem:         #9d7e6e;
@@ -3984,10 +3988,10 @@ body.loaded #loading-overlay {
 }
 /* Dot colors per type — Cursor palette */
 .ca-card.thought::before   { background: var(--c-think); }
-.ca-card.read::before       { background: var(--c-explore); }
-.ca-card.search::before     { background: var(--c-explore); }
-.ca-card.grep::before       { background: var(--c-explore); }
-.ca-card.glob::before       { background: var(--c-explore); }
+.ca-card.read::before       { background: var(--c-read); }
+.ca-card.search::before     { background: var(--c-search); }
+.ca-card.grep::before       { background: var(--c-grep); }
+.ca-card.glob::before       { background: var(--c-glob); }
 .ca-card.explore::before    { background: var(--c-explore); }
 .ca-card.edit::before       { background: var(--c-edit); }
 .ca-card.terminal::before   { background: var(--c-run); }
@@ -4159,7 +4163,7 @@ body.loaded #loading-overlay {
 }
 
 /* ── Card Variant: Read ──────────────────────────────────── */
-.ca-card.read .ca-card-icon { color: var(--c-explore); }
+.ca-card.read .ca-card-icon { color: var(--c-read); }
 .ca-card.read .ca-card-body {
     padding: 0 16px 10px 30px;
     color: #7dbaaa;
@@ -4168,7 +4172,7 @@ body.loaded #loading-overlay {
 }
 
 /* ── Card Variant: Search ────────────────────────────────── */
-.ca-card.search .ca-card-icon { color: var(--c-explore); }
+.ca-card.search .ca-card-icon { color: var(--c-search); }
 .ca-card.search .ca-card-body {
     color: #7dbaaa;
     font-family: var(--mono);
@@ -4177,7 +4181,7 @@ body.loaded #loading-overlay {
 }
 
 /* ── Card Variant: Grep ──────────────────────────────────── */
-.ca-card.grep .ca-card-icon { color: var(--c-explore); }
+.ca-card.grep .ca-card-icon { color: var(--c-grep); }
 .ca-card.grep .ca-card-body {
     color: rgba(110, 157, 138, 0.75);
     font-family: var(--mono);
@@ -4188,7 +4192,7 @@ body.loaded #loading-overlay {
 }
 
 /* ── Card Variant: Glob ──────────────────────────────────── */
-.ca-card.glob .ca-card-icon { color: var(--c-explore); }
+.ca-card.glob .ca-card-icon { color: var(--c-glob); }
 .ca-card.glob .ca-card-body {
     color: rgba(110, 157, 138, 0.75);
     font-family: var(--mono);

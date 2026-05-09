@@ -13,7 +13,7 @@ var _rateLimitRetryTimer = null;
 var _rateLimitRetryRemaining = 0;
 
 // Debug logging in hot paths (streaming, persistence). Keep false for performance.
-var _CHAT_DEBUG = false;
+var _CHAT_DEBUG = true;
 
 // Global error handler to catch uncaught stack overflows and log their origin
 window.onerror = function(message, source, lineno, colno, error) {
@@ -3887,7 +3887,9 @@ function _caRenderRead(data, status) {
     card.innerHTML =
         '<div class="ca-card-header">' +
             '<svg class="ca-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
-            '<span class="ca-card-icon">' + _caExtBadge(ext) + '</span>' +
+            '<span class="ca-card-icon">' +
+                '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>' +
+            '</span>' +
             '<span class="ca-card-label">' +
                 '<span class="ca-highlight" title="' + escapeHtml(displayPath) + '">' + escapeHtml(displayPath) + '</span>' +
                 '<span class="ca-muted">' + escapeHtml(mutedText) + '</span>' +
@@ -3899,7 +3901,29 @@ function _caRenderRead(data, status) {
 
     card.querySelector('.ca-card-header').onclick = function(e) {
         e.stopPropagation();
-        card.classList.toggle('expanded');
+        var body = card.querySelector('.ca-card-body');
+        if (card.classList.contains('expanded')) {
+            if (body) {
+                body.style.maxHeight = body.scrollHeight + 'px';
+                body.offsetHeight;
+                body.style.maxHeight = '0px';
+            }
+            card.classList.remove('expanded');
+            card.classList.add('collapsed');
+        } else {
+            card.classList.remove('collapsed');
+            card.classList.add('expanded');
+            if (body) {
+                body.style.maxHeight = '0px';
+                body.offsetHeight;
+                body.style.maxHeight = body.scrollHeight + 'px';
+                var onTransitionEnd = function() {
+                    body.style.maxHeight = '';
+                    body.removeEventListener('transitionend', onTransitionEnd);
+                };
+                body.addEventListener('transitionend', onTransitionEnd);
+            }
+        }
     };
 
     if (status === 'error') renderErrorBody(card);
@@ -3941,7 +3965,9 @@ function _caRenderEdit(data, status, type) {
     card.innerHTML =
         '<div class="ca-card-header">' +
             '<svg class="ca-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
-            '<span class="ca-card-icon">' + _caExtBadge(ext) + '</span>' +
+            '<span class="ca-card-icon">' +
+                '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>' +
+            '</span>' +
             '<span class="ca-card-label">' +
                 '<span class="ca-highlight" title="' + escapeHtml(displayPath) + '">' + escapeHtml(displayPath) + '</span>' +
                 '<span class="ca-muted">  ' + escapeHtml(desc) + '</span>' +
@@ -3950,6 +3976,14 @@ function _caRenderEdit(data, status, type) {
         '</div>' +
         '<div class="ca-card-preview">' + escapeHtml(desc) + ': ' + escapeHtml(displayPath) + '</div>' +
         '<div class="ca-card-body"></div>';
+
+    // Show diff content in edit card body when complete
+    if (status === 'complete' && data.diff_preview) {
+        var bodyEl = card.querySelector('.ca-card-body');
+        if (bodyEl) {
+            bodyEl.innerHTML = '<pre class="ca-diff-preview">' + escapeHtml(data.diff_preview) + '</pre>';
+        }
+    }
 
     card.querySelector('.ca-card-header').onclick = function(e) {
         e.stopPropagation();
@@ -4037,7 +4071,9 @@ function _caRenderSearch(data, status) {
     card.innerHTML =
         '<div class="ca-card-header">' +
             '<svg class="ca-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
-            '<span class="ca-card-icon">&#128269;</span>' +
+            '<span class="ca-card-icon">' +
+                '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>' +
+            '</span>' +
             '<span class="ca-card-label">' +
                 searchLabel + '  <span class="ca-highlight">' + escapeHtml(displayPattern) + '</span>' +
                 '<span class="ca-muted">' + escapeHtml(includeText) + '</span>' +
@@ -4131,7 +4167,9 @@ function _caRenderGrep(data, status) {
     card.innerHTML =
         '<div class="ca-card-header">' +
             '<svg class="ca-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
-            '<span class="ca-card-icon">&#128270;</span>' +
+            '<span class="ca-card-icon">' +
+                '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>' +
+            '</span>' +
             '<span class="ca-card-label">' +
                 'Grep  <span class="ca-highlight">' + escapeHtml(displayPattern) + '</span>' +
                 '<span class="ca-muted">' + escapeHtml(includeText) + '</span>' +
@@ -4224,7 +4262,9 @@ function _caRenderGlob(data, status) {
     card.innerHTML =
         '<div class="ca-card-header">' +
             '<svg class="ca-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
-            '<span class="ca-card-icon">&#127760;</span>' +
+            '<span class="ca-card-icon">' +
+                '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>' +
+            '</span>' +
             '<span class="ca-card-label">' +
                 'Glob  <span class="ca-highlight">' + escapeHtml(displayPattern) + '</span>' +
             '</span>' +
@@ -4295,7 +4335,9 @@ function _caRenderListDir(data, status) {
     card.innerHTML =
         '<div class="ca-card-header">' +
             '<svg class="ca-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
-            '<span class="ca-card-icon">&#128193;</span>' +
+            '<span class="ca-card-icon">' +
+                '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>' +
+            '</span>' +
             '<span class="ca-card-label"><span class="ca-highlight">' + title + '</span></span>' +
             '<span class="ca-card-badge ' + (status === 'complete' ? 'complete' : 'running') + '">' + (status === 'complete' ? count + ' files' : 'running') + '</span>' +
         '</div>' +
@@ -4699,7 +4741,9 @@ function _caRenderWebSearch(data, status) {
     card.innerHTML =
         '<div class="ca-card-header">' +
             '<svg class="ca-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
-            '<span class="ca-card-icon">&#128269;</span>' +
+            '<span class="ca-card-icon">' +
+                '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>' +
+            '</span>' +
             '<span class="ca-card-label">' +
                 'Web Search  <span class="ca-highlight">' + escapeHtml(displayQuery) + '</span>' +
             '</span>' +
@@ -4784,7 +4828,9 @@ function _caRenderWebFetch(data, status) {
     card.innerHTML =
         '<div class="ca-card-header">' +
             '<svg class="ca-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
-            '<span class="ca-card-icon">&#127760;</span>' +
+            '<span class="ca-card-icon">' +
+                '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>' +
+            '</span>' +
             '<span class="ca-card-label">' +
                 'Web Fetch  <span class="ca-highlight">' + escapeHtml(hostname) + '</span>' +
             '</span>' +
@@ -5371,7 +5417,12 @@ function showThinking() {
         if (emptyState) emptyState.remove();
     }
 
-    // Route thinking into the Cortex Activity card system
+    // Route thinking into the Cortex Activity card system.
+    // Eagerly create the thought card so the brain icon appears for ALL models.
+    // Reasoning models (Kimi K2.6, DeepSeek, GPT-5.x) fill it with actual
+    // reasoning content via tool_activity("thinking") → _caRenderThought().
+    // Non-reasoning models (gpt-4.1-nano, gpt-5.4-nano) keep the "Thinking"
+    // placeholder card which gets marked complete in hideThinking().
     var group = _caEnsureGroup(container);
     if (group) {
         _caRenderThought({ text: 'Thinking' }, 'running');
@@ -5386,9 +5437,15 @@ function hideThinking() {
         thinkingInterval = null;
     }
 
-    // Mark thought card complete in the flat step-block system
+    // Mark any running thought card as complete.
+    // Reasoning models will have their card filled with actual reasoning content;
+    // non-reasoning models keep the "Thinking" placeholder. Both get collapsed
+    // into a completed state — no removal, no flicker.
     if (_caGroup) {
-        _caRenderThought({}, 'complete');
+        var thoughtCard = _caGroup.querySelector('.ca-card.thought[data-ca-state="running"]');
+        if (thoughtCard) {
+            _caRenderThought({}, 'complete');
+        }
         _caUpdateGroupHeader();
     }
 
@@ -6119,7 +6176,9 @@ function normalizeMarkdownText(text) {
     // Guard: skip complex processing for very large text to prevent stack overflow
     if (text.length > 200000) {
         text = text.replace(/\r\n/g, '\n');
-         text = text.replace(/\n{4,}/g, '\n\n\n');
+        text = text.replace(/\n{4,}/g, '\n\n\n');
+
+
     }
 
     // ========== STAGE 1: Safe sanitation ==========
@@ -6235,10 +6294,11 @@ function normalizeMarkdownText(text) {
     }
 
     // Limit blank lines.
-    text = text.replace(/\n{4,}/g, '\n\n\n');
-  
-        
+     text = text.replace(/\n{4,}/g, '\n\n\n');
+
+
     return text;
+
 }
 
 function stripStrayPipeParagraphsFromHtml(html) {
@@ -6645,9 +6705,11 @@ function onComplete(fullText) {
         return;
     }
 
-    // If Python sent the full buffered text, reconcile JS buffer with it
-    if (typeof fullText === 'string' && fullText.length > (currentContent || '').length) {
-        console.log('[CHAT] onComplete: reconciling JS buffer from Python (', fullText.length, 'chars)');
+    // If Python sent the full buffered text, ALWAYS use it as source of truth.
+    // Python sends the complete accumulated response each time, so this is the
+    // authoritative version regardless of what currentContent contains.
+    if (typeof fullText === 'string' && fullText.length > 0) {
+        console.log('[CHAT] onComplete: setting content from Python (', fullText.length, 'chars)');
         currentContent = fullText;
         currentAssistantMessageContent = fullText;
     }
@@ -9798,7 +9860,9 @@ function showFileOperationCard(cardId, filePath, opType) {
     card.innerHTML =
         '<div class="ca-card-header">' +
             '<svg class="ca-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
-            '<span class="ca-card-icon">' + _caExtBadge(ext) + '</span>' +
+            '<span class="ca-card-icon">' +
+                '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>' +
+            '</span>' +
             '<span class="ca-card-label">' +
                 '<span class="ca-highlight" title="' + escapeHtml(displayPath) + '">' + escapeHtml(displayPath) + '</span>' +
                 '<span class="ca-muted">  ' + escapeHtml(desc) + '</span>' +

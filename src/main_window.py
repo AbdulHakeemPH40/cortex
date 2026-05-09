@@ -6016,6 +6016,17 @@ class CortexMainWindow(QMainWindow):
         self._ai_agent.clear_active_file()
         log.info("   ✓ Cleared AI agent active file")
         
+        # 5b. CRITICAL: Clear conversation history to prevent cross-project leakage.
+        # Without this, the old project's chat context (tool calls, reasoning,
+        # file operations like dark.py) leaks into the new project, causing the
+        # AI to hallucinate files from previous projects.
+        self._ai_agent.clear_conversation()
+        log.info("   ✓ Cleared AI agent conversation history")
+        # Reset the guard flag so set_project_root() re-loads DB context
+        # for the NEW project (instead of keeping stale old-project data).
+        self._ai_agent._chat_context_restored = False
+        log.info("   ✓ Reset chat context restore flag for new project")
+        
         # 6. Clear codebase index
         self._codebase_index = None
         log.info("   ✓ Cleared codebase index")
