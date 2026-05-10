@@ -12,14 +12,13 @@ from pathlib import Path
 from typing import Any, Optional, cast
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSplitter,
-    QTabWidget, QLabel, QPushButton, QStatusBar, QFileDialog,
-    QToolBar, QMenuBar, QMenu, QMessageBox, QInputDialog, QTabBar,
-    QFrame, QSizePolicy, QApplication, QListWidget, QListWidgetItem, QComboBox, QDialog,
+    QTabWidget, QLabel, QPushButton, QFileDialog,
+    QMenu, QMessageBox, QInputDialog, QTabBar,
+    QFrame, QSizePolicy, QApplication, QListWidgetItem, QComboBox, QDialog,
     QStackedWidget, QScrollArea, QTreeView, QLineEdit
 )
-from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtSlot, QTimer, QRect, QProcessEnvironment, QSignalBlocker, QEventLoop, QDir, QModelIndex, QThread
-from PyQt6.QtWebChannel import QWebChannel
-from PyQt6.QtGui import QFileSystemModel, QAction, QKeySequence, QIcon, QFont, QPainter, QColor, QMouseEvent, QCloseEvent, QPixmap, QTextDocument
+from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot, QTimer, QSignalBlocker, QDir, QModelIndex, QThread
+from PyQt6.QtGui import QFileSystemModel, QAction, QKeySequence, QIcon, QFont, QMouseEvent, QCloseEvent, QTextDocument
 from PyQt6.QtWebChannel import QWebChannel
 from PyQt6.QtWebEngineCore import QWebEnginePage
 
@@ -38,8 +37,6 @@ except ImportError:
     from src.ai.stub_agent import get_stub_agent as AIAgent  # Fallback stub
     HAS_AGENT_BRIDGE = False
 
-# File tree delegate for chevron arrows
-from src.ui.components.sidebar import FileTreeDelegate
 import subprocess as _subprocess
 import logging as _logging
 
@@ -220,10 +217,11 @@ class CodeAnalyzer:
         return f"Help me debug this {language} code. Error: {error}\n\n```{language}\n{code}\n```\n\nWhat's causing this error and how do I fix it?"
 # from src.ai.file_edit_tracker import FileEditTracker
 from src.core.git_manager import GitManager, GitStatus
-from src.ui.components.sidebar import SidebarWidget
+from src.ui.components.sidebar import SidebarWidget, ChangedFilesPanel
 # CommandPalette removed - not implemented in AI-first mode
 # from src.ui.components.command_palette import CommandPalette
-from src.ui.components.editor import CodeEditor
+from src.ui.components.editor import CodeEditor  # kept for backward compat (welcome/PDF/image tabs)
+from src.ui.components.webview_panel import WebviewPanel
 from src.ui.components.ai_chat import AIChatWidget
 from src.ui.components.xterm_terminal import XTermWidget
 from src.ui.components.find_replace import FindReplaceDialog
@@ -948,10 +946,6 @@ class CortexMainWindow(QMainWindow):
         else:
             log.warning("AI chat not ready, cannot create new chat")
     
-    def _on_settings_requested(self):
-        """Handle settings request from top navigation bar"""
-        self._open_settings()
-    
     def _open_settings(self):
         """Open settings dialog (Ctrl+,)."""
         dialog = QDialog(self)
@@ -981,276 +975,6 @@ class CortexMainWindow(QMainWindow):
         layout.addWidget(close_btn)
         
         dialog.exec()
-    
-    def _on_chat_rename_requested(self, item):
-        """Handle double-click or pencil icon to rename a chat."""
-        chat_id = item.data(Qt.ItemDataRole.UserRole)
-        # Get current title from widget
-        widget = self._sidebar_chat_list.itemWidget(item)
-        current_title = ''
-        if widget:
-            label = widget.findChild(QLabel, 'chat_title_label')
-            if label:
-                current_title = label.text()
-        if not current_title:
-            current_title = item.text() or 'Untitled'
-        
-        from PyQt6.QtWidgets import QInputDialog
-        new_title, ok = QInputDialog.getText(
-            self, 'Rename Chat', 'New name:', text=current_title
-        )
-        if ok and new_title.strip():
-            new_title = new_title.strip()
-            # Update label in widget
-            if widget:
-                label = widget.findChild(QLabel, 'chat_title_label')
-                if label:
-                    label.setText(new_title)
-            # Update in JS
-            safe_title = new_title.replace("'", "\\'").replace('"', '\\"')
-            self._ai_chat.run_javascript(f"""
-                if (window.updateChatTitle) {{
-                    window.updateChatTitle('{chat_id}', '{safe_title}');
-                }}
-            """)
-            log.info(f"Chat renamed to: {new_title}")
-    
-    def _on_chat_context_menu(self, position):
-        """Show context menu for chat items (rename, delete)."""
-        item = self._sidebar_chat_list.itemAt(position)
-        if not item:
-            return
-        
-        menu = QMenu(self)
-        rename_action = menu.addAction('✏️ Rename')
-        rename_action.triggered.connect(lambda: self._on_chat_rename_requested(item))
-        menu.addSeparator()
-        delete_action = menu.addAction('🗑️ Delete Chat')
-        delete_action.setStyleSheet('color: #ef4444;')
-        delete_action.triggered.connect(lambda: self._delete_chat_by_id(item))
-        menu.exec(self._sidebar_chat_list.viewport().mapToGlobal(position))
-    
-    def _delete_chat_by_id(self, item):
-        """Delete a chat: remove from sidebar and from JS storage."""
-        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout as _HBox, QLabel as _Label, QPushButton as _Btn
-        from PyQt6.QtCore import Qt as _Qt
-        chat_id = item.data(Qt.ItemDataRole.UserRole)
-        widget = self._sidebar_chat_list.itemWidget(item)
-        chat_title = 'this chat'
-        if widget:
-            label = widget.findChild(QLabel, 'chat_title_label')
-            if label:
-                chat_title = label.toolTip() or label.text()
-        
-        # --- Compact confirmation dialog ---
-        dialog = QDialog(self)
-        dialog.setWindowTitle('Delete Chat')
-        dialog.setFixedSize(280, 110)
-        dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
-        dialog.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        
-        # Outer layout (no margins) — dialog itself is transparent
-        outer_layout = QVBoxLayout(dialog)
-        outer_layout.setContentsMargins(0, 0, 0, 0)
-        outer_layout.setSpacing(0)
-        
-        # Inner container with dark background, border, and rounded corners
-        container = QWidget()
-        container.setStyleSheet("""
-            QWidget {
-                background-color: #151515;
-                border: 1px solid #333;
-                border-radius: 5px;
-            }
-        """)
-        outer_layout.addWidget(container)
-        
-        # Content layout inside the styled container
-        dlg_layout = QVBoxLayout(container)
-        dlg_layout.setContentsMargins(20, 16, 20, 14)
-        dlg_layout.setSpacing(16)
-        
-        # Message
-        msg_lbl = _Label(f"Delete '{chat_title}'?")
-        msg_lbl.setStyleSheet('color: #d0d0d0; font-size: 13px; font-weight: 500; background: transparent;')
-        msg_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        dlg_layout.addWidget(msg_lbl)
-        
-        dlg_layout.addStretch()
-        
-        # Buttons row - centered equally
-        btn_layout = _HBox()
-        btn_layout.setContentsMargins(0, 0, 0, 0)
-        btn_layout.setSpacing(12)
-        btn_layout.addStretch(1)
-        
-        cancel_btn = _Btn('Cancel')
-        cancel_btn.setFixedSize(80, 30)
-        cancel_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #2d2d2d;
-                color: #c0c0c0;
-                border: 1px solid #555;
-                border-radius: 5px;
-                font-size: 12px;
-            }
-            QPushButton:hover { background-color: #383838; }
-        """)
-        cancel_btn.clicked.connect(dialog.reject)
-        btn_layout.addWidget(cancel_btn)
-        
-        delete_btn = _Btn('Delete')
-        delete_btn.setFixedSize(80, 30)
-        delete_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #c0392b;
-                color: #ffffff;
-                border: none;
-                border-radius: 5px;
-                font-size: 12px;
-            }
-            QPushButton:hover { background-color: #e74c3c; }
-        """)
-        delete_btn.clicked.connect(dialog.accept)
-        btn_layout.addWidget(delete_btn)
-        
-        btn_layout.addStretch(1)
-        dlg_layout.addLayout(btn_layout)
-        
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            row = self._sidebar_chat_list.row(item)
-            self._sidebar_chat_list.takeItem(row)
-            # Delete from JS (bypass JS confirm dialog by directly removing)
-            self._ai_chat.run_javascript(f"""
-                (function() {{
-                    chats = chats.filter(function(c) {{ return c.id != '{chat_id}'; }});
-                    if (typeof bridge !== 'undefined' && bridge.delete_chat_from_sqlite) {{
-                        bridge.delete_chat_from_sqlite('{chat_id}');
-                    }}
-                    var key = typeof getStorageKey === 'function' ? getStorageKey() : '';
-                    if (key) localStorage.removeItem(key);
-                    if (typeof saveChats === 'function') saveChats();
-                    if (typeof currentChatId !== 'undefined' && currentChatId == '{chat_id}') {{
-                        if (chats.length > 0) loadChat(chats[0].id);
-                        else startNewChat();
-                    }}
-                }})();
-            """)
-            log.info(f"Chat deleted: {chat_title} (ID: {chat_id})")
-    
-    def _on_chat_item_clicked(self, item):
-        """Handle click on a chat item to load that chat."""
-        chat_id = item.data(Qt.ItemDataRole.UserRole)
-        # Get title from widget label
-        widget = self._sidebar_chat_list.itemWidget(item)
-        chat_title = ''
-        if widget:
-            label = widget.findChild(QLabel, 'chat_title_label')
-            if label:
-                chat_title = label.toolTip() or label.text()
-        
-        if chat_id and self._ai_chat:
-            self._ai_chat.run_javascript(f"""
-                if (window.loadChat) {{
-                    window.loadChat('{chat_id}');
-                    console.log('[CHAT] Loaded chat from sidebar: {chat_title}');
-                }}
-            """)
-            log.info(f"Chat loaded from sidebar: {chat_title} (ID: {chat_id})")
-    
-    def _refresh_sidebar_chat_list(self, chat_list_json: str = None):
-        """Refresh the sidebar chat list from chat data passed directly from JS."""
-        log.info("[ChatList] _refresh_sidebar_chat_list called")
-        try:
-            if not chat_list_json:
-                log.warning("[ChatList] No chat_list_json provided")
-                return
-            
-            import json
-            chat_list = json.loads(chat_list_json)
-            log.info(f"[ChatList] Parsed {len(chat_list)} chats from JS data")
-            
-            # Clear existing items
-            self._sidebar_chat_list.clear()
-            
-            # Add chats to sidebar with custom widgets
-            for chat in chat_list:
-                title = chat.get('title', 'New Chat')
-                chat_id = chat.get('id', '')
-                item, widget = self._create_chat_list_item(title, chat_id)
-                self._sidebar_chat_list.addItem(item)
-                self._sidebar_chat_list.setItemWidget(item, widget)
-            
-            log.info(f"[ChatList] Sidebar refreshed with {len(chat_list)} chats")
-        except Exception as e:
-            log.warning(f"[ChatList] Failed to refresh sidebar chat list: {e}")
-            import traceback
-            log.warning(traceback.format_exc())
-    
-    def _create_chat_list_item(self, title: str, chat_id: str):
-        """Create a QListWidgetItem + custom widget with SVG pencil and trash icons."""
-        from PyQt6.QtCore import QSize
-        from src.utils.icons import make_icon
-        
-        item = QListWidgetItem()
-        item.setData(Qt.ItemDataRole.UserRole, chat_id)
-        item.setSizeHint(QSize(0, 34))
-        
-        # Container widget
-        widget = QWidget()
-        widget.setObjectName('chat_item_widget')
-        widget.setStyleSheet("""
-            QWidget#chat_item_widget { background: transparent; }
-            QLabel { color: #a0a0a0; font-size: 13px; background: transparent; }
-            QPushButton#pencil_btn { background: transparent; border: none; padding: 0px; }
-            QPushButton#pencil_btn:hover { background: rgba(255, 255, 255, 0.08); border-radius: 3px; }
-            QPushButton#trash_btn { background: transparent; border: none; padding: 0px; }
-            QPushButton#trash_btn:hover { background: rgba(255, 80, 80, 0.15); border-radius: 3px; }
-        """)
-        
-        row_layout = QHBoxLayout(widget)
-        row_layout.setContentsMargins(8, 2, 4, 2)
-        row_layout.setSpacing(4)
-        
-        # Title label (truncated)
-        title_label = QLabel(title)
-        title_label.setObjectName('chat_title_label')
-        title_label.setMaximumWidth(160)
-        metrics_text = title if len(title) <= 22 else title[:22] + '…'
-        title_label.setText(metrics_text)
-        title_label.setToolTip(title)
-        row_layout.addWidget(title_label, 1)
-        
-        # Pencil (rename) button — clean SVG icon in gold
-        pencil_btn = QPushButton()
-        pencil_btn.setObjectName('pencil_btn')
-        pencil_btn.setFixedSize(24, 24)
-        pencil_btn.setIcon(make_icon('chat-pencil', '#e6a817', 16))
-        pencil_btn.setIconSize(QSize(16, 16))
-        pencil_btn.setToolTip('Rename')
-        pencil_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        row_layout.addWidget(pencil_btn)
-        
-        # Trash (delete) button — clean SVG icon in red
-        trash_btn = QPushButton()
-        trash_btn.setObjectName('trash_btn')
-        trash_btn.setFixedSize(24, 24)
-        trash_btn.setIcon(make_icon('chat-trash', '#cc3333', 16))
-        trash_btn.setIconSize(QSize(16, 16))
-        trash_btn.setToolTip('Delete')
-        trash_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        row_layout.addWidget(trash_btn)
-        
-        # Connect buttons — capture item reference
-        def on_pencil(checked=False, _item=item):
-            self._on_chat_rename_requested(_item)
-        def on_trash(checked=False, _item=item):
-            self._delete_chat_by_id(_item)
-        
-        pencil_btn.clicked.connect(on_pencil)
-        trash_btn.clicked.connect(on_trash)
-        
-        return item, widget
     
     def _set_theme(self, theme: str):
         """Set the application theme."""
@@ -1283,31 +1007,31 @@ class CortexMainWindow(QMainWindow):
         """)
 
         # Create all panels
-        # Panel 1: Left Sidebar (220px) - Collapsible
-        self._left_sidebar = self._create_left_sidebar()
-        self._left_sidebar.setMinimumWidth(180)
-        self._left_sidebar.setMaximumWidth(400)
-        main_splitter.addWidget(self._left_sidebar)
+        # Panel 1: Left Sidebar (220px) — REAL SidebarWidget from sidebar.py
+        # The SidebarWidget gets the Git Review panel embedded inside it
+        self._sidebar = SidebarWidget(self._file_manager, git_manager=self._git_manager)
+        self._sidebar.setMinimumWidth(180)
+        self._sidebar.setMaximumWidth(400)
+
+        # Create Review Panel (Summary/Review/Changed Files) and inject into sidebar
+        self._review_panel = self._create_review_panel()
+        self._sidebar.add_git_review_panel(self._review_panel)
+        self._sidebar.add_chat_history_panel()
+
+        main_splitter.addWidget(self._sidebar)
 
         # Panel 2: Chat Panel - Main AI conversation (ALWAYS VISIBLE, flexible)
         self._chat_panel = self._create_chat_panel()
         self._chat_panel.setMinimumWidth(300)
         main_splitter.addWidget(self._chat_panel)
 
-        # Panel 3: Review Panel (380px) - Summary/Review tabs - Collapsible
-        self._review_panel = self._create_review_panel()
-        self._review_panel.setMinimumWidth(250)
-        self._review_panel.setMaximumWidth(600)
-        main_splitter.addWidget(self._review_panel)
+        # Panel 3: Webview Code Editor (Monaco) — rightmost panel
+        self._webview_panel = WebviewPanel()
+        self._webview_panel.setMinimumWidth(300)
+        main_splitter.addWidget(self._webview_panel)
 
-        # Panel 4: File Tree Panel (280px) - Changed files - Collapsible
-        self._file_tree_panel = self._create_file_tree_panel()
-        self._file_tree_panel.setMinimumWidth(200)
-        self._file_tree_panel.setMaximumWidth(500)
-        main_splitter.addWidget(self._file_tree_panel)
-
-        # Set initial sizes (proportions)
-        main_splitter.setSizes([220, 600, 380, 280])
+        # Set initial sizes (proportions) — 3-panel layout
+        main_splitter.setSizes([220, 450, 500])
 
         # Add splitter to main layout
         root_layout = QVBoxLayout(central)
@@ -1320,17 +1044,13 @@ class CortexMainWindow(QMainWindow):
 
         # Panel toggle state tracking
         self._left_sidebar_hidden = False
-        self._file_tree_hidden = False
         self._chat_panel_hidden = False
-        self._review_panel_hidden = False
         self._summary_panel_hidden = False
         self._git_panel_hidden = False
 
         # Store minimum widths for panel toggle restore
         self._left_sidebar_min_width = 220
         self._chat_panel_min_width = 300
-        self._review_panel_min_width = 380
-        self._file_tree_min_width = 280
 
         # Keep old components for backward compatibility
         self._ai_splitter = None  # Replaced by 4-panel layout
@@ -1357,12 +1077,6 @@ class CortexMainWindow(QMainWindow):
         # Command Palette - REMOVED (not implemented in AI-first mode)
         # self._command_palette = CommandPalette(self)
         # self._command_palette.command_selected.connect(self._on_command_selected)
-
-        # === SIDEBAR BACKEND COMPONENT (hidden) ===
-        # SidebarWidget provides file explorer, git, search, AI tools signals/methods.
-        # It is NEVER shown directly — the left sidebar in the splitter is the UI.
-        self._sidebar = SidebarWidget(self._file_manager, git_manager=self._git_manager)
-        self._sidebar.setVisible(False)
 
         # Initialize project info on welcome screen
         self._update_welcome_project_info()
@@ -1588,207 +1302,6 @@ class CortexMainWindow(QMainWindow):
     # Codex-Style 4-Panel Layout Methods
     # ------------------------------------------------------------------
 
-    def _create_left_sidebar(self) -> QWidget:
-        """Create Left Sidebar (220px) - Navigation + Chat History."""
-        sidebar = QWidget()
-        sidebar.setObjectName("leftSidebar")
-        layout = QVBoxLayout(sidebar)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        # Codex-style colors
-        bg_color = "#1a1a1a"
-        text_color = "#cccccc"
-        muted_color = "#888888"
-        section_label_color = "#555555"
-
-        sidebar.setStyleSheet(f"""
-            QWidget#leftSidebar {{
-                background-color: {bg_color};
-            }}
-            QLabel {{
-                color: {text_color};
-            }}
-        """)
-
-        # REMOVED: App Controls section (arrows, icon, title) and separator
-        # Sidebar now starts directly with New chat button
-
-        # Top Actions: New chat + Search
-        actions_widget = QWidget()
-        actions_layout = QVBoxLayout(actions_widget)
-        actions_layout.setContentsMargins(12, 8, 12, 12)  # Reduced top margin from 12 to 8
-        actions_layout.setSpacing(8)
-
-        new_chat_btn = QPushButton("+ New chat")
-        new_chat_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: #2d2d2d;
-                color: {text_color};
-                border: 1px solid #2a2a2a;
-                border-radius: 6px;
-                padding: 8px 12px;
-                font-size: 13px;
-                text-align: left;
-            }}
-            QPushButton:hover {{
-                background-color: #3d3d3d;
-            }}
-        """)
-        new_chat_btn.clicked.connect(self._on_new_chat)
-        actions_layout.addWidget(new_chat_btn)
-
-        # REMOVED: Search button (non-functional)
-
-        layout.addWidget(actions_widget)
-
-        # Section label style
-        section_label_style = f"""
-            color: {section_label_color};
-            font-size: 11px;
-            font-weight: 600;
-            text-transform: uppercase;
-            padding: 16px 12px 8px 12px;
-        """
-
-        # REMOVED: PLUGINS and AUTOMATIONS sections
-
-        # Projects section
-        projects_label = QLabel("Projects")
-        projects_label.setStyleSheet(section_label_style)
-        layout.addWidget(projects_label)
-
-        # Current project name (dynamic)
-        from pathlib import Path as _Path
-        project_root = getattr(self._project_manager, 'root', None) if hasattr(self, '_project_manager') else None
-        display_name = _Path(project_root).name if project_root else "No project"
-        self._sidebar_project_item = QLabel(f"  📁 {display_name}")
-        self._sidebar_project_item.setStyleSheet(f"color: {text_color}; font-size: 13px; padding: 6px 12px;")
-        layout.addWidget(self._sidebar_project_item)
-
-        # Chat List Section - Below Projects
-        chats_header = QWidget()
-        chats_layout = QHBoxLayout(chats_header)
-        chats_layout.setContentsMargins(12, 12, 12, 8)
-        chats_layout.setSpacing(0)
-
-        chats_label = QLabel("Chats")
-        chats_label.setStyleSheet(section_label_style.replace("padding: 16px 12px 8px 12px;", ""))
-        chats_layout.addWidget(chats_label)
-        chats_layout.addStretch()
-
-        # REMOVED: New chat button from CHATS header (redundant with top "+ New chat" button)
-
-        layout.addWidget(chats_header)
-
-        # Chat list with editable titles and delete functionality
-        self._sidebar_chat_list = QListWidget()
-        self._sidebar_chat_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self._sidebar_chat_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._sidebar_chat_list.setUniformItemSizes(True)
-        self._sidebar_chat_list.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Expanding
-        )
-        self._sidebar_chat_list.setStyleSheet(f"""
-            QListWidget {{
-                background-color: transparent;
-                border: none;
-                color: {text_color};
-                font-size: 13px;
-                outline: none;
-            }}
-            QListWidget::item {{
-                padding: 0px;
-                border-radius: 4px;
-                margin: 2px 8px;
-            }}
-            QListWidget::item:selected {{
-                background-color: #2d2d2d;
-            }}
-            QListWidget::item:hover {{
-                background-color: #252525;
-            }}
-        """)
-        # Style scrollbar directly on the scrollbar widget — most reliable approach
-        self._sidebar_chat_list.verticalScrollBar().setStyleSheet("""
-            QScrollBar:vertical {
-                background: #252525;
-                width: 6px;
-                border: none;
-                margin: 0px;
-            }
-            QScrollBar::handle:vertical {
-                background: #5a5a5a;
-                min-height: 20px;
-                border-radius: 3px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: #6a6a6a;
-            }
-            QScrollBar::add-line:vertical,
-            QScrollBar::sub-line:vertical {
-                height: 0px;
-                background: none;
-            }
-            QScrollBar::add-page:vertical,
-            QScrollBar::sub-page:vertical {
-                background: none;
-            }
-        """)
-        
-        # Double-click to rename, right-click for context menu, click to load chat
-        self._sidebar_chat_list.itemDoubleClicked.connect(self._on_chat_rename_requested)
-        self._sidebar_chat_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._sidebar_chat_list.customContextMenuRequested.connect(self._on_chat_context_menu)
-        self._sidebar_chat_list.itemClicked.connect(self._on_chat_item_clicked)
-        
-        layout.addWidget(self._sidebar_chat_list, 1)  # stretch=1 so it fills remaining space
-
-        # Bottom: Settings + Upgrade
-        bottom_widget = QWidget()
-        bottom_layout = QHBoxLayout(bottom_widget)
-        bottom_layout.setContentsMargins(12, 12, 12, 12)
-        bottom_layout.setSpacing(8)
-
-        settings_btn = QPushButton("⚙ Settings")
-        settings_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent;
-                color: {muted_color};
-                border: none;
-                padding: 6px;
-                font-size: 13px;
-            }}
-            QPushButton:hover {{
-                color: {text_color};
-            }}
-        """)
-        settings_btn.clicked.connect(self._on_settings_requested)
-        bottom_layout.addWidget(settings_btn)
-        bottom_layout.addStretch()
-
-        upgrade_btn = QPushButton("Upgrade")
-        upgrade_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #f0a500;
-                color: #1a1a1a;
-                border: none;
-                border-radius: 6px;
-                padding: 6px 12px;
-                font-size: 12px;
-                font-weight: 600;
-            }
-            QPushButton:hover {
-                background-color: #ffb020;
-            }
-        """)
-        bottom_layout.addWidget(upgrade_btn)
-
-        layout.addWidget(bottom_widget)
-
-        return sidebar
-
     def _create_chat_panel(self) -> QWidget:
         """Create Chat Panel (flexible) - Main AI conversation."""
         panel = QWidget()
@@ -1820,10 +1333,6 @@ class CortexMainWindow(QMainWindow):
         self._ai_chat.run_in_terminal_requested.connect(self._show_terminal_and_run)
         self._ai_chat.set_code_context_callback(self._get_code_context)
         self._ai_chat.toggle_autogen_requested.connect(self._on_toggle_autogen)
-        
-        # Connect chat list update signal to refresh sidebar
-        self._ai_chat.chat_list_updated_with_data.connect(self._refresh_sidebar_chat_list)
-        log.info("[ChatList] Connected chat_list_updated_with_data signal to _refresh_sidebar_chat_list")
         layout.addWidget(self._ai_chat, 1)
 
         return panel
@@ -2054,6 +1563,11 @@ class CortexMainWindow(QMainWindow):
         # NOTE: No addStretch() here — scroll area must fill all remaining space
 
         self._review_stack.addWidget(review_content)
+
+        # === CHANGED FILES TAB CONTENT ===
+        self._changed_files_panel = ChangedFilesPanel()
+        self._review_stack.addWidget(self._changed_files_panel)  # index 2
+
         self._review_stack.setCurrentIndex(0)  # Show Summary by default
 
         layout.addWidget(self._review_stack, 1)
@@ -2343,261 +1857,12 @@ class CortexMainWindow(QMainWindow):
 
         return total_add, total_del
 
-    def _create_file_tree_panel(self) -> QWidget:
-        """Create File Tree Panel (280px) - Project Explorer."""
-        panel = QWidget()
-        panel.setObjectName("fileTreePanel")
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        bg_color = "#1a1a1a"
-
-        panel.setStyleSheet(f"""
-            QWidget#fileTreePanel {{
-                background-color: {bg_color};
-            }}
-        """)
-
-        # Header
-        header = QWidget()
-        header.setFixedHeight(48)
-        header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(12, 0, 12, 0)
-        header_layout.setSpacing(8)
-
-        title = QLabel("📁 Explore")
-        title.setStyleSheet("color: #ffffff; font-size: 13px; font-weight: 500;")
-        header_layout.addWidget(title)
-        header_layout.addStretch()
-
-        layout.addWidget(header)
-
-        # Separator
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("background-color: #2a2a2a; max-height: 1px;")
-        layout.addWidget(sep)
-
-        # Filter input
-        filter_widget = QWidget()
-        filter_layout = QHBoxLayout(filter_widget)
-        filter_layout.setContentsMargins(12, 12, 12, 8)
-
-        self._file_filter_input = QLineEdit()
-        self._file_filter_input.setPlaceholderText("🔍 Filter files...")
-        self._file_filter_input.setStyleSheet("""
-            QLineEdit {
-                background-color: #252525;
-                color: #cccccc;
-                border: none;
-                border-radius: 6px;
-                padding: 8px 12px;
-                font-size: 13px;
-            }
-            QLineEdit:focus {
-                background-color: #2d2d2d;
-            }
-        """)
-        self._file_filter_input.textChanged.connect(self._filter_file_tree)
-        filter_layout.addWidget(self._file_filter_input)
-        layout.addWidget(filter_widget)
-
-        # File Tree View with scrollbar
-        self._file_tree_scroll = QScrollArea()
-        self._file_tree_scroll.setWidgetResizable(True)
-        self._file_tree_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._file_tree_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self._file_tree_scroll.setStyleSheet("""
-            QScrollArea {
-                border: none;
-                background-color: transparent;
-            }
-            QScrollBar:vertical {
-                border: none;
-                background: #252525;
-                width: 5px;
-                margin: 0px;
-                border-radius: 6px;
-            }
-            QScrollBar::handle:vertical {
-                background: #5a5a5a;
-                min-height: 30px;
-                border-radius: 6px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: #6a6a6a;
-            }
-            QScrollBar::add-line:vertical,
-            QScrollBar::sub-line:vertical {
-                border: none;
-                background: none;
-                height: 0px;
-            }
-            QScrollBar::add-page:vertical,
-            QScrollBar::sub-page:vertical {
-                background: none;
-            }
-        """)
-
-        # Create tree widget
-        self._file_tree = QTreeView()
-        self._file_tree.setHeaderHidden(True)
-        self._file_tree.setIndentation(14)
-        self._file_tree.setAnimated(True)
-        self._file_tree.setExpandsOnDoubleClick(False)  # Single click expands folders
-        self._file_tree.setSelectionMode(QTreeView.SelectionMode.ExtendedSelection)
-        
-        # Enable F2 rename (but we'll handle it manually to prevent conflicts)
-        from PyQt6.QtWidgets import QAbstractItemView
-        self._file_tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        
-        # VS Code-style QSS from sidebar.py
-        self._file_tree.setStyleSheet("""
-            QTreeView {
-                background: #1e1e1e;
-                border: none;
-                outline: 0;
-                font-size: 12px;
-                color: #cccccc;
-            }
-            QTreeView::item {
-                height: 24px;
-                border-radius: 3px;
-                padding-left: 2px;
-            }
-            QTreeView::item:hover {
-                background: #37373d;
-                color: #ffffff;
-            }
-            QTreeView::item:selected {
-                background: #094771;
-                color: #ffffff;
-                border: 1px solid #007acc;
-            }
-            QTreeView::branch {
-                background: #1e1e1e;
-            }
-            QTreeView::branch:has-children:!has-siblings:closed,
-            QTreeView::branch:closed:has-children:has-siblings {
-                image: none;
-                border-image: none;
-            }
-            QTreeView::branch:open:has-children:!has-siblings,
-            QTreeView::branch:open:has-children:has-siblings {
-                image: none;
-                border-image: none;
-            }
-        """)
-
-        # Setup file system model (from sidebar.py)
-        self._file_model = QFileSystemModel()
-        self._file_model.setReadOnly(False)
-        self._file_model.setFilter(QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot)
-        self._file_model.setNameFilterDisables(False)
-        self._file_tree.setModel(self._file_model)
-        
-        # Set custom delegate for chevron arrows (from sidebar.py)
-        self._file_delegate = FileTreeDelegate(self._file_model)
-        self._file_tree.setItemDelegate(self._file_delegate)
-        
-        # Hide columns except name
-        for col in (1, 2, 3):
-            self._file_tree.setColumnHidden(col, True)
-
-        # Connect signals for tree updates (debounced viewport repaints)
-        self._file_tree_update_timer = QTimer(self)
-        self._file_tree_update_timer.setSingleShot(True)
-        self._file_tree_update_timer.setInterval(50)
-        self._file_tree_update_timer.timeout.connect(lambda: self._file_tree.viewport().update())
-        self._file_model.directoryLoaded.connect(lambda _: self._file_tree_update_timer.start())
-        self._file_tree.expanded.connect(self._on_tree_expanded)
-        self._file_tree.collapsed.connect(self._on_tree_collapsed)
-        
-        # Enable single-click folder expansion
-        self._file_tree.clicked.connect(self._on_tree_clicked)
-        
-        # Enable F2 key for rename
-        self._file_tree.installEventFilter(self)
-        
-        # Connect double-click to open file
-        self._file_tree.doubleClicked.connect(self._on_file_tree_double_clicked)
-        
-        # Override keyPressEvent for F2 rename
-        original_key_press = self._file_tree.keyPressEvent
-        def custom_key_press(event):
-            if event.key() == Qt.Key.Key_F2:
-                self._rename_file()
-                return
-            original_key_press(event)
-        self._file_tree.keyPressEvent = custom_key_press
-
-        self._file_tree_scroll.setWidget(self._file_tree)
-        layout.addWidget(self._file_tree_scroll, 1)
-
-        return panel
-
-    def _filter_file_tree(self, text: str):
-        """Filter files in the tree view."""
-        if not text:
-            self._file_model.setNameFilters([])
-        else:
-            # Use wildcard pattern for filtering
-            self._file_model.setNameFilters([f"*{text}*"])
-
-    def _on_file_tree_double_clicked(self, index: QModelIndex):
-        """Handle file double-click to open in editor."""
-        file_path = self._file_model.filePath(index)
-        if Path(file_path).is_file():
-            self._open_file(file_path)
-
-    def _on_tree_expanded(self, index: QModelIndex):
-        """Handle tree item expansion."""
-        self._file_tree_update_timer.start()
-
-    def _on_tree_collapsed(self, index: QModelIndex):
-        """Handle tree item collapse."""
-        self._file_tree_update_timer.start()
-
-    def _on_tree_clicked(self, index: QModelIndex):
-        """Handle single-click to toggle folder expansion."""
-        file_path = self._file_model.filePath(index)
-        if Path(file_path).is_dir():
-            # Toggle expand/collapse on single click
-            if self._file_tree.isExpanded(index):
-                self._file_tree.collapse(index)
-            else:
-                self._file_tree.expand(index)
-
     def eventFilter(self, obj, event):
-        """Handle F2 key press for renaming files/folders in Explore tree."""
-        from PyQt6.QtCore import QEvent
-        
-        if hasattr(self, '_file_tree') and obj == self._file_tree.viewport():
-            if event.type() == QEvent.Type.KeyPress:
-                if event.key() == Qt.Key.Key_F2:
-                    self._rename_file()
-                    return True
-        
+        """Event filter for keyboard shortcuts."""
         return super().eventFilter(obj, event)
 
-    def _set_project_root(self, path: str):
-        """Set the project root directory for the file tree."""
-        import os
-        # Normalize path (from sidebar.py line 792-807)
-        normalized_path = os.path.normpath(os.path.abspath(path))
-        log.info(f"[FILE TREE] Setting project root: {normalized_path}")
-        
-        if hasattr(self, '_file_model'):
-            # Set model root and get root index
-            root_idx = self._file_model.setRootPath(normalized_path)
-            log.info(f"[FILE TREE] Model root index: {root_idx.row()}, {root_idx.column()}")
-            log.info(f"[FILE TREE] Model root path: {self._file_model.filePath(root_idx)}")
-            
-            if hasattr(self, '_file_tree'):
-                self._file_tree.setRootIndex(root_idx)
-                self._file_tree.setVisible(True)
-                log.info(f"[FILE TREE] Tree root set successfully")
+    def _on_chat_hidden_changed(self, hidden: bool):
+        """Handle chat panel visibility change."""
 
 
     # ------------------------------------------------------------------
@@ -2654,7 +1919,6 @@ class CortexMainWindow(QMainWindow):
         # View
         view_menu = mb.addMenu("View")
         self._add_action(view_menu, "Toggle Sidebar", self._toggle_sidebar, "Ctrl+B")
-        self._add_action(view_menu, "Toggle File Tree", self._toggle_file_tree, "Ctrl+Shift+I")
         self._add_action(view_menu, "Toggle Review Panel", self._toggle_review_panel_menu, "Alt+Ctrl+B")
         view_menu.addSeparator()
         self._add_action(view_menu, "Toggle Full Screen", self._toggle_fullscreen, "F11")
@@ -2828,15 +2092,7 @@ class CortexMainWindow(QMainWindow):
             lambda v: self._toggle_left_sidebar(v)
         ))
 
-        # 2. Right Sidebar (Explore/File Tree) toggle
-        layout.addWidget(_make_toggle(
-            "panel-right-sidebar-visible", "panel-right-sidebar-hidden",
-            "Hide Explore Panel", "Show Explore Panel",
-            lambda: not getattr(self, '_file_tree_hidden', False),
-            lambda v: self._toggle_file_tree_panel(v)
-        ))
-
-        # 3. AI Chat toggle
+        # 2. AI Chat toggle
         layout.addWidget(_make_toggle(
             "panel-ai-chat-visible", "panel-ai-chat-hidden",
             "Hide AI Chat", "Show AI Chat",
@@ -2906,26 +2162,30 @@ class CortexMainWindow(QMainWindow):
         # Propagate to all panels
         self._ai_chat.set_theme(is_dark)
         self._sidebar.set_theme(is_dark)
+        self._changed_files_panel.set_theme(is_dark)
         self._apply_welcome_theme(is_dark)
         # Theme button label
         if hasattr(self, '_theme_btn') and self._theme_btn:
             self._theme_btn.setText("☀️" if not is_dark else "🌙")
         
-        # Apply to editor tabs
+        # Apply to webview editor
+        if hasattr(self, '_webview_panel'):
+            self._webview_panel.set_theme(is_dark)
+        # Also apply to legacy editor tabs (welcome/PDF/image)
         self._editor_tabs.update_theme(is_dark)
         
         # Apply to terminal tab bar
         if isinstance(self._terminal_tabs.tabBar(), CleanTabBar):
             self._terminal_tabs.tabBar().set_dark(is_dark)
         
-        # Style the tab widget panels
+        # Style the legacy tab widget panels (webview has its own CSS)
         tab_bg = "#1e1e1e" if is_dark else "#ffffff"
         tab_border = "#3e3e42" if is_dark else "#dee2e6"
         tab_style = f"""
             QTabWidget::pane {{ border: 1px solid {tab_border}; background: {tab_bg}; }}
             QTabWidget::tab-bar {{ left: 0px; }}
         """
-        self._editor_tabs.setStyleSheet(tab_style)
+        self._editor_tabs.setStyleSheet(tab_style)  # legacy tabs only
         self._terminal_tabs.setStyleSheet(tab_style)
         
         # Apply to all terminal widgets
@@ -3024,20 +2284,35 @@ class CortexMainWindow(QMainWindow):
         self._sidebar.file_deleted.connect(self._on_sidebar_file_deleted)
         
         # Changed files panel signals
-        self._sidebar.file_accepted.connect(self._on_accept_file_edit)
-        self._sidebar.file_rejected.connect(self._on_reject_file_edit)
-        self._sidebar.accept_all_requested.connect(self._on_accept_all_files)
-        self._sidebar.reject_all_requested.connect(self._on_reject_all_files)
+        self._changed_files_panel.file_accepted.connect(self._on_accept_file_edit)
+        self._changed_files_panel.file_rejected.connect(self._on_reject_file_edit)
+        self._changed_files_panel.accept_all_requested.connect(self._on_accept_all_files)
+        self._changed_files_panel.reject_all_requested.connect(self._on_reject_all_files)
+        self._changed_files_panel.file_opened.connect(self._open_file)
 
         # Sidebar footer gear button → Memory Manager
         self._sidebar.settings_requested.connect(self._show_memory_manager)
+
+        # Chat history panel signals (inside sidebar, index 4)
+        self._sidebar.chat_selected.connect(self._on_chat_selected)
+        self._sidebar.chat_renamed.connect(self._on_chat_renamed)
+        self._sidebar.chat_delete_requested.connect(self._on_chat_delete_requested)
+        self._sidebar.new_chat_requested.connect(self._on_new_chat_requested)
+
+        # AI chat list changes → refresh sidebar chat history panel (instant from JS JSON)
+        self._ai_chat.chat_list_updated_with_data.connect(self._on_chat_list_data_updated)
 
         # Project manager
         self._project_manager.project_opened.connect(self._on_project_opened)
         self._project_manager.project_closed.connect(self._on_project_closed)
 
 
-        # Editor tab changes
+        # Webview editor active file changes
+        self._webview_panel.active_file_changed.connect(self._on_webview_file_changed)
+        self._webview_panel.file_content_changed.connect(self._on_webview_content_changed)
+        self._webview_panel.file_closed.connect(self._on_webview_file_closed)
+        self._webview_panel.cursor_position_changed.connect(self._update_status_cursor)
+        # Legacy editor tab changes (welcome/PDF/image)
         self._editor_tabs.currentChanged.connect(self._on_tab_changed)
         
         # File manager undo/redo signals
@@ -3123,20 +2398,10 @@ class CortexMainWindow(QMainWindow):
     # Actions
     # ------------------------------------------------------------------
     def _new_file(self):
-        # Get current theme state and apply it to the new editor
+        """Create a new untitled file in the webview editor."""
         is_dark = self._theme_manager.is_dark
-        editor = CodeEditor(language="python")
-        if is_dark:
-            editor.apply_dark_theme()
-        else:
-            editor.apply_light_theme()
-        idx = self._editor_tabs.addTab(editor, "untitled.py")
-        self._editor_tabs.setCurrentIndex(idx)
-        editor.cursor_position_changed.connect(self._update_status_cursor)
-        editor.inline_edit_submitted.connect(self._on_inline_edit_submitted)
-        editor.inline_edit_cancelled.connect(self._on_inline_edit_cancelled)
-        editor.inline_diff_requested.connect(self._on_inline_diff_requested)
-        editor.code_copied.connect(self._on_code_copied)
+        self._webview_panel.open_file("untitled.py", "", "python")
+        self._webview_panel.set_theme(is_dark)
 
     def _open_file_dialog(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open File",
@@ -3174,10 +2439,10 @@ class CortexMainWindow(QMainWindow):
     def _open_folder_programmatic(self, folder: str):
         """Open a folder as the active project (no dialog, usable from argv/drag-drop)."""
         self._project_manager.open(folder)
-        
-        # Set project root for file tree (with delay to ensure UI is ready)
-        QTimer.singleShot(100, lambda: self._set_project_root(folder))
-        
+
+        # Populate left sidebar file tree
+        self._sidebar.set_project(folder)
+
         # Initialize Git repository
         if hasattr(self, '_git_manager'):
             self._git_manager.set_repository(folder)
@@ -3198,10 +2463,10 @@ class CortexMainWindow(QMainWindow):
             # For now, just open it as a project. 
             # Could add a template/scaffolding step here later.
             self._project_manager.open(folder)
-            
-            # Set project root for file tree (with delay to ensure UI is ready)
-            QTimer.singleShot(100, lambda: self._set_project_root(folder))
-            
+
+            # Populate left sidebar file tree
+            self._sidebar.set_project(folder)
+
             # Initialize Git repository
             if hasattr(self, '_git_manager'):
                 self._git_manager.set_repository(folder)
@@ -3212,6 +2477,15 @@ class CortexMainWindow(QMainWindow):
         # Normalize path (convert forward slashes to backslashes on Windows)
         filepath = os.path.normpath(filepath)
         path = Path(filepath)
+        
+        # If already tracked by webview panel, just switch to it — skip redundant I/O
+        if hasattr(self, '_webview_panel') and filepath in self._webview_panel._open_files:
+            log.info(f"File already open in webview, switching: {filepath}")
+            self._webview_panel.open_file(filepath, self._webview_panel._open_files[filepath]["content"],
+                                          self._webview_panel._open_files[filepath]["language"])
+            self._update_status_file(filepath)
+            return
+
         log.info(f"Opening file: {filepath}")
         
         # If file doesn't exist, try to find it in the project
@@ -3276,24 +2550,10 @@ class CortexMainWindow(QMainWindow):
             
             # Get current theme state and pass it to the editor
             is_dark = self._theme_manager.is_dark
-            idx = self._editor_tabs.open_file(filepath, content, language, is_dark)
-            
-            # Connect cursor signal for the new editor
-            editor = self._editor_tabs.widget(idx)
-            if isinstance(editor, CodeEditor):
-                editor.cursor_position_changed.connect(self._update_status_cursor)
-                editor.inline_edit_submitted.connect(self._on_inline_edit_submitted)
-                editor.inline_edit_cancelled.connect(self._on_inline_edit_cancelled)
-                editor.inline_diff_requested.connect(self._on_inline_diff_requested)
-                editor.code_copied.connect(self._on_code_copied)
+            self._webview_panel.open_file(filepath, content, language)
+            self._webview_panel.set_theme(is_dark)
 
             self._update_status_file(filepath)
-            is_dark = self._theme_manager.is_dark
-            if isinstance(editor, CodeEditor):
-                # Block content_modified signal during theme set (rehighlight triggers it)
-                from PyQt6.QtCore import QSignalBlocker
-                with QSignalBlocker(editor.document()):
-                    editor.set_theme(is_dark)
             log.info(f"File opened successfully: {filepath}")
         except Exception as e:
             log.error(f"Error opening file {filepath}: {e}", exc_info=True)
@@ -3744,7 +3004,7 @@ class CortexMainWindow(QMainWindow):
             self._ai_chat.add_system_message("Open a file to use inline edit.")
             return
 
-        file_path = self._editor_tabs.current_filepath()
+        file_path = self._webview_panel.get_active_file() or self._editor_tabs.current_filepath()
         if not file_path:
             self._ai_chat.add_system_message("Open a file to use inline edit.")
             return
@@ -3893,7 +3153,7 @@ class CortexMainWindow(QMainWindow):
         # Update sidebar changed files panel
         try:
             edit_type = "C" if not original else "M"
-            self._sidebar.add_changed_file(file_path, edit_type)
+            self._changed_files_panel.add_file(file_path, edit_type)
         except Exception as e:
             log.debug(f"Sidebar update skipped: {e}")
 
@@ -4021,7 +3281,7 @@ class CortexMainWindow(QMainWindow):
         if hasattr(self, '_file_snapshots'):
             self._file_snapshots.pop(file_path, None)
 
-        self._sidebar.remove_changed_file(file_path)
+        self._changed_files_panel.remove_file(file_path)
 
     def _on_reject_file_edit(self, file_path: str):
         """Reject AI edit — write original content back to disk and reload editor."""
@@ -4061,7 +3321,7 @@ class CortexMainWindow(QMainWindow):
         if hasattr(self, '_file_snapshots'):
             self._file_snapshots.pop(file_path, None)
 
-        self._sidebar.remove_changed_file(file_path)
+        self._changed_files_panel.remove_file(file_path)
 
     def _get_original_content(self, file_path: str) -> Optional[str]:
         """
@@ -4122,6 +3382,48 @@ class CortexMainWindow(QMainWindow):
                 f"window.handleFullChatLoad('{conversation_id}, null);"
             )
 
+    def _on_chat_selected(self, conversation_id: str):
+        """User clicked a chat in the sidebar history panel → load it in JS."""
+        log.info(f"[ChatHistory] Selected chat: {conversation_id}")
+        js_code = f"window.loadChat('{conversation_id}');"
+        self._ai_chat._view.page().runJavaScript(js_code)
+
+    def _on_chat_renamed(self, conversation_id: str, new_title: str):
+        """User renamed a chat in the sidebar — notify JS."""
+        log.info(f"[ChatHistory] Renamed chat {conversation_id} → {new_title}")
+        safe_title = new_title.replace("'", "\\'").replace('"', '\\"')
+        js_code = f"if(window.updateChatTitle) window.updateChatTitle('{conversation_id}', '{safe_title}');"
+        self._ai_chat._view.page().runJavaScript(js_code)
+
+    def _on_chat_delete_requested(self, conversation_id: str):
+        """User requested delete from sidebar → show confirmation dialog."""
+        reply = QMessageBox.question(
+            self, "Delete Chat",
+            "Are you sure you want to permanently delete this chat?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        log.info(f"[ChatHistory] Deleting chat: {conversation_id}")
+        try:
+            from src.core.chat_history import get_chat_history
+            history = get_chat_history()
+            history.delete_conversation(conversation_id)
+        except Exception as e:
+            log.error(f"[ChatHistory] Delete failed: {e}")
+        self._sidebar.remove_chat_history_item(conversation_id)
+        self._ai_chat._view.page().runJavaScript("window.renderHistoryList();")
+
+    def _on_new_chat_requested(self):
+        """User clicked '+ New Chat' in sidebar → clear and start fresh in JS."""
+        log.info("[ChatHistory] New chat requested")
+        self._ai_chat._view.page().runJavaScript("window.newChat();")
+
+    def _on_chat_list_data_updated(self, chat_list_json: str):
+        """JS pushed updated chat list → populate sidebar panel directly from JSON."""
+        self._sidebar.populate_chat_history_from_json(chat_list_json)
+
     def _on_accept_all_files(self):
         """Accept all pending AI edits — files already on disk, just clean up state."""
         log.info("[Accept All] User accepted all file edits")
@@ -4142,7 +3444,7 @@ class CortexMainWindow(QMainWindow):
         if hasattr(self, '_file_snapshots'):
             self._file_snapshots.clear()
         self.statusBar().showMessage("✓ Accepted all changes", 3000)
-        self._sidebar.clear_changed_files()
+        self._changed_files_panel.clear_files()
 
     def _on_reject_all_files(self):
         """Reject all pending AI edits — revert each file to its original content."""
@@ -4175,7 +3477,7 @@ class CortexMainWindow(QMainWindow):
         if failed:
             msg += f" ({failed} could not be reverted)"
         self.statusBar().showMessage(msg, 5000)
-        self._sidebar.clear_changed_files()
+        self._changed_files_panel.clear_files()
 
     def _on_code_copied(self, text: str, file_path: str, start_line: int, end_line: int):
         """Store copy metadata so smart paste can use it after focus changes."""
@@ -4291,7 +3593,7 @@ class CortexMainWindow(QMainWindow):
             
             editor = self._editor_tabs.current_editor()
             if editor:
-                fp = self._editor_tabs.current_filepath()
+                fp = self._webview_panel.get_active_file() or self._editor_tabs.current_filepath()
                 if fp:
                     name = Path(fp).name
                     content = editor.get_all_text()
@@ -4421,13 +3723,22 @@ class CortexMainWindow(QMainWindow):
             editor.centerCursor()
 
     def _save_current(self):
-        ok = self._editor_tabs.save_current(self._file_manager)
-        if ok:
-            self._status_file.setText(f"  Saved ✓  {self._status_file.text().strip()}")
-            QTimer.singleShot(2000, lambda: self._update_status_file(
-                self._editor_tabs.current_filepath()))
+        fp = self._webview_panel.get_active_file()
+        if not fp or fp == "untitled.py":
+            return
+        content = self._webview_panel.get_content(fp)
+        if content:
+            self._file_manager.write(fp, content)
+            self._status_file.setText(f"  Saved \u2713  {self._status_file.text().strip()}")
+            QTimer.singleShot(2000, lambda: self._update_status_file(fp))
 
     def _save_all(self):
+        """Save all open files in webview editor."""
+        for fp in list(self._webview_panel._open_files.keys()):
+            content = self._webview_panel.get_content(fp)
+            if content and fp != "untitled.py":
+                self._file_manager.write(fp, content)
+        # Also save legacy editor tabs
         for i in range(self._editor_tabs.count()):
             editor = self._editor_tabs.widget(i)
             fp = self._editor_tabs._files.get(i)
@@ -4436,7 +3747,7 @@ class CortexMainWindow(QMainWindow):
                 self._file_manager.write(fp, content)
 
     def _run_file(self):
-        fp = self._editor_tabs.current_filepath()
+        fp = self._webview_panel.get_active_file() or self._editor_tabs.current_filepath()
         if not fp or not Path(fp).exists():
             return
         # HTML files → built-in Live Server (no terminal needed)
@@ -4627,6 +3938,7 @@ class CortexMainWindow(QMainWindow):
         
         self._ai_chat.set_theme(is_dark)
         self._sidebar.set_theme(is_dark)
+        self._changed_files_panel.set_theme(is_dark)
         if hasattr(self, '_diff_window'):
             self._diff_window.set_theme(is_dark)
         
@@ -4685,7 +3997,7 @@ class CortexMainWindow(QMainWindow):
     def _toggle_left_sidebar(self, show: bool = True):
         """Toggle left sidebar via splitter — show=True to expand, False to collapse."""
         sizes = self._main_splitter.sizes()
-        if len(sizes) < 4:
+        if len(sizes) < 2:
             return
         widget = self._main_splitter.widget(0)
         if show:
@@ -4708,35 +4020,10 @@ class CortexMainWindow(QMainWindow):
         hidden = getattr(self, '_left_sidebar_hidden', False)
         self._toggle_left_sidebar(show=hidden)
 
-    def _toggle_file_tree_panel(self, show: bool = True):
-        """Toggle file tree panel via splitter (Ctrl+Shift+I)."""
-        sizes = self._main_splitter.sizes()
-        if len(sizes) < 4:
-            return
-        widget = self._main_splitter.widget(3)
-        if show:
-            widget.setMinimumWidth(200)
-            widget.setMaximumWidth(500)
-            sizes[3] = self._file_tree_min_width
-        else:
-            widget.setMinimumWidth(0)
-            widget.setMaximumWidth(0)
-            sizes[3] = 0
-        self._main_splitter.setSizes(sizes)
-        self._file_tree_hidden = not show
-
-    def _toggle_file_tree(self):
-        """Toggle File Tree panel via splitter (Ctrl+Shift+I).
-        
-        Delegates to the splitter-based toggle matching toolbar behavior.
-        """
-        hidden = getattr(self, '_file_tree_hidden', False)
-        self._toggle_file_tree_panel(show=hidden)
-
     def _toggle_ai_chat_panel(self, show: bool = True):
         """Toggle AI chat panel via splitter."""
         sizes = self._main_splitter.sizes()
-        if len(sizes) < 4:
+        if len(sizes) < 2:
             return
         widget = self._main_splitter.widget(1)
         if show:
@@ -4751,26 +4038,20 @@ class CortexMainWindow(QMainWindow):
         self._chat_panel_hidden = not show
 
     def _toggle_review_panel(self, show: bool = True):
-        """Toggle Review panel via splitter (Alt+Ctrl+B)."""
-        sizes = self._main_splitter.sizes()
-        if len(sizes) < 4:
-            return
-        widget = self._main_splitter.widget(2)
+        """Toggle Git Review panel by switching sidebar to the git-review tab."""
         if show:
-            widget.setMinimumWidth(250)
-            widget.setMaximumWidth(600)
-            sizes[2] = self._review_panel_min_width
+            self._sidebar._switch_panel(3)  # Git Review is index 3
+            # Ensure sidebar is visible
+            if getattr(self, '_left_sidebar_hidden', False):
+                self._toggle_left_sidebar(show=True)
         else:
-            widget.setMinimumWidth(0)
-            widget.setMaximumWidth(0)
-            sizes[2] = 0
-        self._main_splitter.setSizes(sizes)
+            self._sidebar._switch_panel(0)  # Back to Explorer
         self._review_panel_hidden = not show
 
     def _toggle_review_panel_menu(self):
-        """Toggle Review panel via splitter (Alt+Ctrl+B) — menu bar action.
+        """Toggle Git Review panel (Alt+Ctrl+B) — menu bar action.
         
-        Delegates to the splitter-based toggle matching toolbar behavior.
+        Switches sidebar to the git-review tab.
         """
         hidden = getattr(self, '_review_panel_hidden', False)
         self._toggle_review_panel(show=hidden)
@@ -4990,23 +4271,6 @@ class CortexMainWindow(QMainWindow):
 
     def _rename_file(self):
         """Rename file (F2)."""
-        from pathlib import Path as LocalPath
-        # Check if right-side Explore tree is focused
-        if hasattr(self, '_file_tree') and self._file_tree.hasFocus():
-            index = self._file_tree.currentIndex()
-            if index.isValid():
-                file_path = self._file_model.filePath(index)
-                if file_path:
-                    # Prevent renaming the project root
-                    if hasattr(self, '_project_manager') and self._project_manager.root:
-                        try:
-                            if LocalPath(file_path).resolve() == LocalPath(str(self._project_manager.root)).resolve():
-                                return
-                        except Exception as e:
-                            log.debug(f'[MainWindow] Suppressed error: {e}')
-                    self._rename_path(file_path)
-                    return
-        
         # Check if left sidebar explorer is focused
         if self._sidebar.is_explorer_focused():
             if self._sidebar.rename_selected_item():
@@ -5014,7 +4278,7 @@ class CortexMainWindow(QMainWindow):
             return
 
         # Otherwise rename the currently open file in editor
-        current_file = self._editor_tabs.current_filepath()
+        current_file = self._webview_panel.get_active_file() or self._editor_tabs.current_filepath()
         if not current_file:
             return
         
@@ -5068,9 +4332,6 @@ class CortexMainWindow(QMainWindow):
             new_path = str(new_path_obj)
             Path(path).rename(new_path)
             log.info(f"[RENAME] Renamed: {Path(path).name} -> {name}")
-            
-            # Refresh file tree
-            QTimer.singleShot(100, lambda: self._file_tree.viewport().update())
             return True
         except Exception as e:
             QMessageBox.critical(self, "Rename Failed", f"Could not rename: {e}")
@@ -5700,7 +4961,7 @@ class CortexMainWindow(QMainWindow):
         # 2. Current File Context
         editor = self._editor_tabs.current_editor()
         if editor:
-            fp = self._editor_tabs.current_filepath()
+            fp = self._webview_panel.get_active_file() or self._editor_tabs.current_filepath()
             if fp:
                 name = Path(fp).name
                 content = editor.get_all_text()
@@ -6043,12 +5304,7 @@ class CortexMainWindow(QMainWindow):
         self._ai_agent.clear_active_file()
         
         self._sidebar.set_project(folder_path)
-        
-        # Update sidebar project name display
-        if hasattr(self, '_sidebar_project_item'):
-            from pathlib import Path as _Path
-            self._sidebar_project_item.setText(f"  📁 {_Path(folder_path).name}")
-        
+
         # Update all current terminal tabs to the new project directory
         for i in range(self._terminal_tabs.count()):
             term = self._terminal_tabs.widget(i)
@@ -6065,11 +5321,6 @@ class CortexMainWindow(QMainWindow):
         except Exception as e:
             log.warning(f"Failed to load chats for project {folder_path}: {e}")
             chats_json = "[]"
-        
-        # Populate Qt sidebar with loaded chats immediately
-        if chats_json and chats_json != "[]":
-            log.info(f"[ChatList] Initial population with {len(json.loads(chats_json))} chats")
-            self._refresh_sidebar_chat_list(chats_json)
         
         # Update project indicator in AI chat (this triggers project-specific chat loading)
         self._ai_chat.set_project_info(project_name, folder_path, chats_json)
@@ -6150,6 +5401,9 @@ class CortexMainWindow(QMainWindow):
         # Clear AI agent context
         self._ai_agent.clear_active_file()
         self._codebase_index = None
+
+        # Clear chat history sidebar
+        self._sidebar.populate_chat_history_from_json("[]")
         
         # Update welcome page
         self._update_welcome_project_info()
@@ -6199,6 +5453,7 @@ class CortexMainWindow(QMainWindow):
                 break
 
     def _on_tab_changed(self, index: int):
+        """Legacy tab changed (welcome/PDF/image tabs only)."""
         fp = self._editor_tabs._files.get(index)
         self._update_status_file(fp)
         
@@ -6214,6 +5469,26 @@ class CortexMainWindow(QMainWindow):
                 log.debug(f"Active file updated for AI: {fp} at {cursor_pos}")
             except Exception as e:
                 log.warning(f"Could not update active file for AI: {e}")
+
+    def _on_webview_file_changed(self, file_path: str):
+        """Webview editor active file changed (tab switch)."""
+        self._update_status_file(file_path if file_path else None)
+        if file_path and hasattr(self, '_ai_agent'):
+            try:
+                def _on_cursor(line, col):
+                    self._ai_agent.set_active_file(file_path, (line, col))
+                self._webview_panel.get_cursor_position(_on_cursor)
+            except Exception as e:
+                log.warning(f"Could not update active file for AI: {e}")
+
+    def _on_webview_content_changed(self, file_path: str, content: str):
+        """Webview editor content changed — mark file modified."""
+        # Store updated content for save operations
+        pass  # Content is cached in webview_panel, retrieved on save
+
+    def _on_webview_file_closed(self, file_path: str):
+        """Webview editor file tab closed."""
+        self._update_status_file(None)
 
     # def _apply_initial_theme(self):
     #     from PyQt6.QtWidgets import QApplication
@@ -6234,23 +5509,30 @@ class CortexMainWindow(QMainWindow):
             self._show_welcome()
             return
 
-        # Set project root for file tree (with delay to ensure UI is ready)
-        if self._project_manager.root:
+        # Initialize Git repository for restored project
+        if hasattr(self, '_git_manager') and self._project_manager.root:
             project_path = str(self._project_manager.root)
-            log.info(f"[FILE TREE] Restoring project root: {project_path}")
-            QTimer.singleShot(200, lambda: self._set_project_root(project_path))
-            
-            # Initialize Git repository for restored project
-            if hasattr(self, '_git_manager'):
-                self._git_manager.set_repository(project_path)
-                log.info(f"[GIT] Repository restored to: {project_path}")
-                QTimer.singleShot(500, self._update_git_summary)
+            self._git_manager.set_repository(project_path)
+            log.info(f"[GIT] Repository restored to: {project_path}")
+            QTimer.singleShot(500, self._update_git_summary)
+
+        # Populate left sidebar file tree from restored project
+        if self._project_manager.root:
+            self._sidebar.set_project(str(self._project_manager.root))
 
         # Restore open files only if project was successfully restored
         session = self._session_manager.load()
         if session:
-            log.info(f"Restoring {len(session.get('open_files', []))} files...")
-            for fp in session.get("open_files", []):
+            project_root = str(self._project_manager.root) if self._project_manager.root else ""
+            all_files = session.get("open_files", [])
+            # Filter to only files under the current project root
+            project_files = [fp for fp in all_files
+                           if project_root and os.path.normpath(fp).startswith(os.path.normpath(project_root) + os.sep)]
+            skipped = len(all_files) - len(project_files)
+            if skipped > 0:
+                log.info(f"Skipping {skipped} files from other projects (restoring {len(project_files)} project files)")
+            log.info(f"Restoring {len(project_files)} files...")
+            for fp in project_files:
                 if Path(fp).exists():
                     self._open_file(fp)
 
@@ -6579,8 +5861,13 @@ class CortexMainWindow(QMainWindow):
         # 0. Save agent session state for resume after restart
         self._emergency_shutdown_save()
 
-        # 1. Check for unsaved files
-        modified_files = self._editor_tabs._modified
+        # 1. Check for unsaved files (legacy editor tabs)
+        modified_files = set(getattr(self._editor_tabs, '_modified', set()))
+        # Also save all open webview files
+        if hasattr(self, '_webview_panel'):
+            for fp in list(self._webview_panel._open_files.keys()):
+                if fp and fp != "untitled.py":
+                    modified_files.add(fp)
         if modified_files:
             from PyQt6.QtWidgets import QMessageBox
             file_names = [os.path.basename(f) for f in modified_files]
@@ -6599,7 +5886,17 @@ class CortexMainWindow(QMainWindow):
                 event.ignore()
                 return
             elif reply == QMessageBox.StandardButton.SaveAll:
-                # Save all modified files
+                # Save all webview files first
+                if hasattr(self, '_webview_panel'):
+                    for filepath in list(self._webview_panel._open_files.keys()):
+                        if filepath and filepath != "untitled.py":
+                            content = self._webview_panel.get_content(filepath)
+                            if content:
+                                try:
+                                    self._file_manager.write(filepath, content)
+                                except Exception as e:
+                                    log.error(f"Failed to auto-save {filepath}: {e}")
+                # Save all legacy editor tab files
                 for filepath in list(modified_files):
                     idx = -1
                     for i, fp in self._editor_tabs._files.items():
@@ -6632,8 +5929,15 @@ class CortexMainWindow(QMainWindow):
                 log.warning(f"Failed to trigger chat persistence: {e}")
         
         # 3. Save IDE UI state
-        fps = self._editor_tabs.get_open_files()
-        active = self._editor_tabs.current_filepath()
+        # Only save from the active webview editor — NOT the hidden legacy _editor_tabs
+        # which accumulates stale entries from old sessions and never gets cleaned.
+        fps = []
+        if hasattr(self, '_webview_panel'):
+            for fp in self._webview_panel._open_files:
+                if fp and fp != "untitled.py":
+                    fps.append(fp)
+            log.info(f"[SESSION] Saving {len(fps)} open files from webview: {[Path(f).name for f in fps]}")
+        active = self._webview_panel.get_active_file() or self._editor_tabs.current_filepath()
         expanded = self._sidebar.get_expanded_paths()
         self._session_manager.save(fps, active, {"expanded_paths": expanded})
         self._settings.set("window", "maximized", self.isMaximized())
@@ -6691,17 +5995,6 @@ class CortexMainWindow(QMainWindow):
         - Sidebar keeps its width; editor absorbs most resize delta.
         """
         super().resizeEvent(event)
-        w = event.size().width()
-
-        # Codex 4-panel layout: fixed widths for sidebar (220), review (380), file tree (280)
-        # Chat panel is flexible. On very small screens, we may need to hide panels.
-        if w < 1000:
-            # Small window: hide file tree panel
-            if hasattr(self, '_file_tree_panel'):
-                self._file_tree_panel.setVisible(False)
-        else:
-            if hasattr(self, '_file_tree_panel'):
-                self._file_tree_panel.setVisible(True)
 
         if hasattr(self, '_welcome_widget') and self._welcome_widget is not None:
             self._apply_welcome_theme(self._theme_manager.is_dark)
@@ -7121,15 +6414,12 @@ class CortexMainWindow(QMainWindow):
             return "auto"
 
     def _on_title_generated(self, conversation_id: str, title: str):
-        """Update the chat title in the sidebar when a new title is generated.
+        """Update the chat title when a new title is generated.
         
         Args:
             conversation_id: The ID of the conversation.
             title: The new title for the chat.
         """
-        # Update the sidebar chat list with the new title
-        self._refresh_sidebar_chat_list()
-        """Handle auto-generated title - update chat tab and UI."""
         # Update the chat tab title via JavaScript bridge
         if hasattr(self, '_ai_chat') and hasattr(self._ai_chat, '_view'):
             safe_title = title.replace('"', '\\"').replace("'", "\\'")

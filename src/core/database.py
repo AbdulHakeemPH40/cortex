@@ -719,6 +719,15 @@ class CortexDatabase:
             )
             return int(cursor.fetchone()[0] or 0)
     
+    def update_conversation_title(self, conversation_id: str, title: str):
+        """Update the title of an existing conversation."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE conversations SET title = ?, updated_at = ? WHERE conversation_id = ?",
+                (title, int(datetime.now().timestamp() * 1000), conversation_id)
+            )
+
     def delete_conversation(self, conversation_id: str):
         """Delete a conversation and all its messages."""
         with self._get_connection() as conn:

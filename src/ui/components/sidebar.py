@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QTreeView, QLineEdit, QListWidget, QListWidgetItem,
     QLabel, QMenu, QInputDialog, QMessageBox, QFrame,
     QSizePolicy, QComboBox, QSlider, QStyledItemDelegate, QStyle,
-    QApplication
+    QApplication, QAbstractItemView
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QDir, QModelIndex, QSize, QRect, QTimer, QThread
 from PyQt6.QtGui import (
@@ -1790,6 +1790,224 @@ class ChangedFilesPanel(QWidget):
         return line
 
 
+class ChatHistoryPanel(QWidget):
+    """Chat history list panel — shows saved conversations with titles."""
+    chat_selected = pyqtSignal(str)        # conversation_id
+    chat_renamed = pyqtSignal(str, str)     # (conversation_id, new_title)
+    chat_delete_requested = pyqtSignal(str) # conversation_id — main_window shows confirm dialog
+    new_chat_requested = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._chats: list[dict] = []
+        self._project_path: str = ""
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Header with "+ New Chat" button
+        header = QWidget()
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(12, 10, 12, 6)
+        header_layout.setSpacing(8)
+
+        title = QLabel("CHAT HISTORY")
+        title.setStyleSheet("font-size:10px; font-weight:bold; color:#858585; letter-spacing:1px;")
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+
+        self._new_btn = QPushButton()
+        self._new_btn.setFixedSize(28, 28)
+        self._new_btn.setToolTip("New Chat")
+        self._new_btn.setIcon(make_icon("plus", "#cccccc", 14))
+        self._new_btn.setIconSize(QSize(14, 14))
+        self._new_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: 1px solid #3a3a3a;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background: #2d2d2d;
+                border-color: #555555;
+            }
+        """)
+        self._new_btn.clicked.connect(self.new_chat_requested.emit)
+        header_layout.addWidget(self._new_btn)
+        layout.addWidget(header)
+
+        # Chat list
+        self._list = QListWidget()
+        self._list.setFrameShape(QFrame.Shape.NoFrame)
+        self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._list.itemClicked.connect(self._on_item_clicked)
+        self._list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._list.customContextMenuRequested.connect(self._on_context_menu)
+        self._list.setStyleSheet("""
+            QListWidget {
+                background: transparent;
+                border: none;
+                outline: none;
+            }
+            QListWidget::item {
+                color: #cccccc;
+                padding: 8px 12px;
+                border: none;
+                border-radius: 4px;
+            }
+            QListWidget::item:hover {
+                background: #2a2a2a;
+            }
+            QListWidget::item:selected {
+                background: #37373d;
+                color: #ffffff;
+            }
+            QScrollBar:vertical {
+                border: none;
+                background: #1e1e1e;
+                width: 5px;
+                margin: 0px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background: #5a5a5a;
+                min-height: 30px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #6a6a6a;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                border: none;
+                background: none;
+                height: 0px;
+            }
+        """)
+        layout.addWidget(self._list, 1)
+
+        # Empty state
+        self._empty_label = QLabel("No saved chats")
+        self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_label.setStyleSheet("color: #555555; font-size: 12px; padding: 20px;")
+        self._empty_label.hide()
+        layout.addWidget(self._empty_label)
+
+    def refresh(self, project_path: str = None):
+        """Reload chat list from SQLite for the given project path."""
+        if project_path:
+            self._project_path = project_path
+        if not self._project_path:
+            self._list.clear()
+            self._empty_label.show()
+            return
+
+        try:
+            from src.core.chat_history import get_chat_history
+            history = get_chat_history()
+            conversations = history.get_conversations(self._project_path)
+            self._chats = conversations or []
+        except Exception:
+            self._chats = []
+
+        self._list.clear()
+        self._list.blockSignals(True)
+        for chat in self._chats:
+            title = chat.get('title', 'Untitled')
+            conv_id = chat.get('conversation_id', '')
+            msg_count = chat.get('message_count', 0)
+
+            item = QListWidgetItem(f"{title}")
+            item.setData(Qt.ItemDataRole.UserRole, conv_id)
+            item.setToolTip(f"{msg_count} messages")
+            self._list.addItem(item)
+        self._list.blockSignals(False)
+
+        self._empty_label.setVisible(len(self._chats) == 0)
+
+    def _on_item_clicked(self, item: QListWidgetItem):
+        conv_id = item.data(Qt.ItemDataRole.UserRole)
+        if conv_id:
+            self.chat_selected.emit(conv_id)
+
+    def _on_context_menu(self, pos):
+        item = self._list.itemAt(pos)
+        if not item:
+            return
+        conv_id = item.data(Qt.ItemDataRole.UserRole)
+        if not conv_id:
+            return
+
+        menu = QMenu(self)
+        rename_action = menu.addAction("Rename Chat")
+        rename_action.triggered.connect(lambda: self._rename_chat(conv_id, item))
+        menu.addSeparator()
+        delete_action = menu.addAction("Delete Chat")
+        delete_action.triggered.connect(lambda: self.chat_delete_requested.emit(conv_id))
+        menu.exec(self._list.mapToGlobal(pos))
+
+    def _rename_chat(self, conv_id: str, item: QListWidgetItem):
+        current_title = item.text()
+        new_title, ok = QInputDialog.getText(
+            self, "Rename Chat", "New name:", text=current_title
+        )
+        if ok and new_title.strip() and new_title.strip() != current_title:
+            new_title = new_title.strip()
+            try:
+                from src.core.chat_history import get_chat_history
+                history = get_chat_history()
+                history.db.update_conversation_title(conv_id, new_title)
+            except Exception:
+                pass
+            item.setText(new_title)
+            self.chat_renamed.emit(conv_id, new_title)
+
+    def remove_item(self, conv_id: str):
+        """Remove an item by conversation_id (called after confirmed delete)."""
+        for i in range(self._list.count()):
+            item = self._list.item(i)
+            if item and item.data(Qt.ItemDataRole.UserRole) == conv_id:
+                self._list.takeItem(i)
+                break
+        self._empty_label.setVisible(self._list.count() == 0)
+
+    def populate_from_json(self, chat_list_json: str):
+        """Populate the list directly from JS JSON data (bypasses stale SQLite)."""
+        import json
+        try:
+            data = json.loads(chat_list_json) if isinstance(chat_list_json, str) else chat_list_json
+        except (json.JSONDecodeError, TypeError):
+            return
+        if not isinstance(data, list):
+            return
+
+        self._list.clear()
+        self._list.blockSignals(True)
+        for chat in data:
+            if not isinstance(chat, dict):
+                continue
+            conv_id = chat.get('id', '')
+            title = chat.get('title', 'Untitled')
+            msg_count = chat.get('message_count', len(chat.get('messages', [])))
+            if not conv_id:
+                continue
+
+            item = QListWidgetItem(title)
+            item.setData(Qt.ItemDataRole.UserRole, conv_id)
+            item.setToolTip(f"{msg_count} messages")
+            self._list.addItem(item)
+        self._list.blockSignals(False)
+        self._empty_label.setVisible(self._list.count() == 0)
+
+    def set_theme(self, is_dark: bool):
+        color = "#858585" if is_dark else "#666666"
+        # Theme is primarily handled by stylesheets set in _build_ui
+
+
 class SidebarWidget(QWidget):
     """
     Full left sidebar with icon strip + stacked panels.
@@ -1799,13 +2017,11 @@ class SidebarWidget(QWidget):
     ai_action_requested = pyqtSignal(str)
     file_renamed = pyqtSignal(str, str)
     file_deleted = pyqtSignal(str)
-    
-    # Changed files signals
-    file_accepted = pyqtSignal(str)
-    file_rejected = pyqtSignal(str)
-    accept_all_requested = pyqtSignal()
-    reject_all_requested = pyqtSignal()
     settings_requested = pyqtSignal()   # ⚙ gear button in icon-strip footer
+    chat_selected = pyqtSignal(str)        # conversation_id — forwarded from ChatHistoryPanel
+    chat_renamed = pyqtSignal(str, str)     # (conversation_id, new_title)
+    chat_delete_requested = pyqtSignal(str) # conversation_id
+    new_chat_requested = pyqtSignal()      # forwarded from ChatHistoryPanel
 
     def __init__(self, file_manager=None, git_manager=None, parent=None):
         super().__init__(parent)
@@ -1833,7 +2049,8 @@ class SidebarWidget(QWidget):
             ("explorer", "Explorer", 0),
             ("search-panel", "Search", 1),
             ("ai-panel", "AI Tools", 2),
-            ("changed-files-panel", "Changed Files", 3),
+            ("git-review", "Git Review", 3),
+            ("chat-history", "Chat History", 4),
         ]
         for icon_name, tooltip, idx in self._panels_info:
             btn = QPushButton()
@@ -1864,12 +2081,12 @@ class SidebarWidget(QWidget):
         self._explorer = FileExplorerPanel(self._file_manager)
         self._search = SearchPanel()
         self._ai_tools = AIToolsPanel()
-        self._changed_files = ChangedFilesPanel()
 
         self._stack.addWidget(self._explorer)       # 0
         self._stack.addWidget(self._search)          # 1
         self._stack.addWidget(self._ai_tools)        # 2
-        self._stack.addWidget(self._changed_files)   # 3
+        self._git_review = None  # placeholder — set via add_git_review_panel()
+        self._chat_history = ChatHistoryPanel()     # created here, added via add_chat_history_panel()
         layout.addWidget(self._stack)
 
         # Connect signals
@@ -1878,13 +2095,10 @@ class SidebarWidget(QWidget):
         self._explorer.file_deleted.connect(self.file_deleted)
         self._search.file_opened.connect(self.file_search_opened)
         self._ai_tools.action_requested.connect(self.ai_action_requested)
-        
-        # Connect changed files panel signals
-        self._changed_files.file_opened.connect(self.file_opened)
-        self._changed_files.file_accepted.connect(self.file_accepted)
-        self._changed_files.file_rejected.connect(self.file_rejected)
-        self._changed_files.accept_all_requested.connect(self.accept_all_requested)
-        self._changed_files.reject_all_requested.connect(self.reject_all_requested)
+        self._chat_history.chat_selected.connect(self.chat_selected)
+        self._chat_history.chat_renamed.connect(self.chat_renamed)
+        self._chat_history.chat_delete_requested.connect(self.chat_delete_requested)
+        self._chat_history.new_chat_requested.connect(self.new_chat_requested)
 
         self.set_theme(True)
 
@@ -1896,9 +2110,34 @@ class SidebarWidget(QWidget):
         for i, btn in enumerate(self._icon_buttons):
             btn.setChecked(i == index)
 
+    def add_git_review_panel(self, panel: QWidget):
+        """Add the Git Review panel (Summary/Review/Changed Files) at index 3."""
+        self._git_review = panel
+        self._stack.addWidget(panel)  # index 3
+
+    def add_chat_history_panel(self):
+        """Finalize chat history panel at index 4 (after git_review is placed)."""
+        self._stack.addWidget(self._chat_history)  # index 4
+
+    def refresh_chat_history(self):
+        """Refresh chat history list from SQLite for the current project."""
+        if self._chat_history:
+            self._chat_history.refresh()
+
+    def populate_chat_history_from_json(self, chat_list_json: str):
+        """Populate chat history directly from JS JSON (instant, bypasses stale DB)."""
+        if self._chat_history:
+            self._chat_history.populate_from_json(chat_list_json)
+
+    def remove_chat_history_item(self, conv_id: str):
+        """Remove a chat history item after confirmed delete."""
+        if self._chat_history:
+            self._chat_history.remove_item(conv_id)
+
     def set_project(self, folder_path: str):
         self._explorer.set_project(folder_path)
         self._search.set_root(folder_path)
+        self._chat_history.refresh(folder_path)
 
     def is_explorer_focused(self) -> bool:
         return self._explorer.is_tree_focused()
@@ -1910,7 +2149,7 @@ class SidebarWidget(QWidget):
         self._explorer.set_theme(is_dark)
         self._search.set_theme(is_dark)
         self._ai_tools.set_theme(is_dark)
-        self._changed_files.set_theme(is_dark)
+        self._chat_history.set_theme(is_dark)
         
         icon_color = "#cccccc" if is_dark else "#555555"
         hover_bg = "rgba(255,255,255,0.10)" if is_dark else "rgba(0,0,0,0.06)"
@@ -1974,19 +2213,3 @@ class SidebarWidget(QWidget):
 
     def get_ai_temperature(self) -> float:
         return self._ai_tools.get_temperature()
-
-    def add_changed_file(self, file_path: str, edit_type: str = "M"):
-        """Add a file to the changed files panel."""
-        self._changed_files.add_file(file_path, edit_type)
-
-    def remove_changed_file(self, file_path: str):
-        """Remove a file from the changed files panel."""
-        self._changed_files.remove_file(file_path)
-
-    def clear_changed_files(self):
-        """Clear all files from the changed files panel."""
-        self._changed_files.clear_files()
-
-    def show_changed_files_panel(self):
-        """Switch to the changed files panel."""
-        self._switch_panel(4)

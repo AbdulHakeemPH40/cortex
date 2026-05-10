@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "monaco-editor": "^0.44.0",
     "pyright": "^1.1.408"
   },
   "devDependencies": {

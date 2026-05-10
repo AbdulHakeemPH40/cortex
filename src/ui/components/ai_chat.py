@@ -3841,6 +3841,8 @@ class AIChatWidget(QWidget):
         
         # Emit signal to refresh sidebar chat list after project info is applied
         QTimer.singleShot(1000, self.chat_list_updated.emit)
+        # ALSO emit with data so sidebar populates immediately (bypasses stale SQLite)
+        QTimer.singleShot(800, lambda: self.chat_list_updated_with_data.emit(safe_chats))
 
     def clear_chat(self):
         """Clear the chat window."""

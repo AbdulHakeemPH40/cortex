@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cortex Editor</title>
+<style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+
+    #app {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        background: #1e1e1e;
+    }
+
+    /* Tab Bar */
+    #tab-bar {
+        display: flex;
+        background: #252526;
+        border-bottom: 1px solid #3c3c3c;
+        height: 35px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        flex-shrink: 0;
+    }
+    #tab-bar::-webkit-scrollbar { height: 3px; }
+    #tab-bar::-webkit-scrollbar-thumb { background: #424242; border-radius: 2px; }
+
+    .tab {
+        display: flex;
+        align-items: center;
+        padding: 0 12px;
+        height: 35px;
+        font-size: 13px;
+        color: #969696;
+        background: #2d2d2d;
+        border-right: 1px solid #252526;
+        cursor: pointer;
+        white-space: nowrap;
+        user-select: none;
+        min-width: 80px;
+        flex-shrink: 0;
+        gap: 8px;
+    }
+    .tab.active {
+        color: #ffffff;
+        background: #1e1e1e;
+        border-bottom: 2px solid #0078d4;
+    }
+    .tab:hover:not(.active) { background: #2a2a2a; }
+    .tab.modified::before { content: '•'; color: #ffcc00; font-weight: bold; margin-right: -4px; }
+    .tab .close-btn {
+        font-size: 14px;
+        color: #969696;
+        line-height: 1;
+        padding: 2px 4px;
+        border-radius: 3px;
+        margin-left: 4px;
+    }
+    .tab .close-btn:hover { color: #ffffff; background: rgba(255,255,255,0.15); }
+
+    /* No-open-files hint */
+    #no-files-hint {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        color: #555555;
+        font-size: 14px;
+        font-style: italic;
+    }
+
+    /* Editor container */
+    #editor-container { flex: 1; overflow: hidden; }
+    #editor-container.hidden { display: none; }
+
+    /* Light theme overrides */
+    body.light #app { background: #ffffff; }
+    body.light #tab-bar { background: #f3f3f3; border-bottom-color: #d4d4d4; }
+    body.light .tab { color: #616161; background: #ececec; border-right-color: #f3f3f3; }
+    body.light .tab.active { color: #333333; background: #ffffff; border-bottom-color: #0078d4; }
+    body.light .tab:hover:not(.active) { background: #e8e8e8; }
+    body.light #no-files-hint { color: #aaaaaa; }
+</style>
+</head>
+<body>
+
+<div id="app">
+    <div id="tab-bar"></div>
+    <div id="no-files-hint">Open a file from the Explorer to start editing</div>
+    <div id="editor-container" class="hidden"></div>
+</div>
+
+<!-- QWebChannel -->
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+
+<script>
+// ============================================================================
+// State
+// ============================================================================
+var bridge = null;
+var editor = null;
+var monaco = null;
+var openFiles = {};           // path → { path, language, content, modified }
+var openOrder = [];           // ordered file paths for tabs
+var activeFilePath = null;
+var isDark = true;
+var changeTimer = null;
+var CHANGE_DEBOUNCE_MS = 300;
+
+// ---- Global JS error trapping (catch silent bugs before process dies) ----
+window.onerror = function(msg, url, line, col, error) {
+    console.error('[Editor] UNCAUGHT ERROR:', msg, 'at line', line, 'col', col);
+    if (error && error.stack) console.error('[Editor] Stack:', error.stack);
+    return false; // let default handler also run
+};
+window.addEventListener('unhandledrejection', function(e) {
+    console.error('[Editor] UNHANDLED REJECTION:', e.reason);
+    if (e.reason && e.reason.stack) console.error('[Editor] Stack:', e.reason.stack);
+});
+
+// Monaco language map: Cortex language names → Monaco language IDs
+var LANG_MAP = {
+    'python': 'python', 'py': 'python',
+    'javascript': 'javascript', 'js': 'javascript',
+    'typescript': 'typescript', 'ts': 'typescript',
+    'jsx': 'javascript', 'tsx': 'typescript',
+    'html': 'html', 'htm': 'html',
+    'css': 'css', 'scss': 'scss', 'less': 'less',
+    'json': 'json', 'jsonc': 'json',
+    'markdown': 'markdown', 'md': 'markdown',
+    'java': 'java',
+    'rust': 'rs', 'rs': 'rust',
+    'go': 'go',
+    'cpp': 'cpp', 'c++': 'cpp', 'c': 'c', 'h': 'c',
+    'csharp': 'csharp', 'cs': 'csharp',
+    'php': 'php',
+    'ruby': 'ruby', 'rb': 'ruby',
+    'swift': 'swift',
+    'kotlin': 'kotlin',
+    'sql': 'sql',
+    'yaml': 'yaml', 'yml': 'yaml',
+    'xml': 'xml',
+    'shell': 'shell', 'sh': 'shell', 'bash': 'shell',
+    'powershell': 'powershell', 'ps1': 'powershell',
+    'dockerfile': 'dockerfile',
+    'plaintext': 'plaintext', 'txt': 'plaintext',
+    'ini': 'ini', 'toml': 'ini', 'cfg': 'ini',
+    'bat': 'bat', 'cmd': 'bat',
+    'log': 'plaintext',
+    'csv': 'plaintext',
+    'env': 'plaintext',
+    'properties': 'ini',
+};
+
+function monacoLang(lang) {
+    if (!lang) return 'plaintext';
+    var key = lang.toLowerCase();
+    return LANG_MAP[key] || 'plaintext';
+}
+
+// ============================================================================
+// Monaco Init — loader.js path injected by Python via base tag
+// ============================================================================
+
+// The Monaco loader.js is inlined below by Python
+// The vs/ directory path is injected below by Python
+
+// Set up require base URL — this is populated by Python before page load
+var _monacoBaseUrl = '__MONACO_VS_PATH__';
+
+__MONACO_LOADER_INLINE__
+
+// After loader.js is defined, configure and load Monaco
+if (typeof require !== 'undefined') {
+    require.config({ paths: { vs: _monacoBaseUrl }, baseUrl: _monacoBaseUrl });
+    require(['vs/editor/editor.main'], function() {
+    try {
+        monaco = window.monaco;
+        console.log('[Editor] Monaco module loaded, initializing...');
+
+    // Define dark/light themes
+    monaco.editor.defineTheme('cortex-dark', {
+        base: 'vs-dark',
+        inherit: true,
+        rules: [],
+        colors: { 'editor.background': '#1e1e1e' }
+    });
+    monaco.editor.defineTheme('cortex-light', {
+        base: 'vs',
+        inherit: true,
+        rules: [],
+        colors: { 'editor.background': '#ffffff' }
+    });
+
+    editor = monaco.editor.create(document.getElementById('editor-container'), {
+        value: '',
+        language: 'plaintext',
+        theme: isDark ? 'cortex-dark' : 'cortex-light',
+        automaticLayout: true,
+        minimap: { enabled: false },
+        fontSize: 14,
+        fontFamily: '"Cascadia Code", "Fira Code", Consolas, "Courier New", monospace',
+        fontLigatures: false,
+        tabSize: 4,
+        insertSpaces: true,
+        scrollBeyondLastLine: false,
+        wordWrap: 'off',
+        lineNumbers: 'on',
+        renderWhitespace: 'none',
+        bracketPairColorization: { enabled: false },
+        guides: { bracketPairs: false },
+        smoothScrolling: false,
+        cursorBlinking: 'blink',
+        cursorSmoothCaretAnimation: 'off',
+        renderLineHighlight: 'line',
+        occurrencesHighlight: 'off',
+        padding: { top: 8 },
+        glyphMargin: false,
+        folding: true,
+    });
+
+    // ---- Content change tracking (debounced) — no LSP auto-notify during scroll ----
+    editor.onDidChangeModelContent(function() {
+        if (!activeFilePath) return;
+        var model = editor.getModel();
+        var content = model.getValue();
+        if (openFiles[activeFilePath]) {
+            openFiles[activeFilePath].content = content;
+        }
+        if (changeTimer) clearTimeout(changeTimer);
+        changeTimer = setTimeout(function() {
+            if (bridge && activeFilePath) {
+                bridge.onContentChanged(activeFilePath, content);
+            }
+        }, CHANGE_DEBOUNCE_MS);
+    });
+
+    // ---- LSP providers disabled — eliminate QWebChannel calls during editing ----
+    // Completion, hover, and definition providers were removed to prevent
+    // bridge communication from triggering Chromium crashes during scroll.
+
+    // Handle tab close keyboard shortcut (Ctrl+W)
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyW, function() {
+        if (activeFilePath) closeFile(activeFilePath);
+    });
+
+    // Mark Monaco as fully ready
+    window.editorReady = true;
+
+    // Apply any file that was opened before Monaco loaded
+    if (activeFilePath && openFiles[activeFilePath]) {
+        console.log('[Editor] Applying pending file: ' + activeFilePath);
+        setEditorContent(activeFilePath);
+    }
+
+    console.log('[Editor] Monaco initialized successfully');
+
+    // Notify Python that Monaco is truly ready (not just QWebChannel)
+    if (bridge && bridge.onEditorReady) {
+        bridge.onEditorReady();
+    }
+
+    } catch (err) {
+        console.error('[Editor] Monaco init error: ' + err.message);
+        document.getElementById('no-files-hint').textContent = 'Editor failed to load: ' + err.message;
+    }
+    });
+} else {
+    console.error('[Editor] require is not defined — Monaco loader.js failed to load');
+    document.getElementById('no-files-hint').textContent = 'Monaco loader not found. Run: npm install monaco-editor';
+}
+
+// ============================================================================
+// Tab / File Management
+// ============================================================================
+
+function fileName(path) {
+    var parts = path.replace(/\\/g, '/').split('/');
+    return parts[parts.length - 1] || path;
+}
+
+function setEditorContent(filePath) {
+    var f = openFiles[filePath];
+    if (!f || !editor) return;
+    var model = editor.getModel();
+    if (model) {
+        // Clear old LSP markers BEFORE changing content — prevents Monaco from
+        // trying to render decorations on lines that don't exist in the new file.
+        try { monaco.editor.setModelMarkers(model, 'lsp', []); } catch(e) {}
+        model.setValue(f.content || '');
+        monaco.editor.setModelLanguage(model, monacoLang(f.language));
+    }
+    document.getElementById('no-files-hint').style.display = 'none';
+    document.getElementById('editor-container').classList.remove('hidden');
+}
+
+function renderTabs() {
+    var bar = document.getElementById('tab-bar');
+    if (!bar) { console.warn('[Editor] tab-bar not found, skipping renderTabs'); return; }
+    bar.innerHTML = '';
+    for (var i = 0; i < openOrder.length; i++) {
+        var fp = openOrder[i];
+        var f = openFiles[fp];
+        var name = fileName(fp);
+        var div = document.createElement('div');
+        div.className = 'tab' + (fp === activeFilePath ? ' active' : '') + (f.modified ? ' modified' : '');
+        div.title = fp;
+        div.setAttribute('data-path', fp);
+        div.innerHTML = '<span>' + name + '</span><span class="close-btn">&times;</span>';
+        div.querySelector('span').onclick = function(e) {
+            e.stopPropagation();
+            switchToFile(this.parentElement.getAttribute('data-path'));
+        };
+        div.querySelector('.close-btn').onclick = function(e) {
+            e.stopPropagation();
+            closeFile(this.parentElement.getAttribute('data-path'));
+        };
+        // Middle-click to close
+        div.addEventListener('auxclick', function(e) {
+            if (e.button === 1) {
+                e.preventDefault();
+                closeFile(this.getAttribute('data-path'));
+            }
+        });
+        bar.appendChild(div);
+    }
+    var hint = document.getElementById('no-files-hint');
+    var container = document.getElementById('editor-container');
+    if (openOrder.length === 0) {
+        hint.style.display = 'flex';
+        container.classList.add('hidden');
+    } else {
+        // Files are open — show editor area (content will fill in when Monaco loads)
+        hint.style.display = 'none';
+        container.classList.remove('hidden');
+    }
+}
+
+function switchToFile(filePath) {
+    if (!openFiles[filePath]) return;
+    // Save current editor content to cache before switching
+    if (activeFilePath && openFiles[activeFilePath] && editor) {
+        openFiles[activeFilePath].content = editor.getModel().getValue();
+    }
+    activeFilePath = filePath;
+    console.log('[Editor] switchToFile: ' + filePath + ' (editor ready: ' + !!editor + ')');
+    // If Monaco isn't loaded yet, just update state — the init callback will call setEditorContent
+    if (editor) {
+        setEditorContent(filePath);
+    } else {
+        // Monaco not loaded yet — show tabs/hide hint, then retry when editor appears
+        document.getElementById('no-files-hint').style.display = 'none';
+        document.getElementById('editor-container').classList.remove('hidden');
+        scheduleEditorRetry(filePath);
+    }
+    renderTabs();
+    // Notify Python about active file change (no cursor tracking during scroll)
+    if (bridge && editor && activeFilePath) {
+        bridge.onCursorChanged(filePath, 1, 1);
+    }
+}
+
+// Retry loading content into Monaco if it wasn't ready at switch time
+var _editorRetryTimer = null;
+var _editorRetryPath = null;
+var _editorRetryCount = 0;
+function scheduleEditorRetry(filePath) {
+    _editorRetryPath = filePath;
+    _editorRetryCount = 0;
+    if (_editorRetryTimer) clearInterval(_editorRetryTimer);
+    _editorRetryTimer = setInterval(function() {
+        _editorRetryCount++;
+        if (editor && window.editorReady) {
+            clearInterval(_editorRetryTimer);
+            _editorRetryTimer = null;
+            console.log('[Editor] Retry #' + _editorRetryCount + ' succeeded for: ' + _editorRetryPath);
+            setEditorContent(_editorRetryPath);
+            if (bridge) {
+                var pos = editor.getPosition();
+                bridge.onCursorChanged(_editorRetryPath, pos.lineNumber, pos.column);
+            }
+            setTimeout(requestDiagnostics, 300);
+        } else if (_editorRetryCount > 60) {
+            // Give up after 30 seconds (60 * 500ms)
+            clearInterval(_editorRetryTimer);
+            _editorRetryTimer = null;
+            console.error('[Editor] Retry timeout — Monaco never loaded for: ' + _editorRetryPath);
+            document.getElementById('no-files-hint').textContent = 'Editor failed to load. Check your internet connection for Monaco CDN.';
+            document.getElementById('no-files-hint').style.display = 'flex';
+            document.getElementById('editor-container').classList.add('hidden');
+        }
+    }, 500);
+}
+
+// Called by Python: openFile(path, content, language)
+function openFile(filePath, content, language) {
+    if (openFiles[filePath]) {
+        // Already open — switch to it, update content if different
+        if (openFiles[filePath].content !== content) {
+            openFiles[filePath].content = content;
+            openFiles[filePath].language = language || openFiles[filePath].language;
+            if (filePath === activeFilePath) {
+                setEditorContent(filePath);
+            }
+        }
+        switchToFile(filePath);
+        return;
+    }
+
+    // New file
+    openFiles[filePath] = {
+        path: filePath,
+        language: language || 'plaintext',
+        content: content || '',
+        modified: false
+    };
+    openOrder.push(filePath);
+    switchToFile(filePath);
+}
+
+// Called by Python: closeFile(path)
+function closeFile(filePath) {
+    console.log('[Editor] closeFile called: ' + filePath);
+    if (!openFiles[filePath]) return;
+    delete openFiles[filePath];
+    var idx = openOrder.indexOf(filePath);
+    if (idx >= 0) openOrder.splice(idx, 1);
+
+    if (filePath === activeFilePath) {
+        // Switch to next available file or clear
+        if (openOrder.length > 0) {
+            var nextIdx = Math.min(idx, openOrder.length - 1);
+            activeFilePath = openOrder[nextIdx];
+            setEditorContent(activeFilePath);
+        } else {
+            activeFilePath = null;
+            if (editor) {
+                editor.getModel().setValue('');
+            }
+            document.getElementById('no-files-hint').style.display = 'flex';
+            document.getElementById('editor-container').classList.add('hidden');
+        }
+    }
+    renderTabs();
+    console.log('[Editor] closeFile → calling bridge.onFileClosed for: ' + filePath);
+    if (bridge) bridge.onFileClosed(filePath);
+}
+
+// Called by Python: getContent(path) — returns current editor content
+function getContent(filePath) {
+    if (activeFilePath === filePath && editor) {
+        return editor.getModel().getValue();
+    }
+    if (openFiles[filePath]) {
+        return openFiles[filePath].content;
+    }
+    return '';
+}
+
+// Called by Python: setTheme(isDarkFlag)
+function setTheme(dark) {
+    isDark = dark;
+    if (editor) {
+        monaco.editor.setTheme(dark ? 'cortex-dark' : 'cortex-light');
+    }
+    document.body.className = dark ? '' : 'light';
+}
+
+// Called by Python: markModified(path, flag)
+function markModified(filePath, flag) {
+    if (openFiles[filePath]) {
+        openFiles[filePath].modified = flag;
+        renderTabs();
+    }
+}
+
+// Called by Python: getActiveFile() → path or null
+function getActiveFile() {
+    return activeFilePath;
+}
+
+// Called by Python: getCursorPosition() → { line, column }
+function getCursorPosition() {
+    if (editor) {
+        var pos = editor.getPosition();
+        return { line: pos.lineNumber, column: pos.column };
+    }
+    return { line: 1, column: 1 };
+}
+
+// ============================================================================
+// LSP Result Callbacks — called from Python via runJavaScript
+// ============================================================================
+
+// Called by Python: _lspCompletionsResult(requestId, suggestions, isIncomplete)
+function _lspCompletionsResult(requestId, suggestions, isIncomplete) {
+    var resolve = pendingCompletions[requestId];
+    if (!resolve) return;
+    delete pendingCompletions[requestId];
+
+    var items = (suggestions || []).map(function(s) {
+        var kind = s.kind || 1;
+        var insertText = s.insertText || s.label;
+        var item = {
+            label: s.label,
+            kind: kind,
+            detail: s.detail || '',
+            insertText: insertText,
+            sortText: s.sortText || s.label,
+            filterText: s.filterText || s.label,
+            range: undefined  // Let Monaco compute it
+        };
+        // Add documentation if present
+        if (s.documentation) {
+            item.documentation = s.documentation;
+        }
+        // Add insertTextRules for snippets
+        if (s.insertTextFormat === 2) {
+            item.insertTextRules = monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet;
+        }
+        return item;
+    });
+
+    resolve({ suggestions: items, incomplete: !!isIncomplete });
+}
+
+// Called by Python: _lspHoverResult(requestId, text, range)
+function _lspHoverResult(requestId, text, hoverRange) {
+    var resolve = pendingHovers[requestId];
+    if (!resolve) return;
+    delete pendingHovers[requestId];
+
+    if (!text) {
+        resolve(null);
+        return;
+    }
+
+    var result = {
+        contents: [{ value: text }]
+    };
+    if (hoverRange && hoverRange.start && hoverRange.end) {
+        result.range = {
+            startLineNumber: (hoverRange.start.line || 0) + 1,
+            startColumn: (hoverRange.start.character || 0) + 1,
+            endLineNumber: (hoverRange.end.line || 0) + 1,
+            endColumn: (hoverRange.end.character || 0) + 1
+        };
+    }
+    resolve(result);
+}
+
+// Called by Python: _lspDefinitionResult(requestId, locations)
+function _lspDefinitionResult(requestId, locations) {
+    var resolve = pendingDefinitions[requestId];
+    if (!resolve) return;
+    delete pendingDefinitions[requestId];
+
+    if (!locations || locations.length === 0) {
+        resolve([]);
+        return;
+    }
+
+    var results = locations.map(function(loc) {
+        var r = loc.range || {};
+        return {
+            uri: monaco.Uri.parse(loc.uri),
+            range: {
+                startLineNumber: r.startLineNumber || 1,
+                startColumn: r.startColumn || 1,
+                endLineNumber: r.endLineNumber || 1,
+                endColumn: r.endColumn || 1
+            }
+        };
+    });
+    resolve(results);
+}
+
+// Called by Python: _lspDiagnosticsResult(requestId, markers)
+function _lspDiagnosticsResult(requestId, markers) {
+    if (!activeFilePath || !monaco) return;
+    var model = editor.getModel();
+    if (!model) return;
+    try {
+        // Validate markers against the model's actual line count.
+        // Markers with out-of-bounds line numbers will crash Monaco's
+        // decoration renderer during scrolling.
+        var maxLine = model.getLineCount();
+        var safe = [];
+        if (markers && markers.length) {
+            for (var i = 0; i < markers.length; i++) {
+                var m = markers[i];
+                if (m.startLineNumber >= 1 && m.startLineNumber <= maxLine &&
+                    m.endLineNumber >= 1 && m.endLineNumber <= maxLine) {
+                    safe.push(m);
+                }
+            }
+        }
+        monaco.editor.setModelMarkers(model, 'lsp', safe);
+    } catch(e) {
+        console.error('[Editor] setModelMarkers failed:', e.message);
+    }
+}
+
+// Request diagnostics for current active file
+function requestDiagnostics() {
+    if (!bridge || !activeFilePath) return;
+    var f = openFiles[activeFilePath];
+    if (!f) return;
+    bridge.requestDiagnostics('diag_' + Date.now(), activeFilePath, f.language || 'plaintext');
+}
+
+// ============================================================================
+// QWebChannel Bridge Setup
+// ============================================================================
+function initBridge(ch) {
+    bridge = ch;
+    console.log('[Editor] QWebChannel bridge connected');
+    // NOTE: onEditorReady is emitted from Monaco init callback when the editor is truly ready,
+    // not here (QWebChannel connects before Monaco finishes loading asynchronously).
+}
+
+new QWebChannel(qt.webChannelTransport, function(channel) {
+    initBridge(channel.objects.bridge);
+});
+</script>
+</body>
+</html>

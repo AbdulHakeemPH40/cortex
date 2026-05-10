@@ -69,7 +69,14 @@ os.environ['QT_ENABLE_HIGHDPI_SCALING'] = '1'
 os.environ['QT_SCALE_FACTOR_ROUNDING_POLICY'] = 'PassThrough'
 if sys.platform == 'win32':
     os.environ['QT_QPA_PLATFORM'] = 'windows'
-    # Do NOT set QT_OPENGL=software — it disables hardware acceleration and blurs everything
+    
+# GPU flags are deliberately NOT set — Qt6's Chromium handles GPU gracefully
+# and explicit --disable-gpu or --use-gl can cause slow startup or conflicts.
+# Crash prevention is handled by:
+#   1. Reduced Monaco rendering features (no bracket colorization, smooth scroll, etc.)
+#   2. LSP marker line-number validation (prevents out-of-bounds decoration crash)
+#   3. QWebChannel call throttling and null-safety guards
+#   4. renderProcessTerminated signal handler in webview_panel.py
 
 # Add project root to path so 'src' imports work
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -165,7 +172,7 @@ def main():
         # Don't exit - just log and continue running
     
     sys.excepthook = handle_exception
-    
+
     log.info("Starting Cortex AI Agent IDE...")
 
     window = CortexMainWindow()
