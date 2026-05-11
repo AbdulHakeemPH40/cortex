@@ -474,7 +474,7 @@ class LSPManager(QObject):
     # Note: this is measured from LSPManager creation, which occurs ~2-3s
     # before the webview finishes loading. An 8s delay ensures ~5-6s of
     # WebEngine settle time after the webview is visible.
-    _LSP_STARTUP_DELAY = 25.0  # 25s delay for 12 files × 1.5s seq queue + Monaco settle
+    _LSP_STARTUP_DELAY = 8.0  # Keep WebEngine stable but make LSP responsive
     
     def __init__(self):
         super().__init__()

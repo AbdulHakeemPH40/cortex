@@ -118,6 +118,10 @@ var pendingDefinitions = {};
 // Lazy file loading tokens (prevent out-of-order loads overwriting content)
 var fileLoadTokens = {}; // path -> int
 
+// Debounce LSP open/refresh per file to avoid flooding the bridge
+var lspOpenTimer = null;
+var LSP_OPEN_DEBOUNCE_MS = 250;
+
 // ---- Scroll detection: suppress ALL bridge calls during scroll ----
 var isScrolling = false;
 var scrollStopTimer = null;
@@ -158,7 +162,7 @@ var isRenderingMarkers = false;
 // underlines for LSP diagnostics) is one of the most GPU-intensive operations
 // and crashes the render process if called before Chromium settles.
 var MONACO_LOAD_TIME = 0;        // set in Monaco init callback
-var STARTUP_WARMUP_MS = 60000;   // 60s — silent marker suppression during warmup
+var STARTUP_WARMUP_MS = 15000;   // 15s — silent marker suppression during warmup
 
 // ---- Global JS error trapping (catch silent bugs before process dies) ----
 // Monaco load timeout — if Monaco doesn't load within 30s, show error.
@@ -367,6 +371,67 @@ if (typeof require !== 'undefined') {
             });
         }
     });
+
+    // Also register providers for common language IDs. This improves reliability
+    // when the model language is changed dynamically via setModelLanguage().
+    (function() {
+        var languageIds = [
+            'plaintext','python','javascript','typescript','json','html','css','scss','less','markdown',
+            'xml','yaml','sql','powershell','shell','bat','cpp','csharp','java','go','rust','php','ruby'
+        ];
+
+        function _safeRegister(langId) {
+            try {
+                monaco.languages.registerCompletionItemProvider(langId, {
+                    triggerCharacters: [],
+                    provideCompletionItems: function(model, position) {
+                        if (isScrolling || isSwitchingFile || !bridge || !activeFilePath) return { suggestions: [] };
+                        return new Promise(function(resolve) {
+                            var reqId = 'comp_' + Date.now() + '_' + Math.random();
+                            pendingCompletions[reqId] = resolve;
+                            var f = openFiles[activeFilePath];
+                            bridge.requestCompletions(reqId, activeFilePath, f.language, position.lineNumber, position.column);
+                        });
+                    }
+                });
+            } catch(e) {}
+
+            try {
+                monaco.languages.registerHoverProvider(langId, {
+                    provideHover: function(model, position) {
+                        if (isScrolling || isSwitchingFile || !bridge || !activeFilePath) return null;
+                        return new Promise(function(resolve) {
+                            if (hoverTimer) clearTimeout(hoverTimer);
+                            hoverTimer = setTimeout(function() {
+                                var reqId = 'hover_' + Date.now() + '_' + Math.random();
+                                pendingHovers[reqId] = resolve;
+                                var f = openFiles[activeFilePath];
+                                bridge.requestHover(reqId, activeFilePath, f.language, position.lineNumber, position.column);
+                            }, HOVER_DEBOUNCE_MS);
+                        });
+                    }
+                });
+            } catch(e) {}
+
+            try {
+                monaco.languages.registerDefinitionProvider(langId, {
+                    provideDefinition: function(model, position) {
+                        if (!bridge || !activeFilePath) return null;
+                        return new Promise(function(resolve) {
+                            var reqId = 'def_' + Date.now() + '_' + Math.random();
+                            pendingDefinitions[reqId] = resolve;
+                            var f = openFiles[activeFilePath];
+                            bridge.requestDefinition(reqId, activeFilePath, f.language, position.lineNumber, position.column);
+                        });
+                    }
+                });
+            } catch(e) {}
+        }
+
+        for (var i = 0; i < languageIds.length; i++) {
+            _safeRegister(languageIds[i]);
+        }
+    })();
 
     // Handle tab close keyboard shortcut (Ctrl+W)
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyW, function() {
@@ -921,6 +986,11 @@ function scheduleDiagnostics() {
         if (isScrolling || (lastScrollAt && (Date.now() - lastScrollAt) < SCROLL_SETTLE_MS) || !bridge || !activeFilePath) return;
         if (!openFiles[activeFilePath]) return;
         var f = openFiles[activeFilePath];
+        if (bridge.notifyContentChanged) {
+            try {
+                bridge.notifyContentChanged(activeFilePath, f.content || '', f.language || 'plaintext');
+            } catch(e) {}
+        }
         bridge.requestDiagnostics('diag_' + (++diagSeq), activeFilePath, f.language || 'plaintext');
     }, DIAG_THROTTLE_MS);
 }
