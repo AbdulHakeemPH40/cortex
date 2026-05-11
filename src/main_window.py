@@ -1047,12 +1047,14 @@ class CortexMainWindow(QMainWindow):
         # Panel toggle state tracking
         self._left_sidebar_hidden = False
         self._chat_panel_hidden = False
+        self._code_panel_hidden = False
         self._summary_panel_hidden = False
         self._git_panel_hidden = False
 
         # Store minimum widths for panel toggle restore
         self._left_sidebar_min_width = 220
         self._chat_panel_min_width = 300
+        self._code_panel_min_width = 500
 
         # Keep old components for backward compatibility
         self._ai_splitter = None  # Replaced by 4-panel layout
@@ -2063,15 +2065,15 @@ class CortexMainWindow(QMainWindow):
         icon_size = 22
         btn_size = 26
 
+        is_dark = self._settings.theme == "dark"
+        icon_color = "#c8c8c8" if is_dark else "#444444"
+
         def _make_toggle(visible_icon: str, hidden_icon: str, tooltip_v: str, tooltip_h: str,
                          is_visible_getter, toggle_fn):
             """Single toggle button — switches icon/tooltip when panel visibility changes."""
             btn = QPushButton()
             btn.setFixedSize(btn_size, btn_size)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-
-            is_dark = self._settings.theme == "dark"
-            icon_color = "#c8c8c8" if is_dark else "#444444"
 
             _visible = is_visible_getter()
             btn.setIcon(make_icon(visible_icon if _visible else hidden_icon, icon_color, icon_size))
@@ -2102,6 +2104,23 @@ class CortexMainWindow(QMainWindow):
             lambda: not getattr(self, '_chat_panel_hidden', False),
             lambda v: self._toggle_ai_chat_panel(v)
         ))
+
+        # 3. Code Editor toggle
+        layout.addWidget(_make_toggle(
+            "panel-code-visible", "panel-code-hidden",
+            "Hide Code Editor", "Show Code Editor",
+            lambda: not getattr(self, '_code_panel_hidden', False),
+            lambda v: self._toggle_code_panel(v)
+        ))
+
+        # Play/Run button — runs the active file (HTML → Live Server, Python/JS → terminal)
+        play_btn = QPushButton()
+        play_btn.setFixedSize(btn_size, btn_size)
+        play_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        play_btn.setIcon(make_icon("play", icon_color, icon_size))
+        play_btn.setToolTip("Run File (Ctrl+F5)")
+        play_btn.clicked.connect(self._run_file)
+        layout.addWidget(play_btn)
 
         # 4. Review/Summary/Git panel toggle (all 3 tabs share one panel)
         layout.addWidget(_make_toggle(
@@ -3775,20 +3794,30 @@ class CortexMainWindow(QMainWindow):
             QMessageBox.information(self, "Run", f"Running {lang} is not yet supported.")
 
     def _run_live_server(self, file_path: str):
-        """Live Server removed in AI-first mode - AI handles preview"""
-        QMessageBox.information(self, "Info", 
-            "Live Server is not available in AI-first mode.\n"
-            "Ask AI to preview your HTML code instead.")
-        return
-
+        """Start built-in Live Server and open the HTML file in the browser."""
         import webbrowser
-        webbrowser.open(url)
+        from src.core.live_server import LiveServer
 
-        # Show status in status bar
-        if hasattr(self, '_statusbar_label'):
-            self._statusbar_label.setText(
-                f"Live Server  \u25cf  http://localhost:{port}   —   click \u25b6 to restart"
-            )
+        # Stop any existing server
+        if self._live_server and self._live_server.is_running:
+            self._live_server.stop()
+
+        root_dir = os.path.dirname(file_path)
+        self._live_server = LiveServer(root_dir, file_path)
+        try:
+            port = self._live_server.start()
+            url = self._live_server.get_url(file_path)
+            webbrowser.open(url)
+            log.info(f"Live Server started on port {port} → {url}")
+
+            # Show status in status bar
+            if hasattr(self, '_statusbar_label'):
+                self._statusbar_label.setText(
+                    f"Live Server  \u25cf  http://localhost:{port}   —   click \u25b6 to restart"
+                )
+        except Exception as e:
+            log.error(f"Live Server failed to start: {e}")
+            QMessageBox.warning(self, "Live Server", f"Failed to start Live Server:\n{e}")
 
     def _build_run_command(self, file_path: str, lang: str) -> str | None:
         """Build a run command for the current file based on language."""
@@ -4040,6 +4069,23 @@ class CortexMainWindow(QMainWindow):
             sizes[1] = 0
         self._main_splitter.setSizes(sizes)
         self._chat_panel_hidden = not show
+
+    def _toggle_code_panel(self, show: bool = True):
+        """Toggle Code Editor (Monaco/Webview) panel via splitter."""
+        sizes = self._main_splitter.sizes()
+        if len(sizes) < 3:
+            return
+        widget = self._main_splitter.widget(2)
+        if show:
+            widget.setMinimumWidth(500)
+            widget.setMaximumWidth(16777215)  # QWIDGETSIZE_MAX
+            sizes[2] = self._code_panel_min_width
+        else:
+            widget.setMinimumWidth(0)
+            widget.setMaximumWidth(0)
+            sizes[2] = 0
+        self._main_splitter.setSizes(sizes)
+        self._code_panel_hidden = not show
 
     def _toggle_review_panel(self, show: bool = True):
         """Toggle Git Review panel by switching sidebar to the git-review tab."""

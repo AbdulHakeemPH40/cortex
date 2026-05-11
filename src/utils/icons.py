@@ -1011,6 +1011,25 @@ _UI_SVG_TEMPLATES = {
         <line x1="9" y1="14" x2="15" y2="14" stroke-width="1.5"/>
     </svg>''',
 
+    # ── 5. Code Editor (Webview/Monaco): Angle brackets in a file ──
+    "panel-code-visible": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+        <polyline points="9 15 7 12 9 9"/>
+        <polyline points="15 9 17 12 15 15"/>
+    </svg>''',
+    "panel-code-hidden": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke-dasharray="4,2"/>
+        <polyline points="14 2 14 8 20 8"/>
+        <line x1="9" y1="9" x2="15" y2="15" stroke-width="2"/>
+        <line x1="15" y1="9" x2="9" y2="15" stroke-width="2"/>
+    </svg>''',
+
+    # ── 6. Play / Run: Triangle play button ──
+    "play": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="{color}">
+        <path d="M8 5v14l11-7z"/>
+    </svg>''',
+
     # ═══════════════════════════════════════════════════════════════════════════
     # Chat List Action Icons — Pencil (rename) & Trash (delete)
     # ═══════════════════════════════════════════════════════════════════════════
