@@ -3637,23 +3637,21 @@ class AIChatWidget(QWidget):
         self._get_code_context = callback
 
     def set_theme(self, is_dark: bool, retry_count: int = 0):
-        """Update the UI theme. Matches MainWindow naming convention."""
+        """Update the UI theme. Dark-only."""
         import logging as _log
-        self._is_dark = is_dark
-        js_bool = 'true' if is_dark else 'false'
+        self._is_dark = True
+        js_bool = 'true'
         
-        # Only log on first attempt to reduce log spam
         if retry_count == 0:
-            _log.info(f"[AI_CHAT] Setting theme to {'dark' if is_dark else 'light'}")
+            _log.info("[AI_CHAT] Setting theme to dark")
         
         def on_js_result(result):
             if result == 'success':
-                _log.info(f"[AI_CHAT] Theme set successfully to {'dark' if is_dark else 'light'}")
-            elif retry_count < 5:  # Reduced from 10 retries to 5
-                # Retry with increasing delay: 200ms, 400ms, 600ms...
+                _log.info("[AI_CHAT] Theme set successfully to dark")
+            elif retry_count < 5:
                 delay = 200 * (retry_count + 1)
                 from PyQt6.QtCore import QTimer
-                QTimer.singleShot(delay, lambda: self.set_theme(is_dark, retry_count + 1))
+                QTimer.singleShot(delay, lambda: self.set_theme(True, retry_count + 1))
             else:
                 _log.warning(f"[AI_CHAT] setTheme failed after {retry_count + 1} attempts")
         
@@ -3674,8 +3672,8 @@ class AIChatWidget(QWidget):
         self._view.page().runJavaScript(js_code, on_js_result)
 
     def update_theme(self, is_dark: bool):
-        """Alias for set_theme."""
-        self.set_theme(is_dark)
+        """Alias for set_theme. Dark-only."""
+        self.set_theme(True)
 
     def on_error(self, error_message: str):
         """Handle an error from the AI agent."""

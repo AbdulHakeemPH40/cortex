@@ -216,7 +216,7 @@ class FileTreeDelegate(QStyledItemDelegate):
         self._is_dark = True
 
     def set_dark(self, is_dark: bool):
-        self._is_dark = is_dark
+        pass  # dark-only
 
     def paint(self, painter: QPainter, option, index: QModelIndex):
         self.initStyleOption(option, index)
@@ -229,9 +229,9 @@ class FileTreeDelegate(QStyledItemDelegate):
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
         hovered  = bool(option.state & QStyle.StateFlag.State_MouseOver)
         if selected:
-            painter.fillRect(option.rect, QColor("#094771" if self._is_dark else "#cce5ff"))
+            painter.fillRect(option.rect, QColor("#094771"))
         elif hovered:
-            painter.fillRect(option.rect, QColor("#2a2d2e" if self._is_dark else "#f0f4ff"))
+            painter.fillRect(option.rect, QColor("#2a2d2e"))
 
         x = option.rect.left() + 2  # running x cursor
 
@@ -242,8 +242,7 @@ class FileTreeDelegate(QStyledItemDelegate):
             chevron = "▼" if expanded else "▶"
             chevron_rect = QRect(x, option.rect.top(), 14, option.rect.height())
             painter.save()
-            arrow_color = "#cccccc" if self._is_dark else "#555555"
-            painter.setPen(QColor(arrow_color))
+            painter.setPen(QColor("#cccccc"))
             f0 = painter.font()
             f0.setPointSize(8)
             painter.setFont(f0)
@@ -274,9 +273,9 @@ class FileTreeDelegate(QStyledItemDelegate):
         text_rect = QRect(x, option.rect.top(),
                           option.rect.right() - x - 2,
                           option.rect.height())
-        fg = "#d4d4d4" if self._is_dark else "#1a1a1a"
+        fg = "#d4d4d4"
         if selected:
-            fg = "#ffffff" if self._is_dark else "#003d80"
+            fg = "#ffffff"
 
         painter.save()
         painter.setPen(QColor(fg))
@@ -344,57 +343,6 @@ QTreeView QScrollBar::handle:vertical {
 }
 QTreeView QScrollBar::handle:vertical:hover {
     background: #6a6a6a;
-}
-QTreeView QScrollBar::add-line:vertical,
-QTreeView QScrollBar::sub-line:vertical {
-    height: 0px;
-    background: none;
-}
-QTreeView QScrollBar::add-page:vertical,
-QTreeView QScrollBar::sub-page:vertical {
-    background: none;
-}
-"""
-
-TREE_QSS_LIGHT = """
-QTreeView {
-    background: #ffffff;
-    border: none;
-    outline: 0;
-    font-size: 12px;
-    color: #1a1a1a;
-}
-QTreeView::item {
-    height: 24px;
-    border-radius: 3px;
-    padding-left: 2px;
-}
-QTreeView::item:hover      { 
-    background: #d4d4d4;
-    color: #1a1a1a;
-}
-QTreeView::item:selected   { 
-    background: #cce5ff; 
-    color: #003d80;
-    border: 1px solid #007acc;
-}
-QTreeView::branch {
-    background: #ffffff;
-}
-/* Light scrollbar styling */
-QTreeView QScrollBar:vertical {
-    background: #f3f3f3;
-    width: 10px;
-    border: none;
-}
-QTreeView QScrollBar::handle:vertical {
-    background: #c0c0c0;
-    min-height: 20px;
-    border-radius: 5px;
-    margin: 2px;
-}
-QTreeView QScrollBar::handle:vertical:hover {
-    background: #a0a0a0;
 }
 QTreeView QScrollBar::add-line:vertical,
 QTreeView QScrollBar::sub-line:vertical {
@@ -944,59 +892,54 @@ class FileExplorerPanel(QWidget):
             return False
 
     def set_theme(self, is_dark: bool):
-        self._is_dark = is_dark
-        self._delegate.set_dark(is_dark)
-        self._tree.setStyleSheet(TREE_QSS_DARK if is_dark else TREE_QSS_LIGHT)
+        # Dark-only — always apply dark styling
+        self._delegate.set_dark(True)
+        self._tree.setStyleSheet(TREE_QSS_DARK)
         # header/folder row colours
-        fg = "#cccccc" if is_dark else "#1a1a1a"
-        bg = "#1e1e1e" if is_dark else "#f3f3f3"
+        bg = "#1e1e1e"
+        fg = "#cccccc"
         self._header.setStyleSheet(f"background:{bg};")
         self._folder_row.setStyleSheet(
-            f"background:{bg}; border-bottom:1px solid "
-            f"{'#3e3e42' if is_dark else '#dcdcdc'};"
+            f"background:{bg}; border-bottom:1px solid #3e3e42;"
         )
         self._folder_name.setStyleSheet(
             f"font-size:11px; font-weight:bold; color:{fg}; letter-spacing:0.5px;"
         )
         self._folder_arrow.setStyleSheet(f"font-size:9px; color:{fg};")
         
-        # Update toolbar icons (High-quality SVG Codicon/Lucide style)
-        self._btn_new_file.setIcon(make_button_icon("new-file", is_dark, 18))
-        self._btn_new_folder.setIcon(make_button_icon("new-folder", is_dark, 18))
-        self._btn_refresh.setIcon(make_button_icon("refresh-explorer", is_dark, 18))
+        # Update toolbar icons
+        self._btn_new_file.setIcon(make_button_icon("new-file", True, 18))
+        self._btn_new_folder.setIcon(make_button_icon("new-folder", True, 18))
+        self._btn_refresh.setIcon(make_button_icon("refresh-explorer", True, 18))
         
-        btn_qss = f"""
+        btn_qss = """
             QPushButton {{ 
                 border:none; 
                 background:transparent; 
             }} 
             QPushButton:hover {{ 
-                background: {"#3e3e42" if is_dark else "#e5e5e5"}; 
+                background: #3e3e42; 
                 border-radius:3px; 
             }}
         """
         for btn in [self._btn_new_file, self._btn_new_folder, self._btn_refresh]:
             btn.setStyleSheet(btn_qss)
 
-        # Apply scrollbar styling to the panel (affects all scrollbars within)
-        scrollbar_bg = "#1e1e1e" if is_dark else "#f3f3f3"
-        scrollbar_handle = "#4a4a4a" if is_dark else "#c0c0c0"
-        scrollbar_handle_hover = "#5a5a5a" if is_dark else "#a0a0a0"
-        
-        self.setStyleSheet(f"""
+        # Apply scrollbar styling to the panel
+        self.setStyleSheet("""
             FileExplorerPanel QScrollBar:vertical {{
-                background: {scrollbar_bg};
+                background: #1e1e1e;
                 width: 10px;
                 border: none;
             }}
             FileExplorerPanel QScrollBar::handle:vertical {{
-                background: {scrollbar_handle};
+                background: #4a4a4a;
                 min-height: 20px;
                 border-radius: 5px;
                 margin: 2px;
             }}
             FileExplorerPanel QScrollBar::handle:vertical:hover {{
-                background: {scrollbar_handle_hover};
+                background: #5a5a5a;
             }}
             FileExplorerPanel QScrollBar::add-line:vertical,
             FileExplorerPanel QScrollBar::sub-line:vertical {{
@@ -1246,7 +1189,7 @@ class FileExplorerPanel(QWidget):
 
         menu = QMenu(self)
         menu.setStyleSheet(f"""
-            QMenu {{ background-color: {'#252526' if self._is_dark else '#ffffff'}; color: {'#cccccc' if self._is_dark else '#333333'}; border: 1px solid #3c3c3c; }}
+            QMenu {{ background-color: #252526; color: #cccccc; border: 1px solid #3c3c3c; }}
             QMenu::item:selected {{ background-color: #094771; color: white; }}
         """)
         
@@ -1451,7 +1394,7 @@ class SearchPanel(QWidget):
         self.set_theme(True)
 
     def set_theme(self, is_dark: bool):
-        color = "#858585" if is_dark else "#666666"
+        color = "#858585"
         self._header.setStyleSheet(f"font-size:10px; font-weight:bold; color:{color}; letter-spacing:1px;")
         self._status.setStyleSheet(f"font-size:11px; color:{color};")
 
@@ -1525,7 +1468,7 @@ class AIToolsPanel(QWidget):
         layout.addStretch()
 
     def set_theme(self, is_dark: bool):
-        color = "#858585" if is_dark else "#666666"
+        color = "#858585"
         self._header.setStyleSheet(f"font-size:10px; font-weight:bold; color:{color}; letter-spacing:1px;")
 
     def get_model(self) -> str:
@@ -1781,7 +1724,7 @@ class ChangedFilesPanel(QWidget):
             self._count_label.setText(f"({count})")
 
     def set_theme(self, is_dark: bool):
-        color = "#858585" if is_dark else "#666666"
+        color = "#858585"
         self._header.setStyleSheet(f"font-size:10px; font-weight:bold; color:{color}; letter-spacing:1px;")
 
     def _make_separator(self) -> QFrame:
@@ -2004,7 +1947,7 @@ class ChatHistoryPanel(QWidget):
         self._empty_label.setVisible(self._list.count() == 0)
 
     def set_theme(self, is_dark: bool):
-        color = "#858585" if is_dark else "#666666"
+        color = "#858585"
         # Theme is primarily handled by stylesheets set in _build_ui
 
 
@@ -2151,9 +2094,9 @@ class SidebarWidget(QWidget):
         self._ai_tools.set_theme(is_dark)
         self._chat_history.set_theme(is_dark)
         
-        icon_color = "#cccccc" if is_dark else "#555555"
-        hover_bg = "rgba(255,255,255,0.10)" if is_dark else "rgba(0,0,0,0.06)"
-        checked_bg = "rgba(0,122,204,0.30)" if is_dark else "rgba(0,122,204,0.15)"
+        icon_color = "#cccccc"
+        hover_bg = "rgba(255,255,255,0.10)"
+        checked_bg = "rgba(0,122,204,0.30)"
         
         btn_style = f"""
             QPushButton {{

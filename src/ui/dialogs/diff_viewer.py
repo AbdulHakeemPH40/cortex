@@ -52,12 +52,12 @@ class DiffWindow(QDialog):
         layout.addLayout(action_layout)
 
     def set_theme(self, is_dark: bool):
-        """Update colors based on the current IDE theme."""
-        self._is_dark = is_dark
+        """Dark mode only."""
+        self._is_dark = True
         
-        bg_col = "#1e1e1e" if is_dark else "#ffffff"
-        text_col = "#cccccc" if is_dark else "#333333"
-        border_col = "#3e3e42" if is_dark else "#dee2e6"
+        bg_col = "#1e1e1e"
+        text_col = "#cccccc"
+        border_col = "#3e3e42"
         
         self.setStyleSheet(f"""
             QDialog {{
@@ -96,7 +96,7 @@ class DiffWindow(QDialog):
 
         # Check for empty changes
         if not diff_lines:
-            self._viewer.setHtml(f"<div style='color: {'#cccccc' if self._is_dark else '#333333'}; padding: 20px; font-family: monospace;'>No changes detected in the file content.</div>")
+            self._viewer.setHtml(f"<div style='color: #cccccc; padding: 20px; font-family: monospace;'>No changes detected in the file content.</div>")
             self.show()
             return
             
@@ -115,21 +115,13 @@ class DiffWindow(QDialog):
     def _format_diff_to_html(self, diff_lines: list) -> str:
         """Convert standard unified diff lines into syntax-highlighted HTML."""
         
-        # Color palettes
-        if self._is_dark:
-            add_bg = "rgba(46, 160, 67, 0.2)"
-            add_fg = "#56d364"
-            rem_bg = "rgba(248, 81, 73, 0.2)"
-            rem_fg = "#f85149"
-            info_fg = "#8b949e"
-            default_fg = "#cccccc"
-        else:
-            add_bg = "rgba(46, 160, 67, 0.15)"
-            add_fg = "#1a7f37"
-            rem_bg = "rgba(255, 129, 130, 0.15)"
-            rem_fg = "#cf222e"
-            info_fg = "#6e7781"
-            default_fg = "#24292f"
+        # Color palettes — dark mode
+        add_bg = "rgba(46, 160, 67, 0.2)"
+        add_fg = "#56d364"
+        rem_bg = "rgba(248, 81, 73, 0.2)"
+        rem_fg = "#f85149"
+        info_fg = "#8b949e"
+        default_fg = "#cccccc"
 
         html_lines = ["<div style='white-space: pre; font-family: \"Cascadia Code\", Consolas, monospace; font-size: 13px; line-height: 1.5;'>"]
         

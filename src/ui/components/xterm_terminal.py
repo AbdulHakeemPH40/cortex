@@ -655,50 +655,28 @@ class XTermWidget(QWidget):
             self._bridge.update_theme.emit(is_dark)
             
     def _update_header_style(self):
-        if self._is_dark:
-            self._header.setStyleSheet("""
-                QWidget {
-                    background-color: #2d2d30;
-                    border-bottom: 1px solid #3e3e42;
-                }
-                QLabel { color: #cccccc; font-size: 12px; }
-                QPushButton {
-                    background-color: #3c3c3c; color: #cccccc;
-                    border: 1px solid #3e3e42; border-radius: 3px; padding: 2px 8px;
-                }
-                QPushButton:hover { background-color: #4c4c4c; }
-                QComboBox {
-                    background-color: #3c3c3c; color: #cccccc;
-                    border: 1px solid #3e3e42; border-radius: 3px; padding: 2px 8px;
-                }
-                QComboBox::drop-down { border: none; }
-                QComboBox QAbstractItemView {
-                    background-color: #3c3c3c; color: #cccccc;
-                    selection-background-color: #094771;
-                }
-            """)
-        else:
-            self._header.setStyleSheet("""
-                QWidget {
-                    background-color: #f3f3f3;
-                    border-bottom: 1px solid #e0e0e0;
-                }
-                QLabel { color: #333333; font-size: 12px; }
-                QPushButton {
-                    background-color: #ffffff; color: #333333;
-                    border: 1px solid #d0d0d0; border-radius: 3px; padding: 2px 8px;
-                }
-                QPushButton:hover { background-color: #e0e0e0; }
-                QComboBox {
-                    background-color: #ffffff; color: #333333;
-                    border: 1px solid #d0d0d0; border-radius: 3px; padding: 2px 8px;
-                }
-                QComboBox::drop-down { border: none; }
-                QComboBox QAbstractItemView {
-                    background-color: #ffffff; color: #333333;
-                    selection-background-color: #cce5ff;
-                }
-            """)
+        # Dark-only styling
+        self._header.setStyleSheet("""
+            QWidget {
+                background-color: #2d2d30;
+                border-bottom: 1px solid #3e3e42;
+            }
+            QLabel { color: #cccccc; font-size: 12px; }
+            QPushButton {
+                background-color: #3c3c3c; color: #cccccc;
+                border: 1px solid #3e3e42; border-radius: 3px; padding: 2px 8px;
+            }
+            QPushButton:hover { background-color: #4c4c4c; }
+            QComboBox {
+                background-color: #3c3c3c; color: #cccccc;
+                border: 1px solid #3e3e42; border-radius: 3px; padding: 2px 8px;
+            }
+            QComboBox::drop-down { border: none; }
+            QComboBox QAbstractItemView {
+                background-color: #3c3c3c; color: #cccccc;
+                selection-background-color: #094771;
+            }
+        """)
             
     def closeEvent(self, event):
         self._kill_process()

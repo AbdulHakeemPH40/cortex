@@ -89,41 +89,9 @@
             background-color: rgba(0, 120, 212, 0.3);
         }
         
-        /* Light mode scrollbar styles */
-        body.light-mode .xterm-viewport::-webkit-scrollbar-track {
-            background: rgba(240, 240, 240, 0.8);
-        }
-        
-        body.light-mode .xterm-viewport::-webkit-scrollbar-thumb {
-            background: linear-gradient(180deg, #c0c0c0 0%, #a0a0a0 100%);
-            border: 1px solid rgba(0, 0, 0, 0.1);
-        }
-        
-        body.light-mode .xterm-viewport::-webkit-scrollbar-thumb:hover {
-            background: linear-gradient(180deg, #b0b0b0 0%, #909090 100%);
-        }
-        
-        body.light-mode .xterm-viewport::-webkit-scrollbar-thumb:active {
-            background: linear-gradient(180deg, #a0a0a0 0%, #808080 100%);
-        }
-        
-        body.light-mode .xterm-viewport {
-            scrollbar-color: #a0a0a0 #f0f0f0;
-        }
-        
         /* Selection styling for dark mode */
         .xterm .xterm-selection div {
             background-color: rgba(255, 255, 255, 0.3) !important;
-        }
-        
-        /* Selection styling for light mode - target the actual cell elements */
-        body.light-mode .xterm .xterm-selection div {
-            background-color: rgba(0, 120, 212, 0.4) !important;
-        }
-        
-        /* Ensure selected text is visible in light mode */
-        body.light-mode .xterm .xterm-selection div span {
-            background-color: transparent !important;
         }
     </style>
 </head>
@@ -506,45 +474,17 @@
                 }
             });
             
-            // Connect Python -> JS (theme update)
+            // Connect Python -> JS (theme update) — dark mode only
             window.pyTerminal.update_theme.connect(function(is_dark) {
-                if (is_dark) {
-                    document.body.style.backgroundColor = '#0c0c0c';
-                    document.body.classList.remove('light-mode');
-                    term.options.theme = {
-                        background: '#0c0c0c',
-                        foreground: '#cccccc',
-                        cursor: '#ffffff',
-                        selectionBackground: 'rgba(255, 255, 255, 0.3)',
-                        selectionForeground: '#ffffff'
-                    };
-                } else {
-                    document.body.style.backgroundColor = '#ffffff';
-                    document.body.classList.add('light-mode');
-                    term.options.theme = {
-                        background: '#ffffff',
-                        foreground: '#0c0c0c',
-                        cursor: '#000000',
-                        selectionBackground: 'rgba(0, 120, 212, 0.4)',
-                        selectionForeground: '#000000',
-                        black: '#000000',
-                        red: '#cd3131',
-                        green: '#00bc00',
-                        yellow: '#949800',
-                        blue: '#0451a5',
-                        magenta: '#bc05bc',
-                        cyan: '#0598bc',
-                        white: '#555555',
-                        brightBlack: '#666666',
-                        brightRed: '#cd3131',
-                        brightGreen: '#14ce14',
-                        brightYellow: '#b5ba00',
-                        brightBlue: '#0451a5',
-                        brightMagenta: '#bc05bc',
-                        brightCyan: '#0598bc',
-                        brightWhite: '#a5a5a5'
-                    };
-                }
+                document.body.style.backgroundColor = '#0c0c0c';
+                document.body.classList.remove('light-mode');
+                term.options.theme = {
+                    background: '#0c0c0c',
+                    foreground: '#cccccc',
+                    cursor: '#ffffff',
+                    selectionBackground: 'rgba(255, 255, 255, 0.3)',
+                    selectionForeground: '#ffffff'
+                };
             });
             
             // Let Python know we are ready

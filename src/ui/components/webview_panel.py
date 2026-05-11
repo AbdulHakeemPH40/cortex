@@ -508,7 +508,7 @@ class WebviewPanel(QWidget):
             self._pending_theme = is_dark
 
     def _set_theme_js(self, is_dark: bool):
-        js = f"setTheme({'true' if is_dark else 'false'});"
+        js = "setTheme(true);"  # dark-only
         self._safe_run_js(js)
 
     def mark_modified(self, file_path: str, modified: bool = True):

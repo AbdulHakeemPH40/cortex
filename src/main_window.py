@@ -257,14 +257,13 @@ class CleanTabBar(QTabBar):
         super().__init__(parent)
         self.setMouseTracking(True)
         self._hovered_tab = -1
-        # Inherit theme from parent window if possible
+        # Inherit theme — always dark
         from src.config.theme_manager import get_theme_manager
-        self._is_dark = get_theme_manager().is_dark
+        self._is_dark = True
 
 
     def set_dark(self, is_dark: bool):
-        self._is_dark = is_dark
-        self.update()
+        pass  # always dark
 
     def mouseMoveEvent(self, event):
         idx = self.tabAt(event.pos())
@@ -292,16 +291,16 @@ class CleanTabBar(QTabBar):
 
         d = self._is_dark
         # Cursor IDE Anysphere Dark Theme - Tab Colors
-        col_sel_bg    = QColor("#181818") if d else QColor("#fafafa")  # editor.background
-        col_hover_bg  = QColor("#1f1f1f") if d else QColor("#f0f0f0")  # tab.hoverBackground
-        col_normal_bg = QColor("#141414") if d else QColor("#f3f3f3")  # tab.inactiveBackground
-        col_accent    = QColor("#228df2") if d else QColor("#0078d4")  # cursor.accent
-        col_divider   = QColor("#2a2a2a") if d else QColor("#e5e5e5")  # sideBar.border
-        col_sel_fg    = QColor("#ffffff") if d else QColor("#2c2c2c")  # tab.activeForeground
-        col_hover_fg  = QColor("#d6d6dd") if d else QColor("#333333")  # editor.foreground
-        col_normal_fg = QColor("#6d6d6d") if d else QColor("#616161")  # tab.inactiveForeground
-        col_close     = QColor("#f14c4c") if d else QColor("#d73a49")  # RED close button
-        col_close_hover = QColor("#ff6b6b") if d else QColor("#ff4444")  # Brighter red on hover
+        col_sel_bg    = QColor("#181818")
+        col_hover_bg  = QColor("#1f1f1f")
+        col_normal_bg = QColor("#141414")
+        col_accent    = QColor("#228df2")
+        col_divider   = QColor("#2a2a2a")
+        col_sel_fg    = QColor("#ffffff")
+        col_hover_fg  = QColor("#d6d6dd")
+        col_normal_fg = QColor("#6d6d6d")
+        col_close     = QColor("#f14c4c")
+        col_close_hover = QColor("#ff6b6b")
 
         for i in range(self.count()):
             rect = self.tabRect(i)
@@ -499,13 +498,13 @@ class EditorTabWidget(QTabWidget):
             n=3
         ))
 
-        bg   = '#1e1e1e' if is_dark else '#ffffff'
-        fg   = '#cccccc' if is_dark else '#333333'
-        add_bg = 'rgba(46,160,67,0.2)'  if is_dark else 'rgba(46,160,67,0.15)'
-        add_fg = '#56d364'              if is_dark else '#1a7f37'
-        rem_bg = 'rgba(248,81,73,0.2)' if is_dark else 'rgba(255,129,130,0.15)'
-        rem_fg = '#f85149'              if is_dark else '#cf222e'
-        info_fg = '#8b949e'             if is_dark else '#6e7781'
+        bg   = '#1e1e1e'
+        fg   = '#cccccc'
+        add_bg = 'rgba(46,160,67,0.2)'
+        add_fg = '#56d364'
+        rem_bg = 'rgba(248,81,73,0.2)'
+        rem_fg = '#f85149'
+        info_fg = '#8b949e'
 
         def esc(t: str) -> str:
             return t.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
@@ -957,18 +956,6 @@ class CortexMainWindow(QMainWindow):
         
         layout = QVBoxLayout(dialog)
         
-        # Theme setting
-        theme_layout = QHBoxLayout()
-        theme_label = QLabel("Theme:")
-        theme_combo = QComboBox()
-        theme_combo.addItems(["Dark", "Light"])
-        theme_combo.setCurrentText("Dark" if self._settings.theme == "dark" else "Light")
-        theme_combo.currentTextChanged.connect(lambda t: self._set_theme(t.lower()))
-        theme_layout.addWidget(theme_label)
-        theme_layout.addWidget(theme_combo)
-        theme_layout.addStretch()
-        layout.addLayout(theme_layout)
-        
         layout.addStretch()
         
         # Close button
@@ -979,9 +966,8 @@ class CortexMainWindow(QMainWindow):
         dialog.exec()
     
     def _set_theme(self, theme: str):
-        """Set the application theme."""
-        self._settings.theme = theme
-        self._apply_initial_theme()
+        """Theme is always dark."""
+        pass
     
     def _build_ui(self):
         """Build AI-First UI Layout - Codex-style with 2-panel and 4-panel states."""
@@ -1205,23 +1191,23 @@ class CortexMainWindow(QMainWindow):
         self._apply_welcome_theme(self._theme_manager.is_dark)
 
     def _apply_welcome_theme(self, is_dark: bool):
-        """Style the welcome widget to match the current theme."""
+        """Style the welcome widget to match the current theme. Dark-only."""
         if not hasattr(self, '_welcome_widget') or self._welcome_widget is None:
             return
-        bg = "#1e1e1e" if is_dark else "#ffffff"
-        fg = "#d4d4d4" if is_dark else "#1a1a1a"
-        hint_fg = "#cccccc" if is_dark else "#333333"
-        shortcut_color = "#858585" if is_dark else "#6c757d"
-        sep_color = "#3e3e42" if is_dark else "#dee2e6"
-        subtitle_color = "#858585" if is_dark else "#6c757d"
+        bg = "#1e1e1e"
+        fg = "#d4d4d4"
+        hint_fg = "#cccccc"
+        shortcut_color = "#858585"
+        sep_color = "#3e3e42"
+        subtitle_color = "#858585"
         
         # Extract conditional colors for AI card
-        ai_card_bg = "#2d2d30" if is_dark else "#f3f3f3"
-        ai_card_border = "#3e3e42" if is_dark else "#ddd"
-        ai_prompt_bg = "#3e3e42" if is_dark else "#e8e8e8"
-        ai_prompt_hover_bg = "#4e4e52" if is_dark else "#d4d4d4"
-        hint_hover_bg = "#3e3e42" if is_dark else "#e9ecef"
-        project_info_color = "#c678dd" if is_dark else "#9b30ff"
+        ai_card_bg = "#2d2d30"
+        ai_card_border = "#3e3e42"
+        ai_prompt_bg = "#3e3e42"
+        ai_prompt_hover_bg = "#4e4e52"
+        hint_hover_bg = "#3e3e42"
+        project_info_color = "#c678dd"
 
         # Base stylesheet with responsive sizing
         sw = self.width()
@@ -1324,7 +1310,7 @@ class CortexMainWindow(QMainWindow):
             for row in self._welcome_hints:
                 row.setStyleSheet(f"font-size:{hint_size}px; color:{hint_fg}; padding:6px 12px; border-radius:4px;")
         if hasattr(self, '_welcome_project_info') and self._welcome_project_info:
-            self._welcome_project_info.setStyleSheet(f"font-size:{project_size}px; color:{'#c678dd' if is_dark else '#9b30ff'}; margin: 8px 0;")
+            self._welcome_project_info.setStyleSheet(f"font-size:{project_size}px; color:#c678dd; margin: 8px 0;")
 
     # ------------------------------------------------------------------
     # Codex-Style 4-Panel Layout Methods
@@ -2088,8 +2074,7 @@ class CortexMainWindow(QMainWindow):
         icon_size = 22
         btn_size = 26
 
-        is_dark = self._settings.theme == "dark"
-        icon_color = "#c8c8c8" if is_dark else "#444444"
+        icon_color = "#c8c8c8"  # dark mode
 
         def _make_toggle(visible_icon: str, hidden_icon: str, tooltip_v: str, tooltip_h: str,
                          is_visible_getter, toggle_fn):
@@ -2208,10 +2193,9 @@ class CortexMainWindow(QMainWindow):
         """Apply the saved (or default) theme to all panels at startup."""
         from PyQt6.QtWidgets import QApplication as _App
         saved = self._settings.theme if hasattr(self._settings, 'theme') else "dark"
-        theme_name = saved if isinstance(saved, str) and saved in ("dark", "light") else "dark"
-        # Apply theme
-        self._theme_manager.apply(theme_name, _App.instance())
-        is_dark = theme_name == "dark"
+        # Always dark
+        self._theme_manager.apply("dark", _App.instance())
+        is_dark = True
         # Propagate to all panels
         self._ai_chat.set_theme(is_dark)
         self._sidebar.set_theme(is_dark)
@@ -2219,7 +2203,7 @@ class CortexMainWindow(QMainWindow):
         self._apply_welcome_theme(is_dark)
         # Theme button label
         if hasattr(self, '_theme_btn') and self._theme_btn:
-            self._theme_btn.setText("☀️" if not is_dark else "🌙")
+            self._theme_btn.setText("🌙")
         
         # Apply to webview editor
         if hasattr(self, '_webview_panel'):
@@ -2231,9 +2215,9 @@ class CortexMainWindow(QMainWindow):
         if isinstance(self._terminal_tabs.tabBar(), CleanTabBar):
             self._terminal_tabs.tabBar().set_dark(is_dark)
         
-        # Style the legacy tab widget panels (webview has its own CSS)
-        tab_bg = "#1e1e1e" if is_dark else "#ffffff"
-        tab_border = "#3e3e42" if is_dark else "#dee2e6"
+        # Style the legacy tab widget panels (dark only)
+        tab_bg = "#1e1e1e"
+        tab_border = "#3e3e42"
         tab_style = f"""
             QTabWidget::pane {{ border: 1px solid {tab_border}; background: {tab_bg}; }}
             QTabWidget::tab-bar {{ left: 0px; }}
@@ -2381,7 +2365,7 @@ class CortexMainWindow(QMainWindow):
         self._ai_agent.response_complete.connect(self._ai_chat.on_complete)
         self._ai_agent.response_complete.connect(self._on_ai_task_complete)
         self._ai_agent.request_error.connect(self._ai_chat.on_error)
-        self._ai_agent.file_generated.connect(self._open_file)
+        self._ai_agent.file_generated.connect(self._on_agent_file_generated)
         # TEMPORARILY DISABLED - file_tracker was part of deleted agentic code
         # self._ai_agent.file_edited_diff.connect(self._file_tracker.add_edit)
         self._ai_agent.file_edited_diff.connect(self._on_file_edited_diff_for_js)
@@ -2525,6 +2509,18 @@ class CortexMainWindow(QMainWindow):
                 self._git_manager.set_repository(folder)
                 log.info(f"[GIT] Repository set to: {folder}")
                 QTimer.singleShot(300, self._update_git_summary)
+
+    def _on_agent_file_generated(self, filepath: str, _content: str = ""):
+        """Slot for agent file_generated signal — routes through throttled pump (priority=False).
+
+        Agent Write tools can create many files in a single turn. Opening them all with
+        priority=True would flood QWebChannel with simultaneous model.setValue() IPC
+        calls, crashing Chromium's render process on Windows 25H2.
+
+        Using priority=False routes them through the warmup throttle
+        (10s spacing during first 60s, 1.5s after), preventing the crash.
+        """
+        self._open_file(filepath, priority=False)
 
     def _open_file(self, filepath: str, *, priority: bool = True):
         # Normalize path (convert forward slashes to backslashes on Windows)

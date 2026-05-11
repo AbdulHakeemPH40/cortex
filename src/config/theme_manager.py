@@ -1,6 +1,6 @@
 """
 Theme Manager for Cortex AI Agent IDE
-Handles light/dark QSS stylesheet loading and live theme switching.
+Handles dark QSS stylesheet loading — dark mode only.
 """
 
 from pathlib import Path
@@ -12,16 +12,16 @@ THEMES_DIR = Path(__file__).parent.parent / "ui" / "themes"
 
 
 class ThemeManager(QObject):
-    theme_changed = pyqtSignal(str)  # emits 'dark' or 'light'
+    theme_changed = pyqtSignal(str)  # Always 'dark'
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._current = "dark"
 
-    def apply(self, theme_name: str, app: QApplication = None):
-        """Load and apply a QSS theme to the whole application."""
-        self._current = theme_name
-        qss_file = THEMES_DIR / f"{theme_name}.qss"
+    def apply(self, theme_name: str = "dark", app: QApplication = None):
+        """Load and apply the dark QSS theme."""
+        self._current = "dark"
+        qss_file = THEMES_DIR / "dark.qss"
 
         if not qss_file.exists():
             print(f"[ThemeManager] Theme file not found: {qss_file}")
@@ -33,21 +33,20 @@ class ThemeManager(QObject):
         target = app or QApplication.instance()
         if target:
             target.setStyleSheet(stylesheet)
-            self.theme_changed.emit(theme_name)
+            self.theme_changed.emit("dark")
 
     def toggle(self, app: QApplication = None):
-        """Toggle between dark and light themes."""
-        new_theme = "light" if self._current == "dark" else "dark"
-        self.apply(new_theme, app)
-        return new_theme
+        """Always stay dark — no toggle."""
+        self.apply("dark", app)
+        return "dark"
 
     @property
     def current(self) -> str:
-        return self._current
+        return "dark"
 
     @property
     def is_dark(self) -> bool:
-        return self._current == "dark"
+        return True
 
 
 # Singleton

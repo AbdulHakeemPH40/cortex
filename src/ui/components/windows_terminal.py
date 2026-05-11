@@ -187,10 +187,9 @@ class WindowsTerminalWidget(QWidget):
         self._history_idx = -1
         
     def _update_terminal_style(self):
-        """Update terminal appearance."""
-        if self._is_dark:
-            # Dark mode
-            self._output.setStyleSheet("""
+        """Update terminal appearance — dark-only."""
+        # Dark mode
+        self._output.setStyleSheet("""
                 QTextEdit {
                     background-color: #0C0C0C;
                     color: #CCCCCC;
@@ -219,43 +218,17 @@ class WindowsTerminalWidget(QWidget):
                     background: none;
                 }
             """)
-            self._input_row.setStyleSheet("""
+        self._input_row.setStyleSheet("""
                 QWidget {
                     background-color: #1e1e1e;
                     border-top: 1px solid #3e3e42;
                 }
             """)
-            self._prompt_label.setStyleSheet("color: #4ec9b0; font-family: 'Consolas'; font-size: 12px;")
-            self._input.setStyleSheet("""
+        self._prompt_label.setStyleSheet("color: #4ec9b0; font-family: 'Consolas'; font-size: 12px;")
+        self._input.setStyleSheet("""
                 QLineEdit {
                     background: transparent;
                     color: #cccccc;
-                    border: none;
-                    font-family: 'Consolas';
-                    font-size: 12px;
-                }
-            """)
-        else:
-            # Light mode
-            self._output.setStyleSheet("""
-                QTextEdit {
-                    background-color: #FFFFFF;
-                    color: #0C0C0C;
-                    border: none;
-                    padding: 4px;
-                }
-            """)
-            self._input_row.setStyleSheet("""
-                QWidget {
-                    background-color: #f5f5f5;
-                    border-top: 1px solid #d0d0d0;
-                }
-            """)
-            self._prompt_label.setStyleSheet("color: #007acc; font-family: 'Consolas'; font-size: 12px;")
-            self._input.setStyleSheet("""
-                QLineEdit {
-                    background: transparent;
-                    color: #333333;
                     border: none;
                     font-family: 'Consolas';
                     font-size: 12px;
@@ -642,10 +615,8 @@ class WindowsTerminalWidget(QWidget):
         self._update_header_style()
     
     def _update_header_style(self):
-        """Update header styling based on theme."""
-        if self._is_dark:
-            # Dark mode
-            self._header.setStyleSheet("""
+        """Update header styling — dark-only."""
+        self._header.setStyleSheet("""
                 QWidget {
                     background-color: #2d2d30;
                     border-bottom: 1px solid #3e3e42;
@@ -678,43 +649,6 @@ class WindowsTerminalWidget(QWidget):
                     background-color: #3c3c3c;
                     color: #cccccc;
                     selection-background-color: #094771;
-                }
-            """)
-        else:
-            # Light mode
-            self._header.setStyleSheet("""
-                QWidget {
-                    background-color: #f3f3f3;
-                    border-bottom: 1px solid #e0e0e0;
-                }
-                QLabel {
-                    color: #333333;
-                    font-size: 12px;
-                }
-                QPushButton {
-                    background-color: #ffffff;
-                    color: #333333;
-                    border: 1px solid #d0d0d0;
-                    border-radius: 3px;
-                    padding: 2px 8px;
-                }
-                QPushButton:hover {
-                    background-color: #e0e0e0;
-                }
-                QComboBox {
-                    background-color: #ffffff;
-                    color: #333333;
-                    border: 1px solid #d0d0d0;
-                    border-radius: 3px;
-                    padding: 2px 8px;
-                }
-                QComboBox::drop-down {
-                    border: none;
-                }
-                QComboBox QAbstractItemView {
-                    background-color: #ffffff;
-                    color: #333333;
-                    selection-background-color: #cce5ff;
                 }
             """)
     

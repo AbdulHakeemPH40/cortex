@@ -76,13 +76,7 @@
     #editor-container { flex: 1; overflow: hidden; }
     #editor-container.hidden { display: none; }
 
-    /* Light theme overrides */
-    body.light #app { background: #ffffff; }
-    body.light #tab-bar { background: #f3f3f3; border-bottom-color: #d4d4d4; }
-    body.light .tab { color: #616161; background: #ececec; border-right-color: #f3f3f3; }
-    body.light .tab.active { color: #333333; background: #ffffff; border-bottom-color: #0078d4; }
-    body.light .tab:hover:not(.active) { background: #e8e8e8; }
-    body.light #no-files-hint { color: #aaaaaa; }
+    /* Dark theme only */
 </style>
 </head>
 <body>
@@ -106,7 +100,6 @@ var monaco = null;
 var openFiles = {};           // path → { path, language, content, modified }
 var openOrder = [];           // ordered file paths for tabs
 var activeFilePath = null;
-var isDark = true;
 var changeTimer = null;
 var CHANGE_DEBOUNCE_MS = 300;
 
@@ -253,17 +246,11 @@ if (typeof require !== 'undefined') {
         rules: [],
         colors: { 'editor.background': '#1e1e1e' }
     });
-    monaco.editor.defineTheme('cortex-light', {
-        base: 'vs',
-        inherit: true,
-        rules: [],
-        colors: { 'editor.background': '#ffffff' }
-    });
 
     editor = monaco.editor.create(document.getElementById('editor-container'), {
         value: '',
         language: 'plaintext',
-        theme: isDark ? 'cortex-dark' : 'cortex-light',
+        theme: 'cortex-dark',
         automaticLayout: true,
         minimap: { enabled: false },
         fontSize: 14,
@@ -756,9 +743,16 @@ function closeFile(filePath) {
     }
     renderTabs();
     console.log('[Editor] closeFile → calling bridge.onFileClosed for: ' + filePath);
-    // Gate: suppress onFileClosed during rapid file-close bursts to avoid
-    // flooding the QWebChannel with synchronous IPC calls.
-    if (bridge && !isSwitchingFile) bridge.onFileClosed(filePath);
+    // Always notify Python of file closures — suppressing onFileClosed during
+    // switching windows (isSwitchingFile) causes _open_files to desync from
+    // Monaco's actual open tabs. When a user clicks a file that was silently
+    // closed, the fast-path switch_to_file() fails silently (Monaco no longer
+    // has the file) and the editor shows nothing.
+    //
+    // onFileClosed is lightweight (single string arg, called infrequently)
+    // and does NOT contribute to the QWebChannel flooding that crashes
+    // Chromium during startup (that's model.setValue() + LSP markers).
+    if (bridge) bridge.onFileClosed(filePath);
 }
 
 // Called by Python: closeAllFiles() — closes all files in one shot, no
@@ -795,13 +789,12 @@ function getContent(filePath) {
     return '';
 }
 
-// Called by Python: setTheme(isDarkFlag)
+// Called by Python: setTheme(isDarkFlag) — dark mode only
 function setTheme(dark) {
-    isDark = dark;
     if (editor) {
-        monaco.editor.setTheme(dark ? 'cortex-dark' : 'cortex-light');
+        monaco.editor.setTheme('cortex-dark');
     }
-    document.body.className = dark ? '' : 'light';
+    document.body.className = '';
 }
 
 // Called by Python: markModified(path, flag)

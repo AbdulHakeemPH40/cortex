@@ -249,10 +249,10 @@ class EnhancedAIChatWidget(QWidget):
         )
     
     def set_theme(self, is_dark: bool):
-        """Update theme"""
-        self._is_dark = is_dark
+        """Update theme — dark-only."""
+        self._is_dark = True
         self._view.page().runJavaScript(
-            f"if(window.setTheme) window.setTheme({str(is_dark).lower()});"
+            "if(window.setTheme) window.setTheme(true);"
         )
     
     def focus_input(self):

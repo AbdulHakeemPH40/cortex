@@ -363,89 +363,6 @@ class PygmentsSyntaxHighlighter(QSyntaxHighlighter):
         Token.Name.Doctype:         ("#83d6c5", False, False),     # Teal - <!DOCTYPE html> (metatag)
     }
     
-    # Light theme (VS Code Light+) — Full coverage for all token types
-    LIGHT_COLORS = {
-        # Keywords
-        Token.Keyword:            ("#0000FF", False, False),     # Blue - keywords
-        Token.Keyword.Constant:   ("#0000FF", False, False),     # Blue - True, False, None
-        Token.Keyword.Declaration:("#0000FF", False, False),     # Blue - var, let, const
-        Token.Keyword.Namespace:  ("#0000FF", False, False),     # Blue - import, export
-        Token.Keyword.Reserved:   ("#0000FF", False, False),     # Blue - reserved words
-        Token.Keyword.Type:       ("#267F99", False, False),     # Teal - int, void, string
-        
-        # Names
-        Token.Name:               ("#001080", False, False),     # Dark Blue - names
-        Token.Name.Builtin:       ("#267F99", False, False),     # Teal - built-ins
-        Token.Name.Builtin.Pseudo:("#0000FF", False, False),     # Blue - self, this
-        Token.Name.Class:         ("#267F99", True, False),      # Teal BOLD - classes
-        Token.Name.Decorator:     ("#795E26", False, True),      # Brown ITALIC - decorators
-        Token.Name.Entity:        ("#795E26", False, False),     # Brown - entities
-        Token.Name.Exception:     ("#A31515", False, False),     # Red - exceptions
-        Token.Name.Function:      ("#795E26", False, False),     # Brown - functions
-        Token.Name.Function.Magic:("#795E26", False, False),     # Brown - __magic__
-        Token.Name.Label:         ("#001080", False, False),     # Dark Blue - labels
-        Token.Name.Namespace:     ("#267F99", False, False),     # Teal - namespaces
-        Token.Name.Other:         ("#267F99", False, False),     # Teal - JS/CSS identifiers in embedded code
-        Token.Name.Property:      ("#795E26", False, False),     # Brown - object property access
-        Token.Name.Tag:           ("#800000", False, False),     # Maroon - HTML/XML tags
-        Token.Name.Variable:      ("#001080", False, False),     # Dark Blue - variables
-        Token.Name.Constant:      ("#0000FF", False, False),     # Blue - constants
-        Token.Name.Attribute:     ("#FF0000", False, False),     # Red - attribute.name
-        Token.Name.Doctype:       ("#800000", False, False),     # Maroon - DOCTYPE
-        
-        # Strings
-        Token.String:             ("#A31515", False, False),     # Red - strings
-        Token.String.Affix:       ("#0000FF", False, False),     # Blue - f"", r""
-        Token.String.Doc:         ("#008000", False, True),      # Green ITALIC - docstrings
-        Token.String.Escape:      ("#EE0000", False, False),     # Bright Red - escape chars
-        Token.String.Regex:       ("#811F3F", False, False),     # Dark Red - regex
-        Token.String.Interpol:    ("#001080", False, False),     # Dark Blue - interpolation
-        
-        # Numbers
-        Token.Number:             ("#098658", False, False),     # Green - numbers
-        
-        # Operators & Punctuation
-        Token.Operator:           ("#000000", False, False),     # Black - operators
-        Token.Operator.Word:      ("#0000FF", False, False),     # Blue - and, or, not
-        Token.Punctuation:        ("#000000", False, False),     # Black - punctuation
-        
-        # Comments
-        Token.Comment:            ("#008000", False, True),      # Green ITALIC - comments
-        Token.Comment.Preproc:    ("#808080", False, False),     # Gray - preprocessor
-        
-        # Errors
-        Token.Error:              ("#FF0000", False, False),     # Red - errors
-        
-        # Types
-        Token.Type:               ("#267F99", False, False),     # Teal - type names
-        
-        # Markup / Markdown
-        Token.Generic:            ("#000000", False, False),     # Black - generic
-        Token.Generic.Deleted:    ("#A31515", False, False),     # Red - deleted
-        Token.Generic.Emph:       ("#000000", False, True),      # Black ITALIC - emphasis
-        Token.Generic.Error:      ("#FF0000", False, False),     # Red - errors
-        Token.Generic.Heading:    ("#0000FF", True, False),      # Blue BOLD - headings
-        Token.Generic.Inserted:   ("#098658", False, False),     # Green - inserted
-        Token.Generic.Output:     ("#808080", False, False),     # Gray - output
-        Token.Generic.Prompt:     ("#098658", False, False),     # Green - prompt
-        Token.Generic.Strong:     ("#000000", True, False),      # Black BOLD - strong
-        Token.Generic.Subheading: ("#267F99", True, False),      # Teal BOLD - subheadings
-        Token.Generic.Traceback:  ("#FF0000", False, False),     # Red - tracebacks
-        
-        # Literals & Text
-        Token.Literal:            ("#098658", False, False),     # Green - literals
-        Token.Literal.Number:     ("#098658", False, False),     # Green - numbers (embedded JS/CSS)
-        Token.Literal.Number.Float:("#098658", False, False),    # Green - 3.14
-        Token.Literal.Number.Hex: ("#098658", False, False),     # Green - hex colors
-        Token.Literal.Number.Integer:("#098658", False, False),  # Green - integers
-        Token.Literal.String:     ("#A31515", False, False),     # Red - string literals
-        Token.Literal.String.Double:("#A31515", False, False),   # Red - "double"
-        Token.Literal.String.Single:("#A31515", False, False),   # Red - 'single'
-        Token.Literal.String.Backtick:("#A31515", False, False), # Red - `template`
-        Token.Literal.String.Escape:("#EE0000", False, False),   # Bright Red - escape chars
-        Token.Text:               ("#000000", False, False),     # Black - plain text
-    }
-    
     def __init__(self, document, language: str = "python", is_dark: bool = True, base_font: QFont = None):
         super().__init__(document)
         self._language = language
@@ -508,7 +425,7 @@ class PygmentsSyntaxHighlighter(QSyntaxHighlighter):
             return TextLexer()
 
     def _build_formats(self):
-        palette = self.DARK_COLORS if self._is_dark else self.LIGHT_COLORS
+        palette = self.DARK_COLORS  # dark-only
         self._formats.clear()
         
         # Get base font format if available
@@ -544,13 +461,7 @@ class PygmentsSyntaxHighlighter(QSyntaxHighlighter):
         self.rehighlight()
         
     def set_dark(self, is_dark: bool):
-        """Switch theme with optimized refresh."""
-        if self._is_dark == is_dark:
-            return  # Skip if same theme
-            
-        self._is_dark = is_dark
-        self._build_formats()
-        self.rehighlight()
+        pass  # dark-only, no-op
 
     def highlightBlock(self, text: str):
         # Get previous state FIRST (before any early returns)
