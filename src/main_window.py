@@ -1027,10 +1027,31 @@ class CortexMainWindow(QMainWindow):
         self._chat_panel.setMinimumWidth(300)
         main_splitter.addWidget(self._chat_panel)
 
-        # Panel 3: Webview Code Editor (Monaco) — rightmost panel
+        # Panel 3: Webview Code Editor (Monaco) + Terminal — vertical split
+        self._editor_terminal_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._editor_terminal_splitter.setChildrenCollapsible(True)
+        self._editor_terminal_splitter.setHandleWidth(4)
+        self._editor_terminal_splitter.setStyleSheet("""
+            QSplitter::handle {
+                background-color: #2a2a2a;
+            }
+            QSplitter::handle:hover {
+                background-color: #4d78cc;
+            }
+        """)
+
+        # Editor (Monaco webview) — top portion
         self._webview_panel = WebviewPanel()
         self._webview_panel.setMinimumWidth(300)
-        main_splitter.addWidget(self._webview_panel)
+        self._editor_terminal_splitter.addWidget(self._webview_panel)
+
+        # Integrated Terminal — bottom portion (persistent, like VS Code)
+        self._integrated_terminal = XTermWidget()
+        self._integrated_terminal.setMinimumHeight(120)
+        self._editor_terminal_splitter.addWidget(self._integrated_terminal)
+        self._editor_terminal_splitter.setSizes([500, 150])
+
+        main_splitter.addWidget(self._editor_terminal_splitter)
 
         # Set initial sizes (proportions) — 3-panel layout
         main_splitter.setSizes([220, 500, 500])
@@ -1048,6 +1069,7 @@ class CortexMainWindow(QMainWindow):
         self._left_sidebar_hidden = False
         self._chat_panel_hidden = False
         self._code_panel_hidden = False
+        self._terminal_panel_hidden = False
         self._summary_panel_hidden = False
         self._git_panel_hidden = False
 
@@ -1055,6 +1077,7 @@ class CortexMainWindow(QMainWindow):
         self._left_sidebar_min_width = 220
         self._chat_panel_min_width = 300
         self._code_panel_min_width = 500
+        self._terminal_panel_min_height = 150
 
         # Keep old components for backward compatibility
         self._ai_splitter = None  # Replaced by 4-panel layout
@@ -2113,6 +2136,14 @@ class CortexMainWindow(QMainWindow):
             lambda v: self._toggle_code_panel(v)
         ))
 
+        # 4. Terminal panel toggle (bottom panel in editor split)
+        layout.addWidget(_make_toggle(
+            "panel-terminal-visible", "panel-terminal-hidden",
+            "Hide Terminal", "Show Terminal",
+            lambda: not getattr(self, '_terminal_panel_hidden', False),
+            lambda v: self._toggle_terminal_panel(v)
+        ))
+
         # Play/Run button — runs the active file (HTML → Live Server, Python/JS → terminal)
         play_btn = QPushButton()
         play_btn.setFixedSize(btn_size, btn_size)
@@ -2122,7 +2153,7 @@ class CortexMainWindow(QMainWindow):
         play_btn.clicked.connect(self._run_file)
         layout.addWidget(play_btn)
 
-        # 4. Review/Summary/Git panel toggle (all 3 tabs share one panel)
+        # 5. Review/Summary/Git panel toggle (all 3 tabs share one panel)
         layout.addWidget(_make_toggle(
             "panel-review-visible", "panel-review-hidden",
             "Hide Review Panel", "Show Review Panel",
@@ -3779,19 +3810,50 @@ class CortexMainWindow(QMainWindow):
             self._run_live_server(fp)
             return
         self._save_current()
-        
-        self._terminal_tabs.setVisible(True)
-        term = self._current_terminal()
-        if not term:
-            term = self._new_terminal()
-        
-        term.setFocus()
-        lang = detect_language(fp)
-        command = self._build_run_command(fp, lang)
-        if command:
-            term.execute_command(command)
+
+        # Ensure the integrated terminal panel is visible (VS Code style)
+        if getattr(self, '_terminal_panel_hidden', False):
+            self._toggle_terminal_panel(show=True)
+
+        # Use the integrated terminal in the vertical splitter
+        term = self._integrated_terminal
+
+        # Start the shell if it hasn't been started yet
+        if not term._shell_started:
+            term._start_shell()
+
+        # Wait briefly for the shell to be ready, then execute
+        def _send_cmd():
+            if term._pty_process or (term._process and term._process.state() == QProcess.ProcessState.Running):
+                lang = detect_language(fp)
+                command = self._build_run_command(fp, lang)
+                if command:
+                    term.execute_command(command)
+                    term.setFocus()
+                else:
+                    QMessageBox.information(self, "Run", f"Running {lang} is not yet supported.")
+            else:
+                # Shell still not ready — retry once more
+                QTimer.singleShot(500, lambda: _retry_cmd(fp))
+
+        def _retry_cmd(fp):
+            if term._pty_process or (term._process and term._process.state() == QProcess.ProcessState.Running):
+                lang = detect_language(fp)
+                command = self._build_run_command(fp, lang)
+                if command:
+                    term.execute_command(command)
+                    term.setFocus()
+                else:
+                    QMessageBox.information(self, "Run", f"Running {lang} is not yet supported.")
+            else:
+                log.warning("Integrated terminal shell not ready after retry")
+                QMessageBox.warning(self, "Terminal", "Terminal shell is not ready yet. Please wait a moment and try again.")
+
+        # Give the shell a moment to start if it was just initialized
+        if term._shell_started and (term._pty_process or term._process):
+            _send_cmd()
         else:
-            QMessageBox.information(self, "Run", f"Running {lang} is not yet supported.")
+            QTimer.singleShot(300, _send_cmd)
 
     def _run_live_server(self, file_path: str):
         """Start built-in Live Server and open the HTML file in the browser."""
@@ -4015,17 +4077,30 @@ class CortexMainWindow(QMainWindow):
             if command and command.strip():
                 term.execute_command(command.strip())
 
+    def _toggle_terminal_panel(self, show: bool = True):
+        """Toggle integrated terminal panel via vertical splitter — VS Code style."""
+        if not hasattr(self, '_editor_terminal_splitter'):
+            return
+        splitter = self._editor_terminal_splitter
+        sizes = splitter.sizes()
+        if len(sizes) < 2:
+            return
+        widget = splitter.widget(1)  # Terminal is bottom widget in vertical split
+        if show:
+            widget.setMinimumHeight(120)
+            widget.setMaximumHeight(16777215)
+            sizes[1] = self._terminal_panel_min_height
+        else:
+            widget.setMinimumHeight(0)
+            widget.setMaximumHeight(0)
+            sizes[1] = 0
+        splitter.setSizes(sizes)
+        self._terminal_panel_hidden = not show
+
     def _toggle_terminal(self):
-        """Toggle terminal visibility in AI-first mode"""
-        visible = self._terminal_tabs.isVisible()
-        self._terminal_tabs.setVisible(not visible)
-        if self._terminal_tabs.isVisible():
-            if self._terminal_tabs.count() == 0:
-                self._new_terminal()
-            self._terminal_tabs.setMinimumHeight(150)
-            term = self._current_terminal()
-            if term:
-                term.setFocus()
+        """Toggle terminal visibility via vertical splitter (Ctrl+J) — VS Code style."""
+        hidden = getattr(self, '_terminal_panel_hidden', False)
+        self._toggle_terminal_panel(show=hidden)
 
     def _toggle_left_sidebar(self, show: bool = True):
         """Toggle left sidebar via splitter — show=True to expand, False to collapse."""

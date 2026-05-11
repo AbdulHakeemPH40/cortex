@@ -1030,6 +1030,18 @@ _UI_SVG_TEMPLATES = {
         <path d="M8 5v14l11-7z"/>
     </svg>''',
 
+    # ── 7. Terminal Panel: Console prompt icon ──
+    "panel-terminal-visible": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="4 17 10 11 4 5"/>
+        <line x1="12" y1="19" x2="20" y2="19" stroke-width="1.5"/>
+        <rect x="2" y="3" width="20" height="18" rx="2"/>
+    </svg>''',
+    "panel-terminal-hidden": '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="3" width="20" height="18" rx="2" stroke-dasharray="4,2"/>
+        <line x1="9" y1="9" x2="15" y2="15" stroke-width="2"/>
+        <line x1="15" y1="9" x2="9" y2="15" stroke-width="2"/>
+    </svg>''',
+
     # ═══════════════════════════════════════════════════════════════════════════
     # Chat List Action Icons — Pencil (rename) & Trash (delete)
     # ═══════════════════════════════════════════════════════════════════════════
