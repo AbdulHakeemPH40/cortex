@@ -110,7 +110,68 @@ var isDark = true;
 var changeTimer = null;
 var CHANGE_DEBOUNCE_MS = 300;
 
+// Pending promises for LSP results (global — accessed by provider callbacks and result handlers)
+var pendingCompletions = {};
+var pendingHovers = {};
+var pendingDefinitions = {};
+
+// Lazy file loading tokens (prevent out-of-order loads overwriting content)
+var fileLoadTokens = {}; // path -> int
+
+// ---- Scroll detection: suppress ALL bridge calls during scroll ----
+var isScrolling = false;
+var scrollStopTimer = null;
+var SCROLL_STOP_MS = 300;  // consider scroll stopped after 300ms idle
+var lastScrollAt = 0;      // ms timestamp of most recent scroll event
+var SCROLL_SETTLE_MS = 800; // treat as "still scrolling" for 800ms after last event
+
+// ---- File switch guard: suppress bridge calls during rapid tab switching ----
+// Opening 12+ files at startup floods QWebChannel with runJavaScript calls.
+// Each file open triggers Monaco content-change, language-change, and cursor
+// events which fire LSP bridge calls — these stack up and crash Chromium.
+var isSwitchingFile = false;
+var switchStopTimer = null;
+var SWITCH_STOP_MS = 2000;  // batch file switches, settle after 2s idle (must exceed queue interval)
+
+// ---- Content set debounce: collapse rapid model.setValue() calls ----
+// Monaco's setValue() triggers background tokenization & syntax highlighting.
+// Calling setValue() in rapid succession (e.g. close-all → open file1 → open
+// file2) can crash Chromium on Windows because it hasn't finished processing
+// the first tokenization wave before the second hits.
+var pendingSetContent = null;       // filePath of pending setEditorContent
+var setContentTimer = null;         // debounce/retry timer
+var SET_CONTENT_DEBOUNCE = 500;     // ms — long enough for tokenization to settle
+
+// ---- Content set guard: prevent setValue() while tokenization is in flight ----
+// Monaco's async tokenizer crashes Chromium if setValue() changes the model
+// while a previous tokenization cycle is still computing decorations.
+// This guard ensures only ONE setValue() is in flight at any time.
+var isSettingContent = false;
+var SETTING_TIMEOUT_MS = 5000;      // legacy default (dynamic override is used)
+
+// ---- Marker rendering guard: prevent scroll→diagnostics→marker→scroll cascade ----
+var isRenderingMarkers = false;
+
+// ---- Startup warmup: suppress marker rendering until Chromium is stable ----
+// Chromium WebEngine on Windows 25H2 needs 30-60s to fully initialize its
+// multi-process GPU/compositor pipeline. Monaco's setModelMarkers() (squiggly
+// underlines for LSP diagnostics) is one of the most GPU-intensive operations
+// and crashes the render process if called before Chromium settles.
+var MONACO_LOAD_TIME = 0;        // set in Monaco init callback
+var STARTUP_WARMUP_MS = 60000;   // 60s — silent marker suppression during warmup
+
 // ---- Global JS error trapping (catch silent bugs before process dies) ----
+// Monaco load timeout — if Monaco doesn't load within 30s, show error.
+// Replaces the old per-file scheduleEditorRetry with a single global safety net.
+var _monacoLoadTimeout = setTimeout(function() {
+    if (!editor || !window.editorReady) {
+        console.error('[Editor] Monaco failed to load within 30s');
+        document.getElementById('no-files-hint').textContent = 'Editor failed to load. Check npm install monaco-editor.';
+        document.getElementById('no-files-hint').style.display = 'flex';
+        document.getElementById('editor-container').classList.add('hidden');
+    }
+}, 30000);
+
 window.onerror = function(msg, url, line, col, error) {
     console.error('[Editor] UNCAUGHT ERROR:', msg, 'at line', line, 'col', col);
     if (error && error.stack) console.error('[Editor] Stack:', error.stack);
@@ -222,9 +283,9 @@ if (typeof require !== 'undefined') {
         folding: true,
     });
 
-    // ---- Content change tracking (debounced) — no LSP auto-notify during scroll ----
+    // ---- Content change tracking (debounced) — no LSP auto-notify during scroll/switch ----
     editor.onDidChangeModelContent(function() {
-        if (!activeFilePath) return;
+        if (!activeFilePath || isSwitchingFile) return;
         var model = editor.getModel();
         var content = model.getValue();
         if (openFiles[activeFilePath]) {
@@ -234,13 +295,78 @@ if (typeof require !== 'undefined') {
         changeTimer = setTimeout(function() {
             if (bridge && activeFilePath) {
                 bridge.onContentChanged(activeFilePath, content);
+                // Notify LSP about content change + refresh diagnostics
+                var f = openFiles[activeFilePath];
+                if (f && bridge.notifyContentChanged) {
+                    bridge.notifyContentChanged(activeFilePath, content, f.language || 'plaintext');
+                }
+                // Request fresh diagnostics after content settles (scroll-gated internally)
+                scheduleDiagnostics();
             }
         }, CHANGE_DEBOUNCE_MS);
     });
 
-    // ---- LSP providers disabled — eliminate QWebChannel calls during editing ----
-    // Completion, hover, and definition providers were removed to prevent
-    // bridge communication from triggering Chromium crashes during scroll.
+    // ---- Scroll detection: suppress all bridge calls during scrolling ----
+    editor.onDidScrollChange(function() {
+        isScrolling = true;
+        lastScrollAt = Date.now();
+        if (scrollStopTimer) clearTimeout(scrollStopTimer);
+        scrollStopTimer = setTimeout(function() {
+            isScrolling = false;
+            // Request diagnostics after scroll stops (if file is open)
+            scheduleDiagnostics();
+        }, SCROLL_STOP_MS);
+    });
+
+    // ---- Safe LSP providers: explicit user action only, never during scroll/switch ----
+    // Completion provider — only on Ctrl+Space (no auto-trigger during typing)
+    monaco.languages.registerCompletionItemProvider('*', {
+        triggerCharacters: [],  // empty = only explicit Ctrl+Space, no auto-trigger
+        provideCompletionItems: function(model, position) {
+            if (isScrolling || isSwitchingFile || !bridge || !activeFilePath) {
+                return { suggestions: [] };
+            }
+            return new Promise(function(resolve) {
+                var reqId = 'comp_' + Date.now() + '_' + Math.random();
+                pendingCompletions[reqId] = resolve;
+                var f = openFiles[activeFilePath];
+                bridge.requestCompletions(reqId, activeFilePath, f.language, position.lineNumber, position.column);
+            });
+        }
+    });
+
+    // Hover provider — debounced 500ms, suppressed during scroll/switch
+    var hoverTimer = null;
+    var HOVER_DEBOUNCE_MS = 500;
+    monaco.languages.registerHoverProvider('*', {
+        provideHover: function(model, position) {
+            if (isScrolling || isSwitchingFile || !bridge || !activeFilePath) {
+                return null;
+            }
+            return new Promise(function(resolve) {
+                if (hoverTimer) clearTimeout(hoverTimer);
+                hoverTimer = setTimeout(function() {
+                    var reqId = 'hover_' + Date.now() + '_' + Math.random();
+                    pendingHovers[reqId] = resolve;
+                    var f = openFiles[activeFilePath];
+                    bridge.requestHover(reqId, activeFilePath, f.language, position.lineNumber, position.column);
+                }, HOVER_DEBOUNCE_MS);
+            });
+        }
+    });
+
+    // Definition provider — only on F12 / Ctrl+Click (naturally safe, no scroll trigger)
+    monaco.languages.registerDefinitionProvider('*', {
+        provideDefinition: function(model, position) {
+            if (!bridge || !activeFilePath) return null;
+            return new Promise(function(resolve) {
+                var reqId = 'def_' + Date.now() + '_' + Math.random();
+                pendingDefinitions[reqId] = resolve;
+                var f = openFiles[activeFilePath];
+                bridge.requestDefinition(reqId, activeFilePath, f.language, position.lineNumber, position.column);
+            });
+        }
+    });
 
     // Handle tab close keyboard shortcut (Ctrl+W)
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyW, function() {
@@ -249,6 +375,14 @@ if (typeof require !== 'undefined') {
 
     // Mark Monaco as fully ready
     window.editorReady = true;
+    MONACO_LOAD_TIME = Date.now();
+    clearTimeout(_monacoLoadTimeout);  // cancel the global 30s load timeout
+    console.log('[Editor] Warmup started — suppressing markers for ' + (STARTUP_WARMUP_MS/1000) + 's');
+    // Flush diagnostics once warmup ends — ensures markers appear without user action
+    setTimeout(function() {
+        console.log('[Editor] Warmup complete — re-enabling marker rendering');
+        scheduleDiagnostics();
+    }, STARTUP_WARMUP_MS);
 
     // Apply any file that was opened before Monaco loaded
     if (activeFilePath && openFiles[activeFilePath]) {
@@ -285,13 +419,49 @@ function fileName(path) {
 function setEditorContent(filePath) {
     var f = openFiles[filePath];
     if (!f || !editor) return;
+    // Debounce: collapse rapid model.setValue() + setModelLanguage() bursts
+    // into a single operation. Monaco's internal tokenizer is async and
+    // successive setValue() calls before tokenization completes crash Chromium.
+    pendingSetContent = filePath;
+    if (setContentTimer) return;  // already scheduled — will pick up latest filePath
+    _tryFlushContent();
+}
+
+function _tryFlushContent() {
+    // Guard: don't call setValue() while previous tokenization is still running.
+    // Monaco's async tokenizer crashes Chromium if the model changes mid-tokenization.
+    if (isSettingContent) {
+        setContentTimer = setTimeout(_tryFlushContent, 500);
+        return;
+    }
+    var targetPath = pendingSetContent;
+    if (!targetPath) { setContentTimer = null; return; }
+    pendingSetContent = null;
+    setContentTimer = null;
+    var targetFile = openFiles[targetPath];
+    if (!targetFile || !editor) return;
     var model = editor.getModel();
     if (model) {
         // Clear old LSP markers BEFORE changing content — prevents Monaco from
         // trying to render decorations on lines that don't exist in the new file.
         try { monaco.editor.setModelMarkers(model, 'lsp', []); } catch(e) {}
-        model.setValue(f.content || '');
-        monaco.editor.setModelLanguage(model, monacoLang(f.language));
+        isSettingContent = true;
+        model.setValue(targetFile.content || '');
+        monaco.editor.setModelLanguage(model, monacoLang(targetFile.language));
+        // Release guard after a size-based delay. Too long => users see old file
+        // content while switching tabs. Too short => risk overlapping tokenization.
+        var size = (targetFile.content || '').length;
+        var releaseMs = 600;
+        if (size > 200000) releaseMs = 2500;
+        else if (size > 80000) releaseMs = 1500;
+        else if (size > 20000) releaseMs = 900;
+        setTimeout(function() {
+            isSettingContent = false;
+            // If more content is pending, flush immediately
+            if (pendingSetContent) {
+                setContentTimer = setTimeout(_tryFlushContent, SET_CONTENT_DEBOUNCE);
+            }
+        }, releaseMs);
     }
     document.getElementById('no-files-hint').style.display = 'none';
     document.getElementById('editor-container').classList.remove('hidden');
@@ -341,24 +511,45 @@ function renderTabs() {
 
 function switchToFile(filePath) {
     if (!openFiles[filePath]) return;
-    // Save current editor content to cache before switching
-    if (activeFilePath && openFiles[activeFilePath] && editor) {
+    // Save current editor content to cache before switching.
+    // GUARD: only save if isSettingContent is false — when true, the model
+    // still holds the PREVIOUS file's content (setValue() hasn't completed),
+    // so saving would corrupt openFiles[activeFilePath] with wrong content.
+    if (activeFilePath && openFiles[activeFilePath] && editor && !isSettingContent) {
         openFiles[activeFilePath].content = editor.getModel().getValue();
     }
     activeFilePath = filePath;
     console.log('[Editor] switchToFile: ' + filePath + ' (editor ready: ' + !!editor + ')');
+    // Set switching guard to suppress bridge calls during rapid tab changes
+    isSwitchingFile = true;
+    if (switchStopTimer) clearTimeout(switchStopTimer);
+    switchStopTimer = setTimeout(function() {
+        isSwitchingFile = false;
+        // Notify LSP about the active file now that switching has settled.
+        // During rapid switching, didOpen/didChange notifications are
+        // suppressed to avoid QWebChannel overload — send one now.
+        if (activeFilePath && openFiles[activeFilePath] && bridge && bridge.notifyContentChanged) {
+            var af = openFiles[activeFilePath];
+            bridge.notifyContentChanged(activeFilePath, af.content || '', af.language || 'plaintext');
+        }
+        // Request diagnostics after file switching settles
+        scheduleDiagnostics();
+    }, SWITCH_STOP_MS);
     // If Monaco isn't loaded yet, just update state — the init callback will call setEditorContent
     if (editor) {
         setEditorContent(filePath);
     } else {
-        // Monaco not loaded yet — show tabs/hide hint, then retry when editor appears
+        // Monaco not loaded yet — show tabs/hide hint, then let the init callback
+        // handle setEditorContent(activeFilePath). Unlike the old scheduleEditorRetry
+        // (which only tracked ONE file), this approach naturally handles ALL files
+        // because each switchToFile() populates openFiles[] and the init callback
+        // reads activeFilePath which reflects the most recent switch.
         document.getElementById('no-files-hint').style.display = 'none';
         document.getElementById('editor-container').classList.remove('hidden');
-        scheduleEditorRetry(filePath);
     }
     renderTabs();
     // Notify Python about active file change (no cursor tracking during scroll)
-    if (bridge && editor && activeFilePath) {
+    if (bridge && editor && activeFilePath && !isScrolling) {
         bridge.onCursorChanged(filePath, 1, 1);
     }
 }
@@ -382,7 +573,6 @@ function scheduleEditorRetry(filePath) {
                 var pos = editor.getPosition();
                 bridge.onCursorChanged(_editorRetryPath, pos.lineNumber, pos.column);
             }
-            setTimeout(requestDiagnostics, 300);
         } else if (_editorRetryCount > 60) {
             // Give up after 30 seconds (60 * 500ms)
             clearInterval(_editorRetryTimer);
@@ -395,8 +585,9 @@ function scheduleEditorRetry(filePath) {
     }, 500);
 }
 
-// Called by Python: openFile(path, content, language)
-function openFile(filePath, content, language) {
+// Called by Python: openFile(path, content, language, activate?)
+function openFile(filePath, content, language, activate) {
+    if (activate === undefined) activate = true;
     if (openFiles[filePath]) {
         // Already open — switch to it, update content if different
         if (openFiles[filePath].content !== content) {
@@ -406,7 +597,8 @@ function openFile(filePath, content, language) {
                 setEditorContent(filePath);
             }
         }
-        switchToFile(filePath);
+        if (activate) switchToFile(filePath);
+        else renderTabs();
         return;
     }
 
@@ -418,7 +610,60 @@ function openFile(filePath, content, language) {
         modified: false
     };
     openOrder.push(filePath);
-    switchToFile(filePath);
+    if (activate) switchToFile(filePath);
+    else renderTabs();
+}
+
+function _loadTextFromUri(fileUri, onDone) {
+    try {
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', fileUri, true);
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === 4) {
+                if (xhr.status === 200 || xhr.status === 0) {
+                    onDone(xhr.responseText || '', null);
+                } else {
+                    onDone('', 'HTTP ' + xhr.status);
+                }
+            }
+        };
+        xhr.onerror = function() { onDone('', 'XHR error'); };
+        xhr.send();
+    } catch (e) {
+        onDone('', String(e));
+    }
+}
+
+// Called by Python: openFileFromUri(path, language, fileUri, activate?)
+function openFileFromUri(filePath, language, fileUri, activate) {
+    if (activate === undefined) activate = true;
+
+    if (!openFiles[filePath]) {
+        openFiles[filePath] = {
+            path: filePath,
+            language: language || 'plaintext',
+            content: '',
+            modified: false
+        };
+        openOrder.push(filePath);
+    } else {
+        openFiles[filePath].language = language || openFiles[filePath].language;
+    }
+
+    var token = (fileLoadTokens[filePath] || 0) + 1;
+    fileLoadTokens[filePath] = token;
+    openFiles[filePath].content = '// Loading...';
+
+    if (activate) switchToFile(filePath);
+    else renderTabs();
+
+    _loadTextFromUri(fileUri, function(text, err) {
+        if (fileLoadTokens[filePath] !== token) return; // superseded
+        if (!openFiles[filePath]) return; // closed while loading
+        if (err) openFiles[filePath].content = '// Failed to load file: ' + err;
+        else openFiles[filePath].content = text || '';
+        if (activeFilePath === filePath && editor) setEditorContent(filePath);
+    });
 }
 
 // Called by Python: closeFile(path)
@@ -430,23 +675,48 @@ function closeFile(filePath) {
     if (idx >= 0) openOrder.splice(idx, 1);
 
     if (filePath === activeFilePath) {
-        // Switch to next available file or clear
+        // Switch to next available file or hide editor
         if (openOrder.length > 0) {
             var nextIdx = Math.min(idx, openOrder.length - 1);
             activeFilePath = openOrder[nextIdx];
             setEditorContent(activeFilePath);
         } else {
             activeFilePath = null;
-            if (editor) {
-                editor.getModel().setValue('');
-            }
+            // Keep model content — clearing it triggers tokenization that
+            // makes the next openFile() more expensive (empty→content wave).
+            // Just hide the editor area; the model will be overwritten on next open.
             document.getElementById('no-files-hint').style.display = 'flex';
             document.getElementById('editor-container').classList.add('hidden');
         }
     }
     renderTabs();
     console.log('[Editor] closeFile → calling bridge.onFileClosed for: ' + filePath);
-    if (bridge) bridge.onFileClosed(filePath);
+    // Gate: suppress onFileClosed during rapid file-close bursts to avoid
+    // flooding the QWebChannel with synchronous IPC calls.
+    if (bridge && !isSwitchingFile) bridge.onFileClosed(filePath);
+}
+
+// Called by Python: closeAllFiles() — closes all files in one shot, no
+// per-file bridge.onFileClosed() calls or intermediate setEditorContent().
+function closeAllFiles() {
+    console.log('[Editor] closeAllFiles called, closing ' + openOrder.length + ' files');
+    isSwitchingFile = true;
+    if (switchStopTimer) clearTimeout(switchStopTimer);
+    // Clear all open files without triggering per-file switches
+    openFiles = {};
+    openOrder = [];
+    activeFilePath = null;
+    // Keep model content (no setValue('')) — see closeFile rationale above.
+    document.getElementById('no-files-hint').style.display = 'flex';
+    document.getElementById('editor-container').classList.add('hidden');
+    renderTabs();
+    // Release switching guard after a short settle
+    switchStopTimer = setTimeout(function() {
+        isSwitchingFile = false;
+    }, SWITCH_STOP_MS);
+    // Notify Python once for the batch
+    if (bridge) bridge.onFileClosed('__ALL__');
+    console.log('[Editor] closeAllFiles complete');
 }
 
 // Called by Python: getContent(path) — returns current editor content
@@ -581,12 +851,25 @@ function _lspDefinitionResult(requestId, locations) {
 // Called by Python: _lspDiagnosticsResult(requestId, markers)
 function _lspDiagnosticsResult(requestId, markers) {
     if (!activeFilePath || !monaco) return;
+    // Startup warmup: silently drop ALL marker rendering until Chromium
+    // WebEngine's GPU/compositor pipeline has fully stabilized (60s).
+    // setModelMarkers() during initialization crashes the render process.
+    if (MONACO_LOAD_TIME && Date.now() - MONACO_LOAD_TIME < STARTUP_WARMUP_MS) {
+        console.log('[Editor] Warmup(' + Math.round((Date.now() - MONACO_LOAD_TIME)/1000) + 's): suppressing ' + (markers ? markers.length : 0) + ' markers');
+        return;
+    }
+    // NEVER set markers while switching files — model may be transitioning
+    if (isSwitchingFile) return;
+    // NEVER set markers while user is scrolling — Monaco's decoration
+    // renderer during scroll + QWebChannel response = bridge overload → crash
+    if (isScrolling) return;
+    if (lastScrollAt && (Date.now() - lastScrollAt) < SCROLL_SETTLE_MS) return;
+    // Prevent scroll→diagnostics→marker→scroll cascade
+    if (isRenderingMarkers) return;
     var model = editor.getModel();
     if (!model) return;
     try {
         // Validate markers against the model's actual line count.
-        // Markers with out-of-bounds line numbers will crash Monaco's
-        // decoration renderer during scrolling.
         var maxLine = model.getLineCount();
         var safe = [];
         if (markers && markers.length) {
@@ -598,18 +881,53 @@ function _lspDiagnosticsResult(requestId, markers) {
                 }
             }
         }
-        monaco.editor.setModelMarkers(model, 'lsp', safe);
+        // Defer setModelMarkers to next event-loop tick — prevents
+        // Monaco rendering from colliding with the QWebChannel response
+        // cycle that delivered these markers (bridge overload → crash).
+        var mdl = model;
+        var markersToSet = safe;
+        isRenderingMarkers = true;
+        setTimeout(function() {
+            if (isScrolling || (lastScrollAt && (Date.now() - lastScrollAt) < SCROLL_SETTLE_MS) || !mdl || mdl.isDisposed()) {
+                isRenderingMarkers = false;
+                return;
+            }
+            try {
+                monaco.editor.setModelMarkers(mdl, 'lsp', markersToSet);
+            } catch(e) {
+                console.error('[Editor] setModelMarkers failed:', e.message);
+            }
+            // Release guard after a short delay — allows any marker-triggered
+            // scroll events to settle before diagnostics can fire again
+            setTimeout(function() { isRenderingMarkers = false; }, 300);
+        }, 0);
     } catch(e) {
-        console.error('[Editor] setModelMarkers failed:', e.message);
+        console.error('[Editor] setModelMarkers validation failed:', e.message);
     }
 }
 
-// Request diagnostics for current active file
+// ---- Safe diagnostics: throttled 2s, suppressed during scroll ----
+var diagTimer = null;
+var DIAG_THROTTLE_MS = 5000;
+var diagSeq = 0;
+
+function scheduleDiagnostics() {
+    // Called after scroll stops or file opens — throttled to avoid spam
+    if (isScrolling || (lastScrollAt && (Date.now() - lastScrollAt) < SCROLL_SETTLE_MS) || isSwitchingFile || isRenderingMarkers || !bridge || !activeFilePath) return;
+    if (!openFiles[activeFilePath]) return;
+    if (diagTimer) clearTimeout(diagTimer);
+    diagTimer = setTimeout(function() {
+        diagTimer = null;
+        if (isScrolling || (lastScrollAt && (Date.now() - lastScrollAt) < SCROLL_SETTLE_MS) || !bridge || !activeFilePath) return;
+        if (!openFiles[activeFilePath]) return;
+        var f = openFiles[activeFilePath];
+        bridge.requestDiagnostics('diag_' + (++diagSeq), activeFilePath, f.language || 'plaintext');
+    }, DIAG_THROTTLE_MS);
+}
+
+// Also called when file content changes (debounced via the content change handler)
 function requestDiagnostics() {
-    if (!bridge || !activeFilePath) return;
-    var f = openFiles[activeFilePath];
-    if (!f) return;
-    bridge.requestDiagnostics('diag_' + Date.now(), activeFilePath, f.language || 'plaintext');
+    scheduleDiagnostics();
 }
 
 // ============================================================================

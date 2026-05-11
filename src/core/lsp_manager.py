@@ -87,14 +87,28 @@ class LSPServerInstance(QObject):
         try:
             self._set_state(LSPConnectionState.CONNECTING)
             log.info(f"Starting LSP server '{self.name}': {' '.join(self.cmd)}")
+
+            # Windows: isolate LSP process from Qt WebEngine's Chromium processes.
+            # close_fds=True prevents child processes from inheriting Chromium's
+            # file descriptors, GPU surfaces, and shared memory handles.
+            # Without this, any subprocess.Popen silently crashes the IDE.
+            startupinfo = None
+            creationflags = 0
+            if os.name == 'nt':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 0  # SW_HIDE
+                creationflags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+
             self.process = subprocess.Popen(
                 self.cmd,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 bufsize=0,
-                shell=True if os.name == 'nt' else False,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                startupinfo=startupinfo,
+                creationflags=creationflags,
+                close_fds=True
             )
             self._is_running = True
             self._reconnect_attempts = 0  # Reset on successful start
@@ -452,12 +466,23 @@ class LSPManager(QObject):
     
     _instance = None
     
+    # Minimum seconds the IDE must run before LSP subprocesses are spawned.
+    # Qt WebEngine (Chromium) needs time to fully initialize its multi-process
+    # architecture before additional child processes are created, otherwise
+    # process-group contention can cause silent Chromium renderer crashes.
+    #
+    # Note: this is measured from LSPManager creation, which occurs ~2-3s
+    # before the webview finishes loading. An 8s delay ensures ~5-6s of
+    # WebEngine settle time after the webview is visible.
+    _LSP_STARTUP_DELAY = 25.0  # 25s delay for 12 files × 1.5s seq queue + Monaco settle
+    
     def __init__(self):
         super().__init__()
         if hasattr(self, '_initialized'): return
         self.servers: Dict[str, LSPServerInstance] = {}
         self.diagnostics_cache: Dict[str, List[Dict]] = {}
         self.doc_versions: Dict[str, int] = {}
+        self._creation_time = time.time()  # Track when LSP manager was created
         
         # Separate bundled binary root from user project root
         if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
@@ -769,11 +794,27 @@ class LSPManager(QObject):
         root_uri = Path(self.project_root).as_uri()
         server = LSPServerInstance(lang, cmd, root_uri)
         server.diagnostics_callback = self._on_diagnostics
+        self.servers[lang] = server  # Register immediately so notify_changed can queue didOpen
         
-        if server.start():
-            self.servers[lang] = server
+        # Guard: don't spawn the subprocess until Qt WebEngine has had
+        # enough time to fully initialize. The server object is already
+        # registered, so didOpen/didChange notifications will queue in
+        # server._deferred_notifications and flush when the server is READY.
+        #
+        # IMPORTANT: QTimer.singleShot is used (NOT threading.Timer) because
+        # LSPServerInstance is a QObject with main-thread affinity. Calling
+        # start() from a background thread causes Qt object thread-affinity
+        # violations that can crash Qt WebEngine's Chromium renderer.
+        elapsed = time.time() - self._creation_time
+        if elapsed < self._LSP_STARTUP_DELAY:
+            remaining = self._LSP_STARTUP_DELAY - elapsed
+            log.info(f"LSP {lang}: server registered, deferring subprocess spawn ({remaining:.1f}s for Qt WebEngine)")
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(int(remaining * 1000) + 200, lambda s=server: s.start())
             return server
-        return None
+        
+        server.start()
+        return server
 
     def _get_node_path(self) -> str:
         """Return path to bundled node.exe, or fall back to system node."""

@@ -165,6 +165,7 @@ class BackgroundWorker:
                 cwd=self._project_root,
                 text=True,
                 bufsize=1,  # line-buffered
+                close_fds=True,
             )
 
             self._state = WorkerState.RUNNING

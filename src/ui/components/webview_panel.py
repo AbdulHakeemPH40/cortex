@@ -4,16 +4,29 @@ Replaces the PyQt6 QPlainTextEdit-based CodeEditor with VS Code-quality editing.
 """
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QUrl, pyqtSignal, pyqtSlot, QObject
+from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal, pyqtSlot, QObject
 from PyQt6.QtWidgets import QWidget, QVBoxLayout
 from PyQt6.QtWebChannel import QWebChannel
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 
 log = logging.getLogger(__name__)
+
+
+class _LoggingWebEnginePage(QWebEnginePage):
+    """Capture JS console output in Python logs for crash/debug visibility."""
+
+    def javaScriptConsoleMessage(self, level, message, line_number, source_id):
+        try:
+            lvl = int(level)
+        except Exception:
+            lvl = 0
+        level_name = {0: "INFO", 1: "WARN", 2: "ERROR"}.get(lvl, str(level))
+        log.warning(f"[WebviewPanel][JS {level_name}] {source_id}:{line_number} {message}")
 
 
 class _EditorBridge(QObject):
@@ -102,6 +115,7 @@ class WebviewPanel(QWidget):
 
     def __init__(self, parent: QWidget = None):
         super().__init__(parent)
+        self._init_time = time.time()  # track startup for warmup delay
         self._open_files: dict[str, dict] = {}      # path → {path, language, content}
         self._active_file_path: str = ""
         self._page_loaded = False
@@ -134,7 +148,7 @@ class WebviewPanel(QWidget):
             pass
 
         self._view = QWebEngineView()
-        self._page = QWebEnginePage(self._view)
+        self._page = _LoggingWebEnginePage(self._view)
         self._view.setPage(self._page)
 
         # Enable localStorage + clipboard + cross-directory file access
@@ -218,7 +232,6 @@ class WebviewPanel(QWidget):
             self._pending_theme = None
 
         # Small delay to ensure QWebChannel transport is ready
-        from PyQt6.QtCore import QTimer
 
         def _process_pending():
             # Process pending file opens
@@ -226,7 +239,7 @@ class WebviewPanel(QWidget):
             self._pending_opens.clear()
             for args in pending:
                 log.info(f"[WebviewPanel] Processing pending open: {args[0]}")
-                self._open_file_js(*args)
+                self._open_file_js(*args, priority=False)
 
         QTimer.singleShot(200, _process_pending)
 
@@ -245,25 +258,39 @@ class WebviewPanel(QWidget):
         log.critical(f"[WebviewPanel] RENDER PROCESS CRASHED: status={status_name}, exit_code={exit_code}")
         print(f"\n💥 [WebviewPanel] Chromium render process CRASHED (status={status_name}, code={exit_code})\n",
               flush=True)
+        # Mark page dead so we stop sending JS. Future opens will queue until reload.
+        self._page_loaded = False
 
     # ---- Public API -------------------------------------------------------
 
     def _safe_run_js(self, js: str, callback=None):
         """Run JavaScript safely — catches crashes from dead/destroyed webview."""
         try:
-            page = self._view.page() if self._view else None
-            if page:
-                if callback:
-                    page.runJavaScript(js, callback)
-                else:
-                    page.runJavaScript(js)
+            def _invoke():
+                try:
+                    page = self._view.page() if self._view else None
+                    if not page:
+                        return
+                    if callback:
+                        page.runJavaScript(js, callback)
+                    else:
+                        page.runJavaScript(js)
+                except Exception as e:
+                    log.debug(f"[WebviewPanel] runJavaScript failed (webview may be dead): {e}")
+
+            # Always schedule onto the Qt GUI thread (safe even if already on it).
+            QTimer.singleShot(0, _invoke)
         except Exception as e:
-            log.debug(f"[WebviewPanel] runJavaScript failed (webview may be dead): {e}")
+            log.debug(f"[WebviewPanel] runJavaScript scheduling failed: {e}")
 
     # ---- Public API -------------------------------------------------------
 
-    def open_file(self, file_path: str, content: str, language: str = "plaintext"):
-        """Open a file in the editor (creates/switches to tab)."""
+    def open_file(self, file_path: str, content: str, language: str = "plaintext", *, priority: bool = True):
+        """Open a file in the editor (creates/switches to tab).
+
+        priority=True is meant for user-initiated clicks (show the file now).
+        priority=False is meant for bulk/session restore (throttle during startup).
+        """
         log.info(f"[WebviewPanel] open_file: {file_path} (lang={language}, len={len(content)}, page_loaded={self._page_loaded})")
         self._open_files[file_path] = {
             "path": file_path,
@@ -274,43 +301,177 @@ class WebviewPanel(QWidget):
         self.file_opened.emit(file_path)
 
         if self._page_loaded:
-            self._open_file_js(file_path, content, language)
+            self._open_file_js(file_path, content, language, priority=priority)
         else:
             self._pending_opens.append((file_path, content, language))
             log.debug(f"[WebviewPanel] Queued open for: {file_path}")
 
-    def _open_file_js(self, file_path: str, content: str, language: str):
-        """Send openFile() to JS — throttled to prevent QWebChannel overload."""
-        # Throttle: if a pending _open_file_js timer exists, queue this call
-        # Only the LAST call per file matters; intermediate ones are replaced.
+    def switch_to_file(self, file_path: str):
+        """Switch the editor tab to an already-open file WITHOUT re-sending content.
+        
+        This avoids a model.setValue() call through QWebChannel, which is the
+        primary crash trigger during Chromium's startup warmup phase.
+        
+        If the file is still in the open queue (pending JS delivery), the content
+        is flushed IMMEDIATELY so the JS side has it before switchToFile runs.
+        Without this, switchToFile silently fails (openFiles[path] is undefined)
+        and the editor keeps showing the previous file's content.
+        """
+        if file_path not in self._open_files:
+            log.warning(f"[WebviewPanel] switch_to_file: {file_path} not in _open_files")
+            return
+        self._active_file_path = file_path
+        self.file_opened.emit(file_path)
+
+        # If file content is still pending in the open queue, flush it NOW.
+        # Bumping alone doesn't help — JS switchToFile needs openFiles[path]
+        # to exist, which only happens after openFile() delivers the content.
+        if hasattr(self, '_open_queue') and file_path in self._open_queue:
+            args = self._open_queue.pop(file_path)
+            fp, content, language = args
+            safe_path = json.dumps(fp)
+            safe_content = json.dumps(content)
+            safe_lang = json.dumps(language)
+            js_open = f"openFile({safe_path}, {safe_content}, {safe_lang}, true);"
+            self._safe_run_js(js_open)
+            log.info(f"[WebviewPanel] switch_to_file: flushed pending content for {file_path}")
+
+        if self._page_loaded:
+            safe_path = json.dumps(file_path)
+            js = f"switchToFile({safe_path});"
+            self._safe_run_js(js)
+
+    def _open_file_js(self, file_path: str, content: str, language: str, *, priority: bool = True):
+        """Send openFile() to JS — heavily throttled during first 60s warmup.
+        
+        QWebChannel IPC + Monaco model.setValue() crashes Chromium's render
+        process on Windows 25H2 when too many files are opened rapidly during
+        the first ~40-60s of startup. Testing proved that 3s spacing still
+        crashes after ~12 files accumulate. With 10s spacing, only ~6 files
+        load in 60s — safely under the crash threshold while keeping the IDE
+        usable (first file opens immediately so the user sees content).
+        """
+        _WARMUP_SECS = 60
+        _elapsed = time.time() - self._init_time
+        # 10s spacing during warmup (safe: max 6 files in 60s), 1.5s after
+        _delay_ms = 10000 if _elapsed < _WARMUP_SECS else 1500
+
         if not hasattr(self, '_open_queue'):
             self._open_queue: dict[str, tuple] = {}
         if not hasattr(self, '_open_timer'):
-            from PyQt6.QtCore import QTimer
             self._open_timer: Optional[QTimer] = None
 
-        self._open_queue[file_path] = (file_path, content, language)
+        def _run_open_now(fp: str, c: str, lang: str, activate: bool):
+            safe_path = json.dumps(fp)
+            safe_lang = json.dumps(lang)
+
+            # Large-file optimization: avoid shipping huge strings through Qt's
+            # runJavaScript IPC. Instead let the webview fetch the file from disk.
+            # This prevents UI freezes and reduces "wrong file content" races.
+            _LARGE_CHAR_THRESHOLD = 200_000
+            try:
+                if fp and Path(fp).exists() and len(c) > _LARGE_CHAR_THRESHOLD:
+                    file_uri = Path(fp).as_uri()
+                    safe_uri = json.dumps(file_uri)
+                    self._safe_run_js(
+                        f"openFileFromUri({safe_path}, {safe_lang}, {safe_uri}, {'true' if activate else 'false'});"
+                    )
+                    return
+            except Exception:
+                # Fall back to direct content if URI generation or exists() fails
+                pass
+
+            safe_content = json.dumps(c)
+            self._safe_run_js(
+                f"openFile({safe_path}, {safe_content}, {safe_lang}, {'true' if activate else 'false'});"
+            )
+
+        # Dedupe: keep only the latest call per file
+        if file_path:
+            self._open_queue[file_path] = (file_path, content, language)
+
+        # User-initiated opens must show immediately. Warmup throttling is only
+        # for restore/bulk opens; delaying the clicked file causes "wrong file"
+        # content (previous tab stays visible) and feels laggy.
+        if priority and file_path:
+            try:
+                # Stop any running pump so we can front-run the clicked file.
+                if self._open_timer is not None:
+                    try:
+                        self._open_timer.stop()
+                    except Exception:
+                        pass
+                    self._open_timer = None
+
+                args = self._open_queue.pop(file_path, None)
+                if args:
+                    _run_open_now(args[0], args[1], args[2], True)
+            except Exception as e:
+                log.error(f"[WebviewPanel] Priority openFile failed for {file_path}: {e}")
+
+            # Restart a throttled pump for any remaining queued files.
+            if self._open_queue and self._open_timer is None:
+                def _flush_one_priority_tail():
+                    if not self._open_queue:
+                        self._open_timer = None
+                        return
+                    fp, args2 = next(iter(self._open_queue.items()))
+                    del self._open_queue[fp]
+                    try:
+                        _run_open_now(fp, args2[1], args2[2], False)
+                    except Exception as e:
+                        log.error(f"[WebviewPanel] JS openFile failed for {fp}: {e}")
+                    if self._open_queue:
+                        self._open_timer = QTimer(self)
+                        self._open_timer.setSingleShot(True)
+                        self._open_timer.timeout.connect(_flush_one_priority_tail)
+                        _elapsed2 = time.time() - self._init_time
+                        _d2 = 10000 if _elapsed2 < _WARMUP_SECS else 1500
+                        self._open_timer.start(_d2)
+                    else:
+                        self._open_timer = None
+
+                self._open_timer = QTimer(self)
+                self._open_timer.setSingleShot(True)
+                self._open_timer.timeout.connect(_flush_one_priority_tail)
+                self._open_timer.start(_delay_ms)
+            return
 
         if self._open_timer is None:
-            from PyQt6.QtCore import QTimer
-            def _flush():
-                self._open_timer = None
-                queue = list(self._open_queue.values())
-                self._open_queue.clear()
-                for args in queue:
-                    try:
-                        fp, c, lang = args
-                        safe_path = json.dumps(fp)
-                        safe_content = json.dumps(c)
-                        safe_lang = json.dumps(lang)
-                        js = f"openFile({safe_path}, {safe_content}, {safe_lang});"
-                        self._safe_run_js(js)
-                    except Exception as e:
-                        log.error(f"[WebviewPanel] JS openFile failed for {args[0]}: {e}")
+            # Use a QTimer for ALL files, including the first.
+            # The first file fires at 0ms (next event-loop iteration),
+            # subsequent files are spaced by _delay_ms (10s warmup / 1.5s normal).
+            #
+            # CRITICAL: Using a timer (even 0ms) instead of calling _flush_one()
+            # synchronously ensures _open_timer remains set during batch opens
+            # (e.g. _process_pending loop). Without this, each _open_file_js()
+            # resets _open_timer=None after flushing, so the next call creates
+            # another immediate flush — completely bypassing the warmup delay.
+            def _flush_one():
+                if not self._open_queue:
+                    self._open_timer = None
+                    return
+                fp, args = next(iter(self._open_queue.items()))
+                del self._open_queue[fp]
+                try:
+                    c, lang = args[1], args[2]
+                    _run_open_now(fp, c, lang, False)
+                except Exception as e:
+                    log.error(f"[WebviewPanel] JS openFile failed for {fp}: {e}")
+                if self._open_queue:
+                    self._open_timer = QTimer(self)
+                    self._open_timer.setSingleShot(True)
+                    self._open_timer.timeout.connect(_flush_one)
+                    _elapsed2 = time.time() - self._init_time
+                    _d2 = 10000 if _elapsed2 < _WARMUP_SECS else 1500
+                    self._open_timer.start(_d2)
+                else:
+                    self._open_timer = None
+
             self._open_timer = QTimer(self)
             self._open_timer.setSingleShot(True)
-            self._open_timer.timeout.connect(_flush)
-            self._open_timer.start(50)  # batch window: 50ms
+            self._open_timer.timeout.connect(_flush_one)
+            self._open_timer.start(0)  # fire on next event-loop iteration
 
     def close_file(self, file_path: str):
         """Close a file tab."""
@@ -321,6 +482,15 @@ class WebviewPanel(QWidget):
         if self._page_loaded:
             safe = json.dumps(file_path)
             self._safe_run_js(f"closeFile({safe});")
+
+    def close_all_files(self):
+        """Close all file tabs in one shot — avoids per-file runJavaScript flood."""
+        count = len(self._open_files)
+        log.info(f"[WebviewPanel] close_all_files: clearing {count} files")
+        self._open_files.clear()
+        self._active_file_path = ""
+        if self._page_loaded:
+            self._safe_run_js("closeAllFiles();")
 
     def get_content(self, file_path: str) -> str:
         """Get current editor content for a file (async — returns cached content)."""
@@ -369,6 +539,14 @@ class WebviewPanel(QWidget):
 
     def _on_js_file_closed(self, file_path: str):
         """JS notified us that a file tab was closed."""
+        if file_path == '__ALL__':
+            # Bulk close — clear all tracked files
+            count = len(self._open_files)
+            self._open_files.clear()
+            self._active_file_path = ''
+            log.info(f"[WebviewPanel] _on_js_file_closed: __ALL__ (cleared {count} files)")
+            self.file_closed.emit('__ALL__')
+            return
         was_present = file_path in self._open_files
         self._open_files.pop(file_path, None)
         log.info(f"[WebviewPanel] _on_js_file_closed: {file_path} (was_present={was_present}, remaining={len(self._open_files)})")

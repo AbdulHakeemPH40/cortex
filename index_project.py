@@ -3,7 +3,7 @@ Cortex Project Indexer — Builds both symbol index (AST) and semantic index (em
 
 Usage: python index_project.py [--force] [--symbols-only] [--semantic-only]
 """
-import sys
+import s ys
 import os
 import time
 from pathlib import Path

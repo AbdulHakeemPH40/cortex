@@ -307,16 +307,19 @@ class FileManager(QObject):
             return None
             
         try:
+            # Detect encoding from BOM or heuristics
+            detected_encoding = self._detect_encoding(path)
+            
             # Memory-mapped read for large files (>1MB)
             file_size = path.stat().st_size
             if file_size > 1024 * 1024:
                 import mmap
                 with open(path, 'r+b', buffering=0) as f:
                     with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
-                        content = mm.read().decode('utf-8', errors='replace')
+                        content = mm.read().decode(detected_encoding, errors='replace')
                 log.info(f"Large file loaded via mmap: {filepath} ({file_size/1024/1024:.2f}MB)")
             else:
-                content = path.read_text(encoding='utf-8', errors='replace')
+                content = path.read_text(encoding=detected_encoding, errors='replace')
             
             # Update all caches
             resolved_path = str(path.resolve())
@@ -409,13 +412,66 @@ class FileManager(QObject):
         log.info("File cache cleared")
 
     def is_binary(self, filepath: str) -> bool:
-        """Detect if a file is binary (not suitable for text editing)."""
+        """Detect if a file is binary (not suitable for text editing).
+        
+        Handles UTF-16 encoded text files (common on Windows from PowerShell
+        redirection) which contain null bytes but are valid text.
+        """
         try:
             with open(filepath, "rb") as f:
                 chunk = f.read(8192)
-            return b"\x00" in chunk
+            
+            if b"\x00" not in chunk:
+                return False
+            
+            # Check for UTF-16 BOM — these are text files, not binary
+            if chunk[:2] in (b'\xff\xfe', b'\xfe\xff'):
+                return False
+            
+            # Heuristic: if null bytes alternate with non-null bytes
+            # (typical of UTF-16 LE ASCII text), treat as text, not binary.
+            # Count positions: even-index bytes that are null vs non-null.
+            sample = chunk[:1024]
+            null_even = sum(1 for i in range(0, len(sample), 2) if sample[i] == 0)
+            non_null_odd = sum(1 for i in range(1, len(sample), 2) if sample[i] != 0)
+            total_pairs = len(sample) // 2
+            if total_pairs > 0:
+                ratio = (null_even + non_null_odd) / (total_pairs * 2)
+                if ratio > 0.85:
+                    return False
+            
+            return True
         except Exception:
             return True
+
+    @staticmethod
+    def _detect_encoding(path: Path) -> str:
+        """Detect file encoding from BOM or heuristics.
+        
+        Returns an encoding name suitable for decode()/read_text().
+        Handles UTF-16 files commonly created by PowerShell on Windows.
+        """
+        try:
+            with open(path, "rb") as f:
+                head = f.read(4)
+            
+            if len(head) >= 2:
+                if head[:2] == b'\xff\xfe':
+                    return 'utf-16-le'
+                if head[:2] == b'\xfe\xff':
+                    return 'utf-16-be'
+            if len(head) >= 3 and head[:3] == b'\xef\xbb\xbf':
+                return 'utf-8-sig'
+            
+            # Heuristic: check for UTF-16 LE without BOM
+            if len(head) >= 4:
+                # Even bytes null, odd bytes non-null → UTF-16 LE
+                if head[0] == 0 and head[2] == 0 and head[1] != 0 and head[3] != 0:
+                    return 'utf-16-le'
+            
+            return 'utf-8'
+        except Exception:
+            return 'utf-8'
 
     def language(self, filepath: str) -> str:
         return detect_language(filepath)

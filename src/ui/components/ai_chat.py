@@ -1148,11 +1148,11 @@ class ChatBridge(QObject):
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = 0  # SW_HIDE
                 creationflags = subprocess.CREATE_NO_WINDOW
-                subprocess.Popen(['explorer', folder_path], startupinfo=startupinfo, creationflags=creationflags)
+                subprocess.Popen(['explorer', folder_path], startupinfo=startupinfo, creationflags=creationflags, close_fds=True)
             elif sys.platform == 'darwin':
-                subprocess.Popen(['open', folder_path])
+                subprocess.Popen(['open', folder_path], close_fds=True)
             else:
-                subprocess.Popen(['xdg-open', folder_path])
+                subprocess.Popen(['xdg-open', folder_path], close_fds=True)
         except Exception as e:
             log.error(f"Cannot open folder: {e}")
 

@@ -6,6 +6,7 @@ Full 3-panel layout: Sidebar | Editor Tabs | AI Chat + Terminal
 import json
 import os
 import sys
+import time
 import platform
 import uuid as _uuid
 from pathlib import Path
@@ -817,6 +818,7 @@ def _extract_notification_summary(text: str) -> str:
 class CortexMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self._start_time = time.time()  # track startup time for crash-prevention guards
         log.info("MainWindow: __init__ START")
         log.info("MainWindow: Initializing managers...")
         self._settings = get_settings()
@@ -1031,7 +1033,7 @@ class CortexMainWindow(QMainWindow):
         main_splitter.addWidget(self._webview_panel)
 
         # Set initial sizes (proportions) — 3-panel layout
-        main_splitter.setSizes([220, 450, 500])
+        main_splitter.setSizes([220, 500, 500])
 
         # Add splitter to main layout
         root_layout = QVBoxLayout(central)
@@ -1082,11 +1084,12 @@ class CortexMainWindow(QMainWindow):
         self._update_welcome_project_info()
 
         # Initialize Git summary after UI is built
-        QTimer.singleShot(500, cast(Any, self._update_git_summary))
+        # Temporarily disabled for crash debugging
+        # QTimer.singleShot(500, cast(Any, self._update_git_summary))
         
-        # Auto-refresh git status every 30 seconds to detect push/commit from terminal
+        # Auto-refresh git status every 120 seconds to detect push/commit from terminal
         self._git_refresh_timer = QTimer(self)
-        self._git_refresh_timer.setInterval(30000)  # 30 seconds
+        self._git_refresh_timer.setInterval(120000)  # 120 seconds (was 30s, increased for crash debugging)
         cast(Any, self._git_refresh_timer.timeout).connect(self._update_git_summary)
         # Start only when a valid git repository is detected.
         self._git_repo_known_state = None  # type: Optional[bool]
@@ -2473,21 +2476,22 @@ class CortexMainWindow(QMainWindow):
                 log.info(f"[GIT] Repository set to: {folder}")
                 QTimer.singleShot(300, self._update_git_summary)
 
-    def _open_file(self, filepath: str):
+    def _open_file(self, filepath: str, *, priority: bool = True):
         # Normalize path (convert forward slashes to backslashes on Windows)
         filepath = os.path.normpath(filepath)
         path = Path(filepath)
         
         # If already tracked by webview panel, just switch to it — skip redundant I/O
+        # Use switch_to_file() to avoid QWebChannel model.setValue() IPC, which
+        # crashes Chromium on Windows 25H2 during the startup warmup phase.
         if hasattr(self, '_webview_panel') and filepath in self._webview_panel._open_files:
             log.info(f"File already open in webview, switching: {filepath}")
-            self._webview_panel.open_file(filepath, self._webview_panel._open_files[filepath]["content"],
-                                          self._webview_panel._open_files[filepath]["language"])
+            self._webview_panel.switch_to_file(filepath)
             self._update_status_file(filepath)
             return
 
         log.info(f"Opening file: {filepath}")
-        
+
         # If file doesn't exist, try to find it in the project
         if not path.exists() or not path.is_file():
             # Try searching in project directory
@@ -2550,7 +2554,7 @@ class CortexMainWindow(QMainWindow):
             
             # Get current theme state and pass it to the editor
             is_dark = self._theme_manager.is_dark
-            self._webview_panel.open_file(filepath, content, language)
+            self._webview_panel.open_file(filepath, content, language, priority=priority)
             self._webview_panel.set_theme(is_dark)
 
             self._update_status_file(filepath)
@@ -5532,9 +5536,31 @@ class CortexMainWindow(QMainWindow):
             if skipped > 0:
                 log.info(f"Skipping {skipped} files from other projects (restoring {len(project_files)} project files)")
             log.info(f"Restoring {len(project_files)} files...")
+            large_skipped = 0
+            MAX_RESTORE_SIZE = 100 * 1024  # 100KB — skip large files during startup to avoid tokenization crash
             for fp in project_files:
                 if Path(fp).exists():
-                    self._open_file(fp)
+                    try:
+                        fsize = Path(fp).stat().st_size
+                        if fsize > MAX_RESTORE_SIZE:
+                            log.info(f"Skipping large file ({fsize//1024}KB) during restore: {fp}")
+                            large_skipped += 1
+                            continue
+                    except Exception:
+                        pass
+                    self._open_file(fp, priority=False)
+            if large_skipped > 0:
+                log.info(f"Skipped {large_skipped} large file(s) during restore (will open on demand)")
+
+            # Ensure restore doesn't steal focus from user clicks: background
+            # opens are non-activating, then we explicitly activate the last
+            # active file (if any).
+            active_fp = session.get("active_file")
+            if active_fp and Path(active_fp).exists():
+                try:
+                    self._webview_panel.switch_to_file(os.path.normpath(active_fp))
+                except Exception as e:
+                    log.debug(f'[MainWindow] Suppressed error: {e}')
 
         # Focus the active file
         if session:

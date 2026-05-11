@@ -8,6 +8,7 @@ import os
 import signal
 import logging
 from pathlib import Path
+import datetime as _datetime
 
 # Align the embedded agent's memdir base with Cortex's config home.
 # agent/src/memdir/paths.py uses CLAUDE_CODE_REMOTE_MEMORY_DIR as the memory base.
@@ -53,6 +54,34 @@ try:
         print("[MAIN] WARNING: No .env file found!")
 except ImportError:
     print("[MAIN] WARNING: python-dotenv not installed")
+
+# CRITICAL: Monkey-patch subprocess to default close_fds=True on Windows.
+# Qt WebEngine (Chromium) opens numerous file descriptors for GPU surfaces,
+# shared memory, and IPC channels. If ANY subprocess inherits these FDs via
+# Popen or run without close_fds=True, the IDE silently crashes.
+# This patch ensures ALL subprocess calls throughout the application
+# (including third-party libraries) are protected.
+import subprocess as _subprocess_module
+
+# Patch subprocess.run (a function — safe to replace)
+_original_run = _subprocess_module.run
+
+def _patched_run(*args, **kwargs):
+    """Wrapped subprocess.run that defaults close_fds=True on all platforms."""
+    kwargs.setdefault('close_fds', True)
+    return _original_run(*args, **kwargs)
+
+_subprocess_module.run = _patched_run
+
+# Patch subprocess.Popen.__init__ (must preserve class structure for asyncio etc.)
+_original_popen_init = _subprocess_module.Popen.__init__
+
+def _patched_popen_init(self, *args, **kwargs):
+    """Patched Popen.__init__ that defaults close_fds=True."""
+    kwargs.setdefault('close_fds', True)
+    _original_popen_init(self, *args, **kwargs)
+
+_subprocess_module.Popen.__init__ = _patched_popen_init
 
 # CRITICAL FIX: Hide console window on Windows (prevents subprocess popups)
 # This MUST come before QApplication initialization
@@ -101,6 +130,23 @@ log = get_logger("main")
 
 
 def main():
+    # Capture fatal crashes (e.g., native/Qt segfault) to a persistent log.
+    # This helps diagnose "sudden close" cases that don't raise Python exceptions.
+    try:
+        import faulthandler as _faulthandler
+
+        crash_dir = Path.home() / ".cortex"
+        crash_dir.mkdir(parents=True, exist_ok=True)
+        crash_path = crash_dir / "crash.log"
+        _crash_fp = open(crash_path, "a", encoding="utf-8", buffering=1)
+        _crash_fp.write(f"\n===== Cortex crash session { _datetime.datetime.now().isoformat(timespec='seconds') } =====\n")
+        _faulthandler.enable(file=_crash_fp, all_threads=True)
+        # Dump tracebacks if the process appears to hang
+        _faulthandler.dump_traceback_later(120, repeat=True, file=_crash_fp)
+        log.info(f"[CRASH] faulthandler enabled -> {crash_path}")
+    except Exception as e:
+        log.debug(f"[CRASH] faulthandler not enabled: {e}")
+
     # HiDPI support is automatic in Qt6
     
     app = QApplication(sys.argv)

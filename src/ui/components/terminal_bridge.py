@@ -227,7 +227,8 @@ class TerminalCommandExecutor(QThread):
                 encoding='utf-8',
                 errors='replace',
                 startupinfo=startupinfo,
-                creationflags=creationflags
+                creationflags=creationflags,
+                close_fds=True
             )
             
             # Read output with timeout

@@ -1,6 +1,6 @@
 import re
 
-filepath = r"C:\Users\Hakeem1\OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ui\html\ai_chat\script.js"
+filepath = r"C:\Users\Hakeem1\ OneDrive\Desktop\Cortex_Ai_Agent\Cortex\src\ui\html\ai_chat\script.js"
 
 with open(filepath, 'r', encoding='utf-8') as f:
     content = f.read()
