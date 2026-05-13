@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Cortex Editor</title>
 <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    /* Monaco Editor uses its own box-model — don't override it */
+    .monaco-editor *, .monaco-editor *::before, .monaco-editor *::after { box-sizing: content-box; }
     html, body { height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
 
     #app {
@@ -50,7 +52,7 @@
         border-bottom: 2px solid #0078d4;
     }
     .tab:hover:not(.active) { background: #2a2a2a; }
-    .tab.modified::before { content: '•'; color: #ffcc00; font-weight: bold; margin-right: -4px; }
+    .tab.modified::before { content: '●'; color: #ffffff; font-size: 14px; margin-right: 2px; }
     .tab .close-btn {
         font-size: 14px;
         color: #969696;
@@ -270,8 +272,10 @@ if (typeof require !== 'undefined') {
         renderLineHighlight: 'line',
         occurrencesHighlight: 'off',
         padding: { top: 8 },
-        glyphMargin: false,
+        glyphMargin: true,
         folding: true,
+        showFoldingControls: 'always',
+        foldingHighlight: true,
     });
 
     // ---- Content change tracking (debounced) — no LSP auto-notify during scroll/switch ----
@@ -281,6 +285,11 @@ if (typeof require !== 'undefined') {
         var content = model.getValue();
         if (openFiles[activeFilePath]) {
             openFiles[activeFilePath].content = content;
+            // Mark file as modified (VS Code-style white dot on tab)
+            if (!openFiles[activeFilePath].modified) {
+                openFiles[activeFilePath].modified = true;
+                _updateTabModifiedClass(activeFilePath, true);
+            }
         }
         if (changeTimer) clearTimeout(changeTimer);
         changeTimer = setTimeout(function() {
@@ -425,6 +434,9 @@ if (typeof require !== 'undefined') {
         if (activeFilePath) closeFile(activeFilePath);
     });
 
+    // Ctrl+F / Ctrl+H / Ctrl+G are handled natively by Monaco Editor.
+    // (PyQt menu shortcuts for these were removed so key events reach the WebView.)
+
     // Mark Monaco as fully ready
     window.editorReady = true;
     MONACO_LOAD_TIME = Date.now();
@@ -517,6 +529,22 @@ function _tryFlushContent() {
     }
     document.getElementById('no-files-hint').style.display = 'none';
     document.getElementById('editor-container').classList.remove('hidden');
+}
+
+// Lightweight tab class update — avoids full renderTabs() rebuild on every keystroke.
+// Directly adds/removes the 'modified' CSS class on the matching tab element.
+function _updateTabModifiedClass(filePath, isModified) {
+    var tabs = document.querySelectorAll('#tab-bar .tab');
+    for (var i = 0; i < tabs.length; i++) {
+        if (tabs[i].getAttribute('data-path') === filePath) {
+            if (isModified) {
+                tabs[i].classList.add('modified');
+            } else {
+                tabs[i].classList.remove('modified');
+            }
+            return;
+        }
+    }
 }
 
 function renderTabs() {
@@ -797,11 +825,40 @@ function setTheme(dark) {
     document.body.className = '';
 }
 
+// Called by Python: getEditorContent(path) → returns fresh content from Monaco model
+function getEditorContent(filePath) {
+    if (activeFilePath === filePath && editor) {
+        return editor.getModel().getValue();
+    }
+    if (openFiles[filePath]) {
+        return openFiles[filePath].content;
+    }
+    return '';
+}
+
+// Called by Python: nextTab() — switch to the next tab in openOrder
+function nextTab() {
+    if (openOrder.length < 2) return;
+    var idx = openOrder.indexOf(activeFilePath);
+    if (idx < 0) idx = 0;
+    var nextIdx = (idx + 1) % openOrder.length;
+    switchToFile(openOrder[nextIdx]);
+}
+
+// Called by Python: prevTab() — switch to the previous tab in openOrder
+function prevTab() {
+    if (openOrder.length < 2) return;
+    var idx = openOrder.indexOf(activeFilePath);
+    if (idx < 0) idx = 0;
+    var prevIdx = (idx - 1 + openOrder.length) % openOrder.length;
+    switchToFile(openOrder[prevIdx]);
+}
+
 // Called by Python: markModified(path, flag)
 function markModified(filePath, flag) {
     if (openFiles[filePath]) {
         openFiles[filePath].modified = flag;
-        renderTabs();
+        _updateTabModifiedClass(filePath, flag);
     }
 }
 

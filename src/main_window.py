@@ -1912,13 +1912,13 @@ class CortexMainWindow(QMainWindow):
         edit_menu.addSeparator()
         self._add_action(edit_menu, "Select All", lambda: self._current_editor_action("selectAll"), "Ctrl+A")
         edit_menu.addSeparator()
-        self._add_action(edit_menu, "Find...", self._show_find, "Ctrl+F")
-        self._add_action(edit_menu, "Find and Replace...", self._show_find_replace, "Ctrl+H")
+        self._add_action(edit_menu, "Find...", self._show_find, "")
+        self._add_action(edit_menu, "Find and Replace...", self._show_find_replace, "")
         self._add_action(edit_menu, "Find in Files...", self._find_in_files, "Ctrl+Shift+F")
         edit_menu.addSeparator()
         self._add_action(edit_menu, "Rename...", self._rename_file, "F2")
         edit_menu.addSeparator()
-        self._add_action(edit_menu, "Go to Line...", self._go_to_line, "Ctrl+G")
+        self._add_action(edit_menu, "Go to Line...", self._go_to_line, "")
         edit_menu.addSeparator()
         self._add_action(edit_menu, "Toggle Comment", self._toggle_comment, "Ctrl+/")
         self._add_action(edit_menu, "Delete Line", self._delete_line, "Ctrl+Shift+K")
@@ -1942,7 +1942,7 @@ class CortexMainWindow(QMainWindow):
         self._add_action(ai_menu, "Explain Code", lambda: self._ai_action("explain"), "Ctrl+Shift+E")
         self._add_action(ai_menu, "Refactor Code", lambda: self._ai_action("refactor"), "Ctrl+Shift+R")
         self._add_action(ai_menu, "Write Tests", lambda: self._ai_action("tests"), "Ctrl+Shift+U")
-        self._add_action(ai_menu, "Debug Help", lambda: self._ai_action("debug"), "Ctrl+Shift+D")
+        self._add_action(ai_menu, "Debug Help", lambda: self._ai_action("debug"), "Ctrl+Shift+H")
         ai_menu.addSeparator()
         
         # Phase 1, 2, 3 Integration: Agent Mode submenu
@@ -1988,7 +1988,20 @@ class CortexMainWindow(QMainWindow):
         window_menu = mb.addMenu("Window")
         self._add_action(window_menu, "Minimize", self._minimize_window, "Ctrl+M")
         self._add_action(window_menu, "Zoom", self._zoom_window, "")
-        self._add_action(window_menu, "Close", self._close_window, "Ctrl+W")
+        self._add_action(window_menu, "Close", self._close_window, "Ctrl+F4")
+
+        # Close tab / close all tabs — QShortcuts (not menu items, to avoid Ctrl+W
+        # colliding with Monaco editor's own Ctrl+W close-tab command).
+        from PyQt6.QtGui import QShortcut
+        self._s_close_tab = QShortcut(QKeySequence("Ctrl+W"), self)
+        self._s_close_tab.activated.connect(self._close_current_tab)
+        self._s_close_all = QShortcut(QKeySequence("Ctrl+Shift+W"), self)
+        self._s_close_all.activated.connect(self._close_all_tabs)
+        # Next/previous tab navigation
+        self._s_next_tab = QShortcut(QKeySequence("Ctrl+Tab"), self)
+        self._s_next_tab.activated.connect(self._next_tab)
+        self._s_prev_tab = QShortcut(QKeySequence("Ctrl+Shift+Tab"), self)
+        self._s_prev_tab.activated.connect(self._prev_tab)
 
         # Help
         help_menu = mb.addMenu("Help")
@@ -2188,6 +2201,17 @@ class CortexMainWindow(QMainWindow):
         else:
             self._status_file.setText("  No file open")
             self._status_lang.setText("Plain Text")
+
+    def _sync_window_title(self):
+        """Sync window title — prepend ● when files are modified (VS Code-style)."""
+        modified = getattr(self, '_modified_files', set())
+        project_name = self._project_manager.root.name if self._project_manager.root else ""
+        if modified and project_name:
+            self.setWindowTitle(f"● Cortex AI Agent — {project_name}")
+        elif project_name:
+            self.setWindowTitle(f"Cortex AI Agent — {project_name}")
+        else:
+            self.setWindowTitle("Cortex AI Agent")
 
     def _apply_initial_theme(self):
         """Apply the saved (or default) theme to all panels at startup."""
@@ -3776,11 +3800,26 @@ class CortexMainWindow(QMainWindow):
         fp = self._webview_panel.get_active_file()
         if not fp or fp == "untitled.py":
             return
-        content = self._webview_panel.get_content(fp)
-        if content:
+
+        def _do_save(content: str):
+            if not content:
+                return
             self._file_manager.write(fp, content)
+            # Clear the VS Code-style white dot — file is now saved
+            self._webview_panel.mark_modified(fp, False)
+            # Track saved content to prevent post-save re-mark by debounced onContentChanged
+            if not hasattr(self, '_saved_content'):
+                self._saved_content: dict = {}
+            self._saved_content[fp] = content
+            if hasattr(self, '_modified_files'):
+                self._modified_files.discard(fp)
+                self._sync_window_title()
             self._status_file.setText(f"  Saved \u2713  {self._status_file.text().strip()}")
             QTimer.singleShot(2000, lambda: self._update_status_file(fp))
+
+        # Get FRESH content directly from Monaco (bypasses stale Python cache when
+        # Ctrl+S is pressed before the 500ms debounce delivers latest content).
+        self._webview_panel.get_current_content(fp, _do_save)
 
     def _save_all(self):
         """Save all open files in webview editor."""
@@ -3788,6 +3827,16 @@ class CortexMainWindow(QMainWindow):
             content = self._webview_panel.get_content(fp)
             if content and fp != "untitled.py":
                 self._file_manager.write(fp, content)
+                # Clear the VS Code-style white dot — file is now saved
+                self._webview_panel.mark_modified(fp, False)
+                # Track saved content to prevent post-save re-mark by debounced onContentChanged
+                if not hasattr(self, '_saved_content'):
+                    self._saved_content: dict = {}
+                self._saved_content[fp] = content
+        # Clear all modified tracking after save-all
+        if hasattr(self, '_modified_files'):
+            self._modified_files.clear()
+            self._sync_window_title()
         # Also save legacy editor tabs
         for i in range(self._editor_tabs.count()):
             editor = self._editor_tabs.widget(i)
@@ -4367,7 +4416,13 @@ class CortexMainWindow(QMainWindow):
     # VS Code Style Keyboard Shortcuts
     # ------------------------------------------------------------------
     def _show_find(self):
-        """Show Find dialog (Ctrl+F)."""
+        """Show Find widget — Monaco native (Ctrl+F) or legacy dialog."""
+        # Monaco handles Ctrl+F natively — this is for menu-click fallback
+        fp = self._webview_panel.get_active_file()
+        if fp:
+            self._webview_panel._safe_run_js("if(typeof editor!=='undefined'&&editor)editor.trigger('keyboard','actions.find',null);")
+            return
+        # Legacy editor fallback
         editor = self._editor_tabs.current_editor()
         if editor:
             selected = editor.get_selected_text()
@@ -4379,7 +4434,13 @@ class CortexMainWindow(QMainWindow):
             self._find_replace_dialog.activateWindow()
 
     def _show_find_replace(self):
-        """Show Find & Replace dialog (Ctrl+H)."""
+        """Show Find & Replace widget — Monaco native (Ctrl+H) or legacy dialog."""
+        # Monaco handles Ctrl+H natively — this is for menu-click fallback
+        fp = self._webview_panel.get_active_file()
+        if fp:
+            self._webview_panel._safe_run_js("if(typeof editor!=='undefined'&&editor)editor.trigger('keyboard','editor.action.startFindReplaceAction',null);")
+            return
+        # Legacy editor fallback
         editor = self._editor_tabs.current_editor()
         if editor:
             selected = editor.get_selected_text()
@@ -4558,7 +4619,13 @@ class CortexMainWindow(QMainWindow):
         self._ai_chat.set_input_text("Search in files for: ")
 
     def _go_to_line(self):
-        """Go to line (Ctrl+G)."""
+        """Go to line — Monaco native (Ctrl+G) or legacy dialog."""
+        # Monaco handles Ctrl+G natively — this is for menu-click fallback
+        fp = self._webview_panel.get_active_file()
+        if fp:
+            self._webview_panel._safe_run_js("if(typeof editor!=='undefined'&&editor)editor.trigger('keyboard','editor.action.gotoLine',null);")
+            return
+        # Legacy editor fallback
         editor = self._editor_tabs.current_editor()
         if not editor:
             return
@@ -4765,22 +4832,44 @@ class CortexMainWindow(QMainWindow):
             self._ai_chat.add_system_message("No symbols found in current file.")
 
     def _close_current_tab(self):
-        """Close current tab (Ctrl+W)."""
-        self._editor_tabs.close_current_tab()
+        """Close current tab (Ctrl+W) — works for both webview and legacy tabs."""
+        # Close webview tab first if one is active
+        fp = self._webview_panel.get_active_file()
+        if fp:
+            self._webview_panel.close_file(fp)
+            return
+        # Fall back to legacy editor tabs
+        if hasattr(self, '_editor_tabs'):
+            self._editor_tabs.close_current_tab()
 
     def _close_all_tabs(self):
-        """Close all tabs (Ctrl+Shift+W)."""
-        self._editor_tabs.close_all_tabs()
+        """Close all tabs (Ctrl+Shift+W) — works for both webview and legacy tabs."""
+        # Close all webview tabs
+        if hasattr(self, '_webview_panel'):
+            self._webview_panel.close_all_files()
+        # Close all legacy editor tabs
+        if hasattr(self, '_editor_tabs'):
+            self._editor_tabs.close_all_tabs()
 
     def _next_tab(self):
-        """Go to next tab (Ctrl+Tab)."""
+        """Go to next tab (Ctrl+Tab) — webview or legacy."""
+        # Try webview tab navigation first
+        if hasattr(self, '_webview_panel'):
+            self._webview_panel.next_tab()
+            return
+        # Legacy tabs
         current = self._editor_tabs.currentIndex()
         count = self._editor_tabs.count()
         if count > 0:
             self._editor_tabs.setCurrentIndex((current + 1) % count)
 
     def _prev_tab(self):
-        """Go to previous tab (Ctrl+Shift+Tab)."""
+        """Go to previous tab (Ctrl+Shift+Tab) — webview or legacy."""
+        # Try webview tab navigation first
+        if hasattr(self, '_webview_panel'):
+            self._webview_panel.prev_tab()
+            return
+        # Legacy tabs
         current = self._editor_tabs.currentIndex()
         count = self._editor_tabs.count()
         if count > 0:
@@ -5433,7 +5522,7 @@ class CortexMainWindow(QMainWindow):
                 term.set_cwd(folder_path)
                 
         project_name = Path(folder_path).name
-        self.setWindowTitle(f"Cortex AI Agent — {project_name}")
+        self._sync_window_title()
         self._ai_chat.add_system_message(f"📂 Opened: {folder_path}")
         
         # Load existing chats for this project from SQLite BEFORE setting project info
@@ -5502,7 +5591,9 @@ class CortexMainWindow(QMainWindow):
 
         # Clear all state
         self._current_project_path = None
-        self.setWindowTitle("Cortex AI Agent")
+        if hasattr(self, '_modified_files'):
+            self._modified_files.clear()
+        self._sync_window_title()
         self._ai_chat.clear_project_info()
         
         # Close all editor tabs
@@ -5603,12 +5694,28 @@ class CortexMainWindow(QMainWindow):
                 log.warning(f"Could not update active file for AI: {e}")
 
     def _on_webview_content_changed(self, file_path: str, content: str):
-        """Webview editor content changed — mark file modified."""
-        # Store updated content for save operations
-        pass  # Content is cached in webview_panel, retrieved on save
+        """Webview editor content changed — mark file modified (VS Code-style white dot)."""
+        # Race guard: skip if content matches the last-saved version (debounced
+        # onContentChanged can fire after Ctrl+S, re-marking a saved file).
+        saved = getattr(self, '_saved_content', {}).get(file_path)
+        if saved is not None and saved == content:
+            return  # Content unchanged since last save — not actually modified
+        # Mark the file as modified in the webview tab (triggers white dot on tab)
+        if hasattr(self, '_webview_panel') and self._webview_panel._page_loaded:
+            self._webview_panel.mark_modified(file_path, True)
+        # Update window title with modified indicator (VS Code-style)
+        if not hasattr(self, '_modified_files'):
+            self._modified_files: set = set()
+        self._modified_files.add(file_path)
+        self._sync_window_title()
 
     def _on_webview_file_closed(self, file_path: str):
         """Webview editor file tab closed."""
+        if hasattr(self, '_modified_files'):
+            self._modified_files.discard(file_path)
+            self._sync_window_title()
+        if hasattr(self, '_saved_content'):
+            self._saved_content.pop(file_path, None)
         self._update_status_file(None)
 
     # def _apply_initial_theme(self):
@@ -5871,15 +5978,19 @@ class CortexMainWindow(QMainWindow):
             <div class="section">
                 <h2>📁 File Operations</h2>
                 <table>
-                    <tr><th>Action</th><th>Shortcut</th><th>Status</th></tr>
-                    <tr><td>New File</td><td><span class="shortcut">Ctrl+N</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Open Folder</td><td><span class="shortcut">Ctrl+O</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Open File</td><td><span class="shortcut">Ctrl+Shift+O</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Save</td><td><span class="shortcut">Ctrl+S</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Save All</td><td><span class="shortcut">Ctrl+Shift+S</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Close Tab</td><td><span class="shortcut">Ctrl+W</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Close All Tabs</td><td><span class="shortcut">Ctrl+Shift+W</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Rename File</td><td><span class="shortcut">F2</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><th>Action</th><th>Shortcut</th><th>Menu</th></tr>
+                    <tr><td>New Window</td><td><span class="shortcut">Ctrl+Shift+N</span></td><td>File</td></tr>
+                    <tr><td>New Chat</td><td><span class="shortcut">Ctrl+N</span></td><td>File</td></tr>
+                    <tr><td>Quick Chat</td><td><span class="shortcut">Alt+Ctrl+N</span></td><td>File</td></tr>
+                    <tr><td>Open File…</td><td><span class="shortcut">Ctrl+Shift+O</span></td><td>File</td></tr>
+                    <tr><td>Open Folder…</td><td><span class="shortcut">Ctrl+O</span></td><td>File</td></tr>
+                    <tr><td>Save</td><td><span class="shortcut">Ctrl+S</span></td><td>File</td></tr>
+                    <tr><td>Save All</td><td><span class="shortcut">Ctrl+Shift+S</span></td><td>File</td></tr>
+                    <tr><td>Settings…</td><td><span class="shortcut">Ctrl+,</span></td><td>File</td></tr>
+                    <tr><td>Exit</td><td><span class="shortcut">Alt+F4</span></td><td>File</td></tr>
+                    <tr><td>Close Tab</td><td><span class="shortcut">Ctrl+W</span></td><td>Global</td></tr>
+                    <tr><td>Close All Tabs</td><td><span class="shortcut">Ctrl+Shift+W</span></td><td>Global</td></tr>
+                    <tr><td>Rename File</td><td><span class="shortcut">F2</span></td><td>Edit</td></tr>
                 </table>
             </div>
             
@@ -5887,49 +5998,75 @@ class CortexMainWindow(QMainWindow):
             <div class="section">
                 <h2>✏️ Edit Operations</h2>
                 <table>
-                    <tr><th>Action</th><th>Shortcut</th><th>Status</th></tr>
-                    <tr><td>Undo</td><td><span class="shortcut">Ctrl+Z</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Redo</td><td><span class="shortcut">Ctrl+Y</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Cut</td><td><span class="shortcut">Ctrl+X</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Copy</td><td><span class="shortcut">Ctrl+C</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Paste</td><td><span class="shortcut">Ctrl+V</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Select All</td><td><span class="shortcut">Ctrl+A</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Toggle Comment</td><td><span class="shortcut">Ctrl+/</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Delete Line</td><td><span class="shortcut">Ctrl+Shift+K</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Indent Selection</td><td><span class="shortcut">Tab</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Outdent Selection</td><td><span class="shortcut">Shift+Tab</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><th>Action</th><th>Shortcut</th><th>Menu</th></tr>
+                    <tr><td>Undo</td><td><span class="shortcut">Ctrl+Z</span></td><td>Edit</td></tr>
+                    <tr><td>Redo</td><td><span class="shortcut">Ctrl+Y</span></td><td>Edit</td></tr>
+                    <tr><td>Cut</td><td><span class="shortcut">Ctrl+X</span></td><td>Edit</td></tr>
+                    <tr><td>Copy</td><td><span class="shortcut">Ctrl+C</span></td><td>Edit</td></tr>
+                    <tr><td>Paste</td><td><span class="shortcut">Ctrl+V</span></td><td>Edit</td></tr>
+                    <tr><td>Select All</td><td><span class="shortcut">Ctrl+A</span></td><td>Edit</td></tr>
+                    <tr><td>Find…</td><td><span class="shortcut">Ctrl+F</span></td><td>Monaco</td></tr>
+                    <tr><td>Find & Replace…</td><td><span class="shortcut">Ctrl+H</span></td><td>Monaco</td></tr>
+                    <tr><td>Find in Files…</td><td><span class="shortcut">Ctrl+Shift+F</span></td><td>Edit</td></tr>
+                    <tr><td>Go to Line…</td><td><span class="shortcut">Ctrl+G</span></td><td>Monaco</td></tr>
+                    <tr><td>Toggle Comment</td><td><span class="shortcut">Ctrl+/</span></td><td>Edit</td></tr>
+                    <tr><td>Delete Line</td><td><span class="shortcut">Ctrl+Shift+K</span></td><td>Edit</td></tr>
+                    <tr><td>Duplicate Line</td><td><span class="shortcut">Ctrl+Shift+D</span></td><td>Edit</td></tr>
+                    <tr><td>Indent</td><td><span class="shortcut">Ctrl+]</span></td><td>Edit</td></tr>
+                    <tr><td>Outdent</td><td><span class="shortcut">Ctrl+[</span></td><td>Edit</td></tr>
+                    <tr><td>Move Line Up</td><td><span class="shortcut">Alt+Up</span></td><td>Edit</td></tr>
+                    <tr><td>Move Line Down</td><td><span class="shortcut">Alt+Down</span></td><td>Edit</td></tr>
                 </table>
             </div>
             
-            <!-- Find & Replace -->
+            <!-- View & Navigation -->
             <div class="section">
-                <h2>🔍 Find & Replace</h2>
+                <h2>👁️ View & Navigation</h2>
                 <table>
-                    <tr><th>Action</th><th>Shortcut</th><th>Status</th></tr>
-                    <tr><td>Find</td><td><span class="shortcut">Ctrl+F</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Find & Replace</td><td><span class="shortcut">Ctrl+H</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Replace All</td><td><span class="shortcut">In Dialog</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><th>Action</th><th>Shortcut</th><th>Menu</th></tr>
+                    <tr><td>Toggle Sidebar</td><td><span class="shortcut">Ctrl+B</span></td><td>View</td></tr>
+                    <tr><td>Toggle Review Panel</td><td><span class="shortcut">Alt+Ctrl+B</span></td><td>View</td></tr>
+                    <tr><td>Toggle Full Screen</td><td><span class="shortcut">F11</span></td><td>View</td></tr>
+                    <tr><td>Next Tab</td><td><span class="shortcut">Ctrl+Tab</span></td><td>Global</td></tr>
+                    <tr><td>Previous Tab</td><td><span class="shortcut">Ctrl+Shift+Tab</span></td><td>Global</td></tr>
+                    <tr><td>Toggle Terminal</td><td><span class="shortcut">Ctrl+J</span></td><td>Terminal</td></tr>
+                    <tr><td>New Terminal</td><td><span class="shortcut">Ctrl+Shift+`</span></td><td>Terminal</td></tr>
+                    <tr><td>Command Palette…</td><td><span class="shortcut">Ctrl+K</span></td><td>File</td></tr>
+                    <tr><td>Minimize</td><td><span class="shortcut">Ctrl+M</span></td><td>Window</td></tr>
+                    <tr><td>Close Window</td><td><span class="shortcut">Ctrl+F4</span></td><td>Window</td></tr>
                 </table>
             </div>
             
-            <!-- Navigation -->
+            <!-- AI & Tools -->
             <div class="section">
-                <h2>🧭 Navigation</h2>
+                <h2>🤖 AI & Tools</h2>
                 <table>
-                    <tr><th>Action</th><th>Shortcut</th><th>Status</th></tr>
-                    <tr><td>Next Tab</td><td><span class="shortcut">Ctrl+Tab</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Previous Tab</td><td><span class="shortcut">Ctrl+Shift+Tab</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><th>Action</th><th>Shortcut</th><th>Menu</th></tr>
+                    <tr><td>Explain Code</td><td><span class="shortcut">Ctrl+Shift+E</span></td><td>AI</td></tr>
+                    <tr><td>Refactor Code</td><td><span class="shortcut">Ctrl+Shift+R</span></td><td>AI</td></tr>
+                    <tr><td>Write Tests</td><td><span class="shortcut">Ctrl+Shift+U</span></td><td>AI</td></tr>
+                    <tr><td>Debug Help</td><td><span class="shortcut">Ctrl+Shift+H</span></td><td>AI</td></tr>
+                    <tr><td>Memory Manager…</td><td><span class="shortcut">Ctrl+Shift+M</span></td><td>AI</td></tr>
+                    <tr><td>AI Chat Focus</td><td><span class="shortcut">Ctrl+Shift+A</span></td><td>AI</td></tr>
+                    <tr><td>Format Code</td><td><span class="shortcut">Shift+Alt+F</span></td><td>Editor</td></tr>
+                    <tr><td>Collapse Region</td><td><span class="shortcut">Ctrl+Shift+[</span></td><td>Editor</td></tr>
+                    <tr><td>Expand Region</td><td><span class="shortcut">Ctrl+Shift+]</span></td><td>Editor</td></tr>
+                    <tr><td>Collapse All</td><td><span class="shortcut">Ctrl+K Ctrl+0</span></td><td>Editor</td></tr>
+                    <tr><td>Expand All</td><td><span class="shortcut">Ctrl+K Ctrl+J</span></td><td>Editor</td></tr>
+                    <tr><td>IntelliSense</td><td><span class="shortcut">Ctrl+Space</span></td><td>Editor</td></tr>
+                    <tr><td>Debug Console</td><td><span class="shortcut">Ctrl+Alt+D</span></td><td>Chat</td></tr>
                 </table>
             </div>
             
-            <!-- View -->
+            <!-- Monaco Editor -->
             <div class="section">
-                <h2>👁️ View</h2>
+                <h2>📝 Monaco Editor</h2>
                 <table>
-                    <tr><th>Action</th><th>Shortcut</th><th>Status</th></tr>
-                    <tr><td>Toggle Theme</td><td><span class="shortcut">Ctrl+Shift+T</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Toggle Terminal</td><td><span class="shortcut">Ctrl+`</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Toggle Sidebar</td><td><span class="shortcut">Ctrl+B</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><th>Action</th><th>Shortcut</th></tr>
+                    <tr><td>Close Editor Tab</td><td><span class="shortcut">Ctrl+W</span></td></tr>
+                    <tr><td>Send Chat Message</td><td><span class="shortcut">Enter</span></td></tr>
+                    <tr><td>New Line (Chat)</td><td><span class="shortcut">Ctrl+Enter</span> / <span class="shortcut">Shift+Enter</span></td></tr>
+                    <tr><td>Completion (Chat)</td><td><span class="shortcut">Ctrl+Space</span></td></tr>
                 </table>
             </div>
             

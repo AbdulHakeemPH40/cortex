@@ -1122,7 +1122,7 @@
         </aside>
     </div>
 
-    <!-- Debug Console Panel (toggle with Ctrl+Shift+D) -->
+    <!-- Debug Console Panel (toggle with Ctrl+Alt+D) -->
     <div id="debug-console" style="display:none; position:fixed; bottom:0; left:0; right:0; height:200px; background:#1a1a1a; border-top:2px solid #333; z-index:10000; font-family:monospace; font-size:11px;">
         <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 10px; background:#252525; border-bottom:1px solid #333;">
             <span style="color:#888;">Debug Console</span>
@@ -1157,9 +1157,9 @@
                 return false;
             };
             
-            // Toggle debug console with Ctrl+Shift+D
+            // Toggle debug console with Ctrl+Alt+D (Ctrl+Shift+D is Edit→Duplicate Line)
             document.addEventListener('keydown', function(e) {
-                if (e.ctrlKey && e.shiftKey && e.key === 'D') {
+                if (e.ctrlKey && e.altKey && e.key === 'D') {
                     var dc = document.getElementById('debug-console');
                     dc.style.display = dc.style.display === 'none' ? 'block' : 'none';
                 }

@@ -492,9 +492,38 @@ class WebviewPanel(QWidget):
         if self._page_loaded:
             self._safe_run_js("closeAllFiles();")
 
+    def next_tab(self):
+        """Switch to the next open tab (Ctrl+Tab)."""
+        if self._page_loaded:
+            self._safe_run_js("nextTab();")
+
+    def prev_tab(self):
+        """Switch to the previous open tab (Ctrl+Shift+Tab)."""
+        if self._page_loaded:
+            self._safe_run_js("prevTab();")
+
     def get_content(self, file_path: str) -> str:
         """Get current editor content for a file (async — returns cached content)."""
         return self._open_files.get(file_path, {}).get("content", "")
+
+    def get_current_content(self, file_path: str, callback):
+        """Get FRESH content directly from Monaco editor (bypasses Python cache).
+
+        Use this instead of get_content() when the user explicitly saves — it reads
+        the Monaco model's current value, avoiding stale-cache saves when Ctrl+S
+        is pressed before the 500ms debounce fires.
+
+        Args:
+            file_path: Absolute path to the file.
+            callback: callable(content_str) — called with the fresh content.
+        """
+        if not self._page_loaded:
+            if callback:
+                callback(self._open_files.get(file_path, {}).get("content", ""))
+            return
+        safe = json.dumps(file_path)
+        js = f"getEditorContent({safe});"
+        self._safe_run_js(js, callback)
 
     def get_active_file(self) -> str:
         """Get the currently active file path."""

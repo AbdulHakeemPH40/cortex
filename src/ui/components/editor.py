@@ -1183,42 +1183,36 @@ class CodeEditor(QPlainTextEdit):
         # For dark mode, we need to use inverted/light versions
         
         # Undo
-        undo_action = QAction("Undo", self)
-        undo_action.setShortcut("Ctrl+Z")
+        undo_action = QAction("Undo    Ctrl+Z", self)
         undo_action.triggered.connect(self.undo)
         menu.addAction(undo_action)
         
         # Redo
-        redo_action = QAction("Redo", self)
-        redo_action.setShortcut("Ctrl+Y")
+        redo_action = QAction("Redo    Ctrl+Y", self)
         redo_action.triggered.connect(self.redo)
         menu.addAction(redo_action)
         
         menu.addSeparator()
         
         # Cut
-        cut_action = QAction("Cut", self)
-        cut_action.setShortcut("Ctrl+X")
+        cut_action = QAction("Cut    Ctrl+X", self)
         cut_action.triggered.connect(self.cut)
         cut_action.setEnabled(self.textCursor().hasSelection())
         menu.addAction(cut_action)
         
         # Copy
-        copy_action = QAction("Copy", self)
-        copy_action.setShortcut("Ctrl+C")
+        copy_action = QAction("Copy    Ctrl+C", self)
         copy_action.triggered.connect(self.copy)
         copy_action.setEnabled(self.textCursor().hasSelection())
         menu.addAction(copy_action)
         
         # Paste
-        paste_action = QAction("Paste", self)
-        paste_action.setShortcut("Ctrl+V")
+        paste_action = QAction("Paste    Ctrl+V", self)
         paste_action.triggered.connect(self.paste)
         menu.addAction(paste_action)
         
         # Delete
-        delete_action = QAction("Delete", self)
-        delete_action.setShortcut("Delete")
+        delete_action = QAction("Delete    Del", self)
         delete_action.triggered.connect(self._delete_selection)
         delete_action.setEnabled(self.textCursor().hasSelection())
         menu.addAction(delete_action)
@@ -1226,8 +1220,7 @@ class CodeEditor(QPlainTextEdit):
         menu.addSeparator()
         
         # Format Code
-        format_action = QAction("Format Code", self)
-        format_action.setShortcut("Shift+Alt+F")
+        format_action = QAction("Format Code    Shift+Alt+F", self)
         format_action.triggered.connect(self._format_current_code)
         menu.addAction(format_action)
         
@@ -1236,21 +1229,21 @@ class CodeEditor(QPlainTextEdit):
         # Folding submenu
         folding_menu = QMenu("Folding", self)
         
-        fold_action = QAction("Collapse Current (Ctrl+Shift+[)", self)
+        fold_action = QAction("Collapse Current    Ctrl+Shift+[", self)
         fold_action.triggered.connect(self.collapse_current)
         folding_menu.addAction(fold_action)
         
-        unfold_action = QAction("Expand Current (Ctrl+Shift+])", self)
+        unfold_action = QAction("Expand Current    Ctrl+Shift+]", self)
         unfold_action.triggered.connect(self.expand_current)
         folding_menu.addAction(unfold_action)
         
         folding_menu.addSeparator()
         
-        fold_all_action = QAction("Collapse All (Ctrl+K Ctrl+0)", self)
+        fold_all_action = QAction("Collapse All    Ctrl+K Ctrl+0", self)
         fold_all_action.triggered.connect(self.collapse_all)
         folding_menu.addAction(fold_all_action)
         
-        unfold_all_action = QAction("Expand All (Ctrl+K Ctrl+J)", self)
+        unfold_all_action = QAction("Expand All    Ctrl+K Ctrl+J", self)
         unfold_all_action.triggered.connect(self.expand_all)
         folding_menu.addAction(unfold_all_action)
         
@@ -1259,8 +1252,7 @@ class CodeEditor(QPlainTextEdit):
         menu.addSeparator()
         
         # Select All
-        select_all_action = QAction("Select All", self)
-        select_all_action.setShortcut("Ctrl+A")
+        select_all_action = QAction("Select All    Ctrl+A", self)
         select_all_action.triggered.connect(self.selectAll)
         menu.addAction(select_all_action)
         
@@ -1934,11 +1926,8 @@ class CodeEditor(QPlainTextEdit):
                 self._completion_widget.hide()
                 return
 
-        # 2. Inline edit (Ctrl/Cmd + K)
-        if key == Qt.Key.Key_K and (modifiers & Qt.KeyboardModifier.ControlModifier or
-                                    modifiers & Qt.KeyboardModifier.MetaModifier):
-            self._show_inline_overlay()
-            return
+        # 2. Inline edit (removed from Ctrl+K — conflicts with Command Palette and
+        #    Collapse All chord Ctrl+K,Ctrl+0; use context menu "Format Code" instead)
 
         # 2b. Ctrl+C — emit code_copied signal with selection metadata before copy
         if key == Qt.Key.Key_C and modifiers & Qt.KeyboardModifier.ControlModifier:

@@ -1340,7 +1340,23 @@ class _FileSearchWorker(QThread):
 
     def run(self):
         results = []
-        skip_dirs = {'.git', '__pycache__', 'node_modules', 'venv', '.venv'}
+        # Directories to skip entirely during search
+        skip_dirs = {
+            '.git', '__pycache__', 'node_modules', 'venv', '.venv',
+            '.qoder', '.cortex', '.pytest_cache', '.mypy_cache', '.tox',
+            'installer_output', 'tmp', 'memory', 'bin', 'referenc_image',
+            'build', 'dist', '.eggs', 'eggs', '__pycache__',
+            '.idea', '.vscode',  # IDE noise
+        }
+        # Only search text/code files (skip binaries, images, archives, etc.)
+        code_exts = {
+            '.py', '.js', '.ts', '.jsx', '.tsx', '.html', '.css', '.scss', '.less',
+            '.json', '.xml', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf',
+            '.md', '.txt', '.rst', '.csv', '.log', '.env', '.gitignore',
+            '.c', '.cpp', '.h', '.hpp', '.cs', '.java', '.go', '.rs', '.rb',
+            '.php', '.swift', '.kt', '.scala', '.sh', '.bat', '.ps1', '.psm1',
+            '.sql', '.r', '.m', '.lua', '.pl', '.pm', '.dockerfile', '.makefile',
+        }
         for dirpath, dirnames, files in os.walk(self._root):
             if self.isInterruptionRequested():
                 break
@@ -1349,6 +1365,11 @@ class _FileSearchWorker(QThread):
             for fname in files:
                 if self.isInterruptionRequested():
                     break
+                # Skip non-code files by extension
+                _, ext = os.path.splitext(fname)
+                ext_lower = ext.lower()
+                if ext_lower and ext_lower not in code_exts:
+                    continue
                 fpath = os.path.join(dirpath, fname)
                 try:
                     with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
@@ -1373,12 +1394,19 @@ class SearchPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._root = None
+        self._root_display = ""  # human-readable project name for scope label
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
 
         self._header = QLabel("SEARCH")
         layout.addWidget(self._header)
+
+        # Search scope label — shows which project is being searched
+        self._scope_label = QLabel("")
+        self._scope_label.setWordWrap(True)
+        self._scope_label.setStyleSheet("font-size:10px; color:#569cd6; padding:2px 0;")
+        layout.addWidget(self._scope_label)
 
         self._search_input = QLineEdit()
         self._search_input.setPlaceholderText("Search in files...")
@@ -1396,14 +1424,27 @@ class SearchPanel(QWidget):
     def set_theme(self, is_dark: bool):
         color = "#858585"
         self._header.setStyleSheet(f"font-size:10px; font-weight:bold; color:{color}; letter-spacing:1px;")
+        self._scope_label.setStyleSheet(f"font-size:10px; color:#569cd6; padding:2px 0;")
         self._status.setStyleSheet(f"font-size:11px; color:{color};")
 
     def set_root(self, root: str):
         self._root = root
+        # Build a clean display name for the scope label
+        if root and os.path.isdir(root):
+            name = Path(root).name or root
+            self._root_display = name
+            self._scope_label.setText(f"🔍 Searching in: {name}")
+        else:
+            self._root_display = ""
+            self._scope_label.setText("⚠ No project opened — search disabled")
 
     def _do_search(self):
         query = self._search_input.text().strip()
-        if not query or not self._root:
+        if not query:
+            return
+        if not self._root or not os.path.isdir(self._root):
+            self._results.clear()
+            self._status.setText("⚠ No project opened — open a folder first (Ctrl+O)")
             return
         self._results.clear()
         self._status.setText("Searching...")
