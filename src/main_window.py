@@ -2561,17 +2561,30 @@ class CortexMainWindow(QMainWindow):
         """
         self._open_file(filepath, priority=False)
 
-    def _open_file(self, filepath: str, *, priority: bool = True):
+    def _open_file(self, filepath: str, *, priority: bool = True, reload: bool = False):
         # Normalize path (convert forward slashes to backslashes on Windows)
         filepath = os.path.normpath(filepath)
         path = Path(filepath)
         
-        # If already tracked by webview panel, just switch to it — skip redundant I/O
-        # Use switch_to_file() to avoid QWebChannel model.setValue() IPC, which
+        # If already tracked by webview panel, handle reload vs switch.
+        # switch_to_file() avoids QWebChannel model.setValue() IPC which
         # crashes Chromium on Windows 25H2 during the startup warmup phase.
+        # BUT on accept/reject of AI edits, we MUST reload the content so
+        # the editor reflects the latest disk state (like VS Code/Cursor).
         if hasattr(self, '_webview_panel') and filepath in self._webview_panel._open_files:
-            log.info(f"File already open in webview, switching: {filepath}")
-            self._webview_panel.switch_to_file(filepath)
+            if reload:
+                # Re-read from disk and push new content to the Monaco editor
+                try:
+                    content = self._file_manager.read(filepath)
+                    if content is not None:
+                        language = detect_language(filepath)
+                        self._webview_panel.open_file(filepath, content, language, priority=priority)
+                        log.info(f"File reloaded in editor after accept/reject: {filepath} ({len(content)} chars)")
+                except Exception as e:
+                    log.error(f"Failed to reload file content: {e}")
+            else:
+                log.info(f"File already open in webview, switching: {filepath}")
+                self._webview_panel.switch_to_file(filepath)
             self._update_status_file(filepath)
             return
 
@@ -3397,7 +3410,7 @@ class CortexMainWindow(QMainWindow):
         log.info(f"[Accept] User accepted edit: {file_path}")
 
         # Open/refresh the file in the editor so the user sees the accepted state
-        self._open_file(file_path)
+        self._open_file(file_path, reload=True)
         self.statusBar().showMessage(f"✓ Accepted changes to {Path(file_path).name}", 3000)
 
         # Clean up tracking state
@@ -3430,12 +3443,12 @@ class CortexMainWindow(QMainWindow):
                 return
 
             # Reload in editor so editor shows the reverted content
-            self._open_file(file_path)
+            self._open_file(file_path, reload=True)
             self.statusBar().showMessage(f"↩ Reverted {Path(file_path).name} to original", 3000)
         else:
             # No original found — just open the file so user can review manually
             log.warning(f"[Reject] No original content for {file_path} — opening for review")
-            self._open_file(file_path)
+            self._open_file(file_path, reload=True)
             self.statusBar().showMessage(
                 f"⚠ No original content found for {Path(file_path).name} — review manually", 5000
             )
