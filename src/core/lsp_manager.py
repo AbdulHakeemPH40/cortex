@@ -59,7 +59,7 @@ class LSPServerInstance(QObject):
         # Request tracking with timeouts
         self._active_requests: Dict[int, Dict] = {}  # Track pending requests
         self._request_timeouts: Dict[int, threading.Timer] = {}
-        self._default_timeout = 5.0  # 5 second default timeout
+        self._default_timeout = 12.0  # 12s — Pyright needs time for large files
         
         # Message buffering
         self._buffer = b""
@@ -225,7 +225,7 @@ class LSPServerInstance(QObject):
             method: LSP method name
             params: Request parameters
             callback: Callback function for response
-            timeout: Request timeout in seconds (default: 5.0)
+            timeout: Request timeout in seconds (default: 12.0)
             
         Returns:
             Message ID for tracking/cancellation

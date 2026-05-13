@@ -4113,16 +4113,16 @@ body.loaded #loading-overlay {
     opacity: 1;
     transition: max-height 0.25s ease, opacity 0.2s ease, padding 0.25s ease;
 }
+/* Collapsed: show preview so users see thought content at a glance */
 .ca-card:not(.expanded) .ca-card-preview {
-    max-height: 0;
-    padding-top: 0;
-    padding-bottom: 0;
-    opacity: 0;
+    max-height: 30px;
+    padding: 3px 16px 8px 30px;
+    opacity: 0.75;
 }
 .ca-card.expanded .ca-card-preview {
     max-height: 30px;
     padding: 3px 16px 8px 30px;
-    opacity: 1;
+    opacity: 0.6;
 }
 
 /* ── Card Body (expandable content) ─────────────────────── */

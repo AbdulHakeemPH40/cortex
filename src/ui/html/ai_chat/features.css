@@ -2972,6 +2972,12 @@
     border-color: rgba(80, 140, 255, 0.5);
 }
 
+.error-recover-banner { background: rgba(255,120,80,0.07); border-color: rgba(255,120,80,0.25); animation: errorBannerSlideIn 0.35s ease-out; }
+.error-recover-info { color: rgba(255,160,120,0.9); }
+.error-recover-btn { background: rgba(255,120,80,0.18); border-color: rgba(255,120,80,0.4); color: rgba(255,175,140,1); }
+.error-recover-btn:hover { background: rgba(255,120,80,0.32); border-color: rgba(255,120,80,0.55); }
+@keyframes errorBannerSlideIn { 0%{opacity:0;transform:translateY(-10px)} 100%{opacity:1;transform:translateY(0)} }
+
 /* ================================================
    CODE COMPLETION & INLINE DIFF COMPONENTS
    Extracted from aichat.html inline styles (lines 1453-2243)

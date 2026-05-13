@@ -2646,7 +2646,7 @@ Shell: PowerShell (use semicolons ; not &&)
     # PROVIDER FAILOVER HELPERS
     # ============================================================
 
-    # Failover priority chain: Mistral only
+    # Failover priority chain: MISTRAL → SILICONFLOW → DEEPSEEK → KIMI → OPENAI
     _failover_chain = None  # lazily built
 
     def _get_failover_provider(self, current_type: Any, registry: Any) -> Optional[Any]:
@@ -2664,6 +2664,7 @@ Shell: PowerShell (use semicolons ; not &&)
                 ProviderType.SILICONFLOW,
                 ProviderType.DEEPSEEK,
                 ProviderType.KIMI,
+                ProviderType.OPENAI,
             ]
 
         _attempted_raw = getattr(self, '_failover_attempted', None)
@@ -3321,6 +3322,7 @@ Shell: PowerShell (use semicolons ; not &&)
                             'rate limit', 'rate_limit', '429', 'too many requests',
                             'quota exceeded', 'insufficient_quota', 'billing',
                             'no credits', 'exceeded your current quota',
+                            'tpd_quota_exhausted', 'tpd rate limit',
                         )
                         _TIMEOUT_KEYWORDS = (
                             'timed out', 'timeout', 'read timed out',

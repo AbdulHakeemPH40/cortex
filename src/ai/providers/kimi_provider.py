@@ -183,9 +183,17 @@ class KimiProvider(BaseProvider):
                         _resp_body = e.response.text[:500]
                     except Exception:
                         pass
+                # Detect TPD (Tokens Per Day) rate limit — NEVER retryable
+                _is_tpd_limit = "TPD rate limit" in _resp_body or "tokens per day" in _resp_body.lower()
+                if _is_tpd_limit:
+                    log.error(f"Kimi API TPD daily quota exhausted: {_resp_body}")
+                    return ChatResponse(
+                        content="", model=model, provider="kimi",
+                        error=f"TPD_QUOTA_EXHAUSTED: {_resp_body}",
+                        duration_ms=(time.time() - start_time) * 1000
+                    )
                 if status in (429, 502, 503, 504) and attempt < self._max_retries:
                     log.warning(f"Kimi API transient HTTP {status} (attempt {attempt + 1})")
-                    time.sleep(self._retry_delay * (2 ** attempt))
                     continue
                 log.error(f"Kimi API HTTP {status}: {e} | Body: {_resp_body}")
                 return ChatResponse(
@@ -308,6 +316,11 @@ class KimiProvider(BaseProvider):
                         _resp_body = e.response.text[:500]
                     except Exception:
                         pass
+                # Detect TPD (Tokens Per Day) rate limit — NEVER retryable
+                _is_tpd_limit = "TPD rate limit" in _resp_body or "tokens per day" in _resp_body.lower()
+                if _is_tpd_limit:
+                    log.error(f"Kimi API stream TPD daily quota exhausted: {_resp_body}")
+                    raise RuntimeError(f"TPD_QUOTA_EXHAUSTED: Kimi daily token quota reached — {_resp_body}")
                 if status in (429, 502, 503, 504) and attempt < self._max_retries:
                     log.warning(f"Kimi API transient HTTP {status} (attempt {attempt + 1})")
                     if retry_callback:
@@ -315,7 +328,6 @@ class KimiProvider(BaseProvider):
                             retry_callback(attempt + 1, self._max_retries + 1, str(status))
                         except Exception:
                             pass
-                    time.sleep(self._retry_delay * (2 ** attempt))
                     continue
                 log.error(f"Kimi API stream HTTP {status}: {e} | Body: {_resp_body}")
                 yield f"[Error: HTTP {status}]"

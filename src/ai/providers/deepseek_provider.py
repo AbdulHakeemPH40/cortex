@@ -478,18 +478,32 @@ class DeepSeekProvider(BaseProvider):
                 raise last_error
             except requests.exceptions.HTTPError as e:
                 status = e.response.status_code if e.response is not None else 0
+                # Read response body for quota-exhaustion detection
+                _resp_body = ""
+                if e.response is not None:
+                    try:
+                        _resp_body = (e.response.text or "")[:1000]
+                    except Exception:
+                        pass
+                # Detect daily/monthly quota exhaustion — NEVER retryable
+                _is_quota_exhausted = (
+                    "insufficient_quota" in _resp_body.lower()
+                    or "quota exceeded" in _resp_body.lower()
+                    or "insufficient balance" in _resp_body.lower()
+                    or "tpd rate limit" in _resp_body.lower()
+                    or "tokens per day" in _resp_body.lower()
+                )
+                if _is_quota_exhausted:
+                    log.error(f"[DeepSeek] Quota exhausted: {_resp_body}")
+                    raise RuntimeError(
+                        f"QUOTA_EXHAUSTED: DeepSeek daily quota reached — {_resp_body}"
+                    )
                 if status in (429, 502, 503, 504) and attempt < max_retries:
                     log.warning(f"[DeepSeek] Transient error {status} (attempt {attempt + 1}/{max_retries + 1})")
-                    time.sleep(self._retry_delay * (2 ** attempt))
+                    # No sleep here — loop-top already handles backoff
                     continue
-                detail = ""
-                try:
-                    if e.response is not None:
-                        detail = (e.response.text or "")[:1000]
-                except Exception:
-                    pass
                 log.error(f"DeepSeek API HTTP {status}: {e}")
-                raise Exception(f"DeepSeek API HTTP {status}: {e} | {detail}" if detail else f"DeepSeek API HTTP {status}: {e}")
+                raise Exception(f"DeepSeek API HTTP {status}: {e} | {_resp_body}" if _resp_body else f"DeepSeek API HTTP {status}: {e}")
             except requests.exceptions.RequestException as e:
                 last_error = e
                 log.warning(f"[DeepSeek] Request error (attempt {attempt + 1}/{max_retries + 1}): {e}")

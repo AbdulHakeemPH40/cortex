@@ -6176,9 +6176,7 @@ function normalizeMarkdownText(text) {
     // Guard: skip complex processing for very large text to prevent stack overflow
     if (text.length > 200000) {
         text = text.replace(/\r\n/g, '\n');
-        text = text.replace(/\n{4,}/g, '\n\n\n');
-
-
+        // text = text.replace(/\n{4,}/g, '\n\n\n');
     }
 
     // ========== STAGE 1: Safe sanitation ==========
@@ -6294,9 +6292,7 @@ function normalizeMarkdownText(text) {
     }
 
     // Limit blank lines.
-     text = text.replace(/\n{4,}/g, '\n\n\n');
-
-
+    // text = text.replace(/\n{4,}/g, '\n\n\n');
     return text;
 
 }
@@ -6920,6 +6916,20 @@ function onError(errorMessage) {
     if (stopBtn) stopBtn.style.display = 'none';
 
     _isGenerating = false;
+
+    // ── Recoverable error detection ─────────────────────────────
+    // Show a Continue banner so the user can resume work with one click.
+    // The banner re-sends context so the LLM picks up where it left off.
+    var errLower = (errorMessage || '').toLowerCase();
+    var _isRecoverable = /connection|network|timeout|timed out|rate limit|429|502|503|504|quota|tpd|billing|insufficient|exceeded|capacity|overloaded|broken pipe|connection reset|reset by peer|service unavailable|internal error|bad gateway/i.test(errLower);
+    var _isAuthError = /auth|key|invalid.*key|unauthorized|forbidden|401|403/i.test(errLower);
+    var _showContinue = _isRecoverable && !_isAuthError;
+
+    if (_showContinue && _lastUserMessage) {
+        // Only show once per error
+        if (document.getElementById('error-recover-banner')) return;
+        showErrorRecoverBanner(errorMessage);
+    }
 
     // Auto-retry for rate limits with countdown
     if (errorMessage && /rate limit|429/i.test(errorMessage)) {

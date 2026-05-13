@@ -379,6 +379,16 @@ class OpenAIProvider(BaseProvider):
                 self._last_error = str(e)
                 _err_str = str(e).lower()
 
+                # Detect quota exhaustion — NEVER retryable (daily/monthly cap)
+                _is_quota_exhausted = any(kw in _err_str for kw in (
+                    'insufficient_quota', 'exceeded your current quota',
+                    'quota exceeded', 'billing', 'no credits',
+                    'tpd rate limit', 'tokens per day',
+                ))
+                if _is_quota_exhausted:
+                    log.error(f"OpenAI stream quota exhausted: {e}")
+                    break  # Don't retry — raise at exhaustion point
+
                 # Detect transient errors worth retrying
                 _transient = any(kw in _err_str for kw in (
                     'timeout', 'timed out', 'connection', 'rate limit',
@@ -396,10 +406,21 @@ class OpenAIProvider(BaseProvider):
                 log.error(f"OpenAI chat stream failed (attempt {attempt + 1}): {e}")
                 break
 
-        # All retries exhausted — yield error so agent_bridge can react
+        # All retries exhausted — raise RuntimeError so agent_bridge can trigger
+        # provider failover. Yielding [Error: ...] as text (old behavior) was
+        # invisible to the except Exception handler in the agentic loop.
         _err_msg = str(last_error) if last_error else "OpenAI stream failed after all retries"
         log.error(f"OpenAI chat stream exhausted after {_retry_count} retries: {_err_msg}")
-        yield f"[Error: {_err_msg}]"
+        # Detect quota exhaustion in final error for a clearer message
+        _err_lower = _err_msg.lower()
+        _is_quota = any(kw in _err_lower for kw in (
+            'insufficient_quota', 'exceeded your current quota',
+            'quota exceeded', 'billing', 'no credits',
+            'tpd rate limit', 'tokens per day',
+        ))
+        if _is_quota:
+            raise RuntimeError(f"QUOTA_EXHAUSTED: OpenAI quota reached — {_err_msg}")
+        raise RuntimeError(f"OpenAI stream failed: {_err_msg}")
 
     def validate_api_key(self) -> bool:
         """Validate OpenAI API key."""

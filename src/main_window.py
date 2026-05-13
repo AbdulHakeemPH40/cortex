@@ -818,6 +818,12 @@ class CortexMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self._start_time = time.time()  # track startup time for crash-prevention guards
+        self._warmup_duration = 50  # seconds — Chromium GPU/compositor stabilization window (crash zone ≤34s)
+        self._warmup_queued_files: list = []  # (filepath, priority) tuples queued during warmup
+        self._warmup_flush_timer = QTimer(self)
+        self._warmup_flush_timer.setSingleShot(True)
+        self._warmup_flush_timer.timeout.connect(self._flush_warmup_queue)
+        self._warmup_flush_timer.start(self._warmup_duration * 1000)
         log.info("MainWindow: __init__ START")
         log.info("MainWindow: Initializing managers...")
         self._settings = get_settings()
@@ -2003,6 +2009,15 @@ class CortexMainWindow(QMainWindow):
         self._s_prev_tab = QShortcut(QKeySequence("Ctrl+Shift+Tab"), self)
         self._s_prev_tab.activated.connect(self._prev_tab)
 
+        # Format Code — Monaco-native or legacy fallback
+        self._s_format_code = QShortcut(QKeySequence("Shift+Alt+F"), self)
+        self._s_format_code.activated.connect(self._format_code)
+
+        # Debug Console — toggle terminal panel
+        self._s_debug_console = QShortcut(QKeySequence("Ctrl+Alt+D"), self)
+        self._s_debug_console.activated.connect(lambda: self._toggle_terminal_panel(
+            show=not getattr(self, '_terminal_panel_hidden', False)))
+
         # Help
         help_menu = mb.addMenu("Help")
         self._add_action(help_menu, "Cortex Documentation", self._open_documentation, "")
@@ -2560,6 +2575,24 @@ class CortexMainWindow(QMainWindow):
             self._update_status_file(filepath)
             return
 
+        # ── Startup warmup guard: queue BULK opens only ──────────────────
+        # Bulk session-restore opens (priority=False) crash Chromium on
+        # Windows 25H2 if sent through QWebChannel during startup. Single
+        # user-initiated clicks (priority=True) are safe and pass through.
+        elapsed = time.time() - self._start_time
+        if elapsed < self._warmup_duration and not priority:
+            # Deduplicate
+            for fp, _ in self._warmup_queued_files:
+                if fp == filepath:
+                    return
+            self._warmup_queued_files.append((filepath, priority))
+            count = len(self._warmup_queued_files)
+            remaining = self._warmup_duration - int(elapsed)
+            log.info(f"[Warmup {elapsed:.0f}s] Queued: {os.path.basename(filepath)} ({count} total)")
+            if hasattr(self, '_status_file') and self._status_file:
+                self._status_file.setText(f"  \u23f3 Editor warming up ({remaining}s left, {count} file(s) queued)")
+            return
+
         log.info(f"Opening file: {filepath}")
 
         # If file doesn't exist, try to find it in the project
@@ -2631,6 +2664,26 @@ class CortexMainWindow(QMainWindow):
             log.info(f"File opened successfully: {filepath}")
         except Exception as e:
             log.error(f"Error opening file {filepath}: {e}", exc_info=True)
+
+    def _flush_warmup_queue(self):
+        """Open all files queued during the Chromium startup warmup period.
+
+        Chromium WebEngine on Windows 25H2 crashes its render process if
+        ANY QWebChannel IPC (model.setValue()) reaches Monaco during the
+        first ~60s after launch. This method fires after the warmup timer
+        expires, opening all queued files through the normal pipeline.
+        """
+        elapsed = time.time() - self._start_time
+        count = len(self._warmup_queued_files)
+        log.info(f"[Warmup] Flush after {elapsed:.1f}s — opening {count} queued file(s)")
+        for filepath, priority in self._warmup_queued_files:
+            if Path(filepath).exists():
+                # Re-enter _open_file — warmup guard is now bypassed (elapsed >= duration)
+                self._open_file(filepath, priority=priority)
+        self._warmup_queued_files.clear()
+        if hasattr(self, '_status_file') and self._status_file:
+            self._status_file.setText("  No file open")
+        log.info("[Warmup] Queue flushed — Chromium should now be stable")
 
     def _open_image_file(self, filepath: str):
         """Open an image file in a viewer tab, scaled to fit window."""
@@ -3801,16 +3854,27 @@ class CortexMainWindow(QMainWindow):
         if not fp or fp == "untitled.py":
             return
 
+        # ── Race guard: set BEFORE the async get_current_content call ──────
+        # The debounced onContentChanged (300ms) can fire before the async
+        # callback sets _saved_content, causing the white dot to reappear
+        # after save. _saving_files blocks _on_webview_content_changed
+        # from re-marking the file during the save window.
+        if not hasattr(self, '_saving_files'):
+            self._saving_files: set = set()
+        self._saving_files.add(fp)
+        # Clear the white dot IMMEDIATELY (don't wait for async callback)
+        self._webview_panel.mark_modified(fp, False)
+
         def _do_save(content: str):
             if not content:
+                self._saving_files.discard(fp)
                 return
             self._file_manager.write(fp, content)
-            # Clear the VS Code-style white dot — file is now saved
-            self._webview_panel.mark_modified(fp, False)
             # Track saved content to prevent post-save re-mark by debounced onContentChanged
             if not hasattr(self, '_saved_content'):
                 self._saved_content: dict = {}
             self._saved_content[fp] = content
+            self._saving_files.discard(fp)
             if hasattr(self, '_modified_files'):
                 self._modified_files.discard(fp)
                 self._sync_window_title()
@@ -4266,22 +4330,22 @@ class CortexMainWindow(QMainWindow):
         self.close()
 
     def _previous_chat(self):
-        """Navigate to previous chat (Ctrl+Shift+[)."""
+        """Navigate to previous chat (TODO: assign shortcut)."""
         # TODO: Implement chat history navigation
         log.info("Previous chat shortcut pressed")
 
     def _next_chat(self):
-        """Navigate to next chat (Ctrl+Shift+])."""
+        """Navigate to next chat (TODO: assign shortcut)."""
         # TODO: Implement chat history navigation
         log.info("Next chat shortcut pressed")
 
     def _navigate_back(self):
-        """Navigate back (Ctrl+[)."""
+        """Navigate back (TODO: assign shortcut)."""
         # TODO: Implement navigation history
         log.info("Navigate back shortcut pressed")
 
     def _navigate_forward(self):
-        """Navigate forward (Ctrl+])."""
+        """Navigate forward (TODO: assign shortcut)."""
         # TODO: Implement navigation history
         log.info("Navigate forward shortcut pressed")
 
@@ -4639,6 +4703,26 @@ class CortexMainWindow(QMainWindow):
                 cursor.movePosition(cursor.MoveOperation.Down)
             editor.setTextCursor(cursor)
             editor.setFocus()
+
+    def _format_code(self):
+        """Format current file (Shift+Alt+F).
+
+        Routes to Monaco's editor.action.formatDocument when the webview
+        has an active file; falls back to the legacy editor's formatter.
+        """
+        # Prefer Monaco webview
+        fp = self._webview_panel.get_active_file() if hasattr(self, '_webview_panel') else None
+        if fp:
+            self._webview_panel._safe_run_js(
+                "if(typeof editor!=='undefined'&&editor)"
+                "editor.getAction('editor.action.formatDocument').run();"
+            )
+            return
+
+        # Legacy editor fallback
+        editor = self._editor_tabs.current_editor()
+        if editor and hasattr(editor, '_format_current_code'):
+            editor._format_current_code()
 
     def _toggle_comment(self):
         """Toggle comment on selected lines (Ctrl+/)."""
@@ -5388,13 +5472,29 @@ class CortexMainWindow(QMainWindow):
         self._ai_agent.chat("__GENERATE_PLAN__")
 
     def _ai_action(self, action: str):
-        editor = self._editor_tabs.current_editor()
-        if not editor:
-            self._ai_chat.add_system_message("Open a file first to use AI actions.")
+        """Execute an AI tool action on the currently active file."""
+        code = ""
+        language = "plaintext"
+
+        # Prefer Monaco webview file if open
+        fp = self._webview_panel.get_active_file() if hasattr(self, '_webview_panel') else None
+        if fp:
+            code = self._webview_panel.get_content(fp)
+            from src.utils.helpers import detect_language
+            language = detect_language(fp)
+        else:
+            # Fall back to legacy editor
+            editor = self._editor_tabs.current_editor()
+            if not editor:
+                self._ai_chat.add_system_message("Open a file first to use AI actions.")
+                return
+            code = editor.get_selected_text() or editor.get_all_text()
+            language = editor.language
+
+        if not code or not code.strip():
+            self._ai_chat.add_system_message("The file appears to be empty.")
             return
 
-        code = editor.get_selected_text() or editor.get_all_text()
-        language = editor.language
         analyzer = CodeAnalyzer()
 
         prompts = {
@@ -5695,6 +5795,12 @@ class CortexMainWindow(QMainWindow):
 
     def _on_webview_content_changed(self, file_path: str, content: str):
         """Webview editor content changed — mark file modified (VS Code-style white dot)."""
+        # Race guard: if file is being saved right now, suppress re-marking.
+        # The _saving_files flag is set BEFORE the async get_current_content call
+        # in _save_current, preventing the debounced onContentChanged (300ms)
+        # from re-adding the white dot after Ctrl+S.
+        if hasattr(self, '_saving_files') and file_path in self._saving_files:
+            return
         # Race guard: skip if content matches the last-saved version (debounced
         # onContentChanged can fire after Ctrl+S, re-marking a saved file).
         saved = getattr(self, '_saved_content', {}).get(file_path)

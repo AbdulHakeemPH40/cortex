@@ -596,6 +596,9 @@ class WebviewPanel(QWidget):
         self._bridge.lsp_definition_requested.connect(self._on_lsp_definition)
         self._bridge.lsp_diagnostics_requested.connect(self._on_lsp_diagnostics)
         self._bridge.lsp_content_changed.connect(self._on_lsp_content_changed)
+        # Push diagnostics to Monaco immediately when LSP publishes (not just on JS poll)
+        if self._lsp_manager:
+            self._lsp_manager.diagnostics_updated.connect(self._push_diagnostics_to_monaco)
 
     def _js_callback(self, function_name: str, *args):
         """Safely invoke a JS callback with JSON-serialized arguments."""
@@ -760,6 +763,46 @@ class WebviewPanel(QWidget):
                 'code': str(d.get('code', '') or ''),
             })
         self._js_callback('_lspDiagnosticsResult', request_id, markers)
+
+    def _push_diagnostics_to_monaco(self, file_path: str, diagnostics: list):
+        """Push LSP diagnostics to Monaco IMMEDIATELY when LSP publishes them.
+        
+        This is the reactive push path — the analogue of VS Code's
+        textDocument/publishDiagnostics → editor rendering.  Without this,
+        Monaco only gets diagnostics via JS poll (scheduleDiagnostics),
+        which fires on content-change/scroll/switch — not on LSP publish.
+        """
+        import os
+        if not self._page_loaded:
+            return
+        active = self._active_file_path
+        if not active:
+            return
+        # Match the normalization used by lsp_manager._on_diagnostics
+        active_norm = os.path.normcase(os.path.normpath(active))
+        inc_norm = os.path.normcase(os.path.normpath(file_path))
+        if active_norm != inc_norm:
+            return  # diagnostics are for a different file — ignore
+        # Convert to Monaco markers and push immediately
+        markers = []
+        for d in diagnostics:
+            rng = d.get('range', {})
+            start = rng.get('start', {})
+            end = rng.get('end', {})
+            severity = d.get('severity', 2)
+            monaco_severity = {1: 8, 2: 4, 3: 2, 4: 1}.get(severity, 2)
+            markers.append({
+                'startLineNumber': start.get('line', 0) + 1,
+                'startColumn': start.get('character', 0) + 1,
+                'endLineNumber': end.get('line', 0) + 1,
+                'endColumn': end.get('character', 0) + 1,
+                'message': d.get('message', ''),
+                'severity': monaco_severity,
+                'source': d.get('source', ''),
+                'code': str(d.get('code', '') or ''),
+            })
+        # requestId is unused by _lspDiagnosticsResult — markers render directly
+        self._js_callback('_lspDiagnosticsResult', 'lsp_push', markers)
 
     def _on_lsp_content_changed(self, file_path: str, content: str, language: str):
         """Handle content change notification from JS → send to LSP server."""

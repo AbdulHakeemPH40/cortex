@@ -1,3 +1,8 @@
------------------------------------------------------
-build.ps1 | bahviour.txt | error.txt| .env.examples|
-----------------------------------------------------
+"run_semant" is not
+defined Pyright(reportUndefinedVariable)
+
+Expression value is unused Pyright(reportUnusedExpression)
+
+Loading...
+
+View Problem (Alt+F8)   No quick fixes available

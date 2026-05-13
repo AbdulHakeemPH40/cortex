@@ -157,7 +157,7 @@ var isRenderingMarkers = false;
 // underlines for LSP diagnostics) is one of the most GPU-intensive operations
 // and crashes the render process if called before Chromium settles.
 var MONACO_LOAD_TIME = 0;        // set in Monaco init callback
-var STARTUP_WARMUP_MS = 15000;   // 15s — silent marker suppression during warmup
+var STARTUP_WARMUP_MS = 30000;   // 30s — marker suppression during warmup (crash zone ≤34s)
 
 // ---- Global JS error trapping (catch silent bugs before process dies) ----
 // Monaco load timeout — if Monaco doesn't load within 30s, show error.
