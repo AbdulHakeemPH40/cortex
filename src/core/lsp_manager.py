@@ -588,7 +588,7 @@ class LSPManager(QObject):
         if not server: return
         uri = Path(os.path.abspath(file_path)).as_uri()
         params = {"textDocument": {"uri": uri}, "position": {"line": line - 1, "character": col - 1}}
-        server.send_request("textDocument/hover", params, callback)
+        server.send_request("textDocument/hover", params, callback, timeout=5.0)
 
     def get_definition(self, file_path: str, line: int, col: int, 
                        language: str, callback: Callable):

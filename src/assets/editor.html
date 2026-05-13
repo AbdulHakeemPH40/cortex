@@ -343,6 +343,14 @@ if (typeof require !== 'undefined') {
             if (isScrolling || isSwitchingFile || !bridge || !activeFilePath) {
                 return null;
             }
+            // Cancel ALL stale hover Promises — prevents "Loading..." from
+            // accumulating when the user moves the mouse before the LSP responds.
+            for (var k in pendingHovers) {
+                if (pendingHovers.hasOwnProperty(k)) {
+                    pendingHovers[k](null);
+                    delete pendingHovers[k];
+                }
+            }
             return new Promise(function(resolve) {
                 if (hoverTimer) clearTimeout(hoverTimer);
                 hoverTimer = setTimeout(function() {
@@ -396,6 +404,13 @@ if (typeof require !== 'undefined') {
                 monaco.languages.registerHoverProvider(langId, {
                     provideHover: function(model, position) {
                         if (isScrolling || isSwitchingFile || !bridge || !activeFilePath) return null;
+                        // Cancel ALL stale hover Promises (same as wildcard provider)
+                        for (var k in pendingHovers) {
+                            if (pendingHovers.hasOwnProperty(k)) {
+                                pendingHovers[k](null);
+                                delete pendingHovers[k];
+                            }
+                        }
                         return new Promise(function(resolve) {
                             if (hoverTimer) clearTimeout(hoverTimer);
                             hoverTimer = setTimeout(function() {
