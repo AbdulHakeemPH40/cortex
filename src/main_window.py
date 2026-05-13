@@ -1037,11 +1037,12 @@ class CortexMainWindow(QMainWindow):
         self._webview_panel.setMinimumWidth(300)
         self._editor_terminal_splitter.addWidget(self._webview_panel)
 
-        # Integrated Terminal — bottom portion (persistent, like VS Code)
+        # Integrated Terminal — hidden by default (toggle via Ctrl+J or toolbar button)
         self._integrated_terminal = XTermWidget()
         self._integrated_terminal.setMinimumHeight(120)
         self._editor_terminal_splitter.addWidget(self._integrated_terminal)
-        self._editor_terminal_splitter.setSizes([500, 150])
+        self._editor_terminal_splitter.setSizes([500, 0])  # Terminal hidden on startup
+        self._integrated_terminal.setMaximumHeight(0)  # Ensure collapsed state
 
         main_splitter.addWidget(self._editor_terminal_splitter)
 
@@ -1061,7 +1062,7 @@ class CortexMainWindow(QMainWindow):
         self._left_sidebar_hidden = False
         self._chat_panel_hidden = False
         self._code_panel_hidden = False
-        self._terminal_panel_hidden = False
+        self._terminal_panel_hidden = True  # Hidden by default — user toggles open via Ctrl+J or toolbar
         self._summary_panel_hidden = False
         self._git_panel_hidden = False
 
