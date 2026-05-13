@@ -158,6 +158,21 @@ class OpenAIProvider(BaseProvider):
                 else:
                     _body["max_tokens"] = max_tokens
 
+                # ── Reasoning/thinking support for GPT-5.x models ──
+                # GPT-5.4 and newer support interleaved thinking via reasoning_effort.
+                # Nano variants (gpt-5.4-nano) do NOT support reasoning and return 400.
+                # CRITICAL: reasoning_effort + function tools = 400 on Chat Completions.
+                # GPT-5.x requires /v1/responses for tools+reasoning. Only enable
+                # reasoning when NO tools are passed (pure text response turn).
+                # CRITICAL: When reasoning is enabled, GPT-5.x ONLY accepts temperature=1.0
+                # (same constraint as o1/o3/Kimi reasoning models). Any other value → 400.
+                _is_gpt5_nano = model and "nano" in model.lower()
+                if _is_gpt5 and not _is_gpt5_nano and not tools:
+                    _reasoning_effort = os.getenv("CORTEX_OPENAI_REASONING_EFFORT", "medium")
+                    _body["reasoning_effort"] = _reasoning_effort
+                    _body["temperature"] = 1.0  # Reasoning models require temperature=1.0
+                    log.debug(f"OpenAI reasoning_effort={_reasoning_effort} temperature=1.0 for model={model}")
+
                 # Use non-streaming for chat() — streaming path handled by chat_stream()
                 response = client.chat.completions.create(**_body)
 
@@ -296,6 +311,21 @@ class OpenAIProvider(BaseProvider):
                     _body["max_completion_tokens"] = max_tokens
                 else:
                     _body["max_tokens"] = max_tokens
+
+                # ── Reasoning/thinking support for GPT-5.x models ──
+                # GPT-5.4 and newer support interleaved thinking via reasoning_effort.
+                # Nano variants (gpt-5.4-nano) do NOT support reasoning and return 400.
+                # CRITICAL: reasoning_effort + function tools = 400 on Chat Completions.
+                # GPT-5.x requires /v1/responses for tools+reasoning. Only enable
+                # reasoning when NO tools are passed (pure text response turn).
+                # CRITICAL: When reasoning is enabled, GPT-5.x ONLY accepts temperature=1.0
+                # (same constraint as o1/o3/Kimi reasoning models). Any other value → 400.
+                _is_gpt5_nano = model and "nano" in model.lower()
+                if _is_gpt5 and not _is_gpt5_nano and not tools:
+                    _reasoning_effort = os.getenv("CORTEX_OPENAI_REASONING_EFFORT", "medium")
+                    _body["reasoning_effort"] = _reasoning_effort
+                    _body["temperature"] = 1.0  # Reasoning models require temperature=1.0
+                    log.debug(f"OpenAI reasoning_effort={_reasoning_effort} temperature=1.0 for model={model}")
 
                 response = client.chat.completions.create(**_body)
 

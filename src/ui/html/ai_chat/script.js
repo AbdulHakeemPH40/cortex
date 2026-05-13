@@ -6913,6 +6913,67 @@ function _startRateLimitRetry(seconds) {
     }, 1000);
 }
 
+// ── Error recovery banner + Continue logic ──────────────────────────
+// Shows when connection/network/API errors occur (not auth errors).
+// The Continue button re-sends the last user message so the LLM picks
+// up where it left off — no context loss, no broken workflow.
+
+function showErrorRecoverBanner(errorMessage) {
+    var container = document.getElementById('chatMessages');
+    if (!container) return;
+
+    // Shorten error for display
+    var shortMsg = errorMessage || 'Connection failed. Please check your internet connection or VPN.';
+    if (shortMsg.length > 140) {
+        shortMsg = shortMsg.substring(0, 137) + '...';
+    }
+
+    var banner = document.createElement('div');
+    banner.id = 'error-recover-banner';
+    banner.className = 'continue-task-banner error-recover-banner';
+    banner.innerHTML =
+        '<div class="continue-task-info error-recover-info">' +
+            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+                '<circle cx="12" cy="12" r="10"/>' +
+                '<line x1="12" y1="8" x2="12" y2="12"/>' +
+                '<line x1="12" y1="16" x2="12.01" y2="16"/>' +
+            '</svg>' +
+            '<span>' + escapeHtml(shortMsg) + '</span>' +
+        '</div>' +
+        '<button class="continue-task-btn error-recover-btn" onclick="recoverFromError()">Continue</button>';
+    container.appendChild(banner);
+    container.scrollTop = container.scrollHeight;
+}
+
+function recoverFromError() {
+    // Dismiss the banner
+    var banner = document.getElementById('error-recover-banner');
+    if (banner) banner.remove();
+
+    if (!_lastUserMessage) return;
+
+    // Re-send exactly what the user originally sent — backend maintains
+    // conversation history so the LLM knows where to pick up.
+    _isGenerating = true;
+    _stopRequested = false;
+
+    var sendBtn = document.getElementById('sendBtn');
+    var stopBtn = document.getElementById('stopBtn');
+    if (sendBtn) sendBtn.style.display = 'none';
+    if (stopBtn) stopBtn.style.display = 'flex';
+
+    // Start a fresh turn for the retry
+    _beginTurn();
+    showThinkingIndicator();
+
+    if (_lastUserHasImages && _lastUserImageData) {
+        bridge.on_message_with_images(_lastUserMessage, _lastUserImageData);
+    } else {
+        bridge.on_message_submitted(_lastUserMessage);
+    }
+}
+window.recoverFromError = recoverFromError;
+
 function onError(errorMessage) {
     console.error('[CHAT] onError:', errorMessage);
     removeThinkingIndicator();
@@ -6932,11 +6993,24 @@ function onError(errorMessage) {
 
     _isGenerating = false;
 
+    // ── Rate-limit auto-retry (keep turn alive for retry) ────────
+    if (errorMessage && /rate limit|429/i.test(errorMessage)) {
+        var m = errorMessage.match(/wait\s+(\d+)\s*seconds/i);
+        var seconds = m ? parseInt(m[1], 10) : 15;
+        _startRateLimitRetry(seconds);
+        return;
+    }
+
+    // ── End current turn with partial content preserved ───────────
+    // The turn keeps whatever text and cards were already rendered.
+    // This gives the user visibility into what happened before the error.
+    _endTurn();
+
     // ── Recoverable error detection ─────────────────────────────
     // Show a Continue banner so the user can resume work with one click.
     // The banner re-sends context so the LLM picks up where it left off.
     var errLower = (errorMessage || '').toLowerCase();
-    var _isRecoverable = /connection|network|timeout|timed out|rate limit|429|502|503|504|quota|tpd|billing|insufficient|exceeded|capacity|overloaded|broken pipe|connection reset|reset by peer|service unavailable|internal error|bad gateway/i.test(errLower);
+    var _isRecoverable = /connection|network|timeout|timed out|502|503|504|quota|tpd|billing|insufficient|exceeded|capacity|overloaded|broken pipe|connection reset|reset by peer|service unavailable|internal error|bad gateway/i.test(errLower);
     var _isAuthError = /auth|key|invalid.*key|unauthorized|forbidden|401|403/i.test(errLower);
     var _showContinue = _isRecoverable && !_isAuthError;
 
@@ -6944,14 +7018,6 @@ function onError(errorMessage) {
         // Only show once per error
         if (document.getElementById('error-recover-banner')) return;
         showErrorRecoverBanner(errorMessage);
-    }
-
-    // Auto-retry for rate limits with countdown
-    if (errorMessage && /rate limit|429/i.test(errorMessage)) {
-        var m = errorMessage.match(/wait\s+(\d+)\s*seconds/i);
-        var seconds = m ? parseInt(m[1], 10) : 15;
-        _startRateLimitRetry(seconds);
-        return;
     }
 
     _onGenerationComplete();
@@ -12046,11 +12112,11 @@ function selectCompletion(index) {
     
     var completion = window.codeCompletionState.completions[index];
     if (completion && window.bridge) {
-        window.bridge.on_code_completion_selected({
+        window.bridge.on_code_completion_selected(JSON.stringify({
             requestId: window.codeCompletionState.currentRequestId,
             index: index,
             completion: completion
-        });
+        }));
     }
 }
 
@@ -12072,9 +12138,9 @@ window.dismissCodeCompletion = function() {
     hideCodeCompletionPopup();
     
     if (window.bridge && window.codeCompletionState.currentRequestId) {
-        window.bridge.on_code_completion_dismissed({
+        window.bridge.on_code_completion_dismissed(JSON.stringify({
             requestId: window.codeCompletionState.currentRequestId
-        });
+        }));
     }
 };
 
@@ -12151,10 +12217,10 @@ window.showCodeCompletionCard = function(completionData) {
     if (acceptBtn) {
         acceptBtn.onclick = function() {
             if (window.bridge) {
-                window.bridge.on_code_completion_accepted({
+                window.bridge.on_code_completion_accepted(JSON.stringify({
                     requestId: completionData.requestId,
                     completedCode: completionData.completedCode
-                });
+                }));
             }
             card.remove();
         };
@@ -12221,17 +12287,23 @@ window.hideCompletionIndicator = function() {
  * Request code completion from Python
  */
 window.requestCodeCompletion = function(code, language) {
+    // Skip completion for very large inputs — sending massive objects through
+    // QWebChannel causes QJsonValue→PyQt_PyObject conversion crashes.
+    if (!code || code.length > 800) return;
+
     console.log('[CodeCompletion] Requesting completion for', language);
     
     if (window.bridge && typeof window.bridge.on_request_code_completion === 'function') {
         window.showCompletionIndicator();
         
-        window.bridge.on_request_code_completion({
+        // Send as JSON string (not JS object) — prevents Qt C++ layer
+        // from failing to convert large QJsonObject → Python dict
+        window.bridge.on_request_code_completion(JSON.stringify({
             code: code,
             language: language || 'python',
             cursorPosition: getInputCursorPosition(),
             timestamp: Date.now()
-        });
+        }));
     }
 };
 

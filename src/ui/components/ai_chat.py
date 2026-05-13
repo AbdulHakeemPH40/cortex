@@ -921,27 +921,48 @@ class ChatBridge(QObject):
 
     # â”€â”€ CODE COMPLETION SLOTS (OpenCode-style) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     
-    @pyqtSlot(dict)
-    def on_request_code_completion(self, data: dict):
-        """Handle code completion request from JS."""
+    @pyqtSlot(str)
+    def on_request_code_completion(self, json_str: str):
+        """Handle code completion request from JS (receives JSON string).
+        
+        JS sends JSON.stringify({...}) to avoid QJsonValue→PyQt_PyObject
+        conversion crashes with large 'code' payloads.
+        """
+        try:
+            data = json.loads(json_str)
+        except (json.JSONDecodeError, TypeError) as e:
+            log.warning(f"[CodeCompletion] Failed to parse request JSON: {e}")
+            return
         log.info(f"Code completion requested for {data.get('language', 'python')}")
         self.code_completion_requested.emit(data)
     
-    @pyqtSlot(dict)
-    def on_code_completion_selected(self, data: dict):
+    @pyqtSlot(str)
+    def on_code_completion_selected(self, json_str: str):
         """Handle code completion selection from JS."""
+        try:
+            data = json.loads(json_str)
+        except (json.JSONDecodeError, TypeError):
+            return
         log.info(f"Code completion selected: {data.get('index', 0)}")
         self.code_completion_selected.emit(data)
     
-    @pyqtSlot(dict)
-    def on_code_completion_accepted(self, data: dict):
+    @pyqtSlot(str)
+    def on_code_completion_accepted(self, json_str: str):
         """Handle code completion acceptance from JS."""
+        try:
+            data = json.loads(json_str)
+        except (json.JSONDecodeError, TypeError):
+            return
         log.info(f"Code completion accepted: {data.get('requestId', 'unknown')}")
         self.code_completion_accepted.emit(data)
     
-    @pyqtSlot(dict)
-    def on_code_completion_dismissed(self, data: dict):
+    @pyqtSlot(str)
+    def on_code_completion_dismissed(self, json_str: str):
         """Handle code completion dismissal from JS."""
+        try:
+            data = json.loads(json_str)
+        except (json.JSONDecodeError, TypeError):
+            return
         log.info(f"Code completion dismissed: {data.get('requestId', 'unknown')}")
         self.code_completion_dismissed.emit(data)
     
@@ -3773,11 +3794,12 @@ class AIChatWidget(QWidget):
             f"if(window.onContextBudgetUpdate) window.onContextBudgetUpdate({used}, {total}, {json.dumps(provider)});"
         )
 
-    def on_turn_limit_hit(self, pending_todos: list):
+    def on_turn_limit_hit(self, pending_todos: list, context_summary: str = ""):
         """Show a 'Continue?' banner when the agent has unfinished todos."""
         safe_todos = json.dumps(pending_todos)
+        safe_ctx = json.dumps(context_summary or "")
         self._view.page().runJavaScript(
-            f"if(window.onTurnLimitHit) window.onTurnLimitHit({safe_todos});"
+            f"if(window.onTurnLimitHit) window.onTurnLimitHit({safe_todos}, {safe_ctx});"
         )
 
     def show_permission_card(self, request_id: str, html_card: str):

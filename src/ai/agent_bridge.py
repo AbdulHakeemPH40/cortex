@@ -2944,6 +2944,13 @@ Shell: PowerShell (use semicolons ; not &&)
             _compacted_once = False  # Track if we already compacted
             _mistral_downgraded_once = False  # Per-request, timeout-triggered model fallback within Mistral
 
+            # ── OpenAI reasoning-only first pass flag ──────────────────────
+            # GPT-5.x on Chat Completions can NOT use reasoning_effort + tools
+            # together (returns 400). On turn 0, we do a reasoning-only pass
+            # (tools dropped → reasoning_effort enabled → thought card renders).
+            # Then we retry with full tools for the actual agentic work.
+            _reasoning_only_pass = False
+
             # ── Auto-compact state (ported from Claude Code's autoCompact.ts) ───
             _auto_compact_state = None
             try:
@@ -3072,6 +3079,29 @@ Shell: PowerShell (use semicolons ; not &&)
                         f"[TOOLS] Expanded to {len(active_tool_defs)} tools " +
                         f"after {self._session_mutation_count} mutations"
                     )
+
+                # ── OpenAI GPT-5.x reasoning/tools incompatibility ──
+                # GPT-5.x on Chat Completions can NOT use reasoning_effort + tools
+                # together (returns 400: "use /v1/responses instead").
+                # Workaround A: drop tools on the final answer turn so reasoning
+                #   activates (todos done + mutations complete → genuine exit).
+                # Workaround B: on turn 0, do a reasoning-first pass (no tools) so
+                #   the thought card renders. Then retry with full tools for agentic
+                #   work (force-action path re-adds tools on next iteration).
+                if provider_type == ProviderType.OPENAI and active_tool_defs:
+                    _todos_done = all(
+                        str(t.get("status", "")).upper() in ("COMPLETE", "CANCELLED")
+                        for t in self._current_todos
+                    ) if self._current_todos else True
+                    # Final answer turn: todos done + has mutations → drop tools → reasoning
+                    if _has_mutated and _todos_done:
+                        log.info("[BRIDGE] OpenAI final-answer turn — dropping tools to enable reasoning")
+                        active_tool_defs = None
+                    # First turn: reasoning-first pass → thought card renders, then retry with tools
+                    elif turn == 0 and not _reasoning_only_pass:
+                        log.info("[BRIDGE] OpenAI turn 0 — reasoning-first pass (no tools, thought card enabled)")
+                        active_tool_defs = None
+                        _reasoning_only_pass = True
 
                 # Context-length errors are retried up to 2 times per turn by
                 # compacting the message history before each retry.
@@ -3439,6 +3469,23 @@ Shell: PowerShell (use semicolons ; not &&)
                     # ALSO skip if AI already produced a meaningful text response
                     # (read-only/informational tasks like "read this file").
                     _has_text_response = len(turn_text.strip()) > 20
+
+                    # ── OpenAI reasoning-only retry ─────────────────────────
+                    # After the reasoning-first pass on turn 0 (tools dropped to
+                    # enable reasoning_effort), ALWAYS re-run with full tools.
+                    # The model has thought aloud (shown in thought card) and now
+                    # needs tools to plan/act. Purely informational queries that
+                    # produce text on the re-run will exit naturally via Case 3.
+                    if _reasoning_only_pass:
+                        _reasoning_only_pass = False
+                        log.info("[BRIDGE] OpenAI reasoning-only pass complete — re-running with tools")
+                        # Re-build tool definitions (they were set to None for reasoning)
+                        active_tool_defs = _filter_tool_definitions(list(tool_defs), core_names)
+                        if self._session_mutation_count > 5:
+                            expanded_names = core_names | {"WebSearch", "LSP"}
+                            active_tool_defs = _filter_tool_definitions(list(tool_defs), expanded_names)
+                        continue
+
                     if _mutation_turns == 0 and (turn + 1) <= 5 and active_tool_defs and not _has_text_response:
                         log.warning(
                             f"[BRIDGE] AI attempted to exit on turn {turn + 1} without making any changes. " +
