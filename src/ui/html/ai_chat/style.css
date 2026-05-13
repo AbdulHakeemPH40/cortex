@@ -4595,6 +4595,61 @@ body.light-mode .turn-processing-summary:hover {
     color: #555;
 }
 
+/* ── Interleaved Mode: Turn Summary Line ── */
+.turn-summary-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 16px 4px 16px;
+    margin-top: 4px;
+    font-size: 10.5px;
+    font-family: var(--mono);
+    color: var(--c-text-4);
+    opacity: 0.7;
+    animation: fadeIn 0.3s ease forwards;
+}
+.turn-summary-line svg {
+    opacity: 0.5;
+    flex-shrink: 0;
+    color: var(--green);
+}
+.turn-summary-line .summary-elapsed {
+    margin-left: auto;
+    opacity: 0.55;
+    font-size: 10px;
+}
+.turn-summary-line .summary-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    opacity: 0.7;
+}
+.turn-summary-line .summary-dot.dot-think  { background: var(--c-think); }
+.turn-summary-line .summary-dot.dot-read   { background: var(--c-explore); }
+.turn-summary-line .summary-dot.dot-search { background: var(--c-explore); }
+.turn-summary-line .summary-dot.dot-grep   { background: var(--c-explore); }
+.turn-summary-line .summary-dot.dot-edit   { background: var(--c-edit); }
+.turn-summary-line .summary-dot.dot-run    { background: var(--c-run); }
+
+/* ── Interleaved Mode: Cards in turn container get top margin ── */
+.turn-container > .ca-card {
+    margin: 4px 8px;
+}
+
+/* ── Interleaved Mode: Assistant bubbles in turn container ── */
+.turn-container > .message-bubble.assistant {
+    padding: 4px 8px;
+}
+.turn-container > .message-bubble.assistant .message-content {
+    padding: 4px 8px 8px 8px;
+}
+
+/* ── Interleaved Mode: Created files card inside turn ── */
+.turn-container > .created-files-card {
+    margin: 6px 8px;
+}
+
 /* ================================================
    LIGHT MODE TOKEN OVERRIDES
    Inverted luminance palette for light theme

@@ -357,7 +357,9 @@ function showTaskCompletionSummary() {
     html += '</div>';
     
     card.innerHTML = html;
-    container.appendChild(card);
+    // Interleaved mode: if turn is active, append to turn instead of chatMessages
+    var parent = (_interleavedMode && _currentTurn && document.body.contains(_currentTurn)) ? _currentTurn : container;
+    parent.appendChild(card);
     card.scrollIntoView({ behavior: 'smooth', block: 'end' });
     
     _taskActivities = [];
@@ -3316,7 +3318,7 @@ var currentWalkthrough = "";
 var activityStartTime = null;
 var thinkingInterval = null;
 var currentActivitySection = null; // kept for backward compat, unused by new system
-var _caGroup = null;             // points to .turn-processing-body (the card host inside current turn)
+var _caGroup = null;             // points to .turn-processing-body or _currentTurn (card host inside current turn)
 var _currentTurn = null;         // current .turn-container DOM element
 var _caCardStagger = 0;           // cascading entrance delay counter per turn
 var _caStats = { reads: 0, edits: 0, searches: 0, thoughts: 0, commands: 0 };
@@ -3324,6 +3326,7 @@ var _caFileCount = 0;
 var _caSeenFileKeys = Object.create(null);
 var _caThoughtFlushTimer = null;
 var _turnStartTime = null;        // timestamp when turn began (for elapsed display)
+var _interleavedMode = true;      // interleaved card+text flow (cards inline in turn, not bundled)
 
 // ── Helpers ──────────────────────────────────────────────
 function _caFindCard(type, key) {
@@ -3387,72 +3390,17 @@ function _beginTurn() {
     var turn = document.createElement('div');
     turn.className = 'turn-container';
 
-    // Create processing block (initially empty, hidden)
-    var procBlock = document.createElement('div');
-    procBlock.className = 'turn-processing-block no-cards';
-    procBlock.innerHTML =
-        '<div class="turn-processing-summary">' +
-            '<svg class="summary-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
-            '<span class="summary-text"></span>' +
-            '<span class="summary-elapsed"></span>' +
-        '</div>' +
-        '<div class="turn-processing-body"></div>';
-
-    // Summary click toggles expand/collapse
-    var summary = procBlock.querySelector('.turn-processing-summary');
-    summary.onclick = function(e) {
-        e.stopPropagation();
-        var block = summary.parentElement;
-        var body = block.querySelector('.turn-processing-body');
-        if (block.classList.contains('expanded')) {
-            // Collapse
-            if (body) {
-                body.style.maxHeight = body.scrollHeight + 'px';
-                body.offsetHeight;
-                body.style.maxHeight = '0px';
-            }
-            block.classList.remove('expanded');
-        } else {
-            // Expand
-            block.classList.add('expanded');
-            if (body) {
-                body.style.maxHeight = '0px';
-                body.offsetHeight;
-                body.style.maxHeight = Math.min(body.scrollHeight, 1200) + 'px';
-                var onEnd = function() {
-                    body.style.maxHeight = '';
-                    body.removeEventListener('transitionend', onEnd);
-                };
-                body.addEventListener('transitionend', onEnd);
-            }
-        }
-    };
-
-    // Create AI response placeholder
-    var aiResponse = document.createElement('div');
-    aiResponse.className = 'turn-ai-response';
-
-    turn.appendChild(procBlock);
-    turn.appendChild(aiResponse);
-
-    // Store references
+    // Store references — in interleaved mode, _caGroup is the turn itself
     _currentTurn = turn;
-    _caGroup = procBlock.querySelector('.turn-processing-body');
+    _caGroup = _interleavedMode ? turn : null;
 
     container.appendChild(turn);
     return turn;
 }
 
-// ── End Turn: collapse processing block, show summary stats ──
+// ── End Turn: collapse processing block (classic) or add summary line (interleaved) ──
 function _endTurn() {
     if (!_currentTurn) return;
-
-    var procBlock = _currentTurn.querySelector('.turn-processing-block');
-    if (!procBlock) return;
-
-    var summaryText = procBlock.querySelector('.summary-text');
-    var elapsedEl = procBlock.querySelector('.summary-elapsed');
-    var body = procBlock.querySelector('.turn-processing-body');
 
     // Build summary HTML with colored dot indicators
     var dotParts = [];
@@ -3471,19 +3419,34 @@ function _endTurn() {
         ? Math.floor(elapsedSec / 60) + 'm ' + Math.round(elapsedSec % 60) + 's'
         : elapsedSec + 's';
 
-    if (dotParts.length > 0) {
-        if (summaryText) summaryText.innerHTML = dotParts.join('  ·  ');
-        if (elapsedEl) elapsedEl.textContent = elapsedStr;
-        procBlock.classList.remove('no-cards');
-
-        // Collapse processing block
-        procBlock.classList.remove('expanded');
-        if (body) {
-            body.style.maxHeight = '0px';
+    if (_interleavedMode) {
+        // Interleaved mode: append summary line directly to turn container
+        if (dotParts.length > 0) {
+            var summaryLine = document.createElement('div');
+            summaryLine.className = 'turn-summary-line';
+            summaryLine.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>' +
+                dotParts.join('  ·  ') +
+                '<span class="summary-elapsed">' + elapsedStr + '</span>';
+            _currentTurn.appendChild(summaryLine);
         }
     } else {
-        // No tool cards — keep processing block hidden
-        procBlock.classList.add('no-cards');
+        // Classic mode: collapse processing block
+        var procBlock = _currentTurn.querySelector('.turn-processing-block');
+        if (procBlock) {
+            var summaryText = procBlock.querySelector('.summary-text');
+            var elapsedEl = procBlock.querySelector('.summary-elapsed');
+            var body = procBlock.querySelector('.turn-processing-body');
+
+            if (dotParts.length > 0) {
+                if (summaryText) summaryText.innerHTML = dotParts.join('  ·  ');
+                if (elapsedEl) elapsedEl.textContent = elapsedStr;
+                procBlock.classList.remove('no-cards');
+                procBlock.classList.remove('expanded');
+                if (body) body.style.maxHeight = '0px';
+            } else {
+                procBlock.classList.add('no-cards');
+            }
+        }
     }
 
     // Clear current turn reference
@@ -3491,18 +3454,18 @@ function _endTurn() {
     _caGroup = null;
 }
 
-// ── Ensure Activity Container (points to processing body of current turn) ──
+// ── Ensure Activity Container (points to turn container in interleaved mode) ──
 function _caEnsureGroup(container) {
-    // If no current turn or processing body, try to re-resolve from DOM
+    // If no current turn or group, try to re-resolve from DOM
     if (!_caGroup || !document.body.contains(_caGroup)) {
         if (_currentTurn && document.body.contains(_currentTurn)) {
-            _caGroup = _currentTurn.querySelector('.turn-processing-body');
+            _caGroup = _interleavedMode ? _currentTurn : _currentTurn.querySelector('.turn-processing-body');
         }
     }
     // If still no group, begin a new turn
     if (!_caGroup) {
         _beginTurn();
-        _caGroup = _currentTurn ? _currentTurn.querySelector('.turn-processing-body') : null;
+        _caGroup = _interleavedMode ? _currentTurn : (_currentTurn ? _currentTurn.querySelector('.turn-processing-body') : null);
     }
     return _caGroup;
 }
@@ -3512,29 +3475,73 @@ function _caUpdateGroupHeader() {
     // Summary updates happen in _endTurn()
 }
 
-// ── Helper: insert ca-card into processing body ──
+// ── Helper: insert ca-card into processing body (classic) or turn container (interleaved) ──
 function _caInsertCard(card) {
     var group = _caGroup;
     if (!group) return;
 
-    // Show processing block if it was hidden
-    var procBlock = group.closest('.turn-processing-block');
-    if (procBlock && procBlock.classList.contains('no-cards')) {
-        procBlock.classList.remove('no-cards');
-    }
-
-    // Append card into processing body
-    group.appendChild(card);
-
-    // Auto-expand processing block while cards are being added (during streaming)
-    if (procBlock && !procBlock.classList.contains('expanded')) {
-        procBlock.classList.add('expanded');
-        group.style.maxHeight = 'none';
+    if (_interleavedMode) {
+        // Thought cards go BEFORE any AI text (right after user bubble)
+        // All other cards: flush AI text segment and insert after (text→card→text)
+        if (card.dataset.caType === 'thought') {
+            var userBubble = group.querySelector('.message-bubble.user:last-of-type');
+            if (userBubble && userBubble.nextSibling) {
+                group.insertBefore(card, userBubble.nextSibling);
+            } else {
+                group.appendChild(card);
+            }
+        } else {
+            _flushAIContentSegment();
+            group.appendChild(card);
+        }
+    } else {
+        // Classic mode: show processing block and append to processing body
+        var procBlock = group.closest('.turn-processing-block');
+        if (procBlock && procBlock.classList.contains('no-cards')) {
+            procBlock.classList.remove('no-cards');
+        }
+        group.appendChild(card);
+        if (procBlock && !procBlock.classList.contains('expanded')) {
+            procBlock.classList.add('expanded');
+            group.style.maxHeight = 'none';
+        }
     }
 }
 
 function _caMarkGroupComplete() {
     // Completion is handled by _endTurn()
+}
+
+// ── Flush AI Content Segment (interleaved mode) ───────────
+// When a card arrives during streaming, finalize the current AI text bubble
+// and start a fresh one after the card — creating text→card→text pattern
+function _flushAIContentSegment() {
+    if (!_interleavedMode) return;
+    if (!currentAssistantMessage) return;
+    if (!_currentTurn) return;
+
+    var contentDiv = currentAssistantMessage.querySelector('.message-content');
+    if (!contentDiv) return;
+
+    // Check if the current bubble has any meaningful content
+    var text = contentDiv.textContent || contentDiv.innerText || '';
+    if (text.trim().length === 0) return;
+
+    // The current bubble has content — it will stay in the DOM as-is.
+    // Create a fresh assistant bubble for subsequent onChunk writes.
+    var newBubble = document.createElement('div');
+    newBubble.className = 'message-bubble assistant';
+    newBubble.style.animationDelay = '0s';
+    var newContent = document.createElement('div');
+    newContent.className = 'message-content';
+    newBubble.appendChild(newContent);
+
+    // Append after the card will be inserted by _caInsertCard
+    // We append it NOW so future onChunk calls find it
+    _currentTurn.appendChild(newBubble);
+
+    currentAssistantMessage = newBubble;
+    currentContent = '';
 }
 
 // ── Main Tool Activity Router ────────────────────────────
@@ -5469,8 +5476,12 @@ function clearActivitySection() {
 
 // Collapse (not remove) activity cards on completion — delegates to turn system
 function collapseActivitySection() {
-    // Delegate to _endTurn if we have an active turn, otherwise just null refs
-    if (_currentTurn && document.body.contains(_currentTurn)) {
+    // Interleaved mode: just null the refs (summary is handled by _endTurn)
+    // Classic mode: delegate to _endTurn if we have an active turn
+    if (_interleavedMode) {
+        _caGroup = null;
+        // Do NOT null _currentTurn here — _endTurn handles that
+    } else if (_currentTurn && document.body.contains(_currentTurn)) {
         _endTurn();
     } else {
         _caGroup = null;
@@ -5604,7 +5615,9 @@ function showCreatedFilesCard(summaryData) {
         card.appendChild(footer);
     }
 
-    container.appendChild(card);
+    // Interleaved mode: if turn is active, append to turn instead of chatMessages
+    var parent = (_interleavedMode && _currentTurn && document.body.contains(_currentTurn)) ? _currentTurn : container;
+    parent.appendChild(card);
 
     // Trigger slide-in animation after paint
     requestAnimationFrame(function() {
@@ -5657,7 +5670,7 @@ function startStreaming() {
     // NOTE: We no longer clear todos here - todos persist until explicitly completed
     // The AI will send new todos via updateTodos() if needed, which will merge with existing
     
-    // ── Turn-container: create assistant content inside turn-ai-response ──
+    // ── Turn-container: create assistant content inside turn-ai-response or directly in turn ──
     if (!currentAssistantMessage) {
         console.log('[JS] Creating new assistant message in turn container');
         currentAssistantMessage = document.createElement('div');
@@ -5666,9 +5679,12 @@ function startStreaming() {
         content.className = 'message-content';
         currentAssistantMessage.appendChild(content);
         currentContent = "";
-        
-        // Place inside turn-ai-response if turn exists, otherwise append to chatMessages
-        if (_currentTurn && document.body.contains(_currentTurn)) {
+    
+        // Interleaved mode: append directly to turn container
+        if (_interleavedMode && _currentTurn && document.body.contains(_currentTurn)) {
+            _currentTurn.appendChild(currentAssistantMessage);
+        } else if (_currentTurn && document.body.contains(_currentTurn)) {
+            // Classic mode: place inside turn-ai-response if turn exists
             var aiResponse = _currentTurn.querySelector('.turn-ai-response');
             if (aiResponse) {
                 aiResponse.innerHTML = '';
@@ -6713,7 +6729,6 @@ function onComplete(fullText) {
     removeThinkingIndicator();
     hideThinking();
     collapseFecContainer();     // Force-complete any open FEC cards
-    collapseActivitySection();  // Null the flat step-block _caGroup reference
 
     // Phase C: Clear any pending render timeout before doing final render
     if (window._streamRenderTimeout) {
