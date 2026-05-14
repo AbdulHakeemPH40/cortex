@@ -2702,10 +2702,15 @@ Shell: PowerShell (use semicolons ; not &&)
         from src.ai.providers import ProviderType
         provider_enum = cast(ProviderType, provider_type)
         _model_lower = original_model.lower() if original_model else ""
-        _is_small = any(x in _model_lower for x in ['mini', 'nano', 'small', 'lite'])
+        _is_small = any(x in _model_lower for x in ['mini', 'nano', 'small', 'lite', 'flash'])
 
         _defaults = {
-            ProviderType.MISTRAL: 'mistral-small-latest' if _is_small else 'mistral-medium-latest',
+            ProviderType.MISTRAL:    'mistral-small-latest' if _is_small else 'mistral-medium-latest',
+            ProviderType.SILICONFLOW: 'Qwen/Qwen3-Coder-480B-A35B-Instruct' if not _is_small else 'Qwen/Qwen3-Coder-30B-A3B-Instruct',
+            ProviderType.DEEPSEEK:   'deepseek-chat' if _is_small else 'deepseek-reasoner',
+            ProviderType.KIMI:       'kimi-k2-turbo-preview' if _is_small else 'kimi-k2.5',
+            ProviderType.OPENAI:     'gpt-4o-mini' if _is_small else 'gpt-4o',
+            ProviderType.MIMO:       original_model,  # Keep original MiMo model (already correct)
         }
         return _defaults.get(provider_enum, original_model)
 
@@ -2818,6 +2823,17 @@ Shell: PowerShell (use semicolons ; not &&)
             
             provider = registry.get_provider(provider_type)
             model    = model_id
+
+            # If get_provider returned a different type (e.g. MIMO→MISTRAL
+            # because the provider failed to register), map the model name so
+            # the actual provider receives a model it understands.
+            _actual_type = provider.provider_type
+            if _actual_type != provider_type:
+                model = self._get_default_model_for_provider(_actual_type, model_id)
+                log.warning(
+                    f"[BRIDGE] Provider {provider_type.value} unavailable — "
+                    f"routed to {_actual_type.value} with model={model}"
+                )
 
             log.info(f"[BRIDGE] provider={provider_type.value} model={model}")
 

@@ -2343,6 +2343,72 @@ code:not(pre code) {
     animation: modePulse 2s ease-in-out infinite;
 }
 
+/* Thought Badge - rendered at bottom of AI messages */
+.thought-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    padding: 5px 12px;
+    background: rgba(139, 92, 246, 0.06);
+    border: 1px solid rgba(139, 92, 246, 0.15);
+    border-radius: 16px;
+    font-size: 11px;
+    color: rgba(139, 92, 246, 0.8);
+    font-family: var(--font-mono, 'Cascadia Code', monospace);
+}
+.thought-badge .thought-icon {
+    flex-shrink: 0;
+    opacity: 0.7;
+}
+.thought-badge .thought-text {
+    letter-spacing: 0.2px;
+}
+
+/* Tool Summary Card */
+.tool-summary-card {
+    margin-top: 12px;
+    border: 1px solid var(--c-border, rgba(255,255,255,0.06));
+    border-radius: 8px;
+    background: var(--c-bg-surface, rgba(255,255,255,0.02));
+    font-size: 11px;
+    overflow: hidden;
+}
+.tool-summary-card .summary-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 12px;
+    cursor: pointer;
+    user-select: none;
+    background: rgba(255,255,255,0.02);
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.tool-summary-card .summary-header:hover {
+    background: rgba(255,255,255,0.04);
+}
+.tool-summary-card .summary-icon {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    color: var(--c-accent, #38bdf8);
+}
+.tool-summary-card .summary-title {
+    flex: 1;
+    font-weight: 500;
+    color: var(--text-main, #d4d4d4);
+}
+.tool-summary-card .summary-count {
+    font-size: 10px;
+    color: var(--text-muted, #9ca3af);
+    font-family: var(--font-mono, 'Cascadia Code', monospace);
+}
+.tool-summary-card .summary-toggle {
+    font-size: 10px;
+    color: var(--c-accent, #38bdf8);
+    opacity: 0.8;
+}
+
 /* ================================================
    AGENT MODE INDICATOR - Modern Card Design
    ================================================ */
@@ -4368,6 +4434,35 @@ body.loaded #loading-overlay {
     color: var(--text-main);
     margin: 12px 0 4px 0;
     line-height: 1.3;
+}
+
+.ca-fetch-row {
+    display: flex;
+    gap: 4px;
+    padding: 2px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+.ca-fetch-cell {
+    flex: 1;
+    min-width: 0;
+    padding: 2px 6px;
+    font-size: 11px;
+    color: var(--text-secondary, #9ca3af);
+    line-height: 1.4;
+}
+.ca-fetch-cell:first-child {
+    color: var(--text-main);
+    font-weight: 500;
+    flex: 0.6;
+}
+
+.ca-fetch-preview strong {
+    color: #f0f0f0;
+    font-weight: 600;
+}
+.ca-fetch-preview em {
+    color: #d4d4d4;
+    font-style: italic;
 }
 
 /* ── Collapse / Expand State Rules (MUST be after all variants) ── */

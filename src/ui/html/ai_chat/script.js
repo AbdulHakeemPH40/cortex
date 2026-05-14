@@ -2691,9 +2691,17 @@ function appendMessage(text, sender, shouldSave) {
 
         bubble.appendChild(row);
     } else {
+        // Strip internal reasoning artifacts from history-loaded messages
+        var cleanForRender = text
+            .replace(/^<h\[\d[^>]*>.*?<\/h\[\d[^>]*>\s*$/gm, '')
+            .replace(/^\s*\d+\s+(?:file|files|search|searches|thought|thoughts|command|commands)\s*[·\xB7]\s*$/gm, '')
+            .replace(/^\s*\d+\.?\d*s\s*$/gm, '')
+            .trim();
+        if (!cleanForRender) cleanForRender = text;
+
         var parsedHtml = '';
         try {
-            var normalizedText = normalizeMarkdownText(text);
+            var normalizedText = normalizeMarkdownText(cleanForRender);
             if (normalizedText.length > 200000) {
                 parsedHtml = formatMarkdownFallback(normalizedText);
             } else {
@@ -4791,24 +4799,54 @@ function _caRenderWebSearch(data, status) {
     _caInsertCard(card);
 }
 
-// ── Format fetched content: auto-link URLs ──────────────
+// ── Format fetched content: clean, format, auto-link ────
 function _caFormatFetchContent(text) {
     if (!text) return '';
-    // 1. Escape HTML
-    var safe = escapeHtml(text);
-    // 2. Auto-link URLs (must run after escaping to avoid breaking links)
+    // 1. Strip internal reasoning artifacts (regex patterns, tool traces)
+    var clean = text
+        .replace(/<h\[\d[^>]*>.*?<\/h\[\d[^>]*>/g, '')  // strip stray regex
+        .replace(/\b(grep|regex|pattern)\s*[:：]\s*[^\n]+/gi, '')  // strip grep traces
+        .replace(/^\s*The user wants.*$/gm, '')  // strip internal monologue
+        .replace(/^\s*Let me (search|check|look|try|find).*$/gm, '')  // strip thinking
+        .replace(/^\s*\d+\s+(?:file|files|search|searches|thought|thoughts|command|commands).*$/gm, '')  // strip tool stats
+        .replace(/^\s*\d+\.?\d*s\s*$/gm, '')  // strip timing
+        .trim();
+    if (!clean) return '';
+
+    // 2. Escape HTML
+    var safe = escapeHtml(clean);
+
+    // 3. Bold (**text**) and italic (*text*)
+    safe = safe.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    safe = safe.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>');
+
+    // 4. Auto-link URLs (must run after escaping to avoid breaking links)
     safe = safe.replace(/(https?:\/\/[^\s<>"'\u4e00-\u9fff]+)/gi, function(match) {
-        // Trim trailing punctuation that's unlikely part of the URL
-        var clean = match.replace(/[.,;:!?)\]}]+$/, '');
-        var trailing = match.slice(clean.length);
-        return '<a href="' + clean + '" target="_blank" rel="noopener" class="ca-fetch-link">' + clean + '</a>' + trailing;
+        var cl = match.replace(/[.,;:!?)\]}]+$/, '');
+        var tr = match.slice(cl.length);
+        return '<a href="' + cl + '" target="_blank" rel="noopener" class="ca-fetch-link">' + cl + '</a>' + tr;
     });
-    // 3. Highlight markdown-style headings (## Title)
+
+    // 5. Highlight markdown-style headings (## Title)
     safe = safe.replace(/^(#{1,3})\s+(.+)$/gm, function(m, hashes, title) {
         var level = hashes.length;
         var size = level === 1 ? '16px' : level === 2 ? '14px' : '13px';
         return '<div class="ca-fetch-heading" style="font-size:' + size + ';font-weight:600;margin:12px 0 4px 0;color:var(--text-main);">' + title + '</div>';
     });
+
+    // 6. Highlight table-like patterns (tab-separated data)
+    if (safe.indexOf('\t') !== -1 || safe.indexOf('  |  ') !== -1) {
+        safe = safe.replace(/^(.+)$/gm, function(row) {
+            if (row.indexOf('\t') !== -1 || row.indexOf('  |  ') !== -1) {
+                var cells = row.split(/\t|  \|  /);
+                return '<span class="ca-fetch-row">' + cells.map(function(c) {
+                    return '<span class="ca-fetch-cell">' + c.trim() + '</span>';
+                }).join('') + '</span>';
+            }
+            return row;
+        });
+    }
+
     return safe;
 }
 
@@ -6213,7 +6251,7 @@ function normalizeMarkdownText(text) {
     // Guard: skip complex processing for very large text to prevent stack overflow
     if (text.length > 200000) {
         text = text.replace(/\r\n/g, '\n');
-        // text = text.replace(/\n{4,}/g, '\n\n\n');
+        text = text.replace(/\n{4,}/g, '\n\n\n');
     }
 
     // ========== STAGE 1: Safe sanitation ==========
@@ -6329,7 +6367,7 @@ function normalizeMarkdownText(text) {
     }
 
     // Limit blank lines.
-    // text = text.replace(/\n{4,}/g, '\n\n\n');
+    text = text.replace(/\n{4,}/g, '\n\n\n');
     return text;
 
 }
@@ -6418,6 +6456,10 @@ function updateStreamingUI() {
             .replace(/<permission>[\s\S]*?<\/permission>/g, '')
             // Strip DeepSeek/Cursor think tags (case-insensitive covers both <think> and <THINK>)
             .replace(/<think>[\s\S]*?<\/think>/gi, '')
+            // Strip internal reasoning artifacts leaked by models
+            .replace(/^<h\[\d[^>]*>.*?<\/h\[\d[^>]*>\s*$/gm, '')  // stray regex patterns
+            .replace(/^\s*\d+\s+(?:file|files|search|searches|thought|thoughts|command|commands)\s*[·\xB7]\s*$/gm, '')  // tool stats line
+            .replace(/^\s*\d+\.?\d*s\s*$/gm, '')  // timing line (e.g. "32.8s")
             // Strip "⊙Thought · Xs" timing line (covers circle/bullet/star Unicode variants)
             .replace(/[\u2299\u229a\u25ce\u25cf\u2609\u2605\u2606]\s*Thought\s*[\u00B7\u00b7\.\xB7]\s*\d+s\s*/g, '')
             .trim();
@@ -6443,10 +6485,17 @@ function updateStreamingUI() {
 
         // -- Fallback: catch any **bold** / __bold__ / *italic* that survived
         //    the markdown pipeline unprocessed (edge cases, content-type routing)
+        //    Process bold/italic INSIDE text nodes only — skip if already inside HTML tags
+        html = html.replace(/(<\/[^>]+>|^)([^<]+?)(<[^>]+>|$)/g, function(m, before, text, after) {
+            // Only process plain text segments, not HTML tags
+            text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+            text = text.replace(/__(.+?)__/g, '<strong>$1</strong>');
+            text = text.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>');
+            return (before||'') + text + (after||'');
+        });
+        // Second pass: catch any remaining **bold** in block-level elements
         html = html.replace(/<p>\*\*(.+?)\*\*<\/p>/g, '<p><strong>$1</strong></p>');
         html = html.replace(/<li>\*\*(.+?)\*\*<\/li>/g, '<li><strong>$1</strong></li>');
-        html = html.replace(/(?<!<strong>)(?<!<em>)(?<!["=\w>])\*\*(.+?)\*\*(?!<\/strong>)(?!["=])/g, '<strong>$1</strong>');
-        html = html.replace(/(?<!<strong>)(?<!<em>)(?<![\w>])__(.+?)__(?!<\/strong>)/g, '<strong>$1</strong>');
 
         // Highlight file creation mentions
         html = highlightFileCreations(html);

@@ -1257,11 +1257,16 @@ class ChatBridge(QObject):
                     files_accessed=msg.get('files_accessed', []),
                     tools_used=msg.get('tools_used', [])
                 )
-            
-            log.debug(f'âœ" Saved single chat {conversation_id} to SQLite (storage_key: {storage_key})')
+                    
+            # CRITICAL: Force-flush the write queue so messages are persisted
+            # to SQLite immediately. Without this, the 500ms QTimer debounce
+            # in database.py never fires on shutdown and all chat data is lost.
+            history.db.flush_write_queue()
+                    
+            log.debug(f'âœ“ Saved single chat {conversation_id} to SQLite (storage_key: {storage_key})')
             _maybe_schedule_chat_summary(project_path, conversation_id, title, messages, self._parent_widget)
             return "OK"
-            
+                    
         except Exception as e:
             log.error(f'âœ— Failed to save single chat to SQLite: {e}')
             return f"ERROR: {str(e)}"
@@ -1316,9 +1321,13 @@ class ChatBridge(QObject):
                         files_accessed=msg.get('files_accessed', []),
                         tools_used=msg.get('tools_used', [])
                     )
+                            
+                # CRITICAL: Force-flush after each conversation's messages
+                history.db.flush_write_queue()
+                            
                 _maybe_schedule_chat_summary(project_path, conversation_id, title, messages, self._parent_widget)
-                        
-            log.debug(f'âœ" Saved {len(chats)} chats to SQLite (storage_key: {storage_key})')
+                                    
+            log.debug(f'âœ“ Saved {len(chats)} chats to SQLite (storage_key: {storage_key})')
             return "OK"
             
         except Exception as e:

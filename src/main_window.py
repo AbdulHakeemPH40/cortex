@@ -6231,6 +6231,11 @@ class CortexMainWindow(QMainWindow):
                 self._ai_chat.run_javascript(
                     "if(window.saveProjectChats) saveProjectChats(window.chats);"
                 )
+                # Force-flush the DB write queue after a short delay
+                # to ensure chat messages are persisted before system shutdown.
+                from src.core.database import get_database
+                db = get_database()
+                QTimer.singleShot(600, lambda: db.flush_write_queue())
         except Exception:
             pass
 
@@ -6326,8 +6331,11 @@ class CortexMainWindow(QMainWindow):
                 self._ai_chat.run_javascript(
                     "if(window.saveProjectChats) saveProjectChats(window.chats);"
                 )
-                # Give JS 500ms to flush to SQLite, then proceed with close
-                QTimer.singleShot(500, lambda: log.debug("Chat persistence grace period ended"))
+                # Give JS 500ms to flush to SQLite, then force-flush the DB write queue
+                # as a safety net in case the QTimer debounce hasn't fired yet.
+                from src.core.database import get_database
+                db = get_database()
+                QTimer.singleShot(600, lambda: (db.flush_write_queue(), log.debug("Chat persistence grace period ended")))
             except Exception as e:
                 log.warning(f"Failed to trigger chat persistence: {e}")
         

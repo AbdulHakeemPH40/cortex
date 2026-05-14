@@ -169,15 +169,41 @@ class LSPServerInstance(QObject):
         self._active_requests.clear()
         
         if self.process:
+            # ── Graceful pipe shutdown order ──────────────────────────
+            # CRITICAL: Close pipes BEFORE killing the process.
+            # On Windows, daemon threads reading from stdout/stderr pipes
+            # trigger a fatal access violation (0xC0000005) if the pipe
+            # is broken while readline() is in flight.
+            # Closing stdin first sends EOF → LSP process exits cleanly.
+            try:
+                if self.process.stdin:
+                    self.process.stdin.close()
+            except Exception:
+                pass
+            try:
+                if self.process.stdout:
+                    self.process.stdout.close()
+            except Exception:
+                pass
+            try:
+                if self.process.stderr:
+                    self.process.stderr.close()
+            except Exception:
+                pass
+            # Now safe to terminate (pipes already closed)
             try:
                 self.process.terminate()
-                self.process.wait(timeout=0.2)
-            except Exception as e:
-                log.debug(f"Error terminating LSP process {self.name}: {e}")
+                self.process.wait(timeout=1.0)
+            except Exception:
+                pass
+            try:
+                self.process.kill()
+            except Exception:
+                pass
             self.process = None
         
         if self._read_thread and self._read_thread.is_alive():
-            self._read_thread.join(timeout=0.5)
+            self._read_thread.join(timeout=1.0)
             if self._read_thread.is_alive():
                 log.warning(f"LSP server {self.name} read thread did not terminate gracefully.")
 
@@ -320,7 +346,11 @@ class LSPServerInstance(QObject):
         """Log LSP server errors."""
         if not self.process or not self.process.stderr: return
         while self._is_running and self.process:
-            line = self.process.stderr.readline()
+            try:
+                line = self.process.stderr.readline()
+            except (OSError, ValueError, EOFError):
+                # Pipe closed — process exited or was stopped
+                break
             if not line: break
             log.debug(f"[{self.name} STDERR] {line.decode('utf-8', errors='ignore').strip()}")
 
@@ -345,6 +375,13 @@ class LSPServerInstance(QObject):
                     body = stdout.read(length).decode('utf-8', errors='ignore')
                     msg = json.loads(body)
                     self._handle_message(msg)
+            except (OSError, ValueError, EOFError):
+                # Pipe closed at C level — process exited or was stopped.
+                # On Windows, reading from a broken pipe in a daemon thread
+                # can trigger a fatal access violation. Catching OSError/
+                # ValueError here prevents the process crash.
+                log.debug(f"LSP pipe closed for {self.name} — reader exiting")
+                break
             except Exception as e:
                 log.error(f"LSP Read Loop error in {self.name}: {e}")
                 break

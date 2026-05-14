@@ -10,8 +10,11 @@ MiMo-V2.5 is Xiaomi's latest model family from platform.xiaomimimo.com:
   — High-throughput coding, simple tasks
 
 API: OpenAI-compatible chat completions
-  https://api.xiaomimimo.com/v1/chat/completions
-(Anthropic-compatible endpoint also available at /anthropic — not used by this provider)
+
+  Pay-as-you-go (sk-* keys):  https://api.xiaomimimo.com/v1/chat/completions
+  Token Plan (tp-* keys):     https://token-plan-sgp.xiaomimimo.com/v1/chat/completions
+  (Host auto-routed by key prefix — see _base_url property)
+  (Anthropic-compatible endpoint also available at /anthropic — not used by this provider)
 
 Pricing (per 1M tokens, overseas, cache-miss / cached / output):
   mimo-v2.5-pro:   $1.00 / $0.20 / $3.00
@@ -22,6 +25,7 @@ Pricing (per 1M tokens, overseas, cache-miss / cached / output):
 
 Env vars:
   MIMO_API_KEY                     — API key from platform.xiaomimimo.com
+                                      (sk-* = pay-as-you-go, tp-* = token plan)
   CORTEX_MIMO_MAX_RETRIES          — int, default 4
   CORTEX_MIMO_CONNECT_TIMEOUT_SEC  — float, default 20.0
   CORTEX_MIMO_READ_TIMEOUT_SEC     — float, default 40.0
@@ -42,7 +46,27 @@ log = get_logger("mimo_provider")
 class MimoProvider(BaseProvider):
     """Xiaomi MiMo API provider (OpenAI-compatible) with full agentic support."""
 
-    BASE_URL = "https://api.xiaomimimo.com/v1"
+    # ─── Host routing ─────────────────────────────────────────────────────
+    # MiMo uses TWO different API hosts depending on key type:
+    #   sk-* → pay-as-you-go   → https://api.xiaomimimo.com/v1
+    #   tp-* → token plan       → https://token-plan-cn.xiaomimimo.com/v1
+    # This is per MiMo's official advisory (mimo2codex project).
+
+    _PAYGO_HOST = "https://api.xiaomimimo.com/v1"
+    _TOKEN_PLAN_HOST = "https://token-plan-sgp.xiaomimimo.com/v1"
+
+    @property
+    def _base_url(self) -> str:
+        """Auto-route to correct API host based on API key prefix."""
+        if self._api_key.startswith("tp-"):
+            return self._TOKEN_PLAN_HOST
+        return self._PAYGO_HOST
+
+    @_base_url.setter
+    def _base_url(self, value: Optional[str]) -> None:
+        """No-op setter — BaseProvider.__init__ sets _base_url=None.
+        The actual URL is computed dynamically from the API key prefix."""
+        pass
 
     def __init__(self):
         super().__init__(ProviderType.MIMO)
@@ -89,7 +113,7 @@ class MimoProvider(BaseProvider):
 
     @property
     def available_models(self) -> List[ModelInfo]:
-        return [
+        models = [
             ModelInfo(
                 id="mimo-v2.5-pro",
                 name="MiMo V2.5 Pro (Agentic, 1.05M ctx)",
@@ -112,7 +136,10 @@ class MimoProvider(BaseProvider):
                 cost_per_1k_input=0.00040,      # $0.40 / 1M (cache-miss)
                 cost_per_1k_output=0.00200,     # $2.00 / 1M
             ),
-            ModelInfo(
+        ]
+        # Flash is only available on pay-as-you-go (sk-*), not Token Plan (tp-*)
+        if not self._api_key.startswith("tp-"):
+            models.append(ModelInfo(
                 id="mimo-v2.5-flash",
                 name="MiMo V2.5 Flash (256K ctx)",
                 provider="mimo",
@@ -122,8 +149,8 @@ class MimoProvider(BaseProvider):
                 supports_vision=False,
                 cost_per_1k_input=0.00010,      # $0.10 / 1M (cache-miss)
                 cost_per_1k_output=0.00030,     # $0.30 / 1M
-            ),
-        ]
+            ))
+        return models
 
     # ─── auth ─────────────────────────────────────────────────────────────────
 
@@ -172,7 +199,7 @@ class MimoProvider(BaseProvider):
         if tool_choice:
             payload["tool_choice"] = tool_choice
 
-        url = f"{self.BASE_URL}/chat/completions"
+        url = f"{self._base_url}/chat/completions"
 
         last_error: Optional[Exception] = None
         for attempt in range(self._max_retries + 1):
@@ -298,7 +325,7 @@ class MimoProvider(BaseProvider):
         if tools:
             payload["tools"] = tools
 
-        url = f"{self.BASE_URL}/chat/completions"
+        url = f"{self._base_url}/chat/completions"
 
         last_error: Optional[Exception] = None
         for attempt in range(self._max_retries + 1):
@@ -424,12 +451,15 @@ class MimoProvider(BaseProvider):
     def web_search(self,
                    query: str,
                    model: str = "mimo-v2.5-pro",
-                   max_keyword: int = 3,
+                   max_keyword: int = 5,
                    force_search: bool = True,
-                   limit: int = 1,
+                   limit: int = 5,
                    user_location: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """
         Search the web using MiMo's native web_search built-in tool.
+
+        API spec: max_keyword (1-50, default 5), limit (1-50, default 5),
+        force_search (bool, default False — we default True for agent use).
 
         Returns a list of dicts with keys:
           title, url, snippet, site_name, publish_time, logo_url
@@ -452,9 +482,9 @@ class MimoProvider(BaseProvider):
 
         web_search_tool = {
             "type": "web_search",
-            "max_keyword": min(max_keyword, 3),
+            "max_keyword": min(max(max_keyword, 1), 50),
             "force_search": force_search,
-            "limit": min(limit, 5),
+            "limit": min(max(limit, 1), 50),
         }
         if user_location:
             web_search_tool["user_location"] = user_location
@@ -469,7 +499,7 @@ class MimoProvider(BaseProvider):
             "tool_choice": "auto",
         }
 
-        url = f"{self.BASE_URL}/chat/completions"
+        url = f"{self._base_url}/chat/completions"
 
         for attempt in range(min(self._max_retries + 1, 2)):
             if attempt > 0:

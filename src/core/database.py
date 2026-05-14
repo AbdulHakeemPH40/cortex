@@ -750,6 +750,17 @@ class CortexDatabase:
         if self._write_timer.isActive():
             self._write_timer.stop()
         self._write_timer.start(self._write_interval)
+    
+    def flush_write_queue(self):
+        """
+        PUBLIC: Force-flush all queued write operations immediately.
+        
+        CRITICAL: Call this after batch chat saves (save_single_chat_to_sqlite)
+        and during shutdown to guarantee data is persisted before the app exits.
+        Without this, writes queued via the 500ms QTimer debounce will be
+        lost if the timer hasn't fired yet when the window closes.
+        """
+        self._flush_write_queue()
         
     def _flush_write_queue(self):
         """Flush all queued write operations in a single transaction."""

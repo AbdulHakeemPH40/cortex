@@ -547,11 +547,31 @@ class MistralProvider(BaseProvider):
                     timeout=(self._connect_timeout, req_read_timeout),
                 )
                 if not response.ok:
+                    _err_status = response.status_code
+                    # Capture full error body for debugging
                     try:
                         error_body = response.json()
-                        log.error(f"[Mistral] API error response: {json.dumps(error_body, indent=2)}")
-                    except:
-                        log.error(f"[Mistral] API error response (text): {response.text[:500]}")
+                        log.error(f"[Mistral] HTTP {_err_status} for model={model} — "
+                                  f"messages={len(messages)}, tools={len(kwargs.get('tools', []))}")
+                        log.error(f"[Mistral] API error body: {json.dumps(error_body, indent=2)}")
+                    except Exception:
+                        _err_text = response.text[:1000] if response.text else "(empty)"
+                        log.error(f"[Mistral] HTTP {_err_status} for model={model} — "
+                                  f"messages={len(messages)}, tools={len(kwargs.get('tools', []))}")
+                        log.error(f"[Mistral] API error text: {_err_text}")
+                    # Log message roles/types for diagnosis
+                    _role_summary = []
+                    for _m in messages[:10]:
+                        _r = _m.get('role', '?') if isinstance(_m, dict) else getattr(_m, 'role', '?')
+                        _has_tc = bool(_m.get('tool_calls')) if isinstance(_m, dict) else bool(getattr(_m, 'tool_calls', None))
+                        _has_rc = bool(_m.get('reasoning_content')) if isinstance(_m, dict) else bool(getattr(_m, 'reasoning_content', None))
+                        _flags = []
+                        if _has_tc: _flags.append('TC')
+                        if _has_rc: _flags.append('RC')
+                        _role_summary.append(f"{_r}{'(' + ','.join(_flags) + ')' if _flags else ''}")
+                    log.error(f"[Mistral] Message roles: [{', '.join(_role_summary)}]")
+                    if len(messages) > 10:
+                        log.error(f"[Mistral] ... +{len(messages) - 10} more messages")
                 response.raise_for_status()
                 
                 # chunk_size=1 reduces buffering delay for SSE token delivery.
