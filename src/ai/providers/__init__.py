@@ -18,6 +18,7 @@ class ProviderType(Enum):
     SILICONFLOW = "siliconflow"  # Vision models
     DEEPSEEK = "deepseek"   # DeepSeek V4 — primary coding/reasoning
     KIMI = "kimi"           # Kimi/Moonshot AI (K2.6 multimodal)
+    MIMO = "mimo"           # Xiaomi MiMo (V2.5 family — 1M ctx agentic)
     OPENAI = "openai"       # OpenAI — GPT-4o/4.1 series
 
 
@@ -175,6 +176,14 @@ class ProviderRegistry:
             log.info("KimiProvider registered with K2.6 model")
         except (ImportError, Exception) as e:
             log.warning(f"Could not register KimiProvider: {e}")
+
+        # Register Xiaomi MiMo provider (V2.5 family — 1M ctx agentic)
+        try:
+            from src.ai.providers.mimo_provider import MimoProvider
+            self._register_provider(ProviderType.MIMO, MimoProvider())
+            log.info("MimoProvider registered with V2.5 models")
+        except (ImportError, Exception) as e:
+            log.warning(f"Could not register MimoProvider: {e}")
 
         # Register OpenAI provider (GPT-4o / 4.1 series — budget-friendly tier)
         try:

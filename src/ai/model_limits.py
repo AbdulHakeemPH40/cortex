@@ -222,6 +222,19 @@ _REGISTRY: List[Tuple[str, int, int]] = [
     ("kimi-k2.6",             1_000_000,  32_768),
     ("kimi",                   1_000_000,  32_768),   # generic kimi fallback
 
+    # ── Xiaomi MiMo V2.5 Family ──────────────────────────────────────────────
+    # MiMo-V2.5-Pro: 1.02T-param MoE (42B active), 1.05M ctx, 131.1K output
+    #   — Flagship agentic coding, long-horizon autonomous agent loops
+    # MiMo-V2.5: Full-modal (text/image/video/audio), 1.05M ctx, 131.1K output
+    #   — Multimodal agentic perception & workflows
+    # MiMo-V2.5-Flash: Lightweight, 256K (262,144) ctx, 64K output
+    #   — High-throughput coding, simple tasks, cheap fallback
+    # All support streaming + tool calling (OpenAI-compatible API).
+    ("mimo-v2.5-pro",          1_048_576, 131_072),
+    ("mimo-v2.5",              1_048_576, 131_072),
+    ("mimo-v2.5-flash",          262_144,  65_536),
+    ("mimo",                   1_048_576,  32_768),   # generic mimo fallback
+
     # ── SiliconFlow generic ───────────────────────────────────────────────────
     ("pro/deepseek",         128_000,   8_000),
     ("free/deepseek",        128_000,   8_000),

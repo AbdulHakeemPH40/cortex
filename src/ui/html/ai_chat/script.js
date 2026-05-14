@@ -4791,6 +4791,27 @@ function _caRenderWebSearch(data, status) {
     _caInsertCard(card);
 }
 
+// ── Format fetched content: auto-link URLs ──────────────
+function _caFormatFetchContent(text) {
+    if (!text) return '';
+    // 1. Escape HTML
+    var safe = escapeHtml(text);
+    // 2. Auto-link URLs (must run after escaping to avoid breaking links)
+    safe = safe.replace(/(https?:\/\/[^\s<>"'\u4e00-\u9fff]+)/gi, function(match) {
+        // Trim trailing punctuation that's unlikely part of the URL
+        var clean = match.replace(/[.,;:!?)\]}]+$/, '');
+        var trailing = match.slice(clean.length);
+        return '<a href="' + clean + '" target="_blank" rel="noopener" class="ca-fetch-link">' + clean + '</a>' + trailing;
+    });
+    // 3. Highlight markdown-style headings (## Title)
+    safe = safe.replace(/^(#{1,3})\s+(.+)$/gm, function(m, hashes, title) {
+        var level = hashes.length;
+        var size = level === 1 ? '16px' : level === 2 ? '14px' : '13px';
+        return '<div class="ca-fetch-heading" style="font-size:' + size + ';font-weight:600;margin:12px 0 4px 0;color:var(--text-main);">' + title + '</div>';
+    });
+    return safe;
+}
+
 // ── Render: Web Fetch ──────────────────────────────────
 function _caRenderWebFetch(data, status) {
     var group = _caGroup;
@@ -4812,7 +4833,7 @@ function _caRenderWebFetch(data, status) {
             existing.classList.add('expanded');
             var body = existing.querySelector('.ca-card-body');
             if (body) {
-                body.innerHTML = '<div class="ca-fetch-preview">' + escapeHtml(preview) + '</div>';
+                body.innerHTML = '<div class="ca-fetch-preview">' + _caFormatFetchContent(preview) + '</div>';
             }
         }
         return;
@@ -13112,6 +13133,7 @@ window.agentModeToolMap = {
     'run_command': 'explore',
     'execute_command': 'explore',
     'web_search': 'surf',
+    'web_fetch': 'surf',
     'web_browse': 'surf',
     'fetch_url': 'surf',
     'deep_analysis': 'dive',
@@ -13139,6 +13161,7 @@ window.agentModeToolLabels = {
     'run_command': 'Running',
     'execute_command': 'Executing',
     'web_search': 'Browsing',
+    'web_fetch': 'Fetching',
     'web_browse': 'Browsing',
     'fetch_url': 'Fetching',
     'deep_analysis': 'Analyzing',

@@ -4,3 +4,5 @@ pip install black
 pip install jsbeautifier
 choco install ripgrep
 pip install agent-framework
+# If the run fails, you can replace pip with pip3 and run again
+pip install -U openai

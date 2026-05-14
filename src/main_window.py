@@ -5384,6 +5384,9 @@ class CortexMainWindow(QMainWindow):
         elif model_id.startswith("kimi-"):
             # Kimi/Moonshot AI models (K2.6)
             provider = "kimi"
+        elif model_id.startswith("mimo-"):
+            # Xiaomi MiMo models (V2.5 family)
+            provider = "mimo"
         elif model_id.startswith(("gpt-", "o1", "o3")):
             # OpenAI models - determine which API to use
             # Chat Completions: gpt-4o, gpt-4.1-*

@@ -1285,6 +1285,8 @@ _TOOL_TO_ACTIVITY_NAME: Dict[str, str] = {
     "TodoWrite": "todo_write",
     "Grep":  "search",
     "LS":    "list_directory",
+    "WebSearch":  "web_search",
+    "WebFetch":   "web_fetch",
     "TeamCreate": "team_create",
     "TeamDelete": "team_delete",
     "TaskCreate": "task_create",
@@ -2024,6 +2026,8 @@ Shell: PowerShell (use semicolons ; not &&)
 5. VERIFY only for complex changes; skip verification for simple file creation.
 6. BATCH TOOLS: Call multiple independent tools in one turn.
 7. TARGETED READS: Use Grep/Glob to locate code, then Read with offset/limit for the relevant section.
+8. WEB SEARCH: Use WebSearch for real-time info, current events, documentation, or anything requiring up-to-date knowledge. You HAVE internet access — NEVER say you don't have internet access or can't search the web.
+9. WEB FETCH: Use WebFetch to read and extract content from URLs the user provides. You CAN browse and visit URLs — NEVER say you can't browse or visit URLs.
 """
         if context.get("code_context"):
             prompt += f"\n## User's Selected Code\n```\n{context['code_context']}\n```\n"
@@ -2664,6 +2668,7 @@ Shell: PowerShell (use semicolons ; not &&)
                 ProviderType.SILICONFLOW,
                 ProviderType.DEEPSEEK,
                 ProviderType.KIMI,
+                ProviderType.MIMO,
                 ProviderType.OPENAI,
             ]
 
@@ -2804,6 +2809,8 @@ Shell: PowerShell (use semicolons ; not &&)
                 provider_type = ProviderType.MISTRAL
             elif model_lower.startswith("kimi-"):
                 provider_type = ProviderType.KIMI
+            elif model_lower.startswith("mimo-"):
+                provider_type = ProviderType.MIMO
             elif model_lower.startswith("qwen") or "siliconflow" in model_lower:
                 provider_type = ProviderType.SILICONFLOW
             elif model_lower.startswith("gpt-"):
@@ -4314,10 +4321,10 @@ Shell: PowerShell (use semicolons ; not &&)
                             parsed_map = cast(Dict[str, Any], parsed)
                             content = str(parsed_map.get("content", ""))
                             info["content_length"] = len(content)
-                            info["preview"] = content[:600]
+                            info["preview"] = content[:8000]
                             info["url"] = parsed_map.get("url", info["url"])
                     except Exception:
-                        info["preview"] = result_str[:600] if result_str else ""
+                        info["preview"] = result_str[:8000] if result_str else ""
 
             else:
                 # Fallback: pass raw args
@@ -6449,10 +6456,11 @@ Shell: PowerShell (use semicolons ; not &&)
         """
         Handle the WebSearch tool.
 
-        Tier 0: SerpAPI — Google search results (100 free/month, requires SERPAPI_API_KEY).
-        Tier 1: DuckDuckGo HTML search scraping (free, no API key, real web results).
-        Tier 2: DuckDuckGo Instant Answer API fallback (free, limited results).
-        Tier 3: Brave Search API (free tier 2K queries/month, requires BRAVE_API_KEY).
+        Tier 0: MiMo native web_search — best quality, uses MiMo's built-in search tool.
+        Tier 1: SerpAPI — Google search results (100 free/month, requires SERPAPI_API_KEY).
+        Tier 2: DuckDuckGo HTML search scraping (free, no API key, real web results).
+        Tier 3: DuckDuckGo Instant Answer API fallback (free, limited results).
+        Tier 4: Brave Search API (free tier 2K queries/month, requires BRAVE_API_KEY).
         """
         import asyncio
         import json
@@ -6466,7 +6474,32 @@ Shell: PowerShell (use semicolons ; not &&)
         results: List[Dict[str, str]] = []
         error_msgs: List[str] = []
 
-        # ── Tier 0: SerpAPI — Google search (best quality) ─────────────────
+        # ── Tier 0: MiMo Native Web Search (built-in web_search tool) ──────
+        mimo_key = os.environ.get("MIMO_API_KEY", "")
+        if mimo_key:
+            try:
+                from src.ai.providers.mimo_provider import get_mimo_provider
+                mimo = get_mimo_provider()
+                mimo_results = mimo.web_search(query)
+                for r in mimo_results:
+                    results.append({
+                        'title': r.get('title', ''),
+                        'url': r.get('url', ''),
+                        'snippet': r.get('snippet', '')[:300],
+                    })
+                if results:
+                    log.info(f"[WebSearch] MiMo returned {len(results)} results for '{query}'")
+            except Exception as mimo_exc:
+                msg = f"MiMo: {mimo_exc}"
+                log.warning(f"[WebSearch] {msg} — falling through to SerpAPI")
+                error_msgs.append(msg)
+        else:
+            log.debug(
+                "[WebSearch] MiMo API key not set (MIMO_API_KEY). "
+                "Falling through to SerpAPI / DuckDuckGo."
+            )
+
+        # ── Tier 1: SerpAPI — Google search (best quality) ─────────────────
         serpapi_key = os.environ.get("SERPAPI_API_KEY", "")
         if serpapi_key:
             try:
@@ -6529,7 +6562,7 @@ Shell: PowerShell (use semicolons ; not &&)
                 "Falling through to DuckDuckGo HTML search."
             )
 
-        # ── Tier 1: DuckDuckGo HTML search (real web results) ─────────────
+        # ── Tier 2: DuckDuckGo HTML search (real web results) ─────────────
         if not results:
             try:
                 encoded = urllib.parse.quote(query)
@@ -6624,7 +6657,7 @@ Shell: PowerShell (use semicolons ; not &&)
                 log.warning(f"[WebSearch] {msg} — trying Instant Answer API fallback")
                 error_msgs.append(msg)
 
-        # ── Tier 2: DuckDuckGo Instant Answer API (free, no key) ──────────
+        # ── Tier 3: DuckDuckGo Instant Answer API (free, no key) ──────────
         if not results:
             try:
                 encoded = urllib.parse.quote(query)
@@ -6670,7 +6703,7 @@ Shell: PowerShell (use semicolons ; not &&)
                 log.warning(f"[WebSearch] {msg} — trying Brave fallback")
                 error_msgs.append(msg)
 
-        # ── Tier 3: Brave Search API (free tier, 2,000 queries/month) ────
+        # ── Tier 4: Brave Search API (free tier, 2,000 queries/month) ────
         if not results:
             brave_key = os.environ.get("BRAVE_API_KEY", "")
             if brave_key:

@@ -96,6 +96,10 @@ a = Analysis(
         'src.ai.providers',                 # Provider registry __init__.py
         'src.ai.providers.mistral_provider',
         'src.ai.providers.siliconflow_provider',
+        'src.ai.providers.deepseek_provider',
+        'src.ai.providers.kimi_provider',
+        'src.ai.providers.mimo_provider',
+        'src.ai.providers.openai_provider',
         'src.ai.agent_bridge',              # Core agentic loop
         # ── Core modules (lazily imported via get_*() functions) ───────────
         'src.core.lsp_manager',

@@ -1,8 +1,37 @@
-"run_semant" is not
-defined Pyright(reportUndefinedVariable)
+Sure! Let me explain today's top news stories in simple, easy-to-understand language👇
 
-Expression value is unused Pyright(reportUnusedExpression)
+**What happened:**US President Trump traveled to China and met with China's leader Xi Jinping for nearly 2 hours.
 
-Loading...
+**Why it matters:**The US and China are the two biggest economies in the world. When they talk, it affects global trade, prices, and peace. Trump wants to make deals with China on things like trade and technology.
 
-View Problem (Alt+F8)   No quick fixes available
+**What happened:**Russia launched a massive attackwith drones and missiles on Kyiv. Buildings were destroyed, and even children were hurt.
+
+**Why it matters:**The war between Russia and Ukraine has been going on for years. These attacks show the war is still very violentand innocent people are suffering.
+
+**What happened:**UK Prime Minister Keir Starmer's party (Labour) lost badly in elections. Now people in his own party want him to step down.
+
+**Why it matters:**When a leader loses support, it can lead to a change in government. Other politicians are already trying to take his place.
+
+**What happened:The UK economy grew by 0.3%**in March 2026.
+
+**Why it matters:**Even with wars and global problems, the UK economy is still growing. This is good news — it means more jobs, more business, and people are spending money.
+
+**What happened:**Cuba ran out of diesel and oildue to a US-led blockade (sanctions). People have no electricityfor hours.
+
+**Why it matters:**When a country has no fuel, everything stops — hospitals, food transport, lights, cooking. Regular people suffer the most.
+
+**What happened:**Because of the war in Iranand rising oil prices, airline ticketsin Europe are going up.
+
+**Why it matters:**If oil is expensive → fuel is expensive → your flight costs more. Simple as that!
+
+What happened: Madonna, Shakira, and BTSwill perform at the World Cup Finalhalf-time show — like the Super Bowl!
+
+**Why it matters:**The World Cup is the biggest sporting eventon Earth 🌍. Adding a concert makes it even bigger — billions of peoplewill watch!
+
+**What happened:**HMRC (UK's tax office) signed a £175 million dealto use AIto catch people who cheat on taxes.
+
+**Why it matters:**AI can scan millions of recordsinstantly to find fraud. This means tax cheats will get caught faster. It could also mean mistakes are made — AI isn't perfect!
+
+**What happened:**Famous football manager José Mourinhois going back to manage Real Madrid.
+
+**Why it matters:**Mourinho managed Real Madrid before (2010-2013) and was very successful. Now Real Madrid is struggling, so they're hoping he can fix the teamwith his "iron fist" style.

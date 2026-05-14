@@ -154,6 +154,8 @@ def _get_provider_for_model(model_id: str) -> str:
         return "deepseek"
     if mid.startswith("kimi"):
         return "kimi"
+    if mid.startswith("mimo-"):
+        return "mimo"
     if mid.startswith("mistral") or mid.startswith("codestral"):
         return "mistral"
     if mid.startswith("gpt-"):
@@ -1996,6 +1998,7 @@ class AIChatWidget(QWidget):
         # Map provider name to ProviderType
         _ptype_map: Dict[str, ProviderType] = {
             "kimi": ProviderType.KIMI,
+            "mimo": ProviderType.MIMO,
             "deepseek": ProviderType.DEEPSEEK,
             "mistral": ProviderType.MISTRAL,
             "codestral": ProviderType.MISTRAL,
@@ -2084,6 +2087,8 @@ class AIChatWidget(QWidget):
         _m = (model_id or "").lower()
         if "kimi" in _m or "moonshot" in _m:
             return "kimi"
+        if "mimo" in _m:
+            return "mimo"
         if "deepseek" in _m:
             return "deepseek"
         if "mistral" in _m or "codestral" in _m:
