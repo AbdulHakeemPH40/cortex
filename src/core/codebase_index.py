@@ -148,23 +148,37 @@ class CodebaseIndex:
             return False
         return True
     
+    def _remove_file_symbols_from_map(self, file_path: str) -> None:
+        """Remove all previously indexed symbols for a file from the global symbol map."""
+        empty_keys = []
+        for symbol_name, symbols in self._symbol_map.items():
+            remaining = [symbol for symbol in symbols if symbol.file_path != file_path]
+            if remaining:
+                self._symbol_map[symbol_name] = remaining
+            else:
+                empty_keys.append(symbol_name)
+
+        for symbol_name in empty_keys:
+            del self._symbol_map[symbol_name]
+
     def _index_file(self, file_path: Path) -> bool:
         """Index a single file, extracting symbols."""
         try:
             content = file_path.read_text(encoding='utf-8', errors='ignore')
             mod_time = file_path.stat().st_mtime
+            file_path_str = str(file_path)
             
             # Check if file already indexed and not changed
-            existing = self._file_indices.get(str(file_path))
+            existing = self._file_indices.get(file_path_str)
             if existing and existing.last_modified >= mod_time:
                 return True  # Already up to date
             
             # Parse AST
-            tree = ast.parse(content, filename=str(file_path))
+            tree = ast.parse(content, filename=file_path_str)
             
             # Create file index
             file_index = FileIndex(
-                file_path=str(file_path),
+                file_path=file_path_str,
                 language="python",
                 last_modified=mod_time
             )
@@ -172,6 +186,9 @@ class CodebaseIndex:
             # Extract symbols
             visitor = SymbolExtractor(file_path, content)
             visitor.visit(tree)
+
+            # Remove stale symbols for this file before adding refreshed ones
+            self._remove_file_symbols_from_map(file_path_str)
             
             for symbol in visitor.symbols:
                 file_index.add_symbol(symbol)
@@ -180,7 +197,7 @@ class CodebaseIndex:
                     self._symbol_map[symbol.name] = []
                 self._symbol_map[symbol.name].append(symbol)
             
-            self._file_indices[str(file_path)] = file_index
+            self._file_indices[file_path_str] = file_index
             log.debug(f"Indexed {len(visitor.symbols)} symbols in {file_path}")
             return True
             

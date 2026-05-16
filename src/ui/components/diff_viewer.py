@@ -224,20 +224,29 @@ class DiffViewerWidget(QWidget):
                 border-top: 1px solid #3e3e42;
             }
             
-            /* Scrollbar styling */
+            /* Scrollbar styling — Liquid Design */
             QTextEdit QScrollBar:vertical {
-                background-color: #1e1e1e;
-                width: 12px;
+                background-color: transparent;
+                width: 6px;
+                margin: 2px 1px;
             }
             
             QTextEdit QScrollBar::handle:vertical {
-                background-color: #424242;
-                border-radius: 6px;
+                background-color: rgba(255, 255, 255, 0.15);
+                border-radius: 3px;
                 min-height: 20px;
             }
             
             QTextEdit QScrollBar::handle:vertical:hover {
-                background-color: #4f4f4f;
+                background-color: rgba(255, 255, 255, 0.25);
+            }
+
+            QTextEdit QScrollBar::add-line:vertical, QTextEdit QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+
+            QTextEdit QScrollBar::add-page:vertical, QTextEdit QScrollBar::sub-page:vertical {
+                background: none;
             }
         """)
     

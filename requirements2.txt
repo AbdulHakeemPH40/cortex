@@ -1,6 +1,8 @@
-pip install together
-
-pip install pywinpty
-
-
-pip install numpy sentence-transformers
+# Temporary file - can be deleted
+pip install openhands-sdk
+pip install black
+pip install jsbeautifier
+choco install ripgrep
+pip install agent-framework
+# If the run fails, you can replace pip with pip3 and run again
+pip install -U openai

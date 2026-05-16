@@ -134,6 +134,23 @@ class OutlineWidget(QWidget):
         lang_id = detector.detect(file_path, content)
         symbols = detector.extract_symbols(content, lang_id)
         
+        # Emit event for cross-component communication (NEW)
+        try:
+            from src.core.event_bus import get_event_bus, EventType, OutlineEventData
+            event_bus = get_event_bus()
+            event_bus.publish(
+                EventType.OUTLINE_UPDATED,
+                OutlineEventData(
+                    source_component="code_outline",
+                    file_path=file_path,
+                    symbols=symbols,
+                    classes=symbols.get('classes', []),
+                    functions=symbols.get('functions', [])
+                )
+            )
+        except Exception as e:
+            pass  # Don't break functionality if event bus fails
+        
         # Add classes
         if symbols.get('classes'):
             classes_item = QTreeWidgetItem(self.tree)

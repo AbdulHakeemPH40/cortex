@@ -9,97 +9,201 @@ from PyQt6.QtWidgets import (
     QPushButton, QTreeView, QLineEdit, QListWidget, QListWidgetItem,
     QLabel, QMenu, QInputDialog, QMessageBox, QFrame,
     QSizePolicy, QComboBox, QSlider, QStyledItemDelegate, QStyle,
-    QApplication
+    QApplication, QAbstractItemView
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QDir, QModelIndex, QSize, QRect, QTimer
+from PyQt6.QtCore import Qt, pyqtSignal, QDir, QModelIndex, QSize, QRect, QTimer, QThread
 from PyQt6.QtGui import (
     QIcon, QAction, QFont, QFileSystemModel, QColor, QPainter,
     QFontMetrics, QPalette
 )
 from src.utils.helpers import detect_language
 from src.utils.logger import get_logger
-from src.utils.icons import make_icon, make_button_icon
+from src.utils.icons import make_icon, make_button_icon, make_sprite_icon
 
 log = get_logger("sidebar")
 
 def _get_icon_name(path: str) -> str:
-    """Map file extension to icon factory name."""
+    """Map file/folder path → OpenCode sprite IconName (e.g. 'Python', 'Typescript')."""
     p = Path(path)
     if p.is_dir():
-        return "folder"
-    suffix = p.suffix.lower()
-    mapping = {
-        # Python
-        ".py": "python", ".pyw": "python", ".pyi": "python",
-        # JavaScript/TypeScript
-        ".js": "javascript", ".mjs": "javascript", ".cjs": "javascript",
-        ".ts": "typescript", ".tsx": "react", ".jsx": "react",
-        # Web
-        ".html": "html", ".htm": "html",
-        ".css": "css", ".scss": "scss", ".sass": "scss", ".less": "scss",
-        # Java/Kotlin
-        ".java": "java", ".jar": "java", ".groovy": "java",
-        ".kt": "kotlin", ".kts": "kotlin",
-        ".swift": "swift",
-        # C/C++
-        ".cpp": "cpp", ".cc": "cpp", ".cxx": "cpp", ".h": "c", ".hpp": "cpp",
-        # C#
-        ".cs": "csharp",
-        # Rust
-        ".rs": "rust",
-        # Go
-        ".go": "go",
-        # PHP
-        ".php": "php",
-        # Ruby
-        ".rb": "ruby", ".erb": "ruby", ".rake": "ruby",
-        # Dart
-        ".dart": "dart",
-        # Lua
-        ".lua": "lua",
-        # R
-        ".r": "r", ".R": "r",
-        # Julia
-        ".jl": "julia",
-        # Zig
-        ".zig": "zig",
-        # Elixir
-        ".ex": "elixir", ".exs": "elixir",
-        # Haskell
-        ".hs": "haskell", ".lhs": "haskell",
-        # Clojure
-        ".clj": "clojure", ".cljs": "clojure", ".cljc": "clojure",
-        # Shell
-        ".sh": "shell", ".bash": "shell", ".zsh": "shell", ".bat": "shell", ".cmd": "shell", ".ps1": "shell",
-        # Data/Config
-        ".json": "json", ".json5": "json",
-        ".yaml": "yaml", ".yml": "yaml",
-        ".toml": "config", ".ini": "config", ".cfg": "config",
-        ".xml": "config",
-        # SQL
-        ".sql": "sql", ".sqlite": "sql",
-        # Markdown
-        ".md": "markdown", ".mdx": "markdown", ".markdown": "markdown",
-        # Git
-        ".git": "git", ".gitignore": "git", ".gitattributes": "git",
-        # Docker
-        ".dockerfile": "docker", ".dockerignore": "docker",
-        # Vue/Svelte
-        ".vue": "vue",
-        ".svelte": "svelte",
-        # Images
-        ".pdf": "pdf",
-        ".jpg": "image", ".jpeg": "image", ".png": "image", ".gif": "image", ".svg": "image",
-        ".doc": "word", ".docx": "word",
-        ".xlsx": "excel", ".xls": "excel",
-        ".pptx": "powerpoint", ".ppt": "powerpoint",
-        ".csv": "csv",
-        ".log": "files",
-        ".txt": "txt",
-        ".env": "env",
-        ".zip": "zip", ".tar": "zip", ".gz": "zip", ".rar": "zip", ".7z": "zip",
+        folder = p.name.lower().strip('/')
+        _FOLDER_MAP = {
+            'src': 'FolderSrc', 'source': 'FolderSrc',
+            'lib': 'FolderLib', 'libs': 'FolderLib',
+            'test': 'FolderTest', 'tests': 'FolderTest',
+            '__tests__': 'FolderTest', 'spec': 'FolderTest', 'e2e': 'FolderTest',
+            'node_modules': 'FolderNode',
+            'vendor': 'FolderPackages', 'packages': 'FolderPackages',
+            'build': 'FolderBuildkite', 'dist': 'FolderDist',
+            'out': 'FolderDist', 'output': 'FolderDist', 'target': 'FolderTarget',
+            'config': 'FolderConfig', 'configs': 'FolderConfig',
+            'env': 'FolderEnvironment', 'environments': 'FolderEnvironment',
+            'docker': 'FolderDocker', 'containers': 'FolderDocker',
+            'docs': 'FolderDocs', 'doc': 'FolderDocs', 'documentation': 'FolderDocs',
+            'public': 'FolderPublic', 'static': 'FolderPublic',
+            'assets': 'FolderImages', 'images': 'FolderImages',
+            'img': 'FolderImages', 'icons': 'FolderImages', 'media': 'FolderImages',
+            'fonts': 'FolderFont',
+            'styles': 'FolderCss', 'stylesheets': 'FolderCss', 'css': 'FolderCss',
+            'sass': 'FolderSass', 'scss': 'FolderSass',
+            'scripts': 'FolderScripts', 'script': 'FolderScripts',
+            'utils': 'FolderUtils', 'utilities': 'FolderUtils',
+            'helpers': 'FolderHelper', 'tools': 'FolderTools',
+            'components': 'FolderComponents', 'component': 'FolderComponents',
+            'views': 'FolderViews', 'view': 'FolderViews',
+            'layouts': 'FolderLayout', 'layout': 'FolderLayout',
+            'templates': 'FolderTemplate', 'template': 'FolderTemplate',
+            'hooks': 'FolderHook', 'hook': 'FolderHook',
+            'store': 'FolderStore', 'stores': 'FolderStore',
+            'reducers': 'FolderReduxReducer', 'reducer': 'FolderReduxReducer',
+            'services': 'FolderApi', 'service': 'FolderApi',
+            'api': 'FolderApi', 'apis': 'FolderApi',
+            'routes': 'FolderRoutes', 'route': 'FolderRoutes',
+            'middleware': 'FolderMiddleware', 'middlewares': 'FolderMiddleware',
+            'controllers': 'FolderController', 'controller': 'FolderController',
+            'models': 'FolderDatabase', 'model': 'FolderDatabase',
+            'schemas': 'FolderDatabase', 'migrations': 'FolderDatabase',
+            'types': 'FolderTypescript', 'typing': 'FolderTypescript',
+            'typings': 'FolderTypescript', '@types': 'FolderTypescript',
+            'android': 'FolderAndroid', 'ios': 'FolderIos',
+            'flutter': 'FolderFlutter', 'mobile': 'FolderMobile',
+            'kubernetes': 'FolderKubernetes', 'k8s': 'FolderKubernetes',
+            'terraform': 'FolderTerraform',
+            'aws': 'FolderAws', 'firebase': 'FolderFirebase',
+            '.github': 'FolderGithub', '.gitlab': 'FolderGitlab',
+            '.git': 'FolderGit', 'workflows': 'FolderGhWorkflows',
+            '.vscode': 'FolderVscode', '.idea': 'FolderIntellij',
+            '.cursor': 'FolderCursor', '.storybook': 'FolderStorybook',
+            'i18n': 'FolderI18n', 'locales': 'FolderI18n', 'lang': 'FolderI18n',
+            'temp': 'FolderTemp', 'tmp': 'FolderTemp',
+            'logs': 'FolderLog', 'log': 'FolderLog',
+            'mocks': 'FolderMock', 'mock': 'FolderMock',
+            'data': 'FolderDatabase', 'database': 'FolderDatabase', 'db': 'FolderDatabase',
+            'prisma': 'FolderPrisma', 'drizzle': 'FolderDrizzle',
+            'functions': 'FolderFunctions', 'lambda': 'FolderFunctions',
+            'security': 'FolderSecure', 'auth': 'FolderSecure',
+            'keys': 'FolderKeys', 'certs': 'FolderKeys',
+            'examples': 'FolderExamples', 'example': 'FolderExamples',
+            'venv': 'FolderPython', '.venv': 'FolderPython',
+        }
+        return _FOLDER_MAP.get(folder, _FOLDER_MAP.get(folder.lstrip('.'), 'FolderBlue'))
+
+    # Exact filename matches
+    name_lower = p.name.lower()
+    _FILENAME_MAP = {
+        'package.json': 'Nodejs', 'package-lock.json': 'Nodejs',
+        '.nvmrc': 'Nodejs', '.node-version': 'Nodejs',
+        'yarn.lock': 'Yarn', 'pnpm-lock.yaml': 'Pnpm',
+        'bun.lock': 'Bun', 'bun.lockb': 'Bun', 'bunfig.toml': 'Bun',
+        'dockerfile': 'Docker', 'docker-compose.yml': 'Docker',
+        'docker-compose.yaml': 'Docker', '.dockerignore': 'Docker',
+        '.gitignore': 'Git', '.gitattributes': 'Git', '.gitmodules': 'Git',
+        'tsconfig.json': 'Tsconfig', 'jsconfig.json': 'Jsconfig',
+        'vite.config.js': 'Vite', 'vite.config.ts': 'Vite',
+        'tailwind.config.js': 'Tailwindcss', 'tailwind.config.ts': 'Tailwindcss',
+        'jest.config.js': 'Jest', 'jest.config.ts': 'Jest',
+        'vitest.config.js': 'Vitest', 'vitest.config.ts': 'Vitest',
+        '.eslintrc': 'Eslint', '.eslintrc.js': 'Eslint', '.eslintrc.json': 'Eslint',
+        '.prettierrc': 'Prettier', '.prettierrc.js': 'Prettier',
+        'webpack.config.js': 'Webpack', 'rollup.config.js': 'Rollup',
+        'next.config.js': 'Next', 'next.config.mjs': 'Next',
+        'nuxt.config.js': 'Nuxt', 'nuxt.config.ts': 'Nuxt',
+        'svelte.config.js': 'Svelte', 'astro.config.mjs': 'AstroConfig',
+        'gatsby-config.js': 'Gatsby', 'remix.config.js': 'Remix',
+        'cargo.toml': 'Rust', 'go.mod': 'GoMod', 'go.sum': 'GoMod',
+        'requirements.txt': 'Python', 'pyproject.toml': 'Python',
+        'pipfile': 'Python', 'poetry.lock': 'Poetry',
+        'gemfile': 'Gemfile', 'rakefile': 'Ruby',
+        'composer.json': 'Php', 'build.gradle': 'Gradle', 'pom.xml': 'Maven',
+        'deno.json': 'Deno', 'deno.jsonc': 'Deno',
+        'vercel.json': 'Vercel', 'netlify.toml': 'Netlify',
+        '.env': 'Tune', '.env.local': 'Tune', '.env.example': 'Tune',
+        '.editorconfig': 'Editorconfig', 'makefile': 'Makefile',
+        'robots.txt': 'Robots', 'favicon.ico': 'Favicon',
+        '.babelrc': 'Babel', 'babel.config.js': 'Babel',
+        'firebase.json': 'Firebase', 'angular.json': 'Angular',
+        'nx.json': 'Nx', 'lerna.json': 'Lerna',
+        'turbo.json': 'Turborepo',
+        'readme.md': 'Readme', 'readme': 'Readme',
+        'changelog.md': 'Changelog', 'license': 'Certificate',
+        'wrangler.toml': 'Wrangler', 'renovate.json': 'Renovate',
     }
-    return mapping.get(suffix, "default")
+    icon = _FILENAME_MAP.get(name_lower)
+    if icon:
+        return icon
+
+    # Extension map → OpenCode sprite IconName
+    suffix = p.suffix.lower()
+    _EXT_MAP = {
+        # Python
+        '.py': 'Python', '.pyw': 'Python', '.pyi': 'Python', '.pyx': 'Python',
+        # JS/TS
+        '.js': 'Javascript', '.mjs': 'Javascript', '.cjs': 'Javascript',
+        '.ts': 'Typescript', '.tsx': 'React_ts', '.jsx': 'React',
+        '.d.ts': 'TypescriptDef',
+        # Web
+        '.html': 'Html', '.htm': 'Html',
+        '.css': 'Css', '.scss': 'Sass', '.sass': 'Sass', '.less': 'Less', '.styl': 'Stylus',
+        '.vue': 'Vue', '.svelte': 'Svelte',
+        # Java ecosystem
+        '.java': 'Java', '.jar': 'Java', '.groovy': 'Groovy',
+        '.kt': 'Kotlin', '.kts': 'Kotlin', '.scala': 'Scala',
+        # .NET
+        '.cs': 'Csharp', '.vb': 'Visualstudio', '.fs': 'Fsharp',
+        # C/C++
+        '.cpp': 'Cpp', '.cc': 'Cpp', '.cxx': 'Cpp',
+        '.c': 'C', '.h': 'H', '.hpp': 'Hpp',
+        # Systems
+        '.rs': 'Rust', '.go': 'Go', '.nim': 'Nim', '.zig': 'Zig',
+        '.v': 'Vlang', '.odin': 'Odin', '.gleam': 'Gleam',
+        # Scripting
+        '.rb': 'Ruby', '.erb': 'Ruby',
+        '.php': 'Php',
+        '.pl': 'Perl', '.pm': 'Perl',
+        # Shell
+        '.sh': 'Console', '.bash': 'Console', '.zsh': 'Console', '.fish': 'Console',
+        '.bat': 'Console', '.cmd': 'Console', '.ps1': 'Powershell',
+        # Mobile
+        '.swift': 'Swift', '.dart': 'Dart', '.m': 'ObjectiveC', '.mm': 'ObjectiveCpp',
+        # Functional
+        '.hs': 'Haskell', '.lhs': 'Haskell', '.elm': 'Elm',
+        '.ex': 'Elixir', '.exs': 'Elixir', '.erl': 'Erlang',
+        '.clj': 'Clojure', '.cljs': 'Clojure', '.cljc': 'Clojure',
+        '.ml': 'Ocaml', '.mli': 'Ocaml',
+        '.lua': 'Lua', '.r': 'R', '.jl': 'Julia',
+        # Data/config
+        '.json': 'Json', '.json5': 'Json', '.jsonc': 'Json',
+        '.yaml': 'Yaml', '.yml': 'Yaml',
+        '.toml': 'Toml', '.ini': 'Settings', '.cfg': 'Settings', '.conf': 'Settings',
+        '.xml': 'Xml', '.xsd': 'Xml', '.xsl': 'Xml',
+        '.env': 'Tune',
+        '.sql': 'Database', '.sqlite': 'Database', '.db': 'Database',
+        '.graphql': 'Graphql', '.gql': 'Graphql',
+        '.proto': 'Proto', '.wasm': 'Webassembly',
+        # Docs
+        '.md': 'Markdown', '.mdx': 'Mdx', '.markdown': 'Markdown', '.tex': 'Tex',
+        '.rst': 'Readme',
+        # Git
+        '.gitignore': 'Git', '.gitattributes': 'Git',
+        # Docker
+        '.dockerfile': 'Docker', '.dockerignore': 'Docker',
+        # Media
+        '.svg': 'Svg', '.png': 'Image', '.jpg': 'Image', '.jpeg': 'Image',
+        '.gif': 'Image', '.webp': 'Image', '.bmp': 'Image', '.ico': 'Favicon',
+        '.mp4': 'Video', '.mov': 'Video', '.avi': 'Video', '.webm': 'Video',
+        '.mp3': 'Audio', '.wav': 'Audio', '.flac': 'Audio',
+        # Documents
+        '.pdf': 'Pdf', '.doc': 'Word', '.docx': 'Word',
+        '.ppt': 'Powerpoint', '.pptx': 'Powerpoint',
+        '.xls': 'Document', '.xlsx': 'Document', '.csv': 'Document',
+        # Archives
+        '.zip': 'Zip', '.tar': 'Zip', '.gz': 'Zip', '.rar': 'Zip', '.7z': 'Zip',
+        # Other
+        '.log': 'Log', '.lock': 'Lock', '.key': 'Key',
+        '.pem': 'Certificate', '.crt': 'Certificate',
+        '.txt': 'Document',
+    }
+    return _EXT_MAP.get(suffix, 'Document')
 
 
 # ── Custom delegate for VS Code-style rows ─────────────────────────────────────
@@ -112,7 +216,7 @@ class FileTreeDelegate(QStyledItemDelegate):
         self._is_dark = True
 
     def set_dark(self, is_dark: bool):
-        self._is_dark = is_dark
+        pass  # dark-only
 
     def paint(self, painter: QPainter, option, index: QModelIndex):
         self.initStyleOption(option, index)
@@ -125,9 +229,9 @@ class FileTreeDelegate(QStyledItemDelegate):
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
         hovered  = bool(option.state & QStyle.StateFlag.State_MouseOver)
         if selected:
-            painter.fillRect(option.rect, QColor("#094771" if self._is_dark else "#cce5ff"))
+            painter.fillRect(option.rect, QColor("#094771"))
         elif hovered:
-            painter.fillRect(option.rect, QColor("#2a2d2e" if self._is_dark else "#f0f4ff"))
+            painter.fillRect(option.rect, QColor("#2a2d2e"))
 
         x = option.rect.left() + 2  # running x cursor
 
@@ -138,8 +242,7 @@ class FileTreeDelegate(QStyledItemDelegate):
             chevron = "▼" if expanded else "▶"
             chevron_rect = QRect(x, option.rect.top(), 14, option.rect.height())
             painter.save()
-            arrow_color = "#cccccc" if self._is_dark else "#555555"
-            painter.setPen(QColor(arrow_color))
+            painter.setPen(QColor("#cccccc"))
             f0 = painter.font()
             f0.setPointSize(8)
             painter.setFont(f0)
@@ -149,14 +252,19 @@ class FileTreeDelegate(QStyledItemDelegate):
             painter.restore()
             x += 14  # shift rest right
 
-        # ── VS Code-style SVG Icons ───────────────────────────────
+        # ── VS Code-style SVG Icons from OpenCode sprite ─────────────────
         icon_name = _get_icon_name(filepath)
-        
-        # Use 18px size for better visibility
-        icon_size = 18
-        icon = make_icon(icon_name, "", icon_size)
+        # Mark expanded folders with open variant
+        if is_dir:
+            view = option.widget
+            expanded = view.isExpanded(index) if (view and hasattr(view, 'isExpanded')) else False
+            if expanded and not icon_name.endswith('Open'):
+                icon_name = icon_name + 'Open'
+
+        icon_size = 20
+        icon = make_sprite_icon(icon_name, icon_size)
         pixmap = icon.pixmap(icon_size, icon_size)
-        
+
         icon_rect = QRect(x, option.rect.top() + (option.rect.height() - icon_size) // 2, icon_size, icon_size)
         painter.drawPixmap(icon_rect, pixmap)
         x += icon_size + 6
@@ -165,9 +273,9 @@ class FileTreeDelegate(QStyledItemDelegate):
         text_rect = QRect(x, option.rect.top(),
                           option.rect.right() - x - 2,
                           option.rect.height())
-        fg = "#d4d4d4" if self._is_dark else "#1a1a1a"
+        fg = "#d4d4d4"
         if selected:
-            fg = "#ffffff" if self._is_dark else "#003d80"
+            fg = "#ffffff"
 
         painter.save()
         painter.setPen(QColor(fg))
@@ -199,8 +307,15 @@ QTreeView::item {
     border-radius: 3px;
     padding-left: 2px;
 }
-QTreeView::item:hover      { background: #2a2d2e; }
-QTreeView::item:selected   { background: #094771; color: #ffffff; }
+QTreeView::item:hover      { 
+    background: #37373d;
+    color: #ffffff;
+}
+QTreeView::item:selected   { 
+    background: #094771; 
+    color: #ffffff;
+    border: 1px solid #007acc;
+}
 QTreeView::branch {
     background: #1e1e1e;
 }
@@ -214,25 +329,29 @@ QTreeView::branch:open:has-children:has-siblings  {
     image: none;
     border-image: none;
 }
-"""
-
-TREE_QSS_LIGHT = """
-QTreeView {
-    background: #ffffff;
+/* Dark scrollbar styling */
+QTreeView QScrollBar:vertical {
+    background: #252525;
+    width: 5px;
     border: none;
-    outline: 0;
-    font-size: 12px;
-    color: #1a1a1a;
 }
-QTreeView::item {
-    height: 24px;
-    border-radius: 3px;
-    padding-left: 2px;
+QTreeView QScrollBar::handle:vertical {
+    background: #5a5a5a;
+    min-height: 20px;
+    border-radius: 5px;
+    margin: 2px;
 }
-QTreeView::item:hover      { background: #e8f0fe; }
-QTreeView::item:selected   { background: #cce5ff; color: #003d80; }
-QTreeView::branch {
-    background: #ffffff;
+QTreeView QScrollBar::handle:vertical:hover {
+    background: #6a6a6a;
+}
+QTreeView QScrollBar::add-line:vertical,
+QTreeView QScrollBar::sub-line:vertical {
+    height: 0px;
+    background: none;
+}
+QTreeView QScrollBar::add-page:vertical,
+QTreeView QScrollBar::sub-page:vertical {
+    background: none;
 }
 """
 
@@ -242,29 +361,275 @@ SKIP_DIRS = {'.git', '__pycache__', 'node_modules', '.venv',
 
 class VsCodeFileTree(QTreeView):
     """QTreeView subclass: single-click expands folders."""
+    file_deleted = pyqtSignal(str)
 
-    def __init__(self, parent=None):
+    def __init__(self, file_manager=None, explorer=None, parent=None):
         super().__init__(parent)
+        self._file_manager = file_manager
+        self._explorer = explorer  # Direct reference to FileExplorerPanel
         self.setMouseTracking(True)
         self.setExpandsOnDoubleClick(False)  # we handle manually
+        self.setSelectionMode(QTreeView.SelectionMode.ExtendedSelection)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.viewport().setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+        self.setDragDropMode(QTreeView.DragDropMode.InternalMove)
+
+    def _find_explorer(self):
+        """Return the directly linked explorer panel."""
+        return self._explorer
+
+    def keyPressEvent(self, event):
+        """Handle keyboard shortcuts for file operations."""
+        # ── 1. Copy / Cut / Paste (VS Code style) ───────────────────
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            if event.key() == Qt.Key.Key_C:
+                self._handle_copy()
+                return
+            elif event.key() == Qt.Key.Key_X:
+                self._handle_cut()
+                return
+            elif event.key() == Qt.Key.Key_V:
+                self._handle_paste()
+                return
+
+        # ── 2. Delete / Backspace ──────────────────────────────────
+        if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            paths = self._get_selected_paths()
+            if paths:
+                self._delete_items(paths)
+                return
+
+        super().keyPressEvent(event)
+        if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+            self.viewport().update()
+
+    def _handle_copy(self):
+        paths = self._get_selected_paths()
+        print(f"[COPY] selected paths: {paths}")   # DEBUG
+        if paths and self._explorer:
+            self._explorer._clipboard_paths = paths
+            self._explorer._clipboard_mode = "copy"
+            print(f"[COPY] clipboard set to: {paths}")   # DEBUG
+            log.info(f"📋 Copied: {', '.join([Path(p).name for p in paths])}")
+        elif not paths:
+            print("[COPY] Nothing selected — no paths found")
+        elif not self._explorer:
+            print("[COPY] ERROR: _explorer is None")
+
+    def _handle_cut(self):
+        paths = self._get_selected_paths()
+        print(f"[CUT] selected paths: {paths}")   # DEBUG
+        if paths and self._explorer:
+            self._explorer._clipboard_paths = paths
+            self._explorer._clipboard_mode = "cut"
+            log.info(f"✂️ Cut: {', '.join([Path(p).name for p in paths])}")
+        elif not self._explorer:
+            print("[CUT] ERROR: _explorer is None")
+
+    def _handle_paste(self):
+        print(f"[PASTE] explorer={self._explorer}, clipboard={getattr(self._explorer, '_clipboard_paths', None)}")  # DEBUG
+        if not self._explorer or not self._explorer._clipboard_paths:
+            print("[PASTE] Aborted — clipboard empty or no explorer")
+            return
+
+        # Target directory: selected folder, or parent folder if file selected, or project root
+        idx = self.currentIndex()
+        if idx.isValid():
+            path = self.model().filePath(idx)
+            target_dir = path if Path(path).is_dir() else str(Path(path).parent)
+        else:
+            target_dir = self._explorer._root_path
+
+        print(f"[PASTE] target_dir={target_dir}")  # DEBUG
+        if target_dir:
+            self._explorer._paste_into(target_dir)
+
+    def _get_selected_paths(self) -> list[str]:
+        """Get all selected file paths. Uses selectedIndexes() filtered to col 0.
+        NOTE: selectedRows() does NOT work with QFileSystemModel — it always returns []
+        because QFileSystemModel uses SelectItems not SelectRows behaviour.
+        """
+        seen: set[str] = set()
+        paths: list[str] = []
+        for idx in self.selectionModel().selectedIndexes():
+            if idx.column() == 0:  # avoid duplicates from other columns
+                p = self.model().filePath(idx)
+                if p not in seen:
+                    seen.add(p)
+                    paths.append(p)
+        return paths
+
+    # ── Drag and Drop Support ──────────────────────────────────────────
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        """Handle drops: external folder = open as project, internal = move files."""
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            paths = [url.toLocalFile() for url in urls if url.toLocalFile()]
+            
+            if not paths:
+                super().dropEvent(event)
+                return
+
+            # Detect if this is an EXTERNAL drop (from Windows Explorer / Desktop)
+            # by checking if the source is outside the current project root
+            explorer = self._find_explorer()
+            project_root = explorer._root_path if explorer else None
+            
+            if project_root:
+                # Normalize for comparison
+                norm_root = os.path.normcase(os.path.normpath(project_root))
+                
+                # Check if ANY dropped path is outside the project
+                is_external = False
+                for p in paths:
+                    norm_p = os.path.normcase(os.path.normpath(p))
+                    if not norm_p.startswith(norm_root):
+                        is_external = True
+                        break
+                
+                if is_external:
+                    # External drop: open folder as project or open file
+                    # Delegate to the main window
+                    main_win = self.window()
+                    if main_win and hasattr(main_win, '_open_folder_programmatic'):
+                        for p in paths:
+                            if os.path.isdir(p):
+                                main_win._open_folder_programmatic(p)
+                                event.acceptProposedAction()
+                                return
+                            elif os.path.isfile(p):
+                                main_win._open_file(p)
+                                event.acceptProposedAction()
+                                return
+                    event.acceptProposedAction()
+                    return
+
+            # Internal drop: move files within project
+            index = self.indexAt(event.position().toPoint())
+            target_dir = None
+            if index.isValid():
+                path = self.model().filePath(index)
+                if Path(path).is_dir():
+                    target_dir = path
+                else:
+                    target_dir = str(Path(path).parent)
+            else:
+                target_dir = project_root
+
+            if target_dir and paths:
+                if explorer and self._file_manager:
+                    from PyQt6.QtWidgets import QMessageBox
+                    
+                    target_name = Path(target_dir).name
+                    item_count = len(paths)
+                    item_desc = f"'{Path(paths[0]).name}'" if item_count == 1 else f"these {item_count} items"
+                    
+                    msg = f"Are you sure you want to move {item_desc} into '{target_name}'?\n\nThis action can be undone with Ctrl+Z."
+                    reply = QMessageBox.question(
+                        self, 'Confirm Move', msg,
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.Yes
+                    )
+                    
+                    if reply == QMessageBox.StandardButton.Yes:
+                        for p in paths:
+                            if target_dir.startswith(p):
+                                continue
+                            self._file_manager.move(p, target_dir)
+                        event.acceptProposedAction()
+                    return
+
+        super().dropEvent(event)
+
+    def _delete_items(self, paths):
+        """Show confirmation dialog and delete multiple files/folders (moves to trash)."""
+        if not paths: return
+        
+        from PyQt6.QtWidgets import QMessageBox
+        from pathlib import Path
+        
+        count = len(paths)
+        if count == 1:
+            name = Path(paths[0]).name
+            msg = f"Are you sure you want to delete '{name}'?"
+        else:
+            msg = f"Are you sure you want to delete {count} selected items?"
+            
+        msg_box = QMessageBox(
+            QMessageBox.Icon.Question, "Delete",
+            msg + "\n\nThis action can be undone with Ctrl+Z.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            self
+        )
+        msg_box.setDefaultButton(QMessageBox.StandardButton.Yes)
+        
+        reply = msg_box.exec()
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            if self._file_manager:
+                success_count = 0
+                for path in paths:
+                    if self._file_manager.delete(path):
+                        success_count += 1
+                
+                if success_count < len(paths):
+                    QMessageBox.warning(self, "Delete Partial", f"Successfully deleted {success_count} of {len(paths)} items.")
+            else:
+                QMessageBox.critical(self, "Delete Failed", "FileManager not available")
 
     def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.RightButton:
+            # Right click: select item if not already selected
+            index = self.indexAt(event.pos())
+            if index.isValid():
+                if not self.selectionModel().isSelected(index):
+                    self.setCurrentIndex(index)
+            super().mousePressEvent(event)
+            return
+
         index = self.indexAt(event.pos())
         if index.isValid():
             model = self.model()
             if hasattr(model, 'filePath'):
                 path = model.filePath(index)
                 if Path(path).is_dir():
-                    # Call super first so selection + model loading fires
-                    super().mousePressEvent(event)
-                    if self.isExpanded(index):
-                        self.collapse(index)
-                    else:
-                        self.expand(index)
-                    # Force icon repaint for open/closed folder icon
-                    from PyQt6.QtCore import QTimer
-                    QTimer.singleShot(50, self.viewport().update)
-                    return
+                    # Handle folder expand/collapse logic
+                    # If Ctrl/Shift is held, standard selection behavior applies
+                    if not (event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)):
+                        if self.isExpanded(index):
+                            self.collapse(index)
+                        else:
+                            self.expand(index)
+                        QTimer.singleShot(50, self.viewport().update)
+                        self.setCurrentIndex(index)
+                        return
+                else:
+                    # It's a file - open it on single click (if no modifiers)
+                    if not (event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)):
+                        path = model.filePath(index)
+                        # Open the file in the editor (preview mode)
+                        if hasattr(self.parent(), 'file_opened'):
+                            self.parent().file_opened.emit(path)
+                        elif hasattr(self.parent().parent(), 'file_opened'):
+                             self.parent().parent().file_opened.emit(path)
+                        # VS Code behavior: keep focus on the tree after single-click open.
+                        # Since the CodeEditor explicitly tries to steal focus when opened,
+                        # we must assertively steal it back.
+                        self.setFocus()
+                        QTimer.singleShot(50, self.setFocus)
         super().mousePressEvent(event)
 
 
@@ -276,11 +641,27 @@ class FileExplorerPanel(QWidget):
     file_deleted = pyqtSignal(str)
     file_renamed = pyqtSignal(str, str)
 
-    def __init__(self, parent=None):
+    def __init__(self, file_manager=None, parent=None):
         super().__init__(parent)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._file_manager = file_manager
         self._root_path: str | None = None
         self._is_dark = True
         self._tree_collapsed = False
+
+        # Internal clipboard state
+        self._clipboard_paths = []
+        self._clipboard_mode = "copy"  # "copy" or "cut"
+        self._explorer_active = False  # VS Code-style context key: True when tree was last clicked
+
+        # ── VS Code-style focus-aware shortcuts ────────────────────────────
+        # Instead of QShortcuts (which either don't fire or conflict with
+        # the editor's Ctrl+C), we install an application-level event filter.
+        # It intercepts KeyPress events and checks if the file tree has focus
+        # (equivalent to VS Code's `when: explorerViewletFocus && !inputFocus`).
+        # If yes → handle file copy/cut/paste.  If no → pass event through.
+        QApplication.instance().installEventFilter(self)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -299,7 +680,7 @@ class FileExplorerPanel(QWidget):
         hlay.addStretch()
 
         collapse_btn = QPushButton()
-        collapse_btn.setIcon(make_button_icon("collapse", self._is_dark, 18))
+        collapse_btn.setIcon(make_button_icon("collapse-all", self._is_dark, 18))
         collapse_btn.setFixedSize(24, 24)
         collapse_btn.setToolTip("Collapse All")
         collapse_btn.setStyleSheet("QPushButton { border:none; background:transparent; } QPushButton:hover { background: #3e3e42; border-radius:3px; }")
@@ -332,20 +713,21 @@ class FileExplorerPanel(QWidget):
         athay.setContentsMargins(0, 0, 0, 0)
         athay.setSpacing(2)
 
+        # ── Explorer Action Icons (High-quality SVG Lucide/Codicon style) ────
         self._btn_new_file = QPushButton()
-        self._btn_new_file.setIcon(make_button_icon("new_file", self._is_dark, 18))
+        self._btn_new_file.setIcon(make_button_icon("new-file", self._is_dark, 18))
         self._btn_new_file.setFixedSize(26, 26)
         self._btn_new_file.setToolTip("New File")
         self._btn_new_file.clicked.connect(self._new_file)
         
         self._btn_new_folder = QPushButton()
-        self._btn_new_folder.setIcon(make_button_icon("new_folder", self._is_dark, 18))
+        self._btn_new_folder.setIcon(make_button_icon("new-folder", self._is_dark, 18))
         self._btn_new_folder.setFixedSize(26, 26)
         self._btn_new_folder.setToolTip("New Folder")
         self._btn_new_folder.clicked.connect(self._new_folder)
 
         self._btn_refresh = QPushButton()
-        self._btn_refresh.setIcon(make_button_icon("refresh", self._is_dark, 18))
+        self._btn_refresh.setIcon(make_button_icon("refresh-explorer", self._is_dark, 18))
         self._btn_refresh.setFixedSize(26, 26)
         self._btn_refresh.setToolTip("Refresh Explorer")
         self._btn_refresh.clicked.connect(self._refresh_explorer)
@@ -369,7 +751,7 @@ class FileExplorerPanel(QWidget):
         self._model.setNameFilterDisables(False)
 
         # ── Tree view ──────────────────────────────────────────────────────
-        self._tree = VsCodeFileTree()
+        self._tree = VsCodeFileTree(file_manager=self._file_manager, explorer=self, parent=self)
         self._tree.setModel(self._model)
         self._tree.setHeaderHidden(True)
         for col in (1, 2, 3):
@@ -382,8 +764,14 @@ class FileExplorerPanel(QWidget):
         # Repaint after expand/collapse so open-folder icon updates
         self._tree.expanded.connect(self._on_expanded)
         self._tree.collapsed.connect(self._on_collapsed)
-        # Repaint when async directory listing finishes loading
-        self._model.directoryLoaded.connect(lambda _: self._tree.viewport().update())
+        # Repaint when async directory listing finishes loading (debounced)
+        self._viewport_update_timer = QTimer(self)
+        self._viewport_update_timer.setSingleShot(True)
+        self._viewport_update_timer.setInterval(50)
+        self._viewport_update_timer.timeout.connect(lambda: self._tree.viewport().update())
+        self._model.directoryLoaded.connect(lambda _: self._viewport_update_timer.start())
+        # Connect file deletion signal
+        self._tree.file_deleted.connect(self.file_deleted)
 
         # Custom delegate
         self._delegate = FileTreeDelegate(self._model)
@@ -394,18 +782,31 @@ class FileExplorerPanel(QWidget):
         self._tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
 
         layout.addWidget(self._tree)
+        
+        # Apply initial scrollbar styling
+        self.set_theme(True)
         self._tree_visible = True
 
     # ── Public ────────────────────────────────────────────────────────────────
     def set_project(self, folder_path: str):
-        self._root_path = folder_path
-        name = Path(folder_path).name.upper()
+        # Normalize path (convert to absolute, fix slashes)
+        normalized_path = os.path.normpath(os.path.abspath(folder_path))
+        log.info(f"📁 Setting project root: {normalized_path}")
+        
+        self._root_path = normalized_path
+        name = Path(normalized_path).name.upper()
         self._folder_name.setText(name)
         self._folder_arrow.setText("▼")
         self._tree_collapsed = False
-        idx = self._model.setRootPath(folder_path)
+        
+        # Set model root and tree root index
+        idx = self._model.setRootPath(normalized_path)
+        log.info(f"   ✓ Model root index: {idx.row()}, {idx.column()}")
+        log.info(f"   ✓ Model root path: {self._model.filePath(idx)}")
+        
         self._tree.setRootIndex(idx)
         self._tree.setVisible(True)
+        log.info(f"   ✓ Tree root set successfully")
         # NO auto-expand — user expands manually; call restore_expanded_paths() after
 
     def get_expanded_paths(self) -> list[str]:
@@ -471,7 +872,18 @@ class FileExplorerPanel(QWidget):
             if not ok or not name or name == Path(path).name:
                 return False
 
-            new_path = str(Path(path).parent / name)
+            new_path_obj = Path(path).parent / name
+            
+            # Prevent WinError 183 by explicitly checking for existence
+            if new_path_obj.exists() and new_path_obj.resolve() != Path(path).resolve():
+                QMessageBox.warning(
+                    self, 
+                    "Rename Failed", 
+                    f"A file or folder with the name '{name}' already exists at this location.\n\nPlease choose a different name."
+                )
+                return False
+
+            new_path = str(new_path_obj)
             Path(path).rename(new_path)
             self.file_renamed.emit(path, new_path)
             return True
@@ -480,16 +892,15 @@ class FileExplorerPanel(QWidget):
             return False
 
     def set_theme(self, is_dark: bool):
-        self._is_dark = is_dark
-        self._delegate.set_dark(is_dark)
-        self._tree.setStyleSheet(TREE_QSS_DARK if is_dark else TREE_QSS_LIGHT)
+        # Dark-only — always apply dark styling
+        self._delegate.set_dark(True)
+        self._tree.setStyleSheet(TREE_QSS_DARK)
         # header/folder row colours
-        fg = "#cccccc" if is_dark else "#1a1a1a"
-        bg = "#1e1e1e" if is_dark else "#f3f3f3"
+        bg = "#1e1e1e"
+        fg = "#cccccc"
         self._header.setStyleSheet(f"background:{bg};")
         self._folder_row.setStyleSheet(
-            f"background:{bg}; border-bottom:1px solid "
-            f"{'#3e3e42' if is_dark else '#dcdcdc'};"
+            f"background:{bg}; border-bottom:1px solid #3e3e42;"
         )
         self._folder_name.setStyleSheet(
             f"font-size:11px; font-weight:bold; color:{fg}; letter-spacing:0.5px;"
@@ -497,33 +908,196 @@ class FileExplorerPanel(QWidget):
         self._folder_arrow.setStyleSheet(f"font-size:9px; color:{fg};")
         
         # Update toolbar icons
-        self._btn_new_file.setIcon(make_button_icon("new_file", is_dark, 18))
-        self._btn_new_folder.setIcon(make_button_icon("new_folder", is_dark, 18))
-        self._btn_refresh.setIcon(make_button_icon("refresh", is_dark, 18))
+        self._btn_new_file.setIcon(make_button_icon("new-file", True, 18))
+        self._btn_new_folder.setIcon(make_button_icon("new-folder", True, 18))
+        self._btn_refresh.setIcon(make_button_icon("refresh-explorer", True, 18))
         
-        btn_qss = f"""
+        btn_qss = """
             QPushButton {{ 
                 border:none; 
                 background:transparent; 
             }} 
             QPushButton:hover {{ 
-                background: {"#3e3e42" if is_dark else "#e5e5e5"}; 
+                background: #3e3e42; 
                 border-radius:3px; 
             }}
         """
         for btn in [self._btn_new_file, self._btn_new_folder, self._btn_refresh]:
             btn.setStyleSheet(btn_qss)
 
+        # Apply scrollbar styling to the panel
+        self.setStyleSheet("""
+            FileExplorerPanel QScrollBar:vertical {{
+                background: #1e1e1e;
+                width: 10px;
+                border: none;
+            }}
+            FileExplorerPanel QScrollBar::handle:vertical {{
+                background: #4a4a4a;
+                min-height: 20px;
+                border-radius: 5px;
+                margin: 2px;
+            }}
+            FileExplorerPanel QScrollBar::handle:vertical:hover {{
+                background: #5a5a5a;
+            }}
+            FileExplorerPanel QScrollBar::add-line:vertical,
+            FileExplorerPanel QScrollBar::sub-line:vertical {{
+                height: 0px;
+                background: none;
+            }}
+            FileExplorerPanel QScrollBar::add-page:vertical,
+            FileExplorerPanel QScrollBar::sub-page:vertical {{
+                background: none;
+            }}
+        """)
+
         self._tree.viewport().update()
 
     # ── Private ───────────────────────────────────────────────────────────────
     def _on_expanded(self, index: QModelIndex):
-        from PyQt6.QtCore import QTimer
-        QTimer.singleShot(30, self._tree.viewport().update)
+        self._viewport_update_timer.start()
 
     def _on_collapsed(self, index: QModelIndex):
-        from PyQt6.QtCore import QTimer
-        QTimer.singleShot(30, self._tree.viewport().update)
+        self._viewport_update_timer.start()
+
+    def _is_explorer_focused(self) -> bool:
+        focused = QApplication.focusWidget()
+        if not focused:
+            return False
+        w = focused
+        while w is not None:
+            if w is self._tree:
+                return True
+            w = w.parent() if hasattr(w, 'parent') and callable(w.parent) else None
+        return False
+
+    def eventFilter(self, obj, event):
+        """Application-level event filter.
+        Handles Ctrl+C/X/V only when the file tree HAS FOCUS.
+        """
+        from PyQt6.QtCore import QEvent
+        from PyQt6.QtGui import QKeySequence
+        
+        # On Windows, standard keys like Ctrl+C might arrive as ShortcutOverride
+        if event.type() in (QEvent.Type.KeyPress, QEvent.Type.ShortcutOverride):
+            if self._is_explorer_focused():
+                mods = event.modifiers()
+                key = event.key()
+                if mods & Qt.KeyboardModifier.ControlModifier:
+                    if key == Qt.Key.Key_C:
+                        self._kb_copy()
+                        return True
+                    elif key == Qt.Key.Key_X:
+                        self._kb_cut()
+                        return True
+                    elif key == Qt.Key.Key_V:
+                        self._kb_paste()
+                        return True
+        return super().eventFilter(obj, event)
+
+
+    def _set_system_clipboard(self, paths: list[str], mode: str):
+        """Update the OS clipboard so Ctrl+V works everywhere."""
+        from PyQt6.QtCore import QMimeData, QUrl
+        mime = QMimeData()
+        urls = [QUrl.fromLocalFile(p) for p in paths]
+        mime.setUrls(urls)
+        # Set text representation so pasting into editor gives file path
+        mime.setText("\n".join(str(Path(p).resolve()) for p in paths))
+        # Optional: could set custom mime type for 'cut' vs 'copy'
+        QApplication.clipboard().setMimeData(mime)
+
+    def _kb_copy(self):
+        """Ctrl+C — copy selected files (panel-level, always fires)."""
+        paths = self._tree._get_selected_paths()
+        print(f"[KB COPY] paths={paths}")
+        if paths:
+            self._clipboard_paths = paths
+            self._clipboard_mode = "copy"
+            self._set_system_clipboard(paths, "copy")
+            log.info(f"📋 Copied: {', '.join(Path(p).name for p in paths)}")
+
+    def _kb_cut(self):
+        """Ctrl+X — cut selected files."""
+        paths = self._tree._get_selected_paths()
+        print(f"[KB CUT] paths={paths}")
+        if paths:
+            self._clipboard_paths = paths
+            self._clipboard_mode = "cut"
+            self._set_system_clipboard(paths, "cut")
+            log.info(f"✂️ Cut: {', '.join(Path(p).name for p in paths)}")
+
+    def _kb_paste(self):
+        """Ctrl+V — paste into currently selected/focused folder."""
+        print(f"[KB PASTE] start")
+        idx = self._tree.currentIndex()
+        if idx.isValid():
+            p = self._model.filePath(idx)
+            target = p if Path(p).is_dir() else str(Path(p).parent)
+        else:
+            target = self._root_path
+        print(f"[KB PASTE] target={target}")
+        if target:
+            self._paste_into(target)
+
+    def _paste_into(self, target_dir: str):
+        """Execute the actual file copy/move operations from clipboard."""
+        if not self._file_manager:
+            return
+
+        from PyQt6.QtWidgets import QMessageBox
+        
+        # 1. Check internal clipboard first
+        paths = self._clipboard_paths
+        mode = self._clipboard_mode
+        
+        # 2. Check system clipboard if internal is empty
+        if not paths:
+            mime = QApplication.clipboard().mimeData()
+            if mime.hasUrls():
+                paths = [url.toLocalFile() for url in mime.urls() if url.isLocalFile()]
+                mode = "copy"  # external pastes are always treated as copies by default
+                
+        if not paths:
+            return
+
+        # Confirm paste/move operation
+        item_count = len(paths)
+        if item_count == 0:
+            return
+            
+        item_desc = f"'{Path(paths[0]).name}'" if item_count == 1 else f"these {item_count} items"
+        verb = "move" if mode == "cut" else "copy"
+        target_name = Path(target_dir).name
+        
+        msg = f"Are you sure you want to {verb} {item_desc} into '{target_name}'?\n\nThis action can be undone with Ctrl+Z."
+        reply = QMessageBox.question(
+            self, f'Confirm {verb.capitalize()}', msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes
+        )
+        
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        success_count = 0
+        for src in paths:
+            if mode == "cut":
+                res = self._file_manager.move(src, target_dir)
+            else:
+                res = self._file_manager.copy(src, target_dir)
+            
+            if res:
+                success_count += 1
+
+        # If it was an internal 'cut', clear clipboard after moving
+        if self._clipboard_mode == "cut" and self._clipboard_paths:
+            self._clipboard_paths = []
+            self._clipboard_mode = "copy"
+
+        log.info(f"Pasted {success_count} items into {target_dir}")
+        self._tree.viewport().update()
 
     def _toggle_tree(self, _event=None):
         """Collapse/expand all items in tree (like VS Code's root arrow)."""
@@ -602,58 +1176,216 @@ class FileExplorerPanel(QWidget):
             self.file_opened.emit(path)
 
     def _show_context_menu(self, pos):
-        index = self._tree.indexAt(pos)
-        path = self._model.filePath(index) if index.isValid() else self._root_path
-        if not path:
+        indexes = self._tree.selectedIndexes()
+        # Filter for column 0 only
+        selected_paths = [self._model.filePath(idx) for idx in indexes if idx.column() == 0]
+        
+        # Target for Paste is either the folder clicked on, or its parent folder if a file was clicked
+        click_index = self._tree.indexAt(pos)
+        target_path = self._model.filePath(click_index) if click_index.isValid() else self._root_path
+        
+        if not target_path:
             return
 
         menu = QMenu(self)
-        is_dir = Path(path).is_dir()
+        menu.setStyleSheet(f"""
+            QMenu {{ background-color: #252526; color: #cccccc; border: 1px solid #3c3c3c; }}
+            QMenu::item:selected {{ background-color: #094771; color: white; }}
+        """)
+        
+        is_dir = Path(target_path).is_dir()
+        
         if is_dir:
             act_new_file   = menu.addAction("📄  New File")
             act_new_folder = menu.addAction("📁  New Folder")
             menu.addSeparator()
 
+        if selected_paths:
+            act_cut = menu.addAction("✂️  Cut")
+            act_copy = menu.addAction("📋  Copy")
+            menu.addSeparator()
+            
+        # Paste logic: Check internal or system clipboard
+        can_paste = bool(self._clipboard_paths)
+        if not can_paste:
+            clipboard = QApplication.clipboard()
+            mime = clipboard.mimeData()
+            if mime.hasUrls():
+                can_paste = True
+                
+        if can_paste:
+            act_paste = menu.addAction("📥  Paste")
+            menu.addSeparator()
+
         act_rename = menu.addAction("✏️  Rename")
         act_delete = menu.addAction("🗑️  Delete")
         menu.addSeparator()
-        act_copy_path = menu.addAction("📋  Copy Path")
+        act_copy_path = menu.addAction("🔗  Copy Path")
 
         action = menu.exec(self._tree.viewport().mapToGlobal(pos))
         if not action:
             return
 
-        if is_dir and action.text().strip().endswith("New File"):
-            name, ok = QInputDialog.getText(self, "New File", "File name:")
-            if ok and name:
-                new_path = str(Path(path) / name)
+        txt = action.text().strip()
+
+        if is_dir and "New File" in txt:
+            self._new_file_at(target_path)
+        elif is_dir and "New Folder" in txt:
+            self._new_folder_at(target_path)
+        elif "Cut" in txt:
+            paths = selected_paths if selected_paths else [target_path]
+            self._clipboard_paths = paths
+            self._clipboard_mode = "cut"
+            self._set_system_clipboard(paths, "cut")
+            print(f"[CUT] stored: {self._clipboard_paths}")
+        elif "Copy" in txt:
+            paths = selected_paths if selected_paths else [target_path]
+            self._clipboard_paths = paths
+            self._clipboard_mode = "copy"
+            self._set_system_clipboard(paths, "copy")
+            print(f"[COPY] stored: {self._clipboard_paths}")
+        elif "Paste" in txt:
+            dest_dir = target_path if is_dir else str(Path(target_path).parent)
+            print(f"[PASTE] into: {dest_dir}, clipboard: {self._clipboard_paths}")
+            self._paste_into(dest_dir)
+        elif "Rename" in txt:
+            self._rename_path(target_path)
+        elif "Delete" in txt:
+            self._tree._delete_items(selected_paths if selected_paths else [target_path])
+        elif "Copy Path" in txt:
+            QApplication.clipboard().setText(target_path)
+
+    def _new_file_at(self, directory):
+        name, ok = QInputDialog.getText(self, "New File", "File name:")
+        if ok and name:
+            new_path = str(Path(directory) / name)
+            try:
                 Path(new_path).touch()
                 self.file_created.emit(new_path)
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Could not create file: {e}")
 
-        elif is_dir and action.text().strip().endswith("New Folder"):
-            name, ok = QInputDialog.getText(self, "New Folder", "Folder name:")
-            if ok and name:
-                (Path(path) / name).mkdir(exist_ok=True)
+    def _new_folder_at(self, directory):
+        name, ok = QInputDialog.getText(self, "New Folder", "Folder name:")
+        if ok and name:
+            try:
+                (Path(directory) / name).mkdir(exist_ok=True)
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Could not create folder: {e}")
 
-        elif action == act_rename:
-            self._rename_path(path)
+    def _handle_paste(self, dest_dir):
+        """Handle pasting from internal or external clipboard."""
+        import shutil
+        
+        # 1. Check system clipboard first (files from Explorer)
+        clipboard = QApplication.clipboard()
+        mime = clipboard.mimeData()
+        if mime.hasUrls():
+            for url in mime.urls():
+                src_path = url.toLocalFile()
+                if src_path:
+                    try:
+                        self._copy_item(src_path, dest_dir)
+                    except Exception as e:
+                        log.error(f"Failed to paste external file {src_path}: {e}")
+            return
 
-        elif action == act_delete:
-            reply = QMessageBox.question(
-                self, "Delete", f"Delete '{Path(path).name}'?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-            if reply == QMessageBox.StandardButton.Yes:
-                import shutil
-                if Path(path).is_dir():
-                    shutil.rmtree(path)
+        # 2. Internal clipboard
+        if not self._clipboard_paths:
+            return
+
+        for src_path in self._clipboard_paths:
+            try:
+                if self._clipboard_mode == "cut":
+                    shutil.move(src_path, dest_dir)
                 else:
-                    Path(path).unlink()
-                self.file_deleted.emit(path)
+                    self._copy_item(src_path, dest_dir)
+            except Exception as e:
+                log.error(f"Failed to paste {src_path}: {e}")
+                
+        if self._clipboard_mode == "cut":
+            self._clipboard_paths = []
+            
+        self._refresh_explorer()
 
-        elif action == act_copy_path:
-            QApplication.clipboard().setText(str(path))
+    def _copy_item(self, src_path, dest_dir):
+        """Helper to copy file or folder to destination."""
+        import shutil
+        src = Path(src_path)
+        dest = Path(dest_dir) / src.name
+        
+        # Handle filename collisions (e.g. file.txt -> file (copy).txt)
+        if dest.exists():
+            stem = src.stem
+            ext = src.suffix
+            counter = 1
+            while dest.exists():
+                dest = Path(dest_dir) / f"{stem} (copy {counter}){ext}"
+                counter += 1
+                
+        if src.is_dir():
+            shutil.copytree(str(src), str(dest))
+        else:
+            shutil.copy2(str(src), str(dest))
 
+
+class _FileSearchWorker(QThread):
+    """Background worker for file-content search so the UI stays responsive."""
+    results_ready = pyqtSignal(list)  # list of (rel, fpath, lineno, snippet)
+
+    def __init__(self, query: str, root: str):
+        super().__init__()
+        self._query = query.lower()
+        self._root = root
+
+    def run(self):
+        results = []
+        # Directories to skip entirely during search
+        skip_dirs = {
+            '.git', '__pycache__', 'node_modules', 'venv', '.venv',
+            '.qoder', '.cortex', '.pytest_cache', '.mypy_cache', '.tox',
+            'installer_output', 'tmp', 'memory', 'bin', 'referenc_image',
+            'build', 'dist', '.eggs', 'eggs', '__pycache__',
+            '.idea', '.vscode',  # IDE noise
+        }
+        # Only search text/code files (skip binaries, images, archives, etc.)
+        code_exts = {
+            '.py', '.js', '.ts', '.jsx', '.tsx', '.html', '.css', '.scss', '.less',
+            '.json', '.xml', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf',
+            '.md', '.txt', '.rst', '.csv', '.log', '.env', '.gitignore',
+            '.c', '.cpp', '.h', '.hpp', '.cs', '.java', '.go', '.rs', '.rb',
+            '.php', '.swift', '.kt', '.scala', '.sh', '.bat', '.ps1', '.psm1',
+            '.sql', '.r', '.m', '.lua', '.pl', '.pm', '.dockerfile', '.makefile',
+        }
+        for dirpath, dirnames, files in os.walk(self._root):
+            if self.isInterruptionRequested():
+                break
+            # Prune skipped dirs in-place for os.walk
+            dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+            for fname in files:
+                if self.isInterruptionRequested():
+                    break
+                # Skip non-code files by extension
+                _, ext = os.path.splitext(fname)
+                ext_lower = ext.lower()
+                if ext_lower and ext_lower not in code_exts:
+                    continue
+                fpath = os.path.join(dirpath, fname)
+                try:
+                    with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
+                        for lineno, line in enumerate(f, 1):
+                            if self._query in line.lower():
+                                rel = os.path.relpath(fpath, self._root)
+                                results.append((rel, fpath, lineno, line.strip()[:60]))
+                                if len(results) >= 200:
+                                    break
+                except Exception:
+                    pass
+                if len(results) >= 200:
+                    break
+            if len(results) >= 200:
+                break
+        self.results_ready.emit(results)
 
 
 class SearchPanel(QWidget):
@@ -662,12 +1394,19 @@ class SearchPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._root = None
+        self._root_display = ""  # human-readable project name for scope label
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
 
         self._header = QLabel("SEARCH")
         layout.addWidget(self._header)
+
+        # Search scope label — shows which project is being searched
+        self._scope_label = QLabel("")
+        self._scope_label.setWordWrap(True)
+        self._scope_label.setStyleSheet("font-size:10px; color:#569cd6; padding:2px 0;")
+        layout.addWidget(self._scope_label)
 
         self._search_input = QLineEdit()
         self._search_input.setPlaceholderText("Search in files...")
@@ -683,39 +1422,50 @@ class SearchPanel(QWidget):
         self.set_theme(True)
 
     def set_theme(self, is_dark: bool):
-        color = "#858585" if is_dark else "#666666"
+        color = "#858585"
         self._header.setStyleSheet(f"font-size:10px; font-weight:bold; color:{color}; letter-spacing:1px;")
+        self._scope_label.setStyleSheet(f"font-size:10px; color:#569cd6; padding:2px 0;")
         self._status.setStyleSheet(f"font-size:11px; color:{color};")
 
     def set_root(self, root: str):
         self._root = root
+        # Build a clean display name for the scope label
+        if root and os.path.isdir(root):
+            name = Path(root).name or root
+            self._root_display = name
+            self._scope_label.setText(f"🔍 Searching in: {name}")
+        else:
+            self._root_display = ""
+            self._scope_label.setText("⚠ No project opened — search disabled")
 
     def _do_search(self):
         query = self._search_input.text().strip()
-        if not query or not self._root:
+        if not query:
+            return
+        if not self._root or not os.path.isdir(self._root):
+            self._results.clear()
+            self._status.setText("⚠ No project opened — open a folder first (Ctrl+O)")
             return
         self._results.clear()
-        found = 0
-        for dirpath, _, files in os.walk(self._root):
-            if any(skip in dirpath for skip in ['.git', '__pycache__', 'node_modules', 'venv', '.venv']):
-                continue
-            for fname in files:
-                fpath = os.path.join(dirpath, fname)
-                try:
-                    with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
-                        for lineno, line in enumerate(f, 1):
-                            if query.lower() in line.lower():
-                                rel = os.path.relpath(fpath, self._root)
-                                item = QListWidgetItem(f"{rel}:{lineno}  {line.strip()[:60]}")
-                                item.setData(Qt.ItemDataRole.UserRole, (fpath, lineno))
-                                self._results.addItem(item)
-                                found += 1
-                                if found >= 200:
-                                    break
-                except Exception:
-                    pass
-                if found >= 200:
-                    break
+        self._status.setText("Searching...")
+
+        # Cancel any previous worker
+        if hasattr(self, '_search_worker') and self._search_worker is not None and self._search_worker.isRunning():
+            self._search_worker.requestInterruption()
+            self._search_worker.wait(500)
+
+        self._search_worker = _FileSearchWorker(query, self._root)
+        self._search_worker.results_ready.connect(self._on_search_results)
+        self._search_worker.start()
+
+    def _on_search_results(self, results: list):
+        """Receive search results from background thread."""
+        self._results.clear()
+        for rel, fpath, lineno, snippet in results:
+            item = QListWidgetItem(f"{rel}:{lineno}  {snippet}")
+            item.setData(Qt.ItemDataRole.UserRole, (fpath, lineno))
+            self._results.addItem(item)
+        found = len(results)
         self._status.setText(f"{found} result(s)" + (" (limited)" if found >= 200 else ""))
 
     def _open_result(self, item: QListWidgetItem):
@@ -759,7 +1509,7 @@ class AIToolsPanel(QWidget):
         layout.addStretch()
 
     def set_theme(self, is_dark: bool):
-        color = "#858585" if is_dark else "#666666"
+        color = "#858585"
         self._header.setStyleSheet(f"font-size:10px; font-weight:bold; color:{color}; letter-spacing:1px;")
 
     def get_model(self) -> str:
@@ -1015,13 +1765,231 @@ class ChangedFilesPanel(QWidget):
             self._count_label.setText(f"({count})")
 
     def set_theme(self, is_dark: bool):
-        color = "#858585" if is_dark else "#666666"
+        color = "#858585"
         self._header.setStyleSheet(f"font-size:10px; font-weight:bold; color:{color}; letter-spacing:1px;")
 
     def _make_separator(self) -> QFrame:
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
         return line
+
+
+class ChatHistoryPanel(QWidget):
+    """Chat history list panel — shows saved conversations with titles."""
+    chat_selected = pyqtSignal(str)        # conversation_id
+    chat_renamed = pyqtSignal(str, str)     # (conversation_id, new_title)
+    chat_delete_requested = pyqtSignal(str) # conversation_id — main_window shows confirm dialog
+    new_chat_requested = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._chats: list[dict] = []
+        self._project_path: str = ""
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Header with "+ New Chat" button
+        header = QWidget()
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(12, 10, 12, 6)
+        header_layout.setSpacing(8)
+
+        title = QLabel("CHAT HISTORY")
+        title.setStyleSheet("font-size:10px; font-weight:bold; color:#858585; letter-spacing:1px;")
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+
+        self._new_btn = QPushButton()
+        self._new_btn.setFixedSize(28, 28)
+        self._new_btn.setToolTip("New Chat")
+        self._new_btn.setIcon(make_icon("plus", "#cccccc", 14))
+        self._new_btn.setIconSize(QSize(14, 14))
+        self._new_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: 1px solid #3a3a3a;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background: #2d2d2d;
+                border-color: #555555;
+            }
+        """)
+        self._new_btn.clicked.connect(self.new_chat_requested.emit)
+        header_layout.addWidget(self._new_btn)
+        layout.addWidget(header)
+
+        # Chat list
+        self._list = QListWidget()
+        self._list.setFrameShape(QFrame.Shape.NoFrame)
+        self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._list.itemClicked.connect(self._on_item_clicked)
+        self._list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._list.customContextMenuRequested.connect(self._on_context_menu)
+        self._list.setStyleSheet("""
+            QListWidget {
+                background: transparent;
+                border: none;
+                outline: none;
+            }
+            QListWidget::item {
+                color: #cccccc;
+                padding: 8px 12px;
+                border: none;
+                border-radius: 4px;
+            }
+            QListWidget::item:hover {
+                background: #2a2a2a;
+            }
+            QListWidget::item:selected {
+                background: #37373d;
+                color: #ffffff;
+            }
+            QScrollBar:vertical {
+                border: none;
+                background: #1e1e1e;
+                width: 5px;
+                margin: 0px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background: #5a5a5a;
+                min-height: 30px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #6a6a6a;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                border: none;
+                background: none;
+                height: 0px;
+            }
+        """)
+        layout.addWidget(self._list, 1)
+
+        # Empty state
+        self._empty_label = QLabel("No saved chats")
+        self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_label.setStyleSheet("color: #555555; font-size: 12px; padding: 20px;")
+        self._empty_label.hide()
+        layout.addWidget(self._empty_label)
+
+    def refresh(self, project_path: str = None):
+        """Reload chat list from SQLite for the given project path."""
+        if project_path:
+            self._project_path = project_path
+        if not self._project_path:
+            self._list.clear()
+            self._empty_label.show()
+            return
+
+        try:
+            from src.core.chat_history import get_chat_history
+            history = get_chat_history()
+            conversations = history.get_conversations(self._project_path)
+            self._chats = conversations or []
+        except Exception:
+            self._chats = []
+
+        self._list.clear()
+        self._list.blockSignals(True)
+        for chat in self._chats:
+            title = chat.get('title', 'Untitled')
+            conv_id = chat.get('conversation_id', '')
+            msg_count = chat.get('message_count', 0)
+
+            item = QListWidgetItem(f"{title}")
+            item.setData(Qt.ItemDataRole.UserRole, conv_id)
+            item.setToolTip(f"{msg_count} messages")
+            self._list.addItem(item)
+        self._list.blockSignals(False)
+
+        self._empty_label.setVisible(len(self._chats) == 0)
+
+    def _on_item_clicked(self, item: QListWidgetItem):
+        conv_id = item.data(Qt.ItemDataRole.UserRole)
+        if conv_id:
+            self.chat_selected.emit(conv_id)
+
+    def _on_context_menu(self, pos):
+        item = self._list.itemAt(pos)
+        if not item:
+            return
+        conv_id = item.data(Qt.ItemDataRole.UserRole)
+        if not conv_id:
+            return
+
+        menu = QMenu(self)
+        rename_action = menu.addAction("Rename Chat")
+        rename_action.triggered.connect(lambda: self._rename_chat(conv_id, item))
+        menu.addSeparator()
+        delete_action = menu.addAction("Delete Chat")
+        delete_action.triggered.connect(lambda: self.chat_delete_requested.emit(conv_id))
+        menu.exec(self._list.mapToGlobal(pos))
+
+    def _rename_chat(self, conv_id: str, item: QListWidgetItem):
+        current_title = item.text()
+        new_title, ok = QInputDialog.getText(
+            self, "Rename Chat", "New name:", text=current_title
+        )
+        if ok and new_title.strip() and new_title.strip() != current_title:
+            new_title = new_title.strip()
+            try:
+                from src.core.chat_history import get_chat_history
+                history = get_chat_history()
+                history.db.update_conversation_title(conv_id, new_title)
+            except Exception:
+                pass
+            item.setText(new_title)
+            self.chat_renamed.emit(conv_id, new_title)
+
+    def remove_item(self, conv_id: str):
+        """Remove an item by conversation_id (called after confirmed delete)."""
+        for i in range(self._list.count()):
+            item = self._list.item(i)
+            if item and item.data(Qt.ItemDataRole.UserRole) == conv_id:
+                self._list.takeItem(i)
+                break
+        self._empty_label.setVisible(self._list.count() == 0)
+
+    def populate_from_json(self, chat_list_json: str):
+        """Populate the list directly from JS JSON data (bypasses stale SQLite)."""
+        import json
+        try:
+            data = json.loads(chat_list_json) if isinstance(chat_list_json, str) else chat_list_json
+        except (json.JSONDecodeError, TypeError):
+            return
+        if not isinstance(data, list):
+            return
+
+        self._list.clear()
+        self._list.blockSignals(True)
+        for chat in data:
+            if not isinstance(chat, dict):
+                continue
+            conv_id = chat.get('id', '')
+            title = chat.get('title', 'Untitled')
+            msg_count = chat.get('message_count', len(chat.get('messages', [])))
+            if not conv_id:
+                continue
+
+            item = QListWidgetItem(title)
+            item.setData(Qt.ItemDataRole.UserRole, conv_id)
+            item.setToolTip(f"{msg_count} messages")
+            self._list.addItem(item)
+        self._list.blockSignals(False)
+        self._empty_label.setVisible(self._list.count() == 0)
+
+    def set_theme(self, is_dark: bool):
+        color = "#858585"
+        # Theme is primarily handled by stylesheets set in _build_ui
 
 
 class SidebarWidget(QWidget):
@@ -1032,15 +2000,17 @@ class SidebarWidget(QWidget):
     file_search_opened = pyqtSignal(str, int)
     ai_action_requested = pyqtSignal(str)
     file_renamed = pyqtSignal(str, str)
-    
-    # Changed files signals
-    file_accepted = pyqtSignal(str)
-    file_rejected = pyqtSignal(str)
-    accept_all_requested = pyqtSignal()
-    reject_all_requested = pyqtSignal()
+    file_deleted = pyqtSignal(str)
+    settings_requested = pyqtSignal()   # ⚙ gear button in icon-strip footer
+    chat_selected = pyqtSignal(str)        # conversation_id — forwarded from ChatHistoryPanel
+    chat_renamed = pyqtSignal(str, str)     # (conversation_id, new_title)
+    chat_delete_requested = pyqtSignal(str) # conversation_id
+    new_chat_requested = pyqtSignal()      # forwarded from ChatHistoryPanel
 
-    def __init__(self, parent=None):
+    def __init__(self, file_manager=None, git_manager=None, parent=None):
         super().__init__(parent)
+        self._file_manager = file_manager
+        self._git_manager = git_manager
         self._build_ui()
 
     def _build_ui(self):
@@ -1058,7 +2028,14 @@ class SidebarWidget(QWidget):
         icon_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         self._icon_buttons: list[QPushButton] = []
-        self._panels_info = [("files", "Explorer", 0), ("search", "Search", 1), ("ai", "AI Tools", 2), ("git", "Changed Files", 3)]
+        # VS Code-style Activity Bar icons (high-quality SVG templates)
+        self._panels_info = [
+            ("explorer", "Explorer", 0),
+            ("search-panel", "Search", 1),
+            ("ai-panel", "AI Tools", 2),
+            ("git-review", "Git Review", 3),
+            ("chat-history", "Chat History", 4),
+        ]
         for icon_name, tooltip, idx in self._panels_info:
             btn = QPushButton()
             btn.setIconSize(QSize(24, 24))
@@ -1070,33 +2047,42 @@ class SidebarWidget(QWidget):
             self._icon_buttons.append(btn)
 
         icon_layout.addStretch()
+
+        # ── Footer: Settings / Memory gear button ──────────────────────
+        self._settings_icon_btn = QPushButton()
+        self._settings_icon_btn.setIconSize(QSize(22, 22))
+        self._settings_icon_btn.setToolTip("Settings / Memory Manager\nCtrl+Shift+M")
+        self._settings_icon_btn.setFixedSize(46, 46)
+        self._settings_icon_btn.setCheckable(False)
+        self._settings_icon_btn.clicked.connect(self.settings_requested.emit)
+        icon_layout.addWidget(self._settings_icon_btn)
+        icon_layout.setContentsMargins(4, 12, 4, 12)  # extra bottom padding
+
         layout.addWidget(self._icon_strip)
 
         # Stacked panels
         self._stack = QStackedWidget()
-        self._explorer = FileExplorerPanel()
+        self._explorer = FileExplorerPanel(self._file_manager)
         self._search = SearchPanel()
         self._ai_tools = AIToolsPanel()
-        self._changed_files = ChangedFilesPanel()
 
-        self._stack.addWidget(self._explorer)
-        self._stack.addWidget(self._search)
-        self._stack.addWidget(self._ai_tools)
-        self._stack.addWidget(self._changed_files)
+        self._stack.addWidget(self._explorer)       # 0
+        self._stack.addWidget(self._search)          # 1
+        self._stack.addWidget(self._ai_tools)        # 2
+        self._git_review = None  # placeholder — set via add_git_review_panel()
+        self._chat_history = ChatHistoryPanel()     # created here, added via add_chat_history_panel()
         layout.addWidget(self._stack)
 
         # Connect signals
         self._explorer.file_opened.connect(self.file_opened)
         self._explorer.file_renamed.connect(self.file_renamed)
+        self._explorer.file_deleted.connect(self.file_deleted)
         self._search.file_opened.connect(self.file_search_opened)
         self._ai_tools.action_requested.connect(self.ai_action_requested)
-        
-        # Connect changed files panel signals
-        self._changed_files.file_opened.connect(self.file_opened)
-        self._changed_files.file_accepted.connect(self.file_accepted)
-        self._changed_files.file_rejected.connect(self.file_rejected)
-        self._changed_files.accept_all_requested.connect(self.accept_all_requested)
-        self._changed_files.reject_all_requested.connect(self.reject_all_requested)
+        self._chat_history.chat_selected.connect(self.chat_selected)
+        self._chat_history.chat_renamed.connect(self.chat_renamed)
+        self._chat_history.chat_delete_requested.connect(self.chat_delete_requested)
+        self._chat_history.new_chat_requested.connect(self.new_chat_requested)
 
         self.set_theme(True)
 
@@ -1108,9 +2094,34 @@ class SidebarWidget(QWidget):
         for i, btn in enumerate(self._icon_buttons):
             btn.setChecked(i == index)
 
+    def add_git_review_panel(self, panel: QWidget):
+        """Add the Git Review panel (Summary/Review/Changed Files) at index 3."""
+        self._git_review = panel
+        self._stack.addWidget(panel)  # index 3
+
+    def add_chat_history_panel(self):
+        """Finalize chat history panel at index 4 (after git_review is placed)."""
+        self._stack.addWidget(self._chat_history)  # index 4
+
+    def refresh_chat_history(self):
+        """Refresh chat history list from SQLite for the current project."""
+        if self._chat_history:
+            self._chat_history.refresh()
+
+    def populate_chat_history_from_json(self, chat_list_json: str):
+        """Populate chat history directly from JS JSON (instant, bypasses stale DB)."""
+        if self._chat_history:
+            self._chat_history.populate_from_json(chat_list_json)
+
+    def remove_chat_history_item(self, conv_id: str):
+        """Remove a chat history item after confirmed delete."""
+        if self._chat_history:
+            self._chat_history.remove_item(conv_id)
+
     def set_project(self, folder_path: str):
         self._explorer.set_project(folder_path)
         self._search.set_root(folder_path)
+        self._chat_history.refresh(folder_path)
 
     def is_explorer_focused(self) -> bool:
         return self._explorer.is_tree_focused()
@@ -1122,11 +2133,11 @@ class SidebarWidget(QWidget):
         self._explorer.set_theme(is_dark)
         self._search.set_theme(is_dark)
         self._ai_tools.set_theme(is_dark)
-        self._changed_files.set_theme(is_dark)
+        self._chat_history.set_theme(is_dark)
         
-        icon_color = "#cccccc" if is_dark else "#555555"
-        hover_bg = "rgba(255,255,255,0.10)" if is_dark else "rgba(0,0,0,0.06)"
-        checked_bg = "rgba(0,122,204,0.30)" if is_dark else "rgba(0,122,204,0.15)"
+        icon_color = "#cccccc"
+        hover_bg = "rgba(255,255,255,0.10)"
+        checked_bg = "rgba(0,122,204,0.30)"
         
         btn_style = f"""
             QPushButton {{
@@ -1148,11 +2159,34 @@ class SidebarWidget(QWidget):
             btn.setIcon(make_icon(icon_name, icon_color, 24))
             btn.setStyleSheet(btn_style)
 
+        # Style the gear / settings button in footer
+        if hasattr(self, '_settings_icon_btn'):
+            self._settings_icon_btn.setIcon(make_icon("settings", icon_color, 22))
+            self._settings_icon_btn.setStyleSheet(f"""
+                QPushButton {{
+                    border-radius: 8px;
+                    background: transparent;
+                    border: none;
+                    padding: 2px;
+                }}
+                QPushButton:hover {{
+                    background: {hover_bg};
+                }}
+                QPushButton:pressed {{
+                    background: rgba(0,122,204,0.35);
+                }}
+            """)
+
     def get_expanded_paths(self) -> list[str]:
         return self._explorer.get_expanded_paths()
 
     def restore_expanded_paths(self, paths: list[str]):
         self._explorer.restore_expanded_paths(paths)
+
+    def refresh(self):
+        """Refresh the file explorer to reflect changes."""
+        if hasattr(self._explorer, '_refresh_explorer'):
+            self._explorer._refresh_explorer()
 
 
     def get_ai_model(self) -> str:
@@ -1163,19 +2197,3 @@ class SidebarWidget(QWidget):
 
     def get_ai_temperature(self) -> float:
         return self._ai_tools.get_temperature()
-
-    def add_changed_file(self, file_path: str, edit_type: str = "M"):
-        """Add a file to the changed files panel."""
-        self._changed_files.add_file(file_path, edit_type)
-
-    def remove_changed_file(self, file_path: str):
-        """Remove a file from the changed files panel."""
-        self._changed_files.remove_file(file_path)
-
-    def clear_changed_files(self):
-        """Clear all files from the changed files panel."""
-        self._changed_files.clear_files()
-
-    def show_changed_files_panel(self):
-        """Switch to the changed files panel."""
-        self._switch_panel(3)

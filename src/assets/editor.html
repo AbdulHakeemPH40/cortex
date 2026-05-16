@@ -1,0 +1,1083 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cortex Editor</title>
+<style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    /* Monaco Editor uses its own box-model — don't override it */
+    .monaco-editor *, .monaco-editor *::before, .monaco-editor *::after { box-sizing: content-box; }
+    html, body { height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+
+    #app {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        background: #1e1e1e;
+    }
+
+    /* Tab Bar */
+    #tab-bar {
+        display: flex;
+        background: #252526;
+        border-bottom: 1px solid #3c3c3c;
+        height: 35px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        flex-shrink: 0;
+    }
+    #tab-bar::-webkit-scrollbar { height: 3px; }
+    #tab-bar::-webkit-scrollbar-thumb { background: #424242; border-radius: 2px; }
+
+    .tab {
+        display: flex;
+        align-items: center;
+        padding: 0 12px;
+        height: 35px;
+        font-size: 13px;
+        color: #969696;
+        background: #2d2d2d;
+        border-right: 1px solid #252526;
+        cursor: pointer;
+        white-space: nowrap;
+        user-select: none;
+        min-width: 80px;
+        flex-shrink: 0;
+        gap: 8px;
+    }
+    .tab.active {
+        color: #ffffff;
+        background: #1e1e1e;
+        border-bottom: 2px solid #0078d4;
+    }
+    .tab:hover:not(.active) { background: #2a2a2a; }
+    .tab.modified::before { content: '●'; color: #ffffff; font-size: 14px; margin-right: 2px; }
+    .tab .close-btn {
+        font-size: 14px;
+        color: #969696;
+        line-height: 1;
+        padding: 2px 4px;
+        border-radius: 3px;
+        margin-left: 4px;
+    }
+    .tab .close-btn:hover { color: #ffffff; background: rgba(255,255,255,0.15); }
+
+    /* No-open-files hint */
+    #no-files-hint {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        color: #555555;
+        font-size: 14px;
+        font-style: italic;
+    }
+
+    /* Editor container */
+    #editor-container { flex: 1; overflow: hidden; }
+    #editor-container.hidden { display: none; }
+
+    /* Dark theme only */
+</style>
+</head>
+<body>
+
+<div id="app">
+    <div id="tab-bar"></div>
+    <div id="no-files-hint">Open a file from the Explorer to start editing</div>
+    <div id="editor-container" class="hidden"></div>
+</div>
+
+<!-- QWebChannel -->
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+
+<script>
+// ============================================================================
+// State
+// ============================================================================
+var bridge = null;
+var editor = null;
+var monaco = null;
+var openFiles = {};           // path → { path, language, content, modified }
+var openOrder = [];           // ordered file paths for tabs
+var activeFilePath = null;
+var changeTimer = null;
+var CHANGE_DEBOUNCE_MS = 300;
+
+// Pending promises for LSP results (global — accessed by provider callbacks and result handlers)
+var pendingCompletions = {};
+var pendingHovers = {};
+var pendingDefinitions = {};
+
+// Lazy file loading tokens (prevent out-of-order loads overwriting content)
+var fileLoadTokens = {}; // path -> int
+
+// Debounce LSP open/refresh per file to avoid flooding the bridge
+var lspOpenTimer = null;
+var LSP_OPEN_DEBOUNCE_MS = 250;
+
+// ---- Scroll detection: suppress ALL bridge calls during scroll ----
+var isScrolling = false;
+var scrollStopTimer = null;
+var SCROLL_STOP_MS = 300;  // consider scroll stopped after 300ms idle
+var lastScrollAt = 0;      // ms timestamp of most recent scroll event
+var SCROLL_SETTLE_MS = 800; // treat as "still scrolling" for 800ms after last event
+
+// ---- File switch guard: suppress bridge calls during rapid tab switching ----
+// Opening 12+ files at startup floods QWebChannel with runJavaScript calls.
+// Each file open triggers Monaco content-change, language-change, and cursor
+// events which fire LSP bridge calls — these stack up and crash Chromium.
+var isSwitchingFile = false;
+var switchStopTimer = null;
+var SWITCH_STOP_MS = 2000;  // batch file switches, settle after 2s idle (must exceed queue interval)
+
+// ---- Content set debounce: collapse rapid model.setValue() calls ----
+// Monaco's setValue() triggers background tokenization & syntax highlighting.
+// Calling setValue() in rapid succession (e.g. close-all → open file1 → open
+// file2) can crash Chromium on Windows because it hasn't finished processing
+// the first tokenization wave before the second hits.
+var pendingSetContent = null;       // filePath of pending setEditorContent
+var setContentTimer = null;         // debounce/retry timer
+var SET_CONTENT_DEBOUNCE = 500;     // ms — long enough for tokenization to settle
+
+// ---- Content set guard: prevent setValue() while tokenization is in flight ----
+// Monaco's async tokenizer crashes Chromium if setValue() changes the model
+// while a previous tokenization cycle is still computing decorations.
+// This guard ensures only ONE setValue() is in flight at any time.
+var isSettingContent = false;
+var SETTING_TIMEOUT_MS = 5000;      // legacy default (dynamic override is used)
+
+// ---- Marker rendering guard: prevent scroll→diagnostics→marker→scroll cascade ----
+var isRenderingMarkers = false;
+
+// ---- Startup warmup: suppress marker rendering until Chromium is stable ----
+// Chromium WebEngine on Windows 25H2 needs 30-60s to fully initialize its
+// multi-process GPU/compositor pipeline. Monaco's setModelMarkers() (squiggly
+// underlines for LSP diagnostics) is one of the most GPU-intensive operations
+// and crashes the render process if called before Chromium settles.
+var MONACO_LOAD_TIME = 0;        // set in Monaco init callback
+var STARTUP_WARMUP_MS = 30000;   // 30s — marker suppression during warmup (crash zone ≤34s)
+
+// ---- Global JS error trapping (catch silent bugs before process dies) ----
+// Monaco load timeout — if Monaco doesn't load within 30s, show error.
+// Replaces the old per-file scheduleEditorRetry with a single global safety net.
+var _monacoLoadTimeout = setTimeout(function() {
+    if (!editor || !window.editorReady) {
+        console.error('[Editor] Monaco failed to load within 30s');
+        document.getElementById('no-files-hint').textContent = 'Editor failed to load. Check npm install monaco-editor.';
+        document.getElementById('no-files-hint').style.display = 'flex';
+        document.getElementById('editor-container').classList.add('hidden');
+    }
+}, 30000);
+
+window.onerror = function(msg, url, line, col, error) {
+    console.error('[Editor] UNCAUGHT ERROR:', msg, 'at line', line, 'col', col);
+    if (error && error.stack) console.error('[Editor] Stack:', error.stack);
+    return false; // let default handler also run
+};
+window.addEventListener('unhandledrejection', function(e) {
+    console.error('[Editor] UNHANDLED REJECTION:', e.reason);
+    if (e.reason && e.reason.stack) console.error('[Editor] Stack:', e.reason.stack);
+});
+
+// Monaco language map: Cortex language names → Monaco language IDs
+var LANG_MAP = {
+    'python': 'python', 'py': 'python',
+    'javascript': 'javascript', 'js': 'javascript',
+    'typescript': 'typescript', 'ts': 'typescript',
+    'jsx': 'javascript', 'tsx': 'typescript',
+    'html': 'html', 'htm': 'html',
+    'css': 'css', 'scss': 'scss', 'less': 'less',
+    'json': 'json', 'jsonc': 'json',
+    'markdown': 'markdown', 'md': 'markdown',
+    'java': 'java',
+    'rust': 'rs', 'rs': 'rust',
+    'go': 'go',
+    'cpp': 'cpp', 'c++': 'cpp', 'c': 'c', 'h': 'c',
+    'csharp': 'csharp', 'cs': 'csharp',
+    'php': 'php',
+    'ruby': 'ruby', 'rb': 'ruby',
+    'swift': 'swift',
+    'kotlin': 'kotlin',
+    'sql': 'sql',
+    'yaml': 'yaml', 'yml': 'yaml',
+    'xml': 'xml',
+    'shell': 'shell', 'sh': 'shell', 'bash': 'shell',
+    'powershell': 'powershell', 'ps1': 'powershell',
+    'dockerfile': 'dockerfile',
+    'plaintext': 'plaintext', 'txt': 'plaintext',
+    'ini': 'ini', 'toml': 'ini', 'cfg': 'ini',
+    'bat': 'bat', 'cmd': 'bat',
+    'log': 'plaintext',
+    'csv': 'plaintext',
+    'env': 'plaintext',
+    'properties': 'ini',
+};
+
+function monacoLang(lang) {
+    if (!lang) return 'plaintext';
+    var key = lang.toLowerCase();
+    return LANG_MAP[key] || 'plaintext';
+}
+
+// ============================================================================
+// Monaco Init — loader.js path injected by Python via base tag
+// ============================================================================
+
+// The Monaco loader.js is inlined below by Python
+// The vs/ directory path is injected below by Python
+
+// Set up require base URL — this is populated by Python before page load
+var _monacoBaseUrl = '__MONACO_VS_PATH__';
+
+__MONACO_LOADER_INLINE__
+
+// After loader.js is defined, configure and load Monaco
+if (typeof require !== 'undefined') {
+    require.config({ paths: { vs: _monacoBaseUrl }, baseUrl: _monacoBaseUrl });
+    require(['vs/editor/editor.main'], function() {
+    try {
+        monaco = window.monaco;
+        console.log('[Editor] Monaco module loaded, initializing...');
+
+    // Define dark/light themes
+    monaco.editor.defineTheme('cortex-dark', {
+        base: 'vs-dark',
+        inherit: true,
+        rules: [],
+        colors: { 'editor.background': '#1e1e1e' }
+    });
+
+    editor = monaco.editor.create(document.getElementById('editor-container'), {
+        value: '',
+        language: 'plaintext',
+        theme: 'cortex-dark',
+        automaticLayout: true,
+        minimap: { enabled: false },
+        fontSize: 14,
+        fontFamily: '"Cascadia Code", "Fira Code", Consolas, "Courier New", monospace',
+        fontLigatures: false,
+        tabSize: 4,
+        insertSpaces: true,
+        scrollBeyondLastLine: false,
+        wordWrap: 'off',
+        lineNumbers: 'on',
+        renderWhitespace: 'none',
+        bracketPairColorization: { enabled: false },
+        guides: { bracketPairs: false },
+        smoothScrolling: false,
+        cursorBlinking: 'blink',
+        cursorSmoothCaretAnimation: 'off',
+        renderLineHighlight: 'line',
+        occurrencesHighlight: 'off',
+        padding: { top: 8 },
+        glyphMargin: true,
+        folding: true,
+        showFoldingControls: 'always',
+        foldingHighlight: true,
+    });
+
+    // ---- Content change tracking (debounced) — no LSP auto-notify during scroll/switch ----
+    editor.onDidChangeModelContent(function() {
+        if (!activeFilePath || isSwitchingFile) return;
+        var model = editor.getModel();
+        var content = model.getValue();
+        if (openFiles[activeFilePath]) {
+            openFiles[activeFilePath].content = content;
+            // Mark file as modified (VS Code-style white dot on tab)
+            if (!openFiles[activeFilePath].modified) {
+                openFiles[activeFilePath].modified = true;
+                _updateTabModifiedClass(activeFilePath, true);
+            }
+        }
+        if (changeTimer) clearTimeout(changeTimer);
+        changeTimer = setTimeout(function() {
+            if (bridge && activeFilePath) {
+                bridge.onContentChanged(activeFilePath, content);
+                // Notify LSP about content change + refresh diagnostics
+                var f = openFiles[activeFilePath];
+                if (f && bridge.notifyContentChanged) {
+                    bridge.notifyContentChanged(activeFilePath, content, f.language || 'plaintext');
+                }
+                // Request fresh diagnostics after content settles (scroll-gated internally)
+                scheduleDiagnostics();
+            }
+        }, CHANGE_DEBOUNCE_MS);
+    });
+
+    // ---- Scroll detection: suppress all bridge calls during scrolling ----
+    editor.onDidScrollChange(function() {
+        isScrolling = true;
+        lastScrollAt = Date.now();
+        if (scrollStopTimer) clearTimeout(scrollStopTimer);
+        scrollStopTimer = setTimeout(function() {
+            isScrolling = false;
+            // Request diagnostics after scroll stops (if file is open)
+            scheduleDiagnostics();
+        }, SCROLL_STOP_MS);
+    });
+
+    // ---- Safe LSP providers: explicit user action only, never during scroll/switch ----
+    // Completion provider — only on Ctrl+Space (no auto-trigger during typing)
+    monaco.languages.registerCompletionItemProvider('*', {
+        triggerCharacters: [],  // empty = only explicit Ctrl+Space, no auto-trigger
+        provideCompletionItems: function(model, position) {
+            if (isScrolling || isSwitchingFile || !bridge || !activeFilePath) {
+                return { suggestions: [] };
+            }
+            return new Promise(function(resolve) {
+                var reqId = 'comp_' + Date.now() + '_' + Math.random();
+                pendingCompletions[reqId] = resolve;
+                var f = openFiles[activeFilePath];
+                bridge.requestCompletions(reqId, activeFilePath, f.language, position.lineNumber, position.column);
+            });
+        }
+    });
+
+    // Hover provider — debounced 500ms, suppressed during scroll/switch
+    var hoverTimer = null;
+    var HOVER_DEBOUNCE_MS = 500;
+    monaco.languages.registerHoverProvider('*', {
+        provideHover: function(model, position) {
+            if (isScrolling || isSwitchingFile || !bridge || !activeFilePath) {
+                return null;
+            }
+            // Cancel ALL stale hover Promises — prevents "Loading..." from
+            // accumulating when the user moves the mouse before the LSP responds.
+            for (var k in pendingHovers) {
+                if (pendingHovers.hasOwnProperty(k)) {
+                    pendingHovers[k](null);
+                    delete pendingHovers[k];
+                }
+            }
+            return new Promise(function(resolve) {
+                if (hoverTimer) clearTimeout(hoverTimer);
+                hoverTimer = setTimeout(function() {
+                    var reqId = 'hover_' + Date.now() + '_' + Math.random();
+                    pendingHovers[reqId] = resolve;
+                    var f = openFiles[activeFilePath];
+                    bridge.requestHover(reqId, activeFilePath, f.language, position.lineNumber, position.column);
+                }, HOVER_DEBOUNCE_MS);
+            });
+        }
+    });
+
+    // Definition provider — only on F12 / Ctrl+Click (naturally safe, no scroll trigger)
+    monaco.languages.registerDefinitionProvider('*', {
+        provideDefinition: function(model, position) {
+            if (!bridge || !activeFilePath) return null;
+            return new Promise(function(resolve) {
+                var reqId = 'def_' + Date.now() + '_' + Math.random();
+                pendingDefinitions[reqId] = resolve;
+                var f = openFiles[activeFilePath];
+                bridge.requestDefinition(reqId, activeFilePath, f.language, position.lineNumber, position.column);
+            });
+        }
+    });
+
+    // Also register providers for common language IDs. This improves reliability
+    // when the model language is changed dynamically via setModelLanguage().
+    (function() {
+        var languageIds = [
+            'plaintext','python','javascript','typescript','json','html','css','scss','less','markdown',
+            'xml','yaml','sql','powershell','shell','bat','cpp','csharp','java','go','rust','php','ruby'
+        ];
+
+        function _safeRegister(langId) {
+            try {
+                monaco.languages.registerCompletionItemProvider(langId, {
+                    triggerCharacters: [],
+                    provideCompletionItems: function(model, position) {
+                        if (isScrolling || isSwitchingFile || !bridge || !activeFilePath) return { suggestions: [] };
+                        return new Promise(function(resolve) {
+                            var reqId = 'comp_' + Date.now() + '_' + Math.random();
+                            pendingCompletions[reqId] = resolve;
+                            var f = openFiles[activeFilePath];
+                            bridge.requestCompletions(reqId, activeFilePath, f.language, position.lineNumber, position.column);
+                        });
+                    }
+                });
+            } catch(e) {}
+
+            try {
+                monaco.languages.registerHoverProvider(langId, {
+                    provideHover: function(model, position) {
+                        if (isScrolling || isSwitchingFile || !bridge || !activeFilePath) return null;
+                        // Cancel ALL stale hover Promises (same as wildcard provider)
+                        for (var k in pendingHovers) {
+                            if (pendingHovers.hasOwnProperty(k)) {
+                                pendingHovers[k](null);
+                                delete pendingHovers[k];
+                            }
+                        }
+                        return new Promise(function(resolve) {
+                            if (hoverTimer) clearTimeout(hoverTimer);
+                            hoverTimer = setTimeout(function() {
+                                var reqId = 'hover_' + Date.now() + '_' + Math.random();
+                                pendingHovers[reqId] = resolve;
+                                var f = openFiles[activeFilePath];
+                                bridge.requestHover(reqId, activeFilePath, f.language, position.lineNumber, position.column);
+                            }, HOVER_DEBOUNCE_MS);
+                        });
+                    }
+                });
+            } catch(e) {}
+
+            try {
+                monaco.languages.registerDefinitionProvider(langId, {
+                    provideDefinition: function(model, position) {
+                        if (!bridge || !activeFilePath) return null;
+                        return new Promise(function(resolve) {
+                            var reqId = 'def_' + Date.now() + '_' + Math.random();
+                            pendingDefinitions[reqId] = resolve;
+                            var f = openFiles[activeFilePath];
+                            bridge.requestDefinition(reqId, activeFilePath, f.language, position.lineNumber, position.column);
+                        });
+                    }
+                });
+            } catch(e) {}
+        }
+
+        for (var i = 0; i < languageIds.length; i++) {
+            _safeRegister(languageIds[i]);
+        }
+    })();
+
+    // Handle tab close keyboard shortcut (Ctrl+W)
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyW, function() {
+        if (activeFilePath) closeFile(activeFilePath);
+    });
+
+    // Ctrl+F / Ctrl+H / Ctrl+G are handled natively by Monaco Editor.
+    // (PyQt menu shortcuts for these were removed so key events reach the WebView.)
+
+    // Mark Monaco as fully ready
+    window.editorReady = true;
+    MONACO_LOAD_TIME = Date.now();
+    clearTimeout(_monacoLoadTimeout);  // cancel the global 30s load timeout
+    console.log('[Editor] Warmup started — suppressing markers for ' + (STARTUP_WARMUP_MS/1000) + 's');
+    // Flush diagnostics once warmup ends — ensures markers appear without user action
+    setTimeout(function() {
+        console.log('[Editor] Warmup complete — re-enabling marker rendering');
+        scheduleDiagnostics();
+    }, STARTUP_WARMUP_MS);
+
+    // Apply any file that was opened before Monaco loaded
+    if (activeFilePath && openFiles[activeFilePath]) {
+        console.log('[Editor] Applying pending file: ' + activeFilePath);
+        setEditorContent(activeFilePath);
+    }
+
+    console.log('[Editor] Monaco initialized successfully');
+
+    // Notify Python that Monaco is truly ready (not just QWebChannel)
+    if (bridge && bridge.onEditorReady) {
+        bridge.onEditorReady();
+    }
+
+    } catch (err) {
+        console.error('[Editor] Monaco init error: ' + err.message);
+        document.getElementById('no-files-hint').textContent = 'Editor failed to load: ' + err.message;
+    }
+    });
+} else {
+    console.error('[Editor] require is not defined — Monaco loader.js failed to load');
+    document.getElementById('no-files-hint').textContent = 'Monaco loader not found. Run: npm install monaco-editor';
+}
+
+// ============================================================================
+// Tab / File Management
+// ============================================================================
+
+function fileName(path) {
+    var parts = path.replace(/\\/g, '/').split('/');
+    return parts[parts.length - 1] || path;
+}
+
+function setEditorContent(filePath) {
+    var f = openFiles[filePath];
+    if (!f || !editor) return;
+    // Debounce: collapse rapid model.setValue() + setModelLanguage() bursts
+    // into a single operation. Monaco's internal tokenizer is async and
+    // successive setValue() calls before tokenization completes crash Chromium.
+    pendingSetContent = filePath;
+    if (setContentTimer) return;  // already scheduled — will pick up latest filePath
+    _tryFlushContent();
+}
+
+function _tryFlushContent() {
+    // Guard: don't call setValue() while previous tokenization is still running.
+    // Monaco's async tokenizer crashes Chromium if the model changes mid-tokenization.
+    if (isSettingContent) {
+        setContentTimer = setTimeout(_tryFlushContent, 500);
+        return;
+    }
+    var targetPath = pendingSetContent;
+    if (!targetPath) { setContentTimer = null; return; }
+    pendingSetContent = null;
+    setContentTimer = null;
+    var targetFile = openFiles[targetPath];
+    if (!targetFile || !editor) return;
+    var model = editor.getModel();
+    if (model) {
+        // Clear old LSP markers BEFORE changing content — prevents Monaco from
+        // trying to render decorations on lines that don't exist in the new file.
+        try { monaco.editor.setModelMarkers(model, 'lsp', []); } catch(e) {}
+        isSettingContent = true;
+        model.setValue(targetFile.content || '');
+        monaco.editor.setModelLanguage(model, monacoLang(targetFile.language));
+        // Release guard after a size-based delay. Too long => users see old file
+        // content while switching tabs. Too short => risk overlapping tokenization.
+        var size = (targetFile.content || '').length;
+        var releaseMs = 600;
+        if (size > 200000) releaseMs = 2500;
+        else if (size > 80000) releaseMs = 1500;
+        else if (size > 20000) releaseMs = 900;
+        setTimeout(function() {
+            isSettingContent = false;
+            // If more content is pending, flush immediately
+            if (pendingSetContent) {
+                setContentTimer = setTimeout(_tryFlushContent, SET_CONTENT_DEBOUNCE);
+            }
+        }, releaseMs);
+    }
+    document.getElementById('no-files-hint').style.display = 'none';
+    document.getElementById('editor-container').classList.remove('hidden');
+}
+
+// Lightweight tab class update — avoids full renderTabs() rebuild on every keystroke.
+// Directly adds/removes the 'modified' CSS class on the matching tab element.
+function _updateTabModifiedClass(filePath, isModified) {
+    var tabs = document.querySelectorAll('#tab-bar .tab');
+    for (var i = 0; i < tabs.length; i++) {
+        if (tabs[i].getAttribute('data-path') === filePath) {
+            if (isModified) {
+                tabs[i].classList.add('modified');
+            } else {
+                tabs[i].classList.remove('modified');
+            }
+            return;
+        }
+    }
+}
+
+function renderTabs() {
+    var bar = document.getElementById('tab-bar');
+    if (!bar) { console.warn('[Editor] tab-bar not found, skipping renderTabs'); return; }
+    bar.innerHTML = '';
+    for (var i = 0; i < openOrder.length; i++) {
+        var fp = openOrder[i];
+        var f = openFiles[fp];
+        var name = fileName(fp);
+        var div = document.createElement('div');
+        div.className = 'tab' + (fp === activeFilePath ? ' active' : '') + (f.modified ? ' modified' : '');
+        div.title = fp;
+        div.setAttribute('data-path', fp);
+        div.innerHTML = '<span>' + name + '</span><span class="close-btn">&times;</span>';
+        div.querySelector('span').onclick = function(e) {
+            e.stopPropagation();
+            switchToFile(this.parentElement.getAttribute('data-path'));
+        };
+        div.querySelector('.close-btn').onclick = function(e) {
+            e.stopPropagation();
+            closeFile(this.parentElement.getAttribute('data-path'));
+        };
+        // Middle-click to close
+        div.addEventListener('auxclick', function(e) {
+            if (e.button === 1) {
+                e.preventDefault();
+                closeFile(this.getAttribute('data-path'));
+            }
+        });
+        bar.appendChild(div);
+    }
+    var hint = document.getElementById('no-files-hint');
+    var container = document.getElementById('editor-container');
+    if (openOrder.length === 0) {
+        hint.style.display = 'flex';
+        container.classList.add('hidden');
+    } else {
+        // Files are open — show editor area (content will fill in when Monaco loads)
+        hint.style.display = 'none';
+        container.classList.remove('hidden');
+    }
+}
+
+function switchToFile(filePath) {
+    if (!openFiles[filePath]) return;
+    // Save current editor content to cache before switching.
+    // GUARD: only save if isSettingContent is false — when true, the model
+    // still holds the PREVIOUS file's content (setValue() hasn't completed),
+    // so saving would corrupt openFiles[activeFilePath] with wrong content.
+    if (activeFilePath && openFiles[activeFilePath] && editor && !isSettingContent) {
+        openFiles[activeFilePath].content = editor.getModel().getValue();
+    }
+    activeFilePath = filePath;
+    console.log('[Editor] switchToFile: ' + filePath + ' (editor ready: ' + !!editor + ')');
+    // Set switching guard to suppress bridge calls during rapid tab changes
+    isSwitchingFile = true;
+    if (switchStopTimer) clearTimeout(switchStopTimer);
+    switchStopTimer = setTimeout(function() {
+        isSwitchingFile = false;
+        // Notify LSP about the active file now that switching has settled.
+        // During rapid switching, didOpen/didChange notifications are
+        // suppressed to avoid QWebChannel overload — send one now.
+        if (activeFilePath && openFiles[activeFilePath] && bridge && bridge.notifyContentChanged) {
+            var af = openFiles[activeFilePath];
+            bridge.notifyContentChanged(activeFilePath, af.content || '', af.language || 'plaintext');
+        }
+        // Request diagnostics after file switching settles
+        scheduleDiagnostics();
+    }, SWITCH_STOP_MS);
+    // If Monaco isn't loaded yet, just update state — the init callback will call setEditorContent
+    if (editor) {
+        setEditorContent(filePath);
+    } else {
+        // Monaco not loaded yet — show tabs/hide hint, then let the init callback
+        // handle setEditorContent(activeFilePath). Unlike the old scheduleEditorRetry
+        // (which only tracked ONE file), this approach naturally handles ALL files
+        // because each switchToFile() populates openFiles[] and the init callback
+        // reads activeFilePath which reflects the most recent switch.
+        document.getElementById('no-files-hint').style.display = 'none';
+        document.getElementById('editor-container').classList.remove('hidden');
+    }
+    renderTabs();
+    // Notify Python about active file change (no cursor tracking during scroll)
+    if (bridge && editor && activeFilePath && !isScrolling) {
+        bridge.onCursorChanged(filePath, 1, 1);
+    }
+}
+
+// Retry loading content into Monaco if it wasn't ready at switch time
+var _editorRetryTimer = null;
+var _editorRetryPath = null;
+var _editorRetryCount = 0;
+function scheduleEditorRetry(filePath) {
+    _editorRetryPath = filePath;
+    _editorRetryCount = 0;
+    if (_editorRetryTimer) clearInterval(_editorRetryTimer);
+    _editorRetryTimer = setInterval(function() {
+        _editorRetryCount++;
+        if (editor && window.editorReady) {
+            clearInterval(_editorRetryTimer);
+            _editorRetryTimer = null;
+            console.log('[Editor] Retry #' + _editorRetryCount + ' succeeded for: ' + _editorRetryPath);
+            setEditorContent(_editorRetryPath);
+            if (bridge) {
+                var pos = editor.getPosition();
+                bridge.onCursorChanged(_editorRetryPath, pos.lineNumber, pos.column);
+            }
+        } else if (_editorRetryCount > 60) {
+            // Give up after 30 seconds (60 * 500ms)
+            clearInterval(_editorRetryTimer);
+            _editorRetryTimer = null;
+            console.error('[Editor] Retry timeout — Monaco never loaded for: ' + _editorRetryPath);
+            document.getElementById('no-files-hint').textContent = 'Editor failed to load. Check your internet connection for Monaco CDN.';
+            document.getElementById('no-files-hint').style.display = 'flex';
+            document.getElementById('editor-container').classList.add('hidden');
+        }
+    }, 500);
+}
+
+// Called by Python: openFile(path, content, language, activate?)
+function openFile(filePath, content, language, activate) {
+    if (activate === undefined) activate = true;
+    if (openFiles[filePath]) {
+        // Already open — switch to it, update content if different
+        if (openFiles[filePath].content !== content) {
+            openFiles[filePath].content = content;
+            openFiles[filePath].language = language || openFiles[filePath].language;
+            if (filePath === activeFilePath) {
+                setEditorContent(filePath);
+            }
+        }
+        if (activate) switchToFile(filePath);
+        else renderTabs();
+        return;
+    }
+
+    // New file
+    openFiles[filePath] = {
+        path: filePath,
+        language: language || 'plaintext',
+        content: content || '',
+        modified: false
+    };
+    openOrder.push(filePath);
+    if (activate) switchToFile(filePath);
+    else renderTabs();
+}
+
+function _loadTextFromUri(fileUri, onDone) {
+    try {
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', fileUri, true);
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === 4) {
+                if (xhr.status === 200 || xhr.status === 0) {
+                    onDone(xhr.responseText || '', null);
+                } else {
+                    onDone('', 'HTTP ' + xhr.status);
+                }
+            }
+        };
+        xhr.onerror = function() { onDone('', 'XHR error'); };
+        xhr.send();
+    } catch (e) {
+        onDone('', String(e));
+    }
+}
+
+// Called by Python: openFileFromUri(path, language, fileUri, activate?)
+function openFileFromUri(filePath, language, fileUri, activate) {
+    if (activate === undefined) activate = true;
+
+    if (!openFiles[filePath]) {
+        openFiles[filePath] = {
+            path: filePath,
+            language: language || 'plaintext',
+            content: '',
+            modified: false
+        };
+        openOrder.push(filePath);
+    } else {
+        openFiles[filePath].language = language || openFiles[filePath].language;
+    }
+
+    var token = (fileLoadTokens[filePath] || 0) + 1;
+    fileLoadTokens[filePath] = token;
+    openFiles[filePath].content = '// Loading...';
+
+    if (activate) switchToFile(filePath);
+    else renderTabs();
+
+    _loadTextFromUri(fileUri, function(text, err) {
+        if (fileLoadTokens[filePath] !== token) return; // superseded
+        if (!openFiles[filePath]) return; // closed while loading
+        if (err) openFiles[filePath].content = '// Failed to load file: ' + err;
+        else openFiles[filePath].content = text || '';
+        if (activeFilePath === filePath && editor) setEditorContent(filePath);
+    });
+}
+
+// Called by Python: closeFile(path)
+function closeFile(filePath) {
+    console.log('[Editor] closeFile called: ' + filePath);
+    if (!openFiles[filePath]) return;
+    delete openFiles[filePath];
+    var idx = openOrder.indexOf(filePath);
+    if (idx >= 0) openOrder.splice(idx, 1);
+
+    if (filePath === activeFilePath) {
+        // Switch to next available file or hide editor
+        if (openOrder.length > 0) {
+            var nextIdx = Math.min(idx, openOrder.length - 1);
+            activeFilePath = openOrder[nextIdx];
+            setEditorContent(activeFilePath);
+        } else {
+            activeFilePath = null;
+            // Keep model content — clearing it triggers tokenization that
+            // makes the next openFile() more expensive (empty→content wave).
+            // Just hide the editor area; the model will be overwritten on next open.
+            document.getElementById('no-files-hint').style.display = 'flex';
+            document.getElementById('editor-container').classList.add('hidden');
+        }
+    }
+    renderTabs();
+    console.log('[Editor] closeFile → calling bridge.onFileClosed for: ' + filePath);
+    // Always notify Python of file closures — suppressing onFileClosed during
+    // switching windows (isSwitchingFile) causes _open_files to desync from
+    // Monaco's actual open tabs. When a user clicks a file that was silently
+    // closed, the fast-path switch_to_file() fails silently (Monaco no longer
+    // has the file) and the editor shows nothing.
+    //
+    // onFileClosed is lightweight (single string arg, called infrequently)
+    // and does NOT contribute to the QWebChannel flooding that crashes
+    // Chromium during startup (that's model.setValue() + LSP markers).
+    if (bridge) bridge.onFileClosed(filePath);
+}
+
+// Called by Python: closeAllFiles() — closes all files in one shot, no
+// per-file bridge.onFileClosed() calls or intermediate setEditorContent().
+function closeAllFiles() {
+    console.log('[Editor] closeAllFiles called, closing ' + openOrder.length + ' files');
+    isSwitchingFile = true;
+    if (switchStopTimer) clearTimeout(switchStopTimer);
+    // Clear all open files without triggering per-file switches
+    openFiles = {};
+    openOrder = [];
+    activeFilePath = null;
+    // Keep model content (no setValue('')) — see closeFile rationale above.
+    document.getElementById('no-files-hint').style.display = 'flex';
+    document.getElementById('editor-container').classList.add('hidden');
+    renderTabs();
+    // Release switching guard after a short settle
+    switchStopTimer = setTimeout(function() {
+        isSwitchingFile = false;
+    }, SWITCH_STOP_MS);
+    // Notify Python once for the batch
+    if (bridge) bridge.onFileClosed('__ALL__');
+    console.log('[Editor] closeAllFiles complete');
+}
+
+// Called by Python: getContent(path) — returns current editor content
+function getContent(filePath) {
+    if (activeFilePath === filePath && editor) {
+        return editor.getModel().getValue();
+    }
+    if (openFiles[filePath]) {
+        return openFiles[filePath].content;
+    }
+    return '';
+}
+
+// Called by Python: setTheme(isDarkFlag) — dark mode only
+function setTheme(dark) {
+    if (editor) {
+        monaco.editor.setTheme('cortex-dark');
+    }
+    document.body.className = '';
+}
+
+// Called by Python: getEditorContent(path) → returns fresh content from Monaco model
+function getEditorContent(filePath) {
+    if (activeFilePath === filePath && editor) {
+        return editor.getModel().getValue();
+    }
+    if (openFiles[filePath]) {
+        return openFiles[filePath].content;
+    }
+    return '';
+}
+
+// Called by Python: nextTab() — switch to the next tab in openOrder
+function nextTab() {
+    if (openOrder.length < 2) return;
+    var idx = openOrder.indexOf(activeFilePath);
+    if (idx < 0) idx = 0;
+    var nextIdx = (idx + 1) % openOrder.length;
+    switchToFile(openOrder[nextIdx]);
+}
+
+// Called by Python: prevTab() — switch to the previous tab in openOrder
+function prevTab() {
+    if (openOrder.length < 2) return;
+    var idx = openOrder.indexOf(activeFilePath);
+    if (idx < 0) idx = 0;
+    var prevIdx = (idx - 1 + openOrder.length) % openOrder.length;
+    switchToFile(openOrder[prevIdx]);
+}
+
+// Called by Python: markModified(path, flag)
+function markModified(filePath, flag) {
+    if (openFiles[filePath]) {
+        openFiles[filePath].modified = flag;
+        _updateTabModifiedClass(filePath, flag);
+    }
+}
+
+// Called by Python: getActiveFile() → path or null
+function getActiveFile() {
+    return activeFilePath;
+}
+
+// Called by Python: getCursorPosition() → { line, column }
+function getCursorPosition() {
+    if (editor) {
+        var pos = editor.getPosition();
+        return { line: pos.lineNumber, column: pos.column };
+    }
+    return { line: 1, column: 1 };
+}
+
+// ============================================================================
+// LSP Result Callbacks — called from Python via runJavaScript
+// ============================================================================
+
+// Called by Python: _lspCompletionsResult(requestId, suggestions, isIncomplete)
+function _lspCompletionsResult(requestId, suggestions, isIncomplete) {
+    var resolve = pendingCompletions[requestId];
+    if (!resolve) return;
+    delete pendingCompletions[requestId];
+
+    var items = (suggestions || []).map(function(s) {
+        var kind = s.kind || 1;
+        var insertText = s.insertText || s.label;
+        var item = {
+            label: s.label,
+            kind: kind,
+            detail: s.detail || '',
+            insertText: insertText,
+            sortText: s.sortText || s.label,
+            filterText: s.filterText || s.label,
+            range: undefined  // Let Monaco compute it
+        };
+        // Add documentation if present
+        if (s.documentation) {
+            item.documentation = s.documentation;
+        }
+        // Add insertTextRules for snippets
+        if (s.insertTextFormat === 2) {
+            item.insertTextRules = monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet;
+        }
+        return item;
+    });
+
+    resolve({ suggestions: items, incomplete: !!isIncomplete });
+}
+
+// Called by Python: _lspHoverResult(requestId, text, range)
+function _lspHoverResult(requestId, text, hoverRange) {
+    var resolve = pendingHovers[requestId];
+    if (!resolve) return;
+    delete pendingHovers[requestId];
+
+    if (!text) {
+        resolve(null);
+        return;
+    }
+
+    var result = {
+        contents: [{ value: text }]
+    };
+    if (hoverRange && hoverRange.start && hoverRange.end) {
+        result.range = {
+            startLineNumber: (hoverRange.start.line || 0) + 1,
+            startColumn: (hoverRange.start.character || 0) + 1,
+            endLineNumber: (hoverRange.end.line || 0) + 1,
+            endColumn: (hoverRange.end.character || 0) + 1
+        };
+    }
+    resolve(result);
+}
+
+// Called by Python: _lspDefinitionResult(requestId, locations)
+function _lspDefinitionResult(requestId, locations) {
+    var resolve = pendingDefinitions[requestId];
+    if (!resolve) return;
+    delete pendingDefinitions[requestId];
+
+    if (!locations || locations.length === 0) {
+        resolve([]);
+        return;
+    }
+
+    var results = locations.map(function(loc) {
+        var r = loc.range || {};
+        return {
+            uri: monaco.Uri.parse(loc.uri),
+            range: {
+                startLineNumber: r.startLineNumber || 1,
+                startColumn: r.startColumn || 1,
+                endLineNumber: r.endLineNumber || 1,
+                endColumn: r.endColumn || 1
+            }
+        };
+    });
+    resolve(results);
+}
+
+// Called by Python: _lspDiagnosticsResult(requestId, markers)
+function _lspDiagnosticsResult(requestId, markers) {
+    if (!activeFilePath || !monaco) return;
+    // Startup warmup: silently drop ALL marker rendering until Chromium
+    // WebEngine's GPU/compositor pipeline has fully stabilized (60s).
+    // setModelMarkers() during initialization crashes the render process.
+    if (MONACO_LOAD_TIME && Date.now() - MONACO_LOAD_TIME < STARTUP_WARMUP_MS) {
+        console.log('[Editor] Warmup(' + Math.round((Date.now() - MONACO_LOAD_TIME)/1000) + 's): suppressing ' + (markers ? markers.length : 0) + ' markers');
+        return;
+    }
+    // NEVER set markers while switching files — model may be transitioning
+    if (isSwitchingFile) return;
+    // NEVER set markers while user is scrolling — Monaco's decoration
+    // renderer during scroll + QWebChannel response = bridge overload → crash
+    if (isScrolling) return;
+    if (lastScrollAt && (Date.now() - lastScrollAt) < SCROLL_SETTLE_MS) return;
+    // Prevent scroll→diagnostics→marker→scroll cascade
+    if (isRenderingMarkers) return;
+    var model = editor.getModel();
+    if (!model) return;
+    try {
+        // Validate markers against the model's actual line count.
+        var maxLine = model.getLineCount();
+        var safe = [];
+        if (markers && markers.length) {
+            for (var i = 0; i < markers.length; i++) {
+                var m = markers[i];
+                if (m.startLineNumber >= 1 && m.startLineNumber <= maxLine &&
+                    m.endLineNumber >= 1 && m.endLineNumber <= maxLine) {
+                    safe.push(m);
+                }
+            }
+        }
+        // Defer setModelMarkers to next event-loop tick — prevents
+        // Monaco rendering from colliding with the QWebChannel response
+        // cycle that delivered these markers (bridge overload → crash).
+        var mdl = model;
+        var markersToSet = safe;
+        isRenderingMarkers = true;
+        setTimeout(function() {
+            if (isScrolling || (lastScrollAt && (Date.now() - lastScrollAt) < SCROLL_SETTLE_MS) || !mdl || mdl.isDisposed()) {
+                isRenderingMarkers = false;
+                return;
+            }
+            try {
+                monaco.editor.setModelMarkers(mdl, 'lsp', markersToSet);
+            } catch(e) {
+                console.error('[Editor] setModelMarkers failed:', e.message);
+            }
+            // Release guard after a short delay — allows any marker-triggered
+            // scroll events to settle before diagnostics can fire again
+            setTimeout(function() { isRenderingMarkers = false; }, 300);
+        }, 0);
+    } catch(e) {
+        console.error('[Editor] setModelMarkers validation failed:', e.message);
+    }
+}
+
+// ---- Safe diagnostics: throttled 2s, suppressed during scroll ----
+var diagTimer = null;
+var DIAG_THROTTLE_MS = 5000;
+var diagSeq = 0;
+
+function scheduleDiagnostics() {
+    // Called after scroll stops or file opens — throttled to avoid spam
+    if (isScrolling || (lastScrollAt && (Date.now() - lastScrollAt) < SCROLL_SETTLE_MS) || isSwitchingFile || isRenderingMarkers || !bridge || !activeFilePath) return;
+    if (!openFiles[activeFilePath]) return;
+    if (diagTimer) clearTimeout(diagTimer);
+    diagTimer = setTimeout(function() {
+        diagTimer = null;
+        if (isScrolling || (lastScrollAt && (Date.now() - lastScrollAt) < SCROLL_SETTLE_MS) || !bridge || !activeFilePath) return;
+        if (!openFiles[activeFilePath]) return;
+        var f = openFiles[activeFilePath];
+        if (bridge.notifyContentChanged) {
+            try {
+                bridge.notifyContentChanged(activeFilePath, f.content || '', f.language || 'plaintext');
+            } catch(e) {}
+        }
+        bridge.requestDiagnostics('diag_' + (++diagSeq), activeFilePath, f.language || 'plaintext');
+    }, DIAG_THROTTLE_MS);
+}
+
+// Also called when file content changes (debounced via the content change handler)
+function requestDiagnostics() {
+    scheduleDiagnostics();
+}
+
+// ============================================================================
+// QWebChannel Bridge Setup
+// ============================================================================
+function initBridge(ch) {
+    bridge = ch;
+    console.log('[Editor] QWebChannel bridge connected');
+    // NOTE: onEditorReady is emitted from Monaco init callback when the editor is truly ready,
+    // not here (QWebChannel connects before Monaco finishes loading asynchronously).
+}
+
+new QWebChannel(qt.webChannelTransport, function(channel) {
+    initBridge(channel.objects.bridge);
+});
+</script>
+</body>
+</html>

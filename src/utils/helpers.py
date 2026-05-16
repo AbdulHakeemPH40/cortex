@@ -6,41 +6,124 @@ from pathlib import Path
 
 
 LANGUAGE_MAP = {
-    ".py":   "python",
-    ".js":   "javascript",
-    ".ts":   "typescript",
-    ".jsx":  "jsx",
-    ".tsx":  "tsx",
-    ".html": "html",
-    ".css":  "css",
-    ".json": "json",
-    ".md":   "markdown",
-    ".yml":  "yaml",
-    ".yaml": "yaml",
-    ".toml": "toml",
-    ".sh":   "bash",
-    ".bat":  "batch",
-    ".ps1":  "powershell",
-    ".cpp":  "cpp",
-    ".c":    "c",
-    ".h":    "c",
-    ".rs":   "rust",
-    ".go":   "go",
-    ".java": "java",
-    ".rb":   "ruby",
-    ".php":  "php",
-    ".sql":  "sql",
-    ".xml":  "xml",
-    ".txt":  "text",
-    ".env":  "bash",
-    ".ini":  "ini",
-    ".cfg":  "ini",
+    # ============================================
+    # Python
+    # ============================================
+    ".py":      "python",
+    ".pyw":     "python",
+    ".pyi":     "python",
+    
+    # ============================================
+    # Web - HTML, CSS, Preprocessors
+    # ============================================
+    ".html":    "html",       # auto handles embedded JS + CSS
+    ".htm":     "html",
+    ".css":     "css",
+    ".scss":    "scss",
+    ".sass":    "scss",
+    ".less":    "less",
+    
+    # ============================================
+    # JavaScript / TypeScript
+    # ============================================
+    ".js":      "javascript",
+    ".jsx":     "javascript",  # React JSX — Monaco colors tags
+    ".ts":      "typescript",
+    ".tsx":     "typescript",  # React TSX
+    ".mjs":     "javascript",
+    ".cjs":     "javascript",
+    
+    # ============================================
+    # Frameworks & Template Engines
+    # (html mode covers template syntax well enough)
+    # ============================================
+    ".vue":     "html",        # Vue SFC
+    ".svelte":  "html",        # Svelte
+    ".astro":   "html",        # Astro
+    ".njk":     "html",        # Nunjucks
+    ".jinja":   "html",        # Jinja2
+    ".jinja2":  "html",        # Jinja2 / Django templates
+    ".twig":    "html",        # Twig (PHP)
+    ".blade":   "html",        # Laravel Blade
+    ".erb":     "html",        # Ruby ERB
+    
+    # ============================================
+    # Data / Config
+    # ============================================
+    ".json":    "json",
+    ".jsonc":   "json",
+    ".json5":   "json",
+    ".yaml":    "yaml",
+    ".yml":     "yaml",
+    ".toml":    "ini",
+    ".env":     "ini",
+    ".ini":     "ini",
+    ".cfg":     "ini",
+    
+    # ============================================
+    # Markup / Docs
+    # ============================================
+    ".md":      "markdown",
+    ".mdx":     "markdown",
+    ".rst":     "markdown",
+    ".xml":     "xml",
+    ".svg":     "xml",
+    ".xaml":    "xml",
+    
+    # ============================================
+    # Systems Programming
+    # ============================================
+    ".go":      "go",
+    ".rs":      "rust",
+    ".rb":      "ruby",
+    ".php":     "php",
+    ".java":    "java",
+    ".cs":      "csharp",
+    ".cpp":     "cpp",
+    ".cc":      "cpp",
+    ".cxx":     "cpp",
+    ".c":       "c",
+    ".h":       "cpp",
+    ".hpp":     "cpp",
+    ".swift":   "swift",
+    ".kt":      "kotlin",
+    ".dart":    "dart",
+    ".r":       "r",
+    
+    # ============================================
+    # Shell / DevOps
+    # ============================================
+    ".sh":      "shell",
+    ".bash":    "shell",
+    ".zsh":     "shell",
+    ".fish":    "shell",
+    ".ps1":     "powershell",
+    ".bat":     "batch",
+    ".cmd":     "batch",
+    
+    # ============================================
+    # Database / Query
+    # ============================================
+    ".sql":     "sql",
+    ".graphql": "graphql",
+    ".gql":     "graphql",
+    
+    # ============================================
+    # Other
+    # ============================================
+    ".tf":      "hcl",         # Terraform
+    ".proto":   "proto",       # Protobuf
+    ".tex":     "latex",       # LaTeX
+    ".txt":     "plaintext",
+    ".log":     "plaintext",
 }
 
 FILE_ICONS = {
     ".py":   "🐍",
     ".js":   "📜",
     ".ts":   "📘",
+    ".jsx":  "⚛️",
+    ".tsx":  "⚛️",
     ".html": "🌐",
     ".css":  "🎨",
     ".json": "📋",
@@ -50,13 +133,42 @@ FILE_ICONS = {
     ".txt":  "📄",
     ".env":  "🔑",
     ".git":  "🔀",
+    ".vue":  "💚",
+    ".svelte": "🔶",
+    ".rs":   "🦀",
+    ".go":   "🐹",
+    ".java": "☕",
+    ".php":  "🐘",
+    ".rb":   "💎",
+    ".sql":  "🗃️",
     "dir":   "📁",
 }
 
 
 def detect_language(filepath: str) -> str:
+    """Detect Monaco language mode from file extension."""
+    name = os.path.basename(filepath).lower()
+    
+    # Special filenames (no extension)
+    if name == "dockerfile":
+        return "dockerfile"
+    if name == "makefile":
+        return "makefile"
+    if name == "vagrantfile":
+        return "ruby"
+    if name == "gemfile":
+        return "ruby"
+    if name == "rakefile":
+        return "ruby"
+    if name.startswith("readme"):
+        return "markdown"
+    if name.startswith("license"):
+        return "plaintext"
+    if name.startswith(".env"):
+        return "ini"
+    
     ext = Path(filepath).suffix.lower()
-    return LANGUAGE_MAP.get(ext, "text")
+    return LANGUAGE_MAP.get(ext, "plaintext")
 
 
 def file_icon(filepath: str, is_dir: bool = False) -> str:

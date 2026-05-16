@@ -1,0 +1,19 @@
+{
+  "key": "vision_analysis",
+  "worker_id": "4c06fd25",
+  "timestamp": 1776455088.5272677,
+  "data": {
+    "image_path": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAATAA...",
+    "ocr_text": "```\n.CORTEX,\n.cortex,\n.pytest_cache,\n.qoder,\n__pycache__,\nbin,\nbuild,\ndist,\nDocs,\ninstaller_output,\nnode_modules,\nplugins,\nQoder,\nsrc,\ntests,\ntmp,\nvenv,\n.env,\n.env.example\n```\n",
+    "image_description": "The image shows a screenshot of a directory structure in a file explorer window titled \"CORTEX.\" The directory contains several folders and files, including hidden files and folders (indicated by a dot prefix). The folders have different colored icons, indicating different types or statuses. The \".env\" file is highlighted in blue, suggesting it is currently selected. ",
+    "detected_objects": [
+      "Object 1 (Top, File Explorer Title): Title bar with the text \"CORTEX\"",
+      "Object 2 (List, Directory Contents): List of directories and files, including `.cortex`, `.pytest_cache`, `.qoder`, `__pycache__`, `bin`, `build`, `dist`, `Docs`, `installer_output`, `node_modules`, `plugins`, `Qoder`, `src`, `tests`, `tmp`, `venv`, `.env`, and `.env.example`"
+    ],
+    "analysis_timestamp": "2026-04-17T23:44:48.485152",
+    "vision_model_used": "mistral",
+    "confidence_score": 0.99,
+    "analysis_type": "full",
+    "session_id": "default-session"
+  }
+}

@@ -3,39 +3,251 @@ Cortex AI Agent IDE — Main Window
 Full 3-panel layout: Sidebar | Editor Tabs | AI Chat + Terminal
 """
 
+import json
 import os
+import sys
+import time
 import platform
+import uuid as _uuid
 from pathlib import Path
+from typing import Any, Optional, cast
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSplitter,
-    QTabWidget, QLabel, QPushButton, QStatusBar, QFileDialog,
-    QToolBar, QMenuBar, QMessageBox, QInputDialog, QTabBar,
-    QFrame, QSizePolicy
+    QTabWidget, QLabel, QPushButton, QFileDialog,
+    QMenu, QMessageBox, QInputDialog, QTabBar,
+    QFrame, QSizePolicy, QApplication, QListWidgetItem, QComboBox, QDialog,
+    QStackedWidget, QScrollArea, QTreeView, QLineEdit
 )
-from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtSlot, QTimer, QRect, QProcessEnvironment, QSignalBlocker
-from PyQt6.QtGui import (QAction, QKeySequence, QIcon, QFont, QPainter, QColor, 
-                         QMouseEvent, QCloseEvent, QPixmap)
+from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot, QTimer, QSignalBlocker, QDir, QModelIndex, QThread
+from PyQt6.QtGui import QFileSystemModel, QAction, QKeySequence, QIcon, QFont, QMouseEvent, QCloseEvent, QTextDocument
+from PyQt6.QtWebChannel import QWebChannel
+from PyQt6.QtWebEngineCore import QWebEnginePage
 
 from src.config.settings import get_settings
 from src.config.theme_manager import get_theme_manager
+from src.config.points_manager import get_points_manager, InsufficientPointsError
 from src.core.project_manager import ProjectManager
 from src.core.file_manager import FileManager
 from src.core.session_manager import SessionManager
 from src.core.codebase_index import get_codebase_index
-from src.ai.agent import AIAgent
-from src.ai.code_analyzer import CodeAnalyzer
-from src.ai.file_edit_tracker import FileEditTracker
-from src.ui.components.sidebar import SidebarWidget
-from src.ui.components.editor import CodeEditor
+# Agent bridge - connects Cortex to agent module
+try:
+    from src.ai.agent_bridge import get_agent_bridge as AIAgent
+    HAS_AGENT_BRIDGE = True
+except ImportError:
+    from src.ai.stub_agent import get_stub_agent as AIAgent  # Fallback stub
+    HAS_AGENT_BRIDGE = False
+
+import subprocess as _subprocess
+import logging as _logging
+
+_log = _logging.getLogger(__name__)
+
+
+class _GitStatusWorker(QThread):
+    """Background worker that collects git status without blocking the UI."""
+    status_ready = pyqtSignal(dict)
+
+    def __init__(self, repo_path: str, git_manager, gh_cached: object = None):
+        super().__init__()
+        self._repo_path = repo_path
+        self._git_manager = git_manager
+        self._gh_cached = gh_cached  # None = not checked yet
+
+    # ---- helpers (run off-thread) ------------------------------------
+    @staticmethod
+    def _parse_numstat(output: str):
+        for line in output.strip().splitlines():
+            parts = line.split('\t')
+            if len(parts) >= 2:
+                try:
+                    a = int(parts[0]) if parts[0] != '-' else 0
+                    d = int(parts[1]) if parts[1] != '-' else 0
+                    return a, d
+                except ValueError:
+                    pass
+        return 0, 0
+
+    def _get_file_diff_stats(self, file_path: str):
+        total_add, total_del = 0, 0
+        try:
+            # FIX: Prevent console window popup
+            if sys.platform == 'win32':
+                r = _subprocess.run(
+                    ["git", "diff", "--numstat", "--", file_path],
+                    cwd=self._repo_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    creationflags=_subprocess.CREATE_NO_WINDOW,
+                )
+            else:
+                r = _subprocess.run(
+                    ["git", "diff", "--numstat", "--", file_path],
+                    cwd=self._repo_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+            if r.returncode == 0 and r.stdout.strip():
+                a, d = self._parse_numstat(r.stdout)
+                total_add += a; total_del += d
+        except Exception as e:
+            log.debug(f'[MainWindow] Suppressed error: {e}')
+        try:
+            # FIX: Prevent console window popup
+            if sys.platform == 'win32':
+                r = _subprocess.run(
+                    ["git", "diff", "--cached", "--numstat", "--", file_path],
+                    cwd=self._repo_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    creationflags=_subprocess.CREATE_NO_WINDOW,
+                )
+            else:
+                r = _subprocess.run(
+                    ["git", "diff", "--cached", "--numstat", "--", file_path],
+                    cwd=self._repo_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+            if r.returncode == 0 and r.stdout.strip():
+                a, d = self._parse_numstat(r.stdout)
+                total_add += a; total_del += d
+        except Exception as e:
+            log.debug(f'[MainWindow] Suppressed error: {e}')
+        return total_add, total_del
+
+    # ---- main work (runs in QThread) --------------------------------
+    def run(self):
+        data = {}
+        # 1) branch name
+        try:
+            # FIX: Prevent console window popup
+            if sys.platform == 'win32':
+                r = _subprocess.run(
+                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                    cwd=self._repo_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    creationflags=_subprocess.CREATE_NO_WINDOW,
+                )
+            else:
+                r = _subprocess.run(
+                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                    cwd=self._repo_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+            data['branch'] = r.stdout.strip() if r.returncode == 0 else None
+        except Exception:
+            data['branch'] = None
+
+        # 2) git file status
+        try:
+            git_files = self._git_manager.get_status()
+        except Exception:
+            git_files = []
+        data['git_files'] = git_files
+        data['unstaged'] = sum(1 for f in git_files if not f.staged)
+        data['untracked'] = sum(1 for f in git_files if f.status.name == 'UNTRACKED')
+        data['staged'] = sum(1 for f in git_files if f.staged)
+        data['total'] = len(git_files)
+
+        # 3) gh cli (cache-aware)
+        if self._gh_cached is not None:
+            data['gh'] = self._gh_cached
+        else:
+            try:
+                # FIX: Prevent console window popup
+                if sys.platform == 'win32':
+                    r = _subprocess.run(
+                        ["gh", "--version"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                        creationflags=_subprocess.CREATE_NO_WINDOW,
+                    )
+                else:
+                    r = _subprocess.run(
+                        ["gh", "--version"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                if r.returncode == 0:
+                    data['gh'] = r.stdout.strip().split('\n')[0]
+                else:
+                    data['gh'] = ''
+            except FileNotFoundError:
+                data['gh'] = ''
+            except Exception:
+                data['gh'] = ''
+
+        # 4) per-file diff stats (batched, max 100)
+        file_stats = []
+        seen = set()
+        for gf in git_files[:100]:
+            if gf.path in seen:
+                continue
+            seen.add(gf.path)
+            a, d = self._get_file_diff_stats(gf.path)
+            file_stats.append((gf, a, d))
+        data['file_stats'] = file_stats
+
+        self.status_ready.emit(data)
+
+
+class CodeAnalyzer:
+    """Simple prompt builder for AI code actions."""
+
+    def build_explain_prompt(self, code: str, language: str) -> str:
+        return f"Explain this {language} code in detail. Break down what each part does and why:\n\n```{language}\n{code}\n```"
+
+    def build_refactor_prompt(self, code: str, language: str) -> str:
+        return f"Refactor this {language} code to be cleaner, more efficient, and follow best practices. Explain your changes:\n\n```{language}\n{code}\n```"
+
+    def build_test_prompt(self, code: str, language: str) -> str:
+        return f"Write comprehensive unit tests for this {language} code. Include edge cases and error handling:\n\n```{language}\n{code}\n```"
+
+    def build_debug_prompt(self, code: str, error: str, language: str) -> str:
+        return f"Help me debug this {language} code. Error: {error}\n\n```{language}\n{code}\n```\n\nWhat's causing this error and how do I fix it?"
+# from src.ai.file_edit_tracker import FileEditTracker
+from src.core.git_manager import GitManager, GitStatus
+from src.ui.components.sidebar import SidebarWidget, ChangedFilesPanel
+# CommandPalette removed - not implemented in AI-first mode
+# from src.ui.components.command_palette import CommandPalette
+from src.ui.components.editor import CodeEditor  # kept for backward compat (welcome/PDF/image tabs)
+from src.ui.components.webview_panel import WebviewPanel
 from src.ui.components.ai_chat import AIChatWidget
 from src.ui.components.xterm_terminal import XTermWidget
 from src.ui.components.find_replace import FindReplaceDialog
+
 from src.ui.dialogs.diff_viewer import DiffWindow
 from src.utils.icons import make_icon
+# Live Server removed in AI-first mode - AI handles code execution
+# from src.core.live_server import LiveServer
 from src.utils.helpers import detect_language, shorten_path
 from src.utils.logger import get_logger
+from src.utils.notifications import show_task_complete_notification, show_toast_notification
 
 log = get_logger("main_window")
+
+try:
+    from src.ui.syntax_highlighting_config import (
+        UniversalCodeColorizer,
+        MarkdownColorizer, 
+        DRACULA_COLORS,
+        FONTS
+    )
+    HAS_SYNTAX_HIGHLIGHTING = True
+except ImportError:
+    HAS_SYNTAX_HIGHLIGHTING = False
+    log.warning("Syntax highlighting module not available")
 
 
 class CleanTabBar(QTabBar):
@@ -45,14 +257,13 @@ class CleanTabBar(QTabBar):
         super().__init__(parent)
         self.setMouseTracking(True)
         self._hovered_tab = -1
-        # Inherit theme from parent window if possible
+        # Inherit theme — always dark
         from src.config.theme_manager import get_theme_manager
-        self._is_dark = get_theme_manager().is_dark
+        self._is_dark = True
 
 
     def set_dark(self, is_dark: bool):
-        self._is_dark = is_dark
-        self.update()
+        pass  # always dark
 
     def mouseMoveEvent(self, event):
         idx = self.tabAt(event.pos())
@@ -79,16 +290,17 @@ class CleanTabBar(QTabBar):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         d = self._is_dark
-        # Colour palette
-        col_sel_bg    = QColor("#1e1e1e") if d else QColor("#ffffff")
-        col_hover_bg  = QColor("#2a2a2d") if d else QColor("#e0e0e0")
-        col_normal_bg = QColor("#2d2d30") if d else QColor("#ececec")
-        col_accent    = QColor("#007acc") if d else QColor("#0d6efd")
-        col_divider   = QColor("#3e3e42") if d else QColor("#d0d0d0")
-        col_sel_fg    = QColor("#ffffff") if d else QColor("#1a1a1a")
-        col_hover_fg  = QColor("#cccccc") if d else QColor("#333333")
-        col_normal_fg = QColor("#969696") if d else QColor("#6c757d")
-        col_close     = QColor("#cccccc") if d else QColor("#666666")
+        # Cursor IDE Anysphere Dark Theme - Tab Colors
+        col_sel_bg    = QColor("#181818")
+        col_hover_bg  = QColor("#1f1f1f")
+        col_normal_bg = QColor("#141414")
+        col_accent    = QColor("#228df2")
+        col_divider   = QColor("#2a2a2a")
+        col_sel_fg    = QColor("#ffffff")
+        col_hover_fg  = QColor("#d6d6dd")
+        col_normal_fg = QColor("#6d6d6d")
+        col_close     = QColor("#f14c4c")
+        col_close_hover = QColor("#ff6b6b")
 
         for i in range(self.count()):
             rect = self.tabRect(i)
@@ -112,7 +324,6 @@ class CleanTabBar(QTabBar):
 
             # Tab label
             text = self.tabText(i)
-            close_w = 22
             
             # ── Premium Tab Icon ───────────────────────────────────────────────
             icon_x = rect.x() + 10
@@ -128,12 +339,21 @@ class CleanTabBar(QTabBar):
             if text == "Welcome": icon_name = "ai"
             if "Terminal" in text: icon_name = "terminal"
             
-            # Icon Color Mapping
+            # Cursor IDE Syntax Colors for File Icons
             colors = {
-                "python":   "#c678dd", "html": "#e06c75", "css": "#61afef",
-                "javascript": "#d19a66", "typescript": "#61afef", "markdown": "#61afef",
-                "json": "#d19a66", "java": "#e06c75", "rust": "#d19a66", "go": "#61afef",
-                "sql": "#e5c07b", "ai": "#98c379", "terminal": "#858585"
+                "python":   "#83d6c5",  # teal - keyword
+                "html":     "#87c3ff",  # light blue - class/tag
+                "css":      "#87c3ff",  # light blue - class
+                "javascript": "#e394dc", # pink - string
+                "typescript": "#87c3ff", # light blue - class
+                "markdown": "#d6d6dd", # primary text
+                "json":     "#efb080",  # orange - number
+                "java":     "#83d6c5",  # teal
+                "rust":     "#efb080",  # orange
+                "go":       "#87c3ff",  # light blue
+                "sql":      "#83d6c5",  # teal
+                "ai":       "#228df2",  # accent blue
+                "terminal": "#6d6d6d"   # muted
             }
             icon_color = colors.get(icon_name, "#abb2bf")
             
@@ -141,62 +361,87 @@ class CleanTabBar(QTabBar):
             icon_pixmap = make_icon(icon_name, icon_color, icon_size).pixmap(icon_size, icon_size)
             painter.drawPixmap(icon_x, rect.y() + (rect.height() - icon_size)//2, icon_pixmap)
             
-            # Label
-            label_x = icon_x + icon_size + 8
-            label_rect = QRect(label_x, rect.y(), rect.width() - (label_x - rect.x()) - close_w - 4, rect.height())
+            # Reserve space for close button (14px + 2px right padding)
+            btn_reserved = 16  # 14 + 2px right margin
+            
+            # Label - leave space for close button
+            label_x = icon_x + icon_size + 6
+            label_width = rect.width() - (label_x - rect.x()) - btn_reserved - 2
+            label_rect = QRect(label_x, rect.y(), max(0, label_width), rect.height())
+            
+            # Draw label with eliding to prevent overflow
             painter.save()
             fg = col_sel_fg if is_selected else (col_hover_fg if is_hovered else col_normal_fg)
             painter.setPen(fg)
             f = painter.font()
             f.setPointSize(9)
             painter.setFont(f)
+            # Use elided text to prevent overflow into button area
+            from PyQt6.QtGui import QFontMetrics
+            fm = QFontMetrics(f)
+            elided_text = fm.elidedText(text, Qt.TextElideMode.ElideRight, label_width)
             painter.drawText(label_rect,
                              Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
-                             text)
+                             elided_text)
             painter.restore()
 
-            # × close button — only on hovered or selected tab
+            # × close button — ONLY show on hovered or selected tabs
             if is_hovered or is_selected:
-                btn_size = 16
-                btn_x = rect.right() - btn_size - 4
+                # Fixed position from right edge - 2px padding
+                btn_size = 14
+                btn_x = rect.right() - btn_size - 2
                 btn_y = rect.y() + (rect.height() - btn_size) // 2
                 btn_rect = QRect(btn_x, btn_y, btn_size, btn_size)
-
-                # Subtle highlight when cursor is over the × itself
+                
+                # Check if cursor is over the × button
                 cursor_pos = self.mapFromGlobal(self.cursor().pos())
-                if btn_rect.contains(cursor_pos):
-                    painter.save()
-                    a = 35 if d else 30
-                    painter.setBrush(QColor(0, 0, 0, a) if not d else QColor(255, 255, 255, a))
-                    painter.setPen(Qt.PenStyle.NoPen)
-                    painter.drawRoundedRect(btn_rect, 3, 3)
-                    painter.restore()
+                is_close_hovered = btn_rect.contains(cursor_pos)
 
-                painter.save()
-                painter.setPen(col_close)
-                xf = painter.font()
-                xf.setPointSize(10)
-                painter.setFont(xf)
+                # Determine colors
+                if is_close_hovered:
+                    bg_color = QColor("#f14c4c") if d else QColor("#d73a49")  # Red
+                    x_color = QColor("#ffffff")  # White X
+                else:
+                    bg_color = QColor(255, 255, 255, 40) if d else QColor(0, 0, 0, 30)
+                    x_color = QColor("#f14c4c") if d else QColor("#d73a49")  # Red X
+                
+                # CRITICAL: Fill button area with tab background color first
+                bg_fill = col_sel_bg if is_selected else col_hover_bg
+                painter.fillRect(btn_rect, bg_fill)
+                
+                # Draw button background
+                painter.setBrush(bg_color)
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawRoundedRect(btn_rect, 2, 2)
+                
+                # Draw X centered
+                painter.setPen(x_color)
+                font = painter.font()
+                font.setPointSize(10)
+                font.setBold(True)
+                painter.setFont(font)
                 painter.drawText(btn_rect, Qt.AlignmentFlag.AlignCenter, "×")
-                painter.restore()
 
         painter.end()
 
     def mousePressEvent(self, event):
         """Handle × button click to close the tab."""
-        from PyQt6.QtCore import Qt
+        from PyQt6.QtCore import Qt, QRect
         from PyQt6.QtGui import QMouseEvent
         i = self.tabAt(event.pos())
         if i >= 0:
-            rect = self.tabRect(i)
-            btn_size = 16
-            btn_x = rect.right() - btn_size - 4
-            btn_y = rect.y() + (rect.height() - btn_size) // 2
-            from PyQt6.QtCore import QRect
-            btn_rect = QRect(btn_x, btn_y, btn_size, btn_size)
-            if btn_rect.contains(event.pos()):
-                self.tabCloseRequested.emit(i)
-                return
+            # Only check if tab is hovered or selected (matching paint logic)
+            is_selected = (i == self.currentIndex())
+            is_hovered = (i == self._hovered_tab)
+            if is_hovered or is_selected:
+                rect = self.tabRect(i)
+                btn_size = 14
+                btn_x = rect.right() - btn_size - 2  # Match paintEvent
+                btn_y = rect.y() + (rect.height() - btn_size) // 2
+                btn_rect = QRect(btn_x, btn_y, btn_size, btn_size)
+                if btn_rect.contains(event.pos()):
+                    self.tabCloseRequested.emit(i)
+                    return
         super().mousePressEvent(event)
 
 
@@ -253,18 +498,20 @@ class EditorTabWidget(QTabWidget):
             n=3
         ))
 
-        bg   = '#1e1e1e' if is_dark else '#ffffff'
-        fg   = '#cccccc' if is_dark else '#333333'
-        add_bg = 'rgba(46,160,67,0.2)'  if is_dark else 'rgba(46,160,67,0.15)'
-        add_fg = '#56d364'              if is_dark else '#1a7f37'
-        rem_bg = 'rgba(248,81,73,0.2)' if is_dark else 'rgba(255,129,130,0.15)'
-        rem_fg = '#f85149'              if is_dark else '#cf222e'
-        info_fg = '#8b949e'             if is_dark else '#6e7781'
+        bg   = '#1e1e1e'
+        fg   = '#cccccc'
+        add_bg = 'rgba(46,160,67,0.2)'
+        add_fg = '#56d364'
+        rem_bg = 'rgba(248,81,73,0.2)'
+        rem_fg = '#f85149'
+        info_fg = '#8b949e'
 
-        def esc(t): return t.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+        def esc(t: str) -> str:
+            return t.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
-        parts = [f"<div style='background:{bg};color:{fg};white-space:pre;"
-                 f"font-family:\"Cascadia Code\",Consolas,monospace;font-size:13px;line-height:1.5;padding:10px;'>"]
+        parts: list[str] = [
+            f"<div style='background:{bg};color:{fg};white-space:pre;font-family:\"Cascadia Code\",Consolas,monospace;font-size:13px;line-height:1.5;padding:10px;'>"
+        ]
 
         if not diff_lines:
             parts.append(f"<div style='color:{info_fg};padding:20px;'>No changes detected.</div>")
@@ -308,7 +555,7 @@ class EditorTabWidget(QTabWidget):
                     if current_content != content:
                         # Content changed, reload it
                         with QSignalBlocker(editor.document()):
-                            editor.set_content(content, language)
+                            editor.set_content(content, language, filepath)
                         print(f"[EditorTabs] Updated content for already-open file: {filepath}")
                     else:
                         print(f"[EditorTabs] File already open with same content: {filepath}")
@@ -324,7 +571,7 @@ class EditorTabWidget(QTabWidget):
         # Disconnect the internal document→editor connection temporarily
         # Use blockSignals instead of disconnect to avoid errors
         with QSignalBlocker(editor.document()):
-            editor.set_content(content, language)
+            editor.set_content(content, language, filepath)
         
         # NOW connect OUR handler - anything after this is a user edit
         editor.content_modified.connect(lambda: self._mark_modified(filepath))
@@ -423,7 +670,9 @@ class EditorTabWidget(QTabWidget):
                 if editor:
                     content = editor.get_all_text()
                     try:
-                        Path(filepath).write_text(content, encoding='utf-8')
+                        # Normalize line endings to prevent doubled empty lines
+                        content = content.replace("\r\n", "\n").replace("\r", "\n")
+                        Path(filepath).write_text(content, encoding='utf-8', newline='')
                         self._mark_saved(filepath)
                     except Exception as e:
                         from PyQt6.QtWidgets import QMessageBox
@@ -475,7 +724,9 @@ class EditorTabWidget(QTabWidget):
         """Save a specific file and update its modified state."""
         from pathlib import Path as _Path
         try:
-            _Path(filepath).write_text(content, encoding='utf-8')
+            # Normalize line endings to prevent doubled empty lines
+            content = content.replace("\r\n", "\n").replace("\r", "\n")
+            _Path(filepath).write_text(content, encoding='utf-8', newline='')
             self._mark_saved(filepath)
             return True
         except Exception as e:
@@ -508,9 +759,75 @@ class EditorTabWidget(QTabWidget):
                 w.set_theme(is_dark)
 
 
+# ═══════════════════════════════════════════════════════════════
+# NOTIFICATION SUMMARY EXTRACTOR (module-level helper)
+# ═══════════════════════════════════════════════════════════════
+
+def _extract_notification_summary(text: str) -> str:
+    """Extract a clean, minimal task summary from AI response text.
+
+    Skips conversational fluff (greetings, "I think", "Here is", etc.)
+    and returns the first meaningful sentence describing what was done.
+    """
+    import re
+    # Truncate to reasonable length before processing
+    text = text[:500]
+    # Strip markdown formatting
+    cleaned = re.sub(r'#{1,6}\s+', '', text)
+    cleaned = re.sub(r'\*\*([^*]+)\*\*', r'\1', cleaned)     # bold
+    cleaned = re.sub(r'\*([^*]+)\*', r'\1', cleaned)           # italic
+    cleaned = re.sub(r'`{1,3}[^`]*`{1,3}', '', cleaned)         # inline + block code
+    cleaned = re.sub(r'\|[-:\s|]+\|', '', cleaned)             # table separators
+    cleaned = re.sub(r'\|[^|]*\|', '', cleaned)                 # table rows
+    cleaned = re.sub(r'[-*_]{3,}', '', cleaned)                  # horizontal rules
+    cleaned = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', cleaned)  # links
+    cleaned = re.sub(r'[>\-]\s+', '', cleaned)                  # blockquote markers
+    cleaned = re.sub(r'\n{2,}', '. ', cleaned)                  # double newlines → period
+    cleaned = cleaned.replace('\n', ' ').strip()
+    # Collapse multiple spaces
+    cleaned = re.sub(r'\s{2,}', ' ', cleaned)
+    # Split into sentences
+    sentences = re.split(r'(?<=[.!?])\s+', cleaned)
+    # Fluff patterns to skip (conversational intros)
+    skip_starts = {
+        'i think', 'i can', 'i will', 'i would', 'i have', 'i see',
+        'here is', 'here are', 'let me', 'let\'s', 'sure', 'of course',
+        'great question', 'thank', 'hello', 'hi there', 'hi,', 'hey',
+        'certainly', 'absolutely', 'no problem', 'you\'re', 'that\'s a',
+        'based on', 'looking at', 'first', 'now', 'next', 'then',
+        'to start', 'to begin',
+    }
+    for s in sentences:
+        s_clean = s.strip().strip('.,;:!?()[]"\' ')
+        if len(s_clean) < 12:
+            continue
+        s_lower = s_clean.lower()
+        if any(s_lower.startswith(p) for p in skip_starts):
+            continue
+        # Found a meaningful sentence — cap at 100 chars
+        if len(s_clean) > 100:
+            # Try to break at a natural boundary
+            cut = s_clean[:100].rfind(' ')
+            s_clean = s_clean[:cut] if cut > 60 else s_clean[:100]
+        return s_clean
+    # Fallback: first sentence >= 20 chars
+    for s in sentences:
+        s_clean = s.strip().strip('.,;:!?()[]"\' ')
+        if len(s_clean) >= 20:
+            return s_clean[:100]
+    return ""
+
+
 class CortexMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self._start_time = time.time()  # track startup time for crash-prevention guards
+        self._warmup_duration = 50  # seconds — Chromium GPU/compositor stabilization window (crash zone ≤34s)
+        self._warmup_queued_files: list = []  # (filepath, priority) tuples queued during warmup
+        self._warmup_flush_timer = QTimer(self)
+        self._warmup_flush_timer.setSingleShot(True)
+        self._warmup_flush_timer.timeout.connect(self._flush_warmup_queue)
+        self._warmup_flush_timer.start(self._warmup_duration * 1000)
         log.info("MainWindow: __init__ START")
         log.info("MainWindow: Initializing managers...")
         self._settings = get_settings()
@@ -518,25 +835,41 @@ class CortexMainWindow(QMainWindow):
         self._project_manager = ProjectManager()
         self._file_manager = FileManager()
         self._session_manager = SessionManager()
-        self._ai_agent = AIAgent()
-        self._file_tracker = FileEditTracker(self)
+        self._live_server: Optional[Any] = None  # built-in HTML Live Server (disabled in AI-first mode)
+        # Git manager for source control integration
+        self._git_manager = GitManager()
+        self._git_manager.status_changed.connect(self._update_git_summary)
+        log.info("[GIT] GitManager initialized")
+        
+        # Agent bridge connects Cortex to agent module
+        self._ai_agent = AIAgent(file_manager=self._file_manager)
+        if HAS_AGENT_BRIDGE:
+            log.info("[AGENT] Agent bridge initialized - full integration active")
+        else:
+            log.info("[AGENT] Stub agent initialized - bridge not available")
+        
+        # Legacy AI components removed - agent_bridge.py is the active runtime
+        self._file_tracker = None
         self._diff_window = DiffWindow(self)
         self._codebase_index = None
         self._inline_edit_context = None
+        # Live Server removed in AI-first mode
+        self._live_server = None
         
         # Initialize UI components to None to prevent theme application crashes if build fails
         self._toolbar = None
         self._toolbar_sep = None
         self._toolbar_logo = None
         self._toolbar_btns = []
+        self._memory_btn = None
+        self._settings_btn = None
 
         try:
             log.info("MainWindow: Building UI...")
             self._build_ui()
             log.info("MainWindow: Building Menu...")
+            # Build menu bar for all modes (Codex-style has menu bar)
             self._build_menu()
-            log.info("MainWindow: Building Toolbar...")
-            self._build_toolbar()
             log.info("MainWindow: Building Status Bar...")
             self._build_status_bar()
         except Exception as e:
@@ -551,12 +884,59 @@ class CortexMainWindow(QMainWindow):
         log.info("MainWindow: Restoring session...")
         self._restore_session()
         log.info("MainWindow: Initialization complete.")
-        log.info("MainWindow: Initialization complete.")
 
-        # Heartbeat to check for event loop hang
-        self._heartbeat_timer = QTimer(self)
-        self._heartbeat_timer.timeout.connect(lambda: None)  # keep event loop alive, no logging
-        self._heartbeat_timer.start(2000)
+        # Enable drag and drop of folders/files onto the main window
+        self.setAcceptDrops(True)
+
+        # Set Window Icon (Title Bar + Taskbar) - BEFORE show() to prevent flash
+        # Uses pre-generated taskbar_rounded.png (run generate_icons.py once)
+        if getattr(sys, 'frozen', False):
+            base = sys._MEIPASS
+        else:
+            base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        logo_dir = os.path.join(base, "src", "assets", "logo")
+        if not os.path.isdir(logo_dir):
+            # Fallback: try exe directory
+            exe_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.getcwd()
+            logo_dir = os.path.join(exe_dir, "src", "assets", "logo")
+        if not os.path.isdir(logo_dir):
+            # Fallback: try _internal directory (PyInstaller onedir)
+            exe_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.getcwd()
+            logo_dir = os.path.join(exe_dir, "_internal", "src", "assets", "logo")
+        if not os.path.isdir(logo_dir):
+            logo_dir = os.path.join(os.getcwd(), "src", "assets", "logo")
+
+        icon_candidates = [
+            os.path.join(logo_dir, "taskbar_rounded.png"),
+            os.path.join(logo_dir, "taskbar.png"),
+            os.path.join(logo_dir, "taskbar.ico"),
+        ]
+
+        icon = QIcon()
+        found_icon = False
+        for candidate in icon_candidates:
+            if os.path.exists(candidate):
+                from PyQt6.QtGui import QPixmap
+                from PyQt6.QtCore import Qt
+                pm = QPixmap(candidate)
+                if not pm.isNull():
+                    for sz in [16, 32, 48, 64, 128, 256]:
+                        icon.addPixmap(pm.scaled(sz, sz, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+                    found_icon = True
+                    log.info(f"[ICON] Successfully loaded icon: {candidate}")
+                    break
+
+        if not found_icon:
+            log.error(f"[ICON] No valid icon found in candidates: {icon_candidates}")
+            log.error(f"[ICON] Checked paths: {[os.path.abspath(candidate) for candidate in icon_candidates]}")
+
+        if not icon.isNull():
+            self.setWindowIcon(icon)
+            # Also set app-level icon for taskbar grouping
+            from PyQt6.QtWidgets import QApplication
+            QApplication.instance().setWindowIcon(icon)
+        else:
+            log.error("[ICON] Failed to set window icon: QIcon is null")
 
         # Window geometry
         w = self._settings.get("window", "width") or 1400
@@ -568,40 +948,139 @@ class CortexMainWindow(QMainWindow):
         else:
             self.show()
 
-    # ------------------------------------------------------------------
-    # UI Construction
-    # ------------------------------------------------------------------
+    def _on_new_chat(self):
+        """Handle new chat request from sidebar or navigation"""
+        # Create new chat via JavaScript
+        if hasattr(self, '_ai_chat') and self._ai_chat:
+            self._ai_chat.run_javascript("window.newChat()")
+            log.info("New chat created via sidebar")
+        else:
+            log.warning("AI chat not ready, cannot create new chat")
+    
+    def _open_settings(self):
+        """Open settings dialog (Ctrl+,)."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Settings")
+        dialog.setMinimumWidth(500)
+        dialog.setMinimumHeight(400)
+        
+        layout = QVBoxLayout(dialog)
+        
+        layout.addStretch()
+        
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.accept)
+        layout.addWidget(close_btn)
+        
+        dialog.exec()
+    
+    def _set_theme(self, theme: str):
+        """Theme is always dark."""
+        pass
+    
     def _build_ui(self):
+        """Build AI-First UI Layout - Codex-style with 2-panel and 4-panel states."""
         self.setWindowTitle("Cortex AI Agent")
         central = QWidget()
         self._central = central
         self.setCentralWidget(central)
+
+        # === STATE MANAGEMENT ===
+        # Always show 4-panel layout with chat ready
+        self._is_welcome_state = False
+        self._chat_started = True
+
+        # === CODEX-STYLE LAYOUT WITH SPLITTERS ===
+        main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        main_splitter.setChildrenCollapsible(True)
+        main_splitter.setHandleWidth(4)
+        main_splitter.setStyleSheet("""
+            QSplitter::handle {
+                background-color: #2a2a2a;
+            }
+            QSplitter::handle:hover {
+                background-color: #4d78cc;
+            }
+        """)
+
+        # Create all panels
+        # Panel 1: Left Sidebar (220px) — REAL SidebarWidget from sidebar.py
+        # The SidebarWidget gets the Git Review panel embedded inside it
+        self._sidebar = SidebarWidget(self._file_manager, git_manager=self._git_manager)
+        self._sidebar.setMinimumWidth(180)
+        self._sidebar.setMaximumWidth(400)
+
+        # Create Review Panel (Summary/Review/Changed Files) and inject into sidebar
+        self._review_panel = self._create_review_panel()
+        self._sidebar.add_git_review_panel(self._review_panel)
+        self._sidebar.add_chat_history_panel()
+
+        main_splitter.addWidget(self._sidebar)
+
+        # Panel 2: Chat Panel - Main AI conversation (ALWAYS VISIBLE, flexible)
+        self._chat_panel = self._create_chat_panel()
+        self._chat_panel.setMinimumWidth(300)
+        main_splitter.addWidget(self._chat_panel)
+
+        # Panel 3: Webview Code Editor (Monaco) + Terminal — vertical split
+        self._editor_terminal_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._editor_terminal_splitter.setChildrenCollapsible(True)
+        self._editor_terminal_splitter.setHandleWidth(4)
+        self._editor_terminal_splitter.setStyleSheet("""
+            QSplitter::handle {
+                background-color: #2a2a2a;
+            }
+            QSplitter::handle:hover {
+                background-color: #4d78cc;
+            }
+        """)
+
+        # Editor (Monaco webview) — top portion
+        self._webview_panel = WebviewPanel()
+        self._webview_panel.setMinimumWidth(300)
+        self._editor_terminal_splitter.addWidget(self._webview_panel)
+
+        # Integrated Terminal — hidden by default (toggle via Ctrl+J or toolbar button)
+        self._integrated_terminal = XTermWidget()
+        self._integrated_terminal.setMinimumHeight(120)
+        self._editor_terminal_splitter.addWidget(self._integrated_terminal)
+        self._editor_terminal_splitter.setSizes([500, 0])  # Terminal hidden on startup
+        self._integrated_terminal.setMaximumHeight(0)  # Ensure collapsed state
+
+        main_splitter.addWidget(self._editor_terminal_splitter)
+
+        # Set initial sizes (proportions) — 3-panel layout
+        main_splitter.setSizes([220, 500, 500])
+
+        # Add splitter to main layout
         root_layout = QVBoxLayout(central)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
+        root_layout.addWidget(main_splitter, 1)
 
-        # Main horizontal splitter
-        self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        # Store reference for later access
+        self._main_splitter = main_splitter
 
-        # --- Left Sidebar ---
-        self._sidebar = SidebarWidget()
-        self._sidebar.setMinimumWidth(44)
-        self._sidebar.setMaximumWidth(320)
-        self._main_splitter.addWidget(self._sidebar)
+        # Panel toggle state tracking
+        self._left_sidebar_hidden = False
+        self._chat_panel_hidden = False
+        self._code_panel_hidden = False
+        self._terminal_panel_hidden = True  # Hidden by default — user toggles open via Ctrl+J or toolbar
+        self._summary_panel_hidden = False
+        self._git_panel_hidden = False
 
-        # --- Center: Editor + Terminal stacked vertically ---
-        center_widget = QWidget()
-        center_layout = QVBoxLayout(center_widget)
-        center_layout.setContentsMargins(0, 0, 0, 0)
-        center_layout.setSpacing(0)
+        # Store minimum widths for panel toggle restore
+        self._left_sidebar_min_width = 220
+        self._chat_panel_min_width = 300
+        self._code_panel_min_width = 500
+        self._terminal_panel_min_height = 150
 
-        self._center_splitter = QSplitter(Qt.Orientation.Vertical)
-
-        # Editor tabs
+        # Keep old components for backward compatibility
+        self._ai_splitter = None  # Replaced by 4-panel layout
         self._editor_tabs = EditorTabWidget()
-        self._editor_tabs.setMinimumSize(400, 300)
-        self._editor_tabs.show()
-        self._center_splitter.addWidget(self._editor_tabs)
+        self._editor_tabs.setMinimumSize(200, 150)
+        self._editor_tabs.hide()  # Hidden in Codex mode, shown in editor mode
 
         # Terminal tabs
         self._terminal_tabs = QTabWidget()
@@ -610,61 +1089,48 @@ class CortexMainWindow(QMainWindow):
         self._terminal_tabs.setDocumentMode(True)
         self._terminal_tabs.setMovable(True)
         self._terminal_tabs.setVisible(False)
-        self._terminal_tabs.setMinimumHeight(150)
+        self._terminal_tabs.setMinimumHeight(120)
         self._terminal_tabs.tabCloseRequested.connect(self._close_terminal_tab)
-        
-        # Add a placeholder/first terminal
-        self._new_terminal()
-        
-        self._center_splitter.addWidget(self._terminal_tabs)
 
-        self._center_splitter.setSizes([700, 200])
-        center_layout.addWidget(self._center_splitter, 1)
-        self._main_splitter.addWidget(center_widget)
-
-        # --- Right Panel: AI Chat ---
-        self._right_panel = QWidget()
-        self._right_panel.setMinimumWidth(280)
-        right_layout = QVBoxLayout(self._right_panel)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(0)
-
-        self._ai_chat = AIChatWidget()
-        self._ai_chat.run_command.connect(self._on_ai_run_command)
-        self._ai_chat.stop_requested.connect(self._on_ai_stop_requested)
-        self._ai_chat.open_file_requested.connect(self._open_file)
-        self._ai_chat.accept_file_edit_requested.connect(self._on_accept_file_edit)
-        self._ai_chat.reject_file_edit_requested.connect(self._on_reject_file_edit)
-        self._ai_chat.open_terminal_requested.connect(self._show_terminal_panel)
-        self._ai_chat.set_code_context_callback(self._get_code_context)
-        right_layout.addWidget(self._ai_chat)
-        self._main_splitter.addWidget(self._right_panel)
-        
         # Find/Replace Dialog
         self._find_replace_dialog = FindReplaceDialog(self)
         self._find_replace_dialog.find_requested.connect(self._on_find_requested)
         self._find_replace_dialog.replace_requested.connect(self._on_replace_requested)
         self._find_replace_dialog.replace_all_requested.connect(self._on_replace_all_requested)
 
-        # Splitter sizes for 3 panels: sidebar | editor | AI chat
-        sidebar_w = self._settings.get("window", "sidebar_width") or 220
-        right_w = self._settings.get("window", "right_panel_width") or 350
-        total_w = (self._settings.get("window", "width") or 1400)
-        center_w = max(400, total_w - sidebar_w - right_w)
-        self._main_splitter.setSizes([sidebar_w, center_w, right_w])
-        self._main_splitter.setHandleWidth(1)
+        # Command Palette - REMOVED (not implemented in AI-first mode)
+        # self._command_palette = CommandPalette(self)
+        # self._command_palette.command_selected.connect(self._on_command_selected)
+
+        # Initialize project info on welcome screen
+        self._update_welcome_project_info()
+
+        # Initialize Git summary after UI is built
+        # Temporarily disabled for crash debugging
+        # QTimer.singleShot(500, cast(Any, self._update_git_summary))
         
-        # Limit AI chat panel max width to prevent it from getting too wide
-        self._right_panel.setMaximumWidth(480)
-
-        root_layout.addWidget(self._main_splitter, 1)
-
-        # Welcome tab
-        self._show_welcome()
+        # Auto-refresh git status every 120 seconds to detect push/commit from terminal
+        self._git_refresh_timer = QTimer(self)
+        self._git_refresh_timer.setInterval(120000)  # 120 seconds (was 30s, increased for crash debugging)
+        cast(Any, self._git_refresh_timer.timeout).connect(self._update_git_summary)
+        # Start only when a valid git repository is detected.
+        self._git_repo_known_state = None  # type: Optional[bool]
+        self._git_worker = None          # guard: only one worker at a time
+        self._gh_version_cache = None    # cache gh --version across session
 
     def _show_welcome(self):
-        """Show a welcome screen in the editor tabs."""
+        """Show a VS Code-like welcome screen in the editor tabs."""
         from PyQt6.QtWidgets import QScrollArea
+        
+        # Remove existing welcome tab if present
+        for i in range(self._editor_tabs.count()):
+            tab_text = self._editor_tabs.tabText(i)
+            if tab_text == "Welcome":
+                widget = self._editor_tabs.widget(i)
+                self._editor_tabs.removeTab(i)
+                if widget:
+                    widget.deleteLater()
+                break
         
         self._welcome_scroll = QScrollArea()
         self._welcome_scroll.setWidgetResizable(True)
@@ -675,10 +1141,11 @@ class CortexMainWindow(QMainWindow):
         welcome = self._welcome_widget
         wlay = QVBoxLayout(welcome)
         wlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        wlay.setSpacing(16)
-        wlay.setContentsMargins(30, 30, 30, 30)
+        wlay.setSpacing(20)
+        wlay.setContentsMargins(40, 40, 40, 40)
 
-        self._welcome_title = QLabel("🧠 Cortex AI Agent")
+        # Logo and Title
+        self._welcome_title = QLabel("⚡ Cortex AI Agent")
         self._welcome_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._welcome_title.setObjectName("welcome_title")
         wlay.addWidget(self._welcome_title)
@@ -688,46 +1155,42 @@ class CortexMainWindow(QMainWindow):
         self._welcome_subtitle.setObjectName("welcome_subtitle")
         wlay.addWidget(self._welcome_subtitle)
 
-        self._welcome_sep = QFrame()
-        self._welcome_sep.setFrameShape(QFrame.Shape.HLine)
-        self._welcome_sep.setObjectName("welcome_sep")
-        wlay.addWidget(self._welcome_sep)
-
         # Dynamic Project Info
         self._welcome_project_info = QLabel()
         self._welcome_project_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._welcome_project_info.setObjectName("welcome_project_info")
         wlay.addWidget(self._welcome_project_info)
-        self._welcome_hints = []
         self._update_welcome_project_info()
 
-        hints = [
-            ("📂 Open Project", "File → Open Folder  or  Ctrl+O"),
-            ("✨ New Project", "File → New Project"),
-            ("📝 New File", "File → New File  or  Ctrl+N"),
-            ("🎨 Toggle Theme", "View → Toggle Theme  or  Ctrl+Shift+T"),
-            ("⚡ Terminal", "View → Toggle Terminal  or  Ctrl+`"),
-            ("🤖 AI Chat", "Type a question in the right panel"),
-        ]
-        for icon_title, shortcut in hints:
-            row = ClickableLabel(f"<b>{icon_title}</b>   <span class='shortcut'>{shortcut}</span>")
-            row.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            row.setObjectName("welcome_hint")
-            
-            # Connect actions
-            if icon_title == "✨ New Project":
-                row.clicked.connect(self._new_project)
-            elif icon_title == "📂 Open Project":
-                row.clicked.connect(self._open_folder_dialog)
-            elif icon_title == "📝 New File":
-                row.clicked.connect(self._new_file)
-            elif icon_title == "🎨 Toggle Theme":
-                row.clicked.connect(self._toggle_theme)
-            elif icon_title == "⚡ Terminal":
-                row.clicked.connect(self._toggle_terminal)
-                
-            wlay.addWidget(row)
-            self._welcome_hints.append(row)
+        # Initialize hints list for theme styling
+        self._welcome_hints = []
+
+
+        # AI Chat Card (prominent, GitHub Copilot style) - SIMPLIFIED
+        self._welcome_ai_card = QWidget()
+        self._welcome_ai_card.setObjectName("welcome_ai_card")
+        ai_card_layout = QVBoxLayout(self._welcome_ai_card)
+        ai_card_layout.setContentsMargins(16, 16, 16, 16)
+        ai_card_layout.setSpacing(12)
+        
+        ai_title = QLabel("Chat with Cortex")
+        ai_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ai_title.setObjectName("ai_card_title")
+        ai_card_layout.addWidget(ai_title)
+        
+        ai_subtitle = QLabel("Describe what you want to build or explore")
+        ai_subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ai_subtitle.setObjectName("ai_card_subtitle")
+        ai_card_layout.addWidget(ai_subtitle)
+        
+        ai_prompt = ClickableLabel("<b>💬 Ask a question...</b>")
+        ai_prompt.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ai_prompt.setObjectName("ai_prompt")
+        ai_prompt.clicked.connect(self._focus_ai_chat)
+        ai_card_layout.addWidget(ai_prompt)
+        self._welcome_hints.append(ai_prompt)
+        
+        wlay.addWidget(self._welcome_ai_card)
 
         # Add stretch to center content vertically
         wlay.addStretch()
@@ -739,15 +1202,23 @@ class CortexMainWindow(QMainWindow):
         self._apply_welcome_theme(self._theme_manager.is_dark)
 
     def _apply_welcome_theme(self, is_dark: bool):
-        """Style the welcome widget to match the current theme."""
+        """Style the welcome widget to match the current theme. Dark-only."""
         if not hasattr(self, '_welcome_widget') or self._welcome_widget is None:
             return
-        bg = "#1e1e1e" if is_dark else "#ffffff"
-        fg = "#d4d4d4" if is_dark else "#1a1a1a"
-        hint_fg = "#cccccc" if is_dark else "#333333"
-        shortcut_color = "#858585" if is_dark else "#6c757d"
-        sep_color = "#3e3e42" if is_dark else "#dee2e6"
-        subtitle_color = "#858585" if is_dark else "#6c757d"
+        bg = "#1e1e1e"
+        fg = "#d4d4d4"
+        hint_fg = "#cccccc"
+        shortcut_color = "#858585"
+        sep_color = "#3e3e42"
+        subtitle_color = "#858585"
+        
+        # Extract conditional colors for AI card
+        ai_card_bg = "#2d2d30"
+        ai_card_border = "#3e3e42"
+        ai_prompt_bg = "#3e3e42"
+        ai_prompt_hover_bg = "#4e4e52"
+        hint_hover_bg = "#3e3e42"
+        project_info_color = "#c678dd"
 
         # Base stylesheet with responsive sizing
         sw = self.width()
@@ -768,10 +1239,12 @@ class CortexMainWindow(QMainWindow):
                 font-size: {title_size}px;
                 font-weight: bold;
                 color: #007acc;
+                margin-bottom: 8px;
             }}
             QLabel#welcome_subtitle {{
                 font-size: {subtitle_size}px;
                 color: {subtitle_color};
+                margin-bottom: 12px;
             }}
             QFrame#welcome_sep {{
                 color: {sep_color};
@@ -779,17 +1252,59 @@ class CortexMainWindow(QMainWindow):
             }}
             QLabel#welcome_project_info {{
                 font-size: {project_size}px;
-                color: {'#c678dd' if is_dark else '#9b30ff'};
-                margin: 8px 0;
+                color: {project_info_color};
+                margin: 8px 0 16px 0;
+            }}
+            QLabel#quick_actions_label,
+            QLabel#recent_label,
+            QLabel#help_label {{
+                font-size: {hint_size + 1}px;
+                font-weight: bold;
+                color: {fg};
+                margin-top: 16px;
+                margin-bottom: 8px;
             }}
             ClickableLabel#welcome_hint {{
                 font-size: {hint_size}px;
                 color: {hint_fg};
                 padding: 6px 12px;
+                border-radius: 4px;
             }}
             ClickableLabel#welcome_hint:hover {{
-                background-color: {'#3e3e42' if is_dark else '#e9ecef'};
-                border-radius: 4px;
+                background-color: {hint_hover_bg};
+            }}
+            QLabel#recent_projects {{
+                font-size: {hint_size - 1}px;
+                color: {subtitle_color};
+                padding: 4px 12px;
+                font-style: italic;
+            }}
+            /* AI Chat Card - GitHub Copilot style */
+            QWidget#welcome_ai_card {{
+                background-color: {ai_card_bg};
+                border: 1px solid {ai_card_border};
+                border-radius: 8px;
+                padding: 12px;
+                margin: 8px 0;
+            }}
+            QLabel#ai_card_title {{
+                font-size: 15px;
+                font-weight: bold;
+                color: {fg};
+            }}
+            QLabel#ai_card_subtitle {{
+                font-size: 13px;
+                color: {hint_fg};
+            }}
+            ClickableLabel#ai_prompt {{
+                font-size: 14px;
+                color: #569cd6;
+                padding: 10px 14px;
+                background-color: {ai_prompt_bg};
+                border-radius: 6px;
+            }}
+            ClickableLabel#ai_prompt:hover {{
+                background-color: {ai_prompt_hover_bg};
             }}
         """
         
@@ -806,7 +1321,573 @@ class CortexMainWindow(QMainWindow):
             for row in self._welcome_hints:
                 row.setStyleSheet(f"font-size:{hint_size}px; color:{hint_fg}; padding:6px 12px; border-radius:4px;")
         if hasattr(self, '_welcome_project_info') and self._welcome_project_info:
-            self._welcome_project_info.setStyleSheet(f"font-size:{project_size}px; color:{'#c678dd' if is_dark else '#9b30ff'}; margin: 8px 0;")
+            self._welcome_project_info.setStyleSheet(f"font-size:{project_size}px; color:#c678dd; margin: 8px 0;")
+
+    # ------------------------------------------------------------------
+    # Codex-Style 4-Panel Layout Methods
+    # ------------------------------------------------------------------
+
+    def _create_chat_panel(self) -> QWidget:
+        """Create Chat Panel (flexible) - Main AI conversation."""
+        panel = QWidget()
+        panel.setObjectName("chatPanel")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        bg_color = "#1e1e1e"
+        border_color = "#2a2a2a"
+
+        panel.setStyleSheet(f"""
+            QWidget#chatPanel {{
+                background-color: {bg_color};
+            }}
+        """)
+
+        # Top bar - REMOVED hardcoded header (hi Cortex + Commit button)
+        # Clean minimal design without hardcoded elements
+        
+        # AI Chat widget (existing)
+        self._ai_chat = AIChatWidget()
+        self._ai_chat.run_command.connect(self._on_ai_run_command)
+        self._ai_chat.stop_requested.connect(self._on_ai_stop_requested)
+        self._ai_chat.open_file_requested.connect(self._open_file)
+        self._ai_chat.accept_file_edit_requested.connect(self._on_accept_file_edit)
+        self._ai_chat.reject_file_edit_requested.connect(self._on_reject_file_edit)
+        self._ai_chat.open_terminal_requested.connect(self._show_terminal_panel)
+        self._ai_chat.run_in_terminal_requested.connect(self._show_terminal_and_run)
+        self._ai_chat.set_code_context_callback(self._get_code_context)
+        self._ai_chat.toggle_autogen_requested.connect(self._on_toggle_autogen)
+        layout.addWidget(self._ai_chat, 1)
+
+        return panel
+
+    def _create_review_panel(self) -> QWidget:
+        """Create Review Panel (380px) - Clickable Summary/Review tabs."""
+        panel = QWidget()
+        panel.setObjectName("reviewPanel")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        bg_color = "#1e1e1e"
+
+        panel.setStyleSheet(f"""
+            QWidget#reviewPanel {{
+                background-color: {bg_color};
+            }}
+        """)
+
+        # Tab bar with clickable buttons
+        tab_bar = QWidget()
+        tab_bar.setFixedHeight(48)
+        tab_layout = QHBoxLayout(tab_bar)
+        tab_layout.setContentsMargins(12, 0, 12, 0)
+        tab_layout.setSpacing(8)
+
+        # Summary tab button
+        self._summary_tab_btn = QPushButton("≡ Summary")
+        self._summary_tab_btn.setFlat(True)
+        self._summary_tab_btn.setStyleSheet("""
+            QPushButton {
+                color: #ffffff;
+                font-size: 13px;
+                font-weight: 500;
+                background-color: transparent;
+                border: none;
+                padding: 8px 12px;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #2d2d2d;
+            }
+            QPushButton:checked {
+                background-color: #2d2d2d;
+            }
+        """)
+        self._summary_tab_btn.setCheckable(True)
+        self._summary_tab_btn.setChecked(True)
+        self._summary_tab_btn.clicked.connect(self._on_summary_tab_clicked)
+        tab_layout.addWidget(self._summary_tab_btn)
+
+        # Review tab button
+        self._review_tab_btn = QPushButton("📄 Review")
+        self._review_tab_btn.setFlat(True)
+        self._review_tab_btn.setStyleSheet("""
+            QPushButton {
+                color: #888888;
+                font-size: 13px;
+                background-color: transparent;
+                border: none;
+                padding: 8px 12px;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #2d2d2d;
+                color: #cccccc;
+            }
+            QPushButton:checked {
+                background-color: #2d2d2d;
+                color: #ffffff;
+            }
+        """)
+        self._review_tab_btn.setCheckable(True)
+        self._review_tab_btn.clicked.connect(self._on_review_tab_clicked)
+        tab_layout.addWidget(self._review_tab_btn)
+
+        tab_layout.addStretch()
+
+        add_tab = QLabel("+")
+        add_tab.setStyleSheet("color: #888888; font-size: 16px;")
+        tab_layout.addWidget(add_tab)
+
+        layout.addWidget(tab_bar)
+
+        # Separator
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("background-color: #2a2a2a; max-height: 1px;")
+        layout.addWidget(sep)
+
+        # Stacked widget for tab content
+        self._review_stack = QStackedWidget()
+
+        # === SUMMARY TAB CONTENT ===
+        summary_content = QWidget()
+        summary_layout = QVBoxLayout(summary_content)
+        summary_layout.setContentsMargins(16, 16, 16, 16)
+        summary_layout.setSpacing(12)
+
+        # Progress section
+        progress_label = QLabel("Progress")
+        progress_label.setStyleSheet("color: #aaaaaa; font-size: 12px; font-weight: bold;")
+        summary_layout.addWidget(progress_label)
+
+        progress_text = QLabel("Progress displayed for longer responses")
+        progress_text.setStyleSheet("color: #666666; font-size: 13px; padding: 8px 0;")
+        summary_layout.addWidget(progress_text)
+
+        # Branch details
+        branch_label = QLabel("Branch details")
+        branch_label.setStyleSheet("color: #aaaaaa; font-size: 12px; font-weight: bold; margin-top: 8px;")
+        summary_layout.addWidget(branch_label)
+
+        # Current branch name (will be updated dynamically)
+        self._branch_name_label = QLabel("🌿 No repository")
+        self._branch_name_label.setStyleSheet("color: #888888; font-size: 13px; padding: 4px 0;")
+        summary_layout.addWidget(self._branch_name_label)
+
+        # GitHub CLI status (will be updated dynamically)
+        self._github_status_label = QLabel("🐙 GitHub CLI not installed")
+        self._github_status_label.setStyleSheet("color: #888888; font-size: 13px; padding: 4px 0;")
+        summary_layout.addWidget(self._github_status_label)
+
+        # Changes count (will be updated dynamically)
+        self._changes_label = QLabel("✏️ 0 unstaged, 0 untracked")
+        self._changes_label.setStyleSheet("color: #cccccc; font-size: 13px; padding: 4px 0;")
+        summary_layout.addWidget(self._changes_label)
+
+        # Artifacts
+        artifacts_label = QLabel("Artifacts")
+        artifacts_label.setStyleSheet("color: #aaaaaa; font-size: 12px; font-weight: bold; margin-top: 16px;")
+        summary_layout.addWidget(artifacts_label)
+
+        artifacts_text = QLabel("View and open referenced files")
+        artifacts_text.setStyleSheet("color: #666666; font-size: 13px; padding: 8px 0;")
+        summary_layout.addWidget(artifacts_text)
+
+        # Sources
+        sources_label = QLabel("Sources")
+        sources_label.setStyleSheet("color: #aaaaaa; font-size: 12px; font-weight: bold; margin-top: 16px;")
+        summary_layout.addWidget(sources_label)
+
+        sources_text = QLabel("Track sources used")
+        sources_text.setStyleSheet("color: #666666; font-size: 13px; padding: 8px 0;")
+        summary_layout.addWidget(sources_text)
+
+        summary_layout.addStretch()
+        self._review_stack.addWidget(summary_content)
+
+        # === REVIEW TAB CONTENT ===
+        review_content = QWidget()
+        review_layout = QVBoxLayout(review_content)
+        review_layout.setContentsMargins(16, 16, 16, 16)
+        review_layout.setSpacing(12)
+
+        # Unstaged files header
+        unstaged_header = QWidget()
+        unstaged_layout = QHBoxLayout(unstaged_header)
+        unstaged_layout.setContentsMargins(0, 0, 0, 0)
+
+        unstaged_label = QLabel("Unstaged")
+        unstaged_label.setStyleSheet("color: #ffffff; font-size: 13px; font-weight: 500;")
+        unstaged_layout.addWidget(unstaged_label)
+
+        # Unstaged count (will be updated dynamically)
+        self._unstaged_count_label = QLabel("0 ▾")
+        self._unstaged_count_label.setStyleSheet("color: #888888; font-size: 13px;")
+        unstaged_layout.addWidget(self._unstaged_count_label)
+        unstaged_layout.addStretch()
+
+        more_options = QLabel("⋯")
+        more_options.setStyleSheet("color: #888888; font-size: 16px;")
+        unstaged_layout.addWidget(more_options)
+
+        review_layout.addWidget(unstaged_header)
+
+        # Large diff notice
+        self._diff_notice = QLabel("Large diff detected — showing one file at a time.")
+        self._diff_notice.setStyleSheet("color: #888888; font-size: 12px; padding: 8px 0;")
+        self._diff_notice.hide()  # Hidden by default
+        review_layout.addWidget(self._diff_notice)
+
+        # File list container with scrollbar
+        self._file_list_scroll = QScrollArea()
+        self._file_list_scroll.setWidgetResizable(True)
+        self._file_list_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._file_list_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._file_list_scroll.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background-color: transparent;
+            }
+            QScrollBar:vertical {
+                border: none;
+                background: #252525;
+                width: 5px;
+                margin: 0px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background: #5a5a5a;
+                min-height: 30px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #6a6a6a;
+            }
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {
+                border: none;
+                background: none;
+                height: 0px;
+            }
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {
+                background: none;
+            }
+        """)
+        
+        self._file_list_container = QWidget()
+        self._file_list_layout = QVBoxLayout(self._file_list_container)
+        self._file_list_layout.setContentsMargins(0, 0, 0, 0)
+        self._file_list_layout.setSpacing(0)  # No spacing between files
+        
+        self._file_list_scroll.setWidget(self._file_list_container)
+        review_layout.addWidget(self._file_list_scroll, 1)
+        # NOTE: No addStretch() here — scroll area must fill all remaining space
+
+        self._review_stack.addWidget(review_content)
+
+        # === CHANGED FILES TAB CONTENT ===
+        self._changed_files_panel = ChangedFilesPanel()
+        self._review_stack.addWidget(self._changed_files_panel)  # index 2
+
+        self._review_stack.setCurrentIndex(0)  # Show Summary by default
+
+        layout.addWidget(self._review_stack, 1)
+
+        return panel
+
+    def _on_summary_tab_clicked(self):
+        """Handle Summary tab click."""
+        self._summary_tab_btn.setChecked(True)
+        self._review_tab_btn.setChecked(False)
+        self._review_stack.setCurrentIndex(0)
+
+    def _on_review_tab_clicked(self):
+        """Handle Review tab click."""
+        self._review_tab_btn.setChecked(True)
+        self._summary_tab_btn.setChecked(False)
+        self._review_stack.setCurrentIndex(1)
+
+    def _update_git_summary(self):
+        """Kick off a background thread to collect git status (non-blocking)."""
+        if not hasattr(self, '_git_manager'):
+            log.warning("[GIT] GitManager not available")
+            self._set_no_git_status()
+            return
+
+        project_path = getattr(self, '_current_project_path', None)
+        if not project_path and getattr(self._project_manager, 'root', None):
+            project_path = str(self._project_manager.root)
+        if project_path:
+            current_repo = os.path.normcase(os.path.normpath(self._git_manager._repo_path or ""))
+            expected_repo = os.path.normcase(os.path.normpath(project_path))
+            if (not self._git_manager.is_repo()) or current_repo != expected_repo:
+                repo_ok = self._git_manager.set_repository(project_path)
+                log.info(f"[GIT] Refreshed repository path for panel: {project_path} (ok={repo_ok})")
+
+        if not self._git_manager.is_repo():
+            if self._git_repo_known_state is not False:
+                log.info("[GIT] No repository set")
+            self._git_repo_known_state = False
+            if hasattr(self, "_git_refresh_timer") and self._git_refresh_timer.isActive():
+                self._git_refresh_timer.stop()
+            self._set_no_git_status()
+            return
+
+        # Repository is available: ensure refresh timer is active.
+        if self._git_repo_known_state is not True:
+            log.info("[GIT] Repository detected - enabling periodic refresh")
+        self._git_repo_known_state = True
+        if hasattr(self, "_git_refresh_timer") and not self._git_refresh_timer.isActive():
+            self._git_refresh_timer.start()
+
+        # Guard: skip if a worker is already running
+        if self._git_worker is not None and self._git_worker.isRunning():
+            return
+
+        log.info("[GIT] Updating git summary (background)...")
+        self._git_worker = _GitStatusWorker(
+            self._git_manager._repo_path,
+            self._git_manager,
+            gh_cached=self._gh_version_cache,
+        )
+        self._git_worker.status_ready.connect(self._on_git_status_ready)
+        self._git_worker.start()
+
+    @pyqtSlot(dict)
+    def _on_git_status_ready(self, data: dict):
+        """Receive git data from background worker and update UI labels."""
+        # Branch
+        branch = data.get('branch')
+        if branch:
+            self._branch_name_label.setText(f"🌿 {branch}")
+            self._branch_name_label.setStyleSheet("color: #4ec94e; font-size: 13px; padding: 4px 0;")
+        else:
+            self._branch_name_label.setText("🌿 Unknown branch")
+            self._branch_name_label.setStyleSheet("color: #888888; font-size: 13px; padding: 4px 0;")
+
+        # GitHub CLI (cache the result for the session)
+        gh = data.get('gh', '')
+        self._gh_version_cache = gh
+        if gh:
+            self._github_status_label.setText(f"🐙 {gh}")
+            self._github_status_label.setStyleSheet("color: #4ec94e; font-size: 13px; padding: 8px 0;")
+        else:
+            self._github_status_label.setText("🐙 GitHub CLI not installed")
+            self._github_status_label.setStyleSheet("color: #888888; font-size: 13px; padding: 8px 0;")
+
+        # Changes summary
+        total = data.get('total', 0)
+        unstaged = data.get('unstaged', 0)
+        untracked = data.get('untracked', 0)
+        staged = data.get('staged', 0)
+        if total > 0:
+            self._changes_label.setText(f"✏️ {unstaged} unstaged, {untracked} untracked, {staged} staged")
+            self._changes_label.setStyleSheet("color: #e6a817; font-size: 13px; padding: 4px 0;")
+        else:
+            self._changes_label.setText("✏️ No changes")
+            self._changes_label.setStyleSheet("color: #4ec94e; font-size: 13px; padding: 4px 0;")
+
+        if hasattr(self, '_unstaged_count_label'):
+            self._unstaged_count_label.setText(f"{unstaged} ▾")
+
+        # Update review file list from pre-computed stats
+        self._update_review_file_list_from_stats(data.get('file_stats', []), data.get('git_files', []))
+    
+    def _set_no_git_status(self):
+        """Set all git status labels to 'no repository' state."""
+        if hasattr(self, '_branch_name_label'):
+            self._branch_name_label.setText("🌿 No repository")
+            self._branch_name_label.setStyleSheet("color: #888888; font-size: 13px; padding: 4px 0;")
+        if hasattr(self, '_github_status_label'):
+            self._github_status_label.setText("🐙 GitHub CLI not installed")
+            self._github_status_label.setStyleSheet("color: #888888; font-size: 13px; padding: 4px 0;")
+        if hasattr(self, '_changes_label'):
+            self._changes_label.setText("✏️ No changes")
+            self._changes_label.setStyleSheet("color: #888888; font-size: 13px; padding: 4px 0;")
+        if hasattr(self, '_unstaged_count_label'):
+            self._unstaged_count_label.setText("0 ▾")
+
+    def _check_github_cli(self):
+        """Legacy stub — gh check now runs inside _GitStatusWorker."""
+        pass
+
+    def _update_review_file_list(self, git_files):
+        """Legacy entry — delegates to stats-based variant."""
+        # Kept for any external callers; runs with empty stats (no diff numbers)
+        stats = [(gf, 0, 0) for gf in git_files[:100]]
+        self._update_review_file_list_from_stats(stats, git_files)
+
+    def _update_review_file_list_from_stats(self, file_stats, git_files):
+        """Update Review tab using pre-computed diff stats (no subprocess on UI thread)."""
+        # Clear existing file list
+        while self._file_list_layout.count():
+            child = self._file_list_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        if not git_files:
+            no_changes = QLabel("No changed files")
+            no_changes.setStyleSheet("color: #888888; font-size: 13px; padding: 8px 0;")
+            self._file_list_layout.addWidget(no_changes)
+            self._file_list_layout.addStretch()
+            self._diff_notice.hide()
+            return
+
+        if len(git_files) > 50:
+            self._diff_notice.show()
+        else:
+            self._diff_notice.hide()
+
+        added_count = 0
+        for gf, additions, deletions in file_stats:
+            if additions == 0 and deletions == 0:
+                continue
+            file_widget = self._create_file_diff_item_from_stats(gf, additions, deletions)
+            if file_widget:
+                self._file_list_layout.addWidget(file_widget)
+                added_count += 1
+
+        if added_count == 0:
+            no_changes = QLabel("No files with changes")
+            no_changes.setStyleSheet("color: #888888; font-size: 13px; padding: 8px 0;")
+            self._file_list_layout.addWidget(no_changes)
+
+        self._file_list_layout.addStretch()
+
+    def _create_file_diff_item(self, git_file) -> QWidget:
+        """Legacy wrapper — gets diff stats inline (kept for compatibility)."""
+        additions, deletions = self._get_file_diff_stats(git_file.path)
+        return self._create_file_diff_item_from_stats(git_file, additions, deletions)
+
+    def _create_file_diff_item_from_stats(self, git_file, additions: int, deletions: int) -> QWidget:
+        """Create a file diff item widget from pre-computed stats."""
+        file_item = QWidget()
+        file_item.setFixedHeight(28)
+        file_layout = QHBoxLayout(file_item)
+        file_layout.setContentsMargins(0, 2, 0, 2)
+        file_layout.setSpacing(8)
+
+        from pathlib import Path
+        filename = Path(git_file.path).name
+        file_name = QLabel(filename)
+        file_name.setStyleSheet("color: #cccccc; font-size: 13px;")
+        file_name.setToolTip(git_file.path)
+        file_layout.addWidget(file_name)
+
+        file_layout.addStretch()
+
+        status_text = None
+        status_color = "#888888"
+        if git_file.status == GitStatus.UNTRACKED:
+            status_text = "new"
+            status_color = "#4ec94e"
+        elif git_file.status == GitStatus.DELETED:
+            status_text = "deleted"
+            status_color = "#e05252"
+        elif git_file.status == GitStatus.RENAMED:
+            status_text = "renamed"
+            status_color = "#6cb2ff"
+        elif git_file.status == GitStatus.ADDED:
+            status_text = "added"
+            status_color = "#4ec94e"
+        elif git_file.staged:
+            status_text = "staged"
+            status_color = "#e6a817"
+        elif git_file.status == GitStatus.MODIFIED:
+            status_text = "modified"
+
+        if status_text:
+            status_label = QLabel(status_text)
+            status_label.setStyleSheet(
+                f"color: {status_color}; font-size: 11px; font-weight: 500; padding: 1px 6px;"
+            )
+            file_layout.addWidget(status_label)
+
+        if additions > 0:
+            additions_label = QLabel(f"+{additions}")
+            additions_label.setStyleSheet("color: #4ec94e; font-size: 13px; font-weight: 500;")
+            file_layout.addWidget(additions_label)
+
+        if deletions > 0:
+            deletions_label = QLabel(f"-{deletions}")
+            deletions_label.setStyleSheet("color: #e05252; font-size: 13px; font-weight: 500;")
+            file_layout.addWidget(deletions_label)
+
+        expand_icon = QLabel("▾")
+        expand_icon.setStyleSheet("color: #888888; font-size: 12px;")
+        file_layout.addWidget(expand_icon)
+
+        return file_item
+
+    def _get_file_diff_stats(self, file_path: str) -> tuple:
+        """Get additions and deletions for a file (checks both staged and unstaged)."""
+        if not hasattr(self, '_git_manager') or not self._git_manager.is_repo():
+            return 0, 0
+
+        import subprocess
+        cwd = self._git_manager._repo_path
+        total_add, total_del = 0, 0
+
+        def _parse_numstat(output: str):
+            for line in output.strip().splitlines():
+                parts = line.split('\t')
+                if len(parts) >= 2:
+                    try:
+                        a = int(parts[0]) if parts[0] != '-' else 0
+                        d = int(parts[1]) if parts[1] != '-' else 0
+                        return a, d
+                    except ValueError:
+                        pass
+            return 0, 0
+
+        try:
+            # Unstaged changes (working tree vs index)
+            # FIX: Prevent console window popup
+            kwargs = dict(cwd=cwd, capture_output=True, text=True, timeout=5)
+            if sys.platform == 'win32':
+                kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+            
+            r = subprocess.run(
+                ["git", "diff", "--numstat", "--", file_path],
+                **kwargs
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                a, d = _parse_numstat(r.stdout)
+                total_add += a
+                total_del += d
+        except Exception as e:
+            log.debug(f'[MainWindow] Suppressed error: {e}')
+
+        try:
+            # Staged changes (index vs HEAD)
+            # FIX: Prevent console window popup
+            kwargs = dict(cwd=cwd, capture_output=True, text=True, timeout=5)
+            if sys.platform == 'win32':
+                kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+            
+            r = subprocess.run(
+                ["git", "diff", "--cached", "--numstat", "--", file_path],
+                **kwargs
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                a, d = _parse_numstat(r.stdout)
+                total_add += a
+                total_del += d
+        except Exception as e:
+            log.debug(f'[MainWindow] Suppressed error: {e}')
+
+        return total_add, total_del
+
+    def eventFilter(self, obj, event):
+        """Event filter for keyboard shortcuts."""
+        return super().eventFilter(obj, event)
+
+    def _on_chat_hidden_changed(self, hidden: bool):
+        """Handle chat panel visibility change."""
 
 
     # ------------------------------------------------------------------
@@ -817,20 +1898,24 @@ class CortexMainWindow(QMainWindow):
 
         # File
         file_menu = mb.addMenu("File")
-        self._add_action(file_menu, "New File", self._new_file, "Ctrl+N")
-        self._add_action(file_menu, "New Project...", self._new_project, "")
+        self._add_action(file_menu, "New Window", self._new_window, "Ctrl+Shift+N")
+        self._add_action(file_menu, "New Chat", self._on_new_chat, "Ctrl+N")
+        self._add_action(file_menu, "Quick Chat", self._quick_chat, "Alt+Ctrl+N")
+        file_menu.addSeparator()
         self._add_action(file_menu, "Open File...", self._open_file_dialog, "Ctrl+Shift+O")
         self._add_action(file_menu, "Open Folder...", self._open_folder_dialog, "Ctrl+O")
         file_menu.addSeparator()
         self._add_action(file_menu, "Save", self._save_current, "Ctrl+S")
         self._add_action(file_menu, "Save All", self._save_all, "Ctrl+Shift+S")
         file_menu.addSeparator()
+        self._add_action(file_menu, "Settings...", self._open_settings, "Ctrl+,")
+        file_menu.addSeparator()
         self._add_action(file_menu, "Exit", self.close, "Alt+F4")
 
         # Edit
         edit_menu = mb.addMenu("Edit")
-        self._add_action(edit_menu, "Undo", lambda: self._current_editor_action("undo"), "Ctrl+Z")
-        self._add_action(edit_menu, "Redo", lambda: self._current_editor_action("redo"), "Ctrl+Y")
+        self._add_action(edit_menu, "Undo", self._undo, "Ctrl+Z")
+        self._add_action(edit_menu, "Redo", self._redo, "Ctrl+Y")
         edit_menu.addSeparator()
         self._add_action(edit_menu, "Cut", lambda: self._current_editor_action("cut"), "Ctrl+X")
         self._add_action(edit_menu, "Copy", lambda: self._current_editor_action("copy"), "Ctrl+C")
@@ -838,13 +1923,13 @@ class CortexMainWindow(QMainWindow):
         edit_menu.addSeparator()
         self._add_action(edit_menu, "Select All", lambda: self._current_editor_action("selectAll"), "Ctrl+A")
         edit_menu.addSeparator()
-        self._add_action(edit_menu, "Find...", self._show_find, "Ctrl+F")
-        self._add_action(edit_menu, "Find and Replace...", self._show_find_replace, "Ctrl+H")
+        self._add_action(edit_menu, "Find...", self._show_find, "")
+        self._add_action(edit_menu, "Find and Replace...", self._show_find_replace, "")
         self._add_action(edit_menu, "Find in Files...", self._find_in_files, "Ctrl+Shift+F")
         edit_menu.addSeparator()
         self._add_action(edit_menu, "Rename...", self._rename_file, "F2")
         edit_menu.addSeparator()
-        self._add_action(edit_menu, "Go to Line...", self._go_to_line, "Ctrl+G")
+        self._add_action(edit_menu, "Go to Line...", self._go_to_line, "")
         edit_menu.addSeparator()
         self._add_action(edit_menu, "Toggle Comment", self._toggle_comment, "Ctrl+/")
         self._add_action(edit_menu, "Delete Line", self._delete_line, "Ctrl+Shift+K")
@@ -856,55 +1941,120 @@ class CortexMainWindow(QMainWindow):
         self._add_action(edit_menu, "Move Line Up", self._move_line_up, "Alt+Up")
         self._add_action(edit_menu, "Move Line Down", self._move_line_down, "Alt+Down")
 
-        # Navigation
-        nav_menu = mb.addMenu("Navigation")
-        self._add_action(nav_menu, "Quick Open File...", self._quick_open, "Ctrl+P")
-        self._add_action(nav_menu, "Go to Symbol...", self._go_to_symbol, "Ctrl+Shift+O")
-        nav_menu.addSeparator()
-        self._add_action(nav_menu, "Close Tab", self._close_current_tab, "Ctrl+W")
-        self._add_action(nav_menu, "Close All Tabs", self._close_all_tabs, "Ctrl+Shift+W")
-        nav_menu.addSeparator()
-        self._add_action(nav_menu, "Next Tab", self._next_tab, "Ctrl+Tab")
-        self._add_action(nav_menu, "Previous Tab", self._prev_tab, "Ctrl+Shift+Tab")
-        nav_menu.addSeparator()
-        self._add_action(nav_menu, "Keyboard Shortcuts Help", self._show_shortcuts_help, "Ctrl+Alt+K")
-
         # View
         view_menu = mb.addMenu("View")
-        self._add_action(view_menu, "Toggle Theme", self._toggle_theme, "Ctrl+Shift+T")
-        self._add_action(view_menu, "Toggle Terminal", self._toggle_terminal, "Ctrl+`")
-        view_menu.addSeparator()
         self._add_action(view_menu, "Toggle Sidebar", self._toggle_sidebar, "Ctrl+B")
+        self._add_action(view_menu, "Toggle Review Panel", self._toggle_review_panel_menu, "Alt+Ctrl+B")
         view_menu.addSeparator()
-        self._add_action(view_menu, "Zoom In", self._zoom_in, "Ctrl+=")
-        self._add_action(view_menu, "Zoom Out", self._zoom_out, "Ctrl+-")
-        self._add_action(view_menu, "Reset Zoom", self._zoom_reset, "Ctrl+0")
+        self._add_action(view_menu, "Toggle Full Screen", self._toggle_fullscreen, "F11")
 
         # AI
         ai_menu = mb.addMenu("AI")
         self._add_action(ai_menu, "Explain Code", lambda: self._ai_action("explain"), "Ctrl+Shift+E")
         self._add_action(ai_menu, "Refactor Code", lambda: self._ai_action("refactor"), "Ctrl+Shift+R")
         self._add_action(ai_menu, "Write Tests", lambda: self._ai_action("tests"), "Ctrl+Shift+U")
-        self._add_action(ai_menu, "Debug Help", lambda: self._ai_action("debug"), "Ctrl+Shift+D")
+        self._add_action(ai_menu, "Debug Help", lambda: self._ai_action("debug"), "Ctrl+Shift+H")
         ai_menu.addSeparator()
+        
+        # Phase 1, 2, 3 Integration: Agent Mode submenu
+        mode_menu = ai_menu.addMenu("Agent Mode")
+        self._add_action(mode_menu, "Build Mode", lambda: self._set_agent_mode("build"), "")
+        self._add_action(mode_menu, "Explore Mode", lambda: self._set_agent_mode("explore"), "")
+        self._add_action(mode_menu, "Debug Mode", lambda: self._set_agent_mode("debug"), "")
+        self._add_action(mode_menu, "Plan Mode", lambda: self._set_agent_mode("plan"), "")
+        ai_menu.addSeparator()
+        
+        # Phase 3 Integration: Skills and MCP
+        self._add_action(ai_menu, "Browse Skills...", self._show_skills_browser, "")
+        self._add_action(ai_menu, "MCP Connections...", self._show_mcp_connections, "")
+        ai_menu.addSeparator()
+        
+        # Phase 4 Integration: TODO, Permission, and GitHub
+        todo_menu = ai_menu.addMenu("Tasks & TODOs")
+        self._add_action(todo_menu, "View Tasks...", self._show_todo_manager, "")
+        self._add_action(todo_menu, "Add Task...", self._add_todo_task, "")
+        todo_menu.addSeparator()
+        self._add_action(todo_menu, "Complete Task", self._complete_todo_task, "")
+        
+        self._add_action(ai_menu, "Permission Settings...", self._show_permission_settings, "")
+        self._add_action(ai_menu, "GitHub Integration...", self._show_github_integration, "")
+        self._add_action(ai_menu, "Memory Manager...", self._show_memory_manager, "Ctrl+Shift+M")
+        ai_menu.addSeparator()
+        
         self._add_action(ai_menu, "AI Chat Focus", self._focus_ai_chat, "Ctrl+Shift+A")
         
-        # Command Palette
-        self._add_action(file_menu, "Command Palette...", self._command_palette, "Ctrl+Shift+P")
+        # Command Palette - AI-First mode uses Ctrl+K
+        self._add_action(file_menu, "Command Palette...", self._show_command_palette, "Ctrl+K")
         ai_menu.addSeparator()
         self._add_action(ai_menu, "Clear Chat", self._ai_chat.clear_chat, "")
 
         # Terminal
         term_menu = mb.addMenu("Terminal")
-        self._add_action(term_menu, "New Terminal", self._new_terminal, "Ctrl+Shift+`")
+        self._add_action(term_menu, "New Terminal", lambda: self._new_terminal(show_panel=True), "Ctrl+Shift+`")
         self._add_action(term_menu, "Kill Terminal", self._kill_current_terminal, "")
         term_menu.addSeparator()
-        self._add_action(term_menu, "Toggle Terminal Panel", self._toggle_terminal, "Ctrl+`")
+        self._add_action(term_menu, "Toggle Terminal Panel", self._toggle_terminal, "Ctrl+J")
+
+        # Window
+        window_menu = mb.addMenu("Window")
+        self._add_action(window_menu, "Minimize", self._minimize_window, "Ctrl+M")
+        self._add_action(window_menu, "Zoom", self._zoom_window, "")
+        self._add_action(window_menu, "Close", self._close_window, "Ctrl+F4")
+
+        # Close tab / close all tabs — QShortcuts (not menu items, to avoid Ctrl+W
+        # colliding with Monaco editor's own Ctrl+W close-tab command).
+        from PyQt6.QtGui import QShortcut
+        self._s_close_tab = QShortcut(QKeySequence("Ctrl+W"), self)
+        self._s_close_tab.activated.connect(self._close_current_tab)
+        self._s_close_all = QShortcut(QKeySequence("Ctrl+Shift+W"), self)
+        self._s_close_all.activated.connect(self._close_all_tabs)
+        # Next/previous tab navigation
+        self._s_next_tab = QShortcut(QKeySequence("Ctrl+Tab"), self)
+        self._s_next_tab.activated.connect(self._next_tab)
+        self._s_prev_tab = QShortcut(QKeySequence("Ctrl+Shift+Tab"), self)
+        self._s_prev_tab.activated.connect(self._prev_tab)
+
+        # Format Code — Monaco-native or legacy fallback
+        self._s_format_code = QShortcut(QKeySequence("Shift+Alt+F"), self)
+        self._s_format_code.activated.connect(self._format_code)
+
+        # Debug Console — toggle terminal panel
+        self._s_debug_console = QShortcut(QKeySequence("Ctrl+Alt+D"), self)
+        self._s_debug_console.activated.connect(lambda: self._toggle_terminal_panel(
+            show=not getattr(self, '_terminal_panel_hidden', False)))
 
         # Help
         help_menu = mb.addMenu("Help")
+        self._add_action(help_menu, "Cortex Documentation", self._open_documentation, "")
+        self._add_action(help_menu, "What's New", self._show_whats_new, "")
+        self._add_action(help_menu, "Automations", self._show_automations, "")
+        self._add_action(help_menu, "Local Environments", self._show_local_envs, "")
+        self._add_action(help_menu, "Worktrees", self._show_worktrees, "")
+        self._add_action(help_menu, "Skills", self._show_skills_help, "")
+        self._add_action(help_menu, "Model Context Protocol", self._show_mcp_help, "")
+        self._add_action(help_menu, "Troubleshooting", self._show_troubleshooting, "")
+        help_menu.addSeparator()
+        self._add_action(help_menu, "Send Feedback", self._send_feedback, "")
+        self._add_action(help_menu, "Start Trace Recording", self._start_trace, "")
+        help_menu.addSeparator()
         self._add_action(help_menu, "Keyboard Shortcuts", self._show_keyboard_shortcuts, "F1")
+        help_menu.addSeparator()
         self._add_action(help_menu, "About Cortex", self._show_about, "")
+
+        # ═══════════════════════════════════════════════════════════════════════
+        # Panel Toggle Button Group — right corner of menu bar
+        # ═══════════════════════════════════════════════════════════════════════
+        self._panel_toggle_bar = self._build_panel_toggle_bar()
+
+        # QMenuBar doesn't support custom widgets in the same way, so we add
+        # them as a QAction with a QWidget. We use a spacer trick:
+        # Create a spacer action to push buttons right.
+        spacer_action = QAction(self)
+        spacer_action.setVisible(False)  # Won't show but allows layout control
+        # Instead, we'll place buttons in a QWidget that sits on the right
+        # by using a custom approach: a QWidget placed next to menu bar via layout.
+        # For simplicity, add directly to menuBar's cornerWidget.
+        self.menuBar().setCornerWidget(self._panel_toggle_bar, Qt.Corner.TopRightCorner)
 
     def _add_action(self, menu, text, slot, shortcut=""):
         action = QAction(text, self)
@@ -917,85 +2067,119 @@ class CortexMainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Toolbar
     # ------------------------------------------------------------------
-    def _build_toolbar(self):
-        self._toolbar = self.addToolBar("Main")
-        tb = self._toolbar
-        tb.setMovable(False)
-        tb.setIconSize(QSize(28, 28))
-        tb.setFixedHeight(50)
+    # Toolbar removed in AI-first mode - replaced by TopNavBar component
+    # def _build_toolbar(self):
 
-        # Logo label
-        self._toolbar_logo = QLabel("  🧠  <b style='font-size:16px'>Cortex AI</b>  ")
-        self._toolbar_logo.setStyleSheet("font-size:17px; padding:0 10px; letter-spacing:0.5px;")
-        tb.addWidget(self._toolbar_logo)
 
-        self._toolbar_sep = QFrame()
-        self._toolbar_sep.setFrameShape(QFrame.Shape.VLine)
-        self._toolbar_sep.setFixedHeight(30)
-        tb.addWidget(self._toolbar_sep)
-
-        self._toolbar_btns = []
-
-        actions = [
-            ("📂", "Open Folder\nCtrl+O",   self._open_folder_dialog),
-            ("💾", "Save File\nCtrl+S",     self._save_current),
-            ("▶️", "Run Current File",      self._run_file),
-            ("➕", "New Terminal",          self._new_terminal),
-            ("⚡", "Show/Hide Terminal\nCtrl+`", self._toggle_terminal),
-        ]
-        for icon, tip, slot in actions:
-            btn = QPushButton(icon)
-            btn.setToolTip(tip)
-            btn.setFixedSize(44, 40)
-            btn.clicked.connect(slot)
-            self._toolbar_btns.append(btn)
-            tb.addWidget(btn)
-
-        tb.addWidget(self._make_spacer())
-
-        # Theme toggle button
-        self._theme_btn = QPushButton("🌙")
-        self._theme_btn.setToolTip("Toggle Theme\nCtrl+Shift+T")
-        self._theme_btn.setFixedSize(44, 40)
-        self._theme_btn.clicked.connect(self._toggle_theme)
-        self._toolbar_btns.append(self._theme_btn)
-        tb.addWidget(self._theme_btn)
-
-    def _apply_toolbar_theme(self, is_dark: bool):
-        """Apply theme-aware styles to toolbar elements."""
-        if not self._toolbar:
-            return
-            
-        border_color = "#3e3e42" if is_dark else "#dee2e6"
-        hover_bg = "rgba(255,255,255,0.10)" if is_dark else "rgba(0,0,0,0.06)"
-        
-        self._toolbar.setStyleSheet(f"""
-            QToolBar {{
-                spacing: 6px;
-                padding: 4px 6px;
-                border-bottom: 1px solid {border_color};
-            }}
-        """)
-        self._toolbar_sep.setStyleSheet(f"color:{border_color};")
-        
-        btn_style = f"""
-            QPushButton {{
-                font-size: 22px;
-                border-radius: 6px;
+    # ------------------------------------------------------------------
+    # Panel Toggle Buttons
+    # ------------------------------------------------------------------
+    def _build_panel_toggle_bar(self) -> QWidget:
+        """Build a horizontal bar of 4 toggle buttons — one per panel group."""
+        bar = QWidget()
+        bar.setObjectName("panelToggleBar")
+        bar.setStyleSheet("""
+            QWidget#panelToggleBar {
+                background: transparent;
+                padding: 0px 8px;
+            }
+            QPushButton {
                 background: transparent;
                 border: none;
+                border-radius: 4px;
                 padding: 2px;
-            }}
-            QPushButton:hover {{
-                background: {hover_bg};
-            }}
-            QPushButton:pressed {{
-                background: rgba(0,122,204,0.35);
-            }}
-        """
-        for btn in self._toolbar_btns:
-            btn.setStyleSheet(btn_style)
+                margin: 1px 0px;
+            }
+            QPushButton:hover {
+                background: rgba(255, 255, 255, 0.08);
+            }
+            QPushButton:pressed {
+                background: rgba(255, 255, 255, 0.15);
+            }
+        """)
 
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(0, 0, 4, 0)
+        layout.setSpacing(1)
+
+        from src.utils.icons import make_icon
+
+        icon_size = 22
+        btn_size = 26
+
+        icon_color = "#c8c8c8"  # dark mode
+
+        def _make_toggle(visible_icon: str, hidden_icon: str, tooltip_v: str, tooltip_h: str,
+                         is_visible_getter, toggle_fn):
+            """Single toggle button — switches icon/tooltip when panel visibility changes."""
+            btn = QPushButton()
+            btn.setFixedSize(btn_size, btn_size)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+
+            _visible = is_visible_getter()
+            btn.setIcon(make_icon(visible_icon if _visible else hidden_icon, icon_color, icon_size))
+            btn.setToolTip(tooltip_v if _visible else tooltip_h)
+
+            def on_click():
+                nonlocal _visible
+                _visible = not _visible
+                btn.setIcon(make_icon(visible_icon if _visible else hidden_icon, icon_color, icon_size))
+                btn.setToolTip(tooltip_v if _visible else tooltip_h)
+                toggle_fn(_visible)
+
+            btn.clicked.connect(on_click)
+            return btn
+
+        # 1. Left Sidebar toggle
+        layout.addWidget(_make_toggle(
+            "panel-left-sidebar-visible", "panel-left-sidebar-hidden",
+            "Hide Left Sidebar", "Show Left Sidebar",
+            lambda: not getattr(self, '_left_sidebar_hidden', False),
+            lambda v: self._toggle_left_sidebar(v)
+        ))
+
+        # 2. AI Chat toggle
+        layout.addWidget(_make_toggle(
+            "panel-ai-chat-visible", "panel-ai-chat-hidden",
+            "Hide AI Chat", "Show AI Chat",
+            lambda: not getattr(self, '_chat_panel_hidden', False),
+            lambda v: self._toggle_ai_chat_panel(v)
+        ))
+
+        # 3. Code Editor toggle
+        layout.addWidget(_make_toggle(
+            "panel-code-visible", "panel-code-hidden",
+            "Hide Code Editor", "Show Code Editor",
+            lambda: not getattr(self, '_code_panel_hidden', False),
+            lambda v: self._toggle_code_panel(v)
+        ))
+
+        # 4. Terminal panel toggle (bottom panel in editor split)
+        layout.addWidget(_make_toggle(
+            "panel-terminal-visible", "panel-terminal-hidden",
+            "Hide Terminal", "Show Terminal",
+            lambda: not getattr(self, '_terminal_panel_hidden', False),
+            lambda v: self._toggle_terminal_panel(v)
+        ))
+
+        # Play/Run button — runs the active file (HTML → Live Server, Python/JS → terminal)
+        play_btn = QPushButton()
+        play_btn.setFixedSize(btn_size, btn_size)
+        play_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        play_btn.setIcon(make_icon("play", icon_color, icon_size))
+        play_btn.setToolTip("Run File (Ctrl+F5)")
+        play_btn.clicked.connect(self._run_file)
+        layout.addWidget(play_btn)
+
+        # 5. Review/Summary/Git panel toggle (all 3 tabs share one panel)
+        layout.addWidget(_make_toggle(
+            "panel-review-visible", "panel-review-hidden",
+            "Hide Review Panel", "Show Review Panel",
+            lambda: not getattr(self, '_review_panel_hidden', False),
+            lambda v: self._toggle_review_panel(v)
+        ))
+
+        return bar
 
     def _make_spacer(self) -> QWidget:
         spacer = QWidget()
@@ -1007,6 +2191,18 @@ class CortexMainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _build_status_bar(self):
         sb = self.statusBar()
+        sb.setStyleSheet("""
+            QStatusBar {
+                background-color: #1e1e1e;
+                color: #cccccc;
+                border-top: 1px solid #2a2a2a;
+                font-size: 12px;
+            }
+            QLabel {
+                color: #cccccc;
+                padding: 0 6px;
+            }
+        """)
         self._status_file = QLabel("  No file open")
         self._status_cursor = QLabel("Ln 1, Col 1")
         self._status_lang = QLabel("Plain Text")
@@ -1015,7 +2211,53 @@ class CortexMainWindow(QMainWindow):
         for lbl in [self._status_file, self._status_cursor, self._status_lang, self._status_ai]:
             sb.addWidget(lbl)
 
-        sb.addPermanentWidget(QLabel("  Cortex AI Agent v1.0  "))
+        # ── System Monitor: RAM & CPU ──
+        self._status_ram = QLabel("RAM: --")
+        self._status_ram.setToolTip("Memory usage")
+        self._status_ram.setStyleSheet("color: #8be9fd; font-size: 11px; padding: 0 8px;")
+        self._status_cpu = QLabel("CPU: --")
+        self._status_cpu.setToolTip("CPU usage")
+        self._status_cpu.setStyleSheet("color: #50fa7b; font-size: 11px; padding: 0 8px;")
+        sb.addPermanentWidget(self._status_ram)
+        sb.addPermanentWidget(self._status_cpu)
+
+        # ── Version ──
+        version_lbl = QLabel("  Cortex AI Agent v1.0.15  ")
+        version_lbl.setStyleSheet("color: #6272a4; font-size: 11px;")
+        sb.addPermanentWidget(version_lbl)
+
+        # ── System Monitor Timer ──
+        self._system_monitor_timer = QTimer()
+        self._system_monitor_timer.timeout.connect(self._update_system_monitor)
+        self._system_monitor_timer.start(2000)
+        self._update_system_monitor()
+
+    def _update_system_monitor(self):
+        """Update RAM and CPU usage in status bar."""
+        try:
+            import psutil
+            mem = psutil.virtual_memory()
+            cpu = psutil.cpu_percent(interval=0.05)
+            ram_gb = mem.used / (1024 ** 3)
+            ram_total = mem.total / (1024 ** 3)
+            self._status_ram.setText(f"RAM: {ram_gb:.1f}/{ram_total:.1f} GB ({mem.percent}%)")
+            self._status_cpu.setText(f"CPU: {cpu:.1f}%")
+            # Color based on pressure
+            if mem.percent > 90:
+                self._status_ram.setStyleSheet("color: #ff5555; font-size: 11px; padding: 0 8px;")
+            elif mem.percent > 70:
+                self._status_ram.setStyleSheet("color: #ffb86c; font-size: 11px; padding: 0 8px;")
+            else:
+                self._status_ram.setStyleSheet("color: #8be9fd; font-size: 11px; padding: 0 8px;")
+            if cpu > 90:
+                self._status_cpu.setStyleSheet("color: #ff5555; font-size: 11px; padding: 0 8px;")
+            elif cpu > 70:
+                self._status_cpu.setStyleSheet("color: #ffb86c; font-size: 11px; padding: 0 8px;")
+            else:
+                self._status_cpu.setStyleSheet("color: #50fa7b; font-size: 11px; padding: 0 8px;")
+        except ImportError:
+            self._status_ram.setText("RAM: --")
+            self._status_cpu.setText("CPU: --")
 
     def _update_status_cursor(self, line: int, col: int):
         self._status_cursor.setText(f"Ln {line}, Col {col}")
@@ -1028,22 +2270,136 @@ class CortexMainWindow(QMainWindow):
             self._status_file.setText("  No file open")
             self._status_lang.setText("Plain Text")
 
+    def _sync_window_title(self):
+        """Sync window title — prepend ● when files are modified (VS Code-style)."""
+        modified = getattr(self, '_modified_files', set())
+        project_name = self._project_manager.root.name if self._project_manager.root else ""
+        if modified and project_name:
+            self.setWindowTitle(f"● Cortex AI Agent — {project_name}")
+        elif project_name:
+            self.setWindowTitle(f"Cortex AI Agent — {project_name}")
+        else:
+            self.setWindowTitle("Cortex AI Agent")
+
     def _apply_initial_theme(self):
         """Apply the saved (or default) theme to all panels at startup."""
         from PyQt6.QtWidgets import QApplication as _App
         saved = self._settings.theme if hasattr(self._settings, 'theme') else "dark"
-        theme_name = saved if isinstance(saved, str) and saved in ("dark", "light") else "dark"
-        # Apply theme
-        self._theme_manager.apply(theme_name, _App.instance())
-        is_dark = theme_name == "dark"
+        # Always dark
+        self._theme_manager.apply("dark", _App.instance())
+        is_dark = True
         # Propagate to all panels
         self._ai_chat.set_theme(is_dark)
         self._sidebar.set_theme(is_dark)
+        self._changed_files_panel.set_theme(is_dark)
         self._apply_welcome_theme(is_dark)
-        self._apply_toolbar_theme(is_dark)
         # Theme button label
         if hasattr(self, '_theme_btn') and self._theme_btn:
-            self._theme_btn.setText("☀️" if not is_dark else "🌙")
+            self._theme_btn.setText("🌙")
+        
+        # Apply to webview editor
+        if hasattr(self, '_webview_panel'):
+            self._webview_panel.set_theme(is_dark)
+        # Also apply to legacy editor tabs (welcome/PDF/image)
+        self._editor_tabs.update_theme(is_dark)
+        
+        # Apply to terminal tab bar
+        if isinstance(self._terminal_tabs.tabBar(), CleanTabBar):
+            self._terminal_tabs.tabBar().set_dark(is_dark)
+        
+        # Style the legacy tab widget panels (dark only)
+        tab_bg = "#1e1e1e"
+        tab_border = "#3e3e42"
+        tab_style = f"""
+            QTabWidget::pane {{ border: 1px solid {tab_border}; background: {tab_bg}; }}
+            QTabWidget::tab-bar {{ left: 0px; }}
+        """
+        self._editor_tabs.setStyleSheet(tab_style)  # legacy tabs only
+        self._terminal_tabs.setStyleSheet(tab_style)
+        
+        # Apply to all terminal widgets
+        for i in range(self._terminal_tabs.count()):
+            term = self._terminal_tabs.widget(i)
+            if isinstance(term, XTermWidget):
+                term.set_theme(is_dark)
+        
+        # Apply global syntax highlighting fonts and colors
+        self._apply_syntax_highlighting_fonts()
+
+    def _apply_syntax_highlighting_fonts(self):
+        """Apply Dracula-themed fonts and colors globally to code displays."""
+        if not HAS_SYNTAX_HIGHLIGHTING:
+            return
+        
+        try:
+            # Initialize global code colorizer
+            self._code_colorizer = UniversalCodeColorizer()
+            
+            # Apply monospace font (for code editors, terminal)
+            mono_fonts = FONTS['mono']
+            
+            # Apply sans-serif font (for UI elements)
+            sans_fonts = FONTS['sans']
+            
+            # Apply to all code editors
+            if hasattr(self, '_code_editor') and self._code_editor:
+                code_font = QFont()
+                code_font.setFamily(mono_fonts[0])  # Use first preferred monospace font
+                code_font.setPointSize(10)
+                code_font.setFixedPitch(True)
+                self._code_editor.setFont(code_font)
+                log.info(f"[FONTS] Applied monospace font to editor: {mono_fonts[0]}")
+            
+            # Apply to terminal if available
+            if hasattr(self, '_terminal') and self._terminal:
+                term_font = QFont()
+                term_font.setFamily(mono_fonts[0])
+                term_font.setPointSize(9)
+                term_font.setFixedPitch(True)
+                self._terminal.setFont(term_font)
+                log.info(f"[FONTS] Applied terminal font: {mono_fonts[0]}")
+            
+            # Log Dracula theme application
+            log.info(f"[COLORS] Dracula theme applied with {len(DRACULA_COLORS)} color definitions")
+            log.info(f"[LANGUAGES] 100+ programming languages supported")
+            log.info(f"[FRAMEWORKS] React, Vue, Angular, Django, Flask, FastAPI, and 20+ frameworks")
+            log.info(f"[MARKDOWN] Blue headings (#0047AB), White text (#ffffff)")
+            
+            # Display font stack information
+            mono_stack = " -> ".join(mono_fonts)
+            sans_stack = " -> ".join(sans_fonts)
+            log.info(f"[FONT_STACK_MONO] {mono_stack}")
+            log.info(f"[FONT_STACK_SANS] {sans_stack}")
+            
+        except Exception as e:
+            log.warning(f"Error applying syntax highlighting fonts: {e}")
+    
+    def colorize_code(self, code, language='plaintext'):
+        """
+        Public method to colorize code with Dracula theme.
+        Every language gets colors - NO white text fallback.
+        """
+        if not HAS_SYNTAX_HIGHLIGHTING or not hasattr(self, '_code_colorizer'):
+            return code
+        
+        try:
+            return self._code_colorizer.colorize(code, language)
+        except Exception as e:
+            log.warning(f"Error colorizing code for language '{language}': {e}")
+            return code
+    
+    def colorize_markdown(self, markdown_text):
+        """
+        Public method to colorize Markdown with blue headings and white text.
+        """
+        if not HAS_SYNTAX_HIGHLIGHTING:
+            return markdown_text
+        
+        try:
+            return MarkdownColorizer.colorize(markdown_text)
+        except Exception as e:
+            log.warning(f"Error colorizing markdown: {e}")
+            return markdown_text
 
     # ------------------------------------------------------------------
     # Signal Connections
@@ -1054,66 +2410,130 @@ class CortexMainWindow(QMainWindow):
         self._sidebar.file_search_opened.connect(self._open_file_at_line)
         self._sidebar.ai_action_requested.connect(self._ai_action)
         self._sidebar.file_renamed.connect(self._on_sidebar_file_renamed)
+        self._sidebar.file_deleted.connect(self._on_sidebar_file_deleted)
         
         # Changed files panel signals
-        self._sidebar.file_accepted.connect(self._on_accept_file_edit)
-        self._sidebar.file_rejected.connect(self._on_reject_file_edit)
-        self._sidebar.accept_all_requested.connect(self._on_accept_all_files)
-        self._sidebar.reject_all_requested.connect(self._on_reject_all_files)
+        self._changed_files_panel.file_accepted.connect(self._on_accept_file_edit)
+        self._changed_files_panel.file_rejected.connect(self._on_reject_file_edit)
+        self._changed_files_panel.accept_all_requested.connect(self._on_accept_all_files)
+        self._changed_files_panel.reject_all_requested.connect(self._on_reject_all_files)
+        self._changed_files_panel.file_opened.connect(self._open_file)
+
+        # Sidebar footer gear button → Memory Manager
+        self._sidebar.settings_requested.connect(self._show_memory_manager)
+
+        # Chat history panel signals (inside sidebar, index 4)
+        self._sidebar.chat_selected.connect(self._on_chat_selected)
+        self._sidebar.chat_renamed.connect(self._on_chat_renamed)
+        self._sidebar.chat_delete_requested.connect(self._on_chat_delete_requested)
+        self._sidebar.new_chat_requested.connect(self._on_new_chat_requested)
+
+        # AI chat list changes → refresh sidebar chat history panel (instant from JS JSON)
+        self._ai_chat.chat_list_updated_with_data.connect(self._on_chat_list_data_updated)
+
+        # AI context sync: when user switches chats, restore conversation context for AI
+        self._ai_chat.switch_chat_context.connect(self._on_switch_chat_context)
 
         # Project manager
         self._project_manager.project_opened.connect(self._on_project_opened)
         self._project_manager.project_closed.connect(self._on_project_closed)
 
 
-        # Editor tab changes
+        # Webview editor active file changes
+        self._webview_panel.active_file_changed.connect(self._on_webview_file_changed)
+        self._webview_panel.file_content_changed.connect(self._on_webview_content_changed)
+        self._webview_panel.file_closed.connect(self._on_webview_file_closed)
+        self._webview_panel.cursor_position_changed.connect(self._update_status_cursor)
+        # Legacy editor tab changes (welcome/PDF/image)
         self._editor_tabs.currentChanged.connect(self._on_tab_changed)
+        
+        # File manager undo/redo signals
+        if hasattr(self, '_file_manager'):
+            self._file_manager.file_deleted.connect(self._on_file_deleted_for_undo)
+            self._file_manager.file_restored.connect(self._on_file_restored_for_redo)
 
         # AI chat - ONLY connect signals here to avoid duplicates
         self._ai_chat.message_sent.connect(self._on_ai_chat_message)
         self._ai_chat.model_changed.connect(self._on_model_changed)
+        self._ai_chat.vision_history_sync.connect(self._ai_agent.inject_vision_history)
         self._ai_agent.response_chunk.connect(self._ai_chat.on_chunk)
         self._ai_agent.response_complete.connect(self._ai_chat.on_complete)
+        self._ai_agent.response_complete.connect(self._on_ai_task_complete)
         self._ai_agent.request_error.connect(self._ai_chat.on_error)
-        self._ai_agent.file_generated.connect(self._open_file)
-        self._ai_agent.file_edited_diff.connect(self._file_tracker.add_edit)
+        self._ai_agent.file_generated.connect(self._on_agent_file_generated)
+        # TEMPORARILY DISABLED - file_tracker was part of deleted agentic code
+        # self._ai_agent.file_edited_diff.connect(self._file_tracker.add_edit)
         self._ai_agent.file_edited_diff.connect(self._on_file_edited_diff_for_js)
         self._ai_agent.file_edited_diff.connect(self._on_inline_edit_diff)
+        self._ai_agent.file_edited_diff.connect(self._ai_chat.on_file_edited_diff)  # populate Changed Files panel with +/- counts
+        self._ai_agent.file_edited_diff.connect(self._ai_chat.show_diff_card)       # show diff viewer card in chat
+        # File operation cards — animated create/edit cards
+        self._ai_agent.file_creating_started.connect(self._on_file_creating_started)
+        self._ai_agent.file_editing_started.connect(self._on_file_editing_started)
+        self._ai_agent.file_operation_completed.connect(self._on_file_operation_completed)
         self._ai_agent.tool_activity.connect(self._ai_chat.show_tool_activity)
         self._ai_agent.directory_contents.connect(self._ai_chat.show_directory_contents)
         self._ai_agent.directory_contents.connect(self._on_directory_contents_for_tree)
         self._ai_agent.thinking_started.connect(self._ai_chat.show_thinking)
         self._ai_agent.thinking_stopped.connect(self._ai_chat.hide_thinking)
         self._ai_agent.todos_updated.connect(self._ai_chat.update_todos)
+        self._ai_agent.task_progress_update.connect(self._on_task_progress_update)
+        self._ai_agent.tool_summary_ready.connect(self._ai_chat.show_tool_summary)
+        # Recovery: context compaction status + turn-limit continuation
+        self._ai_agent.agent_status_update.connect(self._ai_chat.on_agent_status_update)
+        self._ai_agent.turn_limit_hit.connect(self._ai_chat.on_turn_limit_hit)
+        # Token budget: real-time context usage bar
+        self._ai_agent.context_budget_update.connect(self._ai_chat.on_context_budget_update)
+        # Permission gate: agent → chat UI shows card; user response → agent continues
+        self._ai_agent.permission_requested.connect(self._ai_chat._on_permission_request)
+        self._ai_chat.permission_decided.connect(self._ai_agent.on_permission_respond)
+        # Auto-approval toggle in chat toolbar → backend permission behavior
+        self._ai_chat.always_allow_changed.connect(self._ai_agent.set_always_allowed)
         
-        # New interaction signals
+        # Active signal connections
         self._ai_chat.generate_plan_requested.connect(self._on_generate_plan)
-        self._ai_chat.mode_changed.connect(self._ai_agent.set_interaction_mode)
         self._ai_chat.open_file_requested.connect(self._open_file)
         self._ai_chat.open_file_at_line_requested.connect(self._open_file_at_line)
+        log.info(f"[Diff-Debug] Connecting show_diff_requested to _on_show_diff. Signal exists: {hasattr(self._ai_chat, 'show_diff_requested')}")
         self._ai_chat.show_diff_requested.connect(self._on_show_diff)
+        self._ai_chat.answer_question_requested.connect(self._ai_agent.user_responded)
         self._ai_chat.smart_paste_check_requested.connect(self._on_smart_paste_check)
+        
+        # Todo toggle (logs only - state managed by bridge/JS)
+        self._ai_chat.toggle_todo_requested.connect(self._on_toggle_todo)
+        
+        # Interactive questions from agent to user
+        self._ai_agent.user_question_requested.connect(self._on_ai_question_requested)
+
+        # ========== CortexDiffBridge: wire accept/reject signals ==========
+        # This connects useDiffInIDE.py's CortexDiffBridge to Cortex's FEC card
+        # accept/reject signals so the agent can await user confirmation of edits.
+        try:
+            import importlib as _il
+            _diff_ide_mod = _il.import_module("agent.src.hooks.useDiffInIDE")
+            _cdb = _diff_ide_mod.CortexDiffBridge.instance()
+            _cdb.register_accept_signal(self._ai_chat.accept_file_edit_requested)
+            _cdb.register_reject_signal(self._ai_chat.reject_file_edit_requested)
+            log.info("[CortexDiffBridge] Accept/Reject signals wired")
+        except Exception as _cdb_err:
+            log.warning(f"[CortexDiffBridge] Signal wiring skipped: {_cdb_err}")
 
         # Terminal tab changes
         self._terminal_tabs.currentChanged.connect(self._on_terminal_tab_changed)
+        
+        # ========== PERMISSION SYSTEM CONNECTION (NEW) ==========
+        # Connect AI agent to UI for permission dialogs
+        self._ai_agent.set_ui_parent(self)
+        log.info("Permission system initialized and connected to main window")
 
     # ------------------------------------------------------------------
     # Actions
     # ------------------------------------------------------------------
     def _new_file(self):
-        # Get current theme state and apply it to the new editor
+        """Create a new untitled file in the webview editor."""
         is_dark = self._theme_manager.is_dark
-        editor = CodeEditor(language="python")
-        if is_dark:
-            editor.apply_dark_theme()
-        else:
-            editor.apply_light_theme()
-        idx = self._editor_tabs.addTab(editor, "untitled.py")
-        self._editor_tabs.setCurrentIndex(idx)
-        editor.cursor_position_changed.connect(self._update_status_cursor)
-        editor.inline_edit_submitted.connect(self._on_inline_edit_submitted)
-        editor.inline_edit_cancelled.connect(self._on_inline_edit_cancelled)
-        editor.inline_diff_requested.connect(self._on_inline_diff_requested)
+        self._webview_panel.open_file("untitled.py", "", "python")
+        self._webview_panel.set_theme(is_dark)
 
     def _open_file_dialog(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open File",
@@ -1137,8 +2557,8 @@ class CortexMainWindow(QMainWindow):
             for file_path in root.rglob(clean_filename):
                 if file_path.is_file():
                     return str(file_path)
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug(f'[MainWindow] Suppressed error: {e}')
         
         return None
 
@@ -1146,7 +2566,27 @@ class CortexMainWindow(QMainWindow):
         folder = QFileDialog.getExistingDirectory(self, "Open Folder",
                                                    str(Path.home()))
         if folder:
-            self._project_manager.open(folder)
+            self._open_folder_programmatic(folder)
+
+    def _open_folder_programmatic(self, folder: str):
+        """Open a folder as the active project (no dialog, usable from argv/drag-drop)."""
+        self._project_manager.open(folder)
+
+        # Populate left sidebar file tree
+        self._sidebar.set_project(folder)
+
+        # Initialize Git repository
+        if hasattr(self, '_git_manager'):
+            self._git_manager.set_repository(folder)
+            log.info(f"[GIT] Repository set to: {folder}")
+            # Update Git summary after a short delay
+            QTimer.singleShot(300, self._update_git_summary)
+        
+        try:
+            from src.core.lsp_manager import get_lsp_manager
+            get_lsp_manager().set_project_root(folder)
+        except Exception as e:
+            log.debug(f'[MainWindow] Suppressed error: {e}')
 
     def _new_project(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Folder for New Project",
@@ -1156,12 +2596,74 @@ class CortexMainWindow(QMainWindow):
             # Could add a template/scaffolding step here later.
             self._project_manager.open(folder)
 
-    def _open_file(self, filepath: str):
+            # Populate left sidebar file tree
+            self._sidebar.set_project(folder)
+
+            # Initialize Git repository
+            if hasattr(self, '_git_manager'):
+                self._git_manager.set_repository(folder)
+                log.info(f"[GIT] Repository set to: {folder}")
+                QTimer.singleShot(300, self._update_git_summary)
+
+    def _on_agent_file_generated(self, filepath: str, _content: str = ""):
+        """Slot for agent file_generated signal — routes through throttled pump (priority=False).
+
+        Agent Write tools can create many files in a single turn. Opening them all with
+        priority=True would flood QWebChannel with simultaneous model.setValue() IPC
+        calls, crashing Chromium's render process on Windows 25H2.
+
+        Using priority=False routes them through the warmup throttle
+        (10s spacing during first 60s, 1.5s after), preventing the crash.
+        """
+        self._open_file(filepath, priority=False)
+
+    def _open_file(self, filepath: str, *, priority: bool = True, reload: bool = False):
         # Normalize path (convert forward slashes to backslashes on Windows)
         filepath = os.path.normpath(filepath)
         path = Path(filepath)
-        log.info(f"Opening file: {filepath}")
         
+        # If already tracked by webview panel, handle reload vs switch.
+        # switch_to_file() avoids QWebChannel model.setValue() IPC which
+        # crashes Chromium on Windows 25H2 during the startup warmup phase.
+        # BUT on accept/reject of AI edits, we MUST reload the content so
+        # the editor reflects the latest disk state (like VS Code/Cursor).
+        if hasattr(self, '_webview_panel') and filepath in self._webview_panel._open_files:
+            if reload:
+                # Re-read from disk and push new content to the Monaco editor
+                try:
+                    content = self._file_manager.read(filepath)
+                    if content is not None:
+                        language = detect_language(filepath)
+                        self._webview_panel.open_file(filepath, content, language, priority=priority)
+                        log.info(f"File reloaded in editor after accept/reject: {filepath} ({len(content)} chars)")
+                except Exception as e:
+                    log.error(f"Failed to reload file content: {e}")
+            else:
+                log.info(f"File already open in webview, switching: {filepath}")
+                self._webview_panel.switch_to_file(filepath)
+            self._update_status_file(filepath)
+            return
+
+        # ── Startup warmup guard: queue BULK opens only ──────────────────
+        # Bulk session-restore opens (priority=False) crash Chromium on
+        # Windows 25H2 if sent through QWebChannel during startup. Single
+        # user-initiated clicks (priority=True) are safe and pass through.
+        elapsed = time.time() - self._start_time
+        if elapsed < self._warmup_duration and not priority:
+            # Deduplicate
+            for fp, _ in self._warmup_queued_files:
+                if fp == filepath:
+                    return
+            self._warmup_queued_files.append((filepath, priority))
+            count = len(self._warmup_queued_files)
+            remaining = self._warmup_duration - int(elapsed)
+            log.info(f"[Warmup {elapsed:.0f}s] Queued: {os.path.basename(filepath)} ({count} total)")
+            if hasattr(self, '_status_file') and self._status_file:
+                self._status_file.setText(f"  \u23f3 Editor warming up ({remaining}s left, {count} file(s) queued)")
+            return
+
+        log.info(f"Opening file: {filepath}")
+
         # If file doesn't exist, try to find it in the project
         if not path.exists() or not path.is_file():
             # Try searching in project directory
@@ -1173,7 +2675,31 @@ class CortexMainWindow(QMainWindow):
             else:
                 log.warning(f"File skip (not found or dir): {filepath}")
                 return
+        
+        # Check file extension for images and documents
+        file_ext = path.suffix.lower()
+        
+        # Handle image files
+        image_extensions = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp', '.ico', '.tiff', '.tif'}
+        if file_ext in image_extensions:
+            self._open_image_file(filepath)
+            return
+        
+        # Handle PDF files
+        if file_ext == '.pdf':
+            self._open_pdf_file(filepath)
+            return
+        
+        # Handle Office documents
+        office_extensions = {'.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx'}
+        if file_ext in office_extensions:
+            self._open_office_file(filepath)
+            return
             
+        # Initialize file snapshots dict for diff generation
+        if not hasattr(self, '_file_snapshots'):
+            self._file_snapshots = {}
+        
         if self._file_manager.is_binary(filepath):
             log.info(f"File skip (binary): {filepath}")
             QMessageBox.information(self, "Binary File",
@@ -1185,6 +2711,14 @@ class CortexMainWindow(QMainWindow):
             if content is None:
                 log.error(f"Failed to read content: {filepath}")
                 return
+            
+            # Store original snapshot for diff generation (only if not already stored)
+            # This preserves the FIRST version opened, allowing multiple diffs
+            if filepath not in self._file_snapshots:
+                self._file_snapshots[filepath] = content
+                log.info(f"[Snapshot] Stored initial snapshot: {filepath} ({len(content)} chars)")
+            else:
+                log.info(f"[Snapshot] Keeping existing snapshot for: {filepath}")
                 
             log.info(f"Content read ({len(content)} chars). Detecting language...")
             language = detect_language(filepath)
@@ -1192,54 +2726,471 @@ class CortexMainWindow(QMainWindow):
             
             # Get current theme state and pass it to the editor
             is_dark = self._theme_manager.is_dark
-            idx = self._editor_tabs.open_file(filepath, content, language, is_dark)
-            
-            # Connect cursor signal for the new editor
-            editor = self._editor_tabs.widget(idx)
-            if isinstance(editor, CodeEditor):
-                editor.cursor_position_changed.connect(self._update_status_cursor)
-                editor.inline_edit_submitted.connect(self._on_inline_edit_submitted)
-                editor.inline_edit_cancelled.connect(self._on_inline_edit_cancelled)
-                editor.inline_diff_requested.connect(self._on_inline_diff_requested)
-                
+            self._webview_panel.open_file(filepath, content, language, priority=priority)
+            self._webview_panel.set_theme(is_dark)
+
             self._update_status_file(filepath)
-            is_dark = self._theme_manager.is_dark
-            if isinstance(editor, CodeEditor):
-                # Block content_modified signal during theme set (rehighlight triggers it)
-                from PyQt6.QtCore import QSignalBlocker
-                with QSignalBlocker(editor.document()):
-                    editor.set_theme(is_dark)
             log.info(f"File opened successfully: {filepath}")
         except Exception as e:
             log.error(f"Error opening file {filepath}: {e}", exc_info=True)
 
+    def _flush_warmup_queue(self):
+        """Open all files queued during the Chromium startup warmup period.
+
+        Chromium WebEngine on Windows 25H2 crashes its render process if
+        ANY QWebChannel IPC (model.setValue()) reaches Monaco during the
+        first ~60s after launch. This method fires after the warmup timer
+        expires, opening all queued files through the normal pipeline.
+        """
+        elapsed = time.time() - self._start_time
+        count = len(self._warmup_queued_files)
+        log.info(f"[Warmup] Flush after {elapsed:.1f}s — opening {count} queued file(s)")
+        for filepath, priority in self._warmup_queued_files:
+            if Path(filepath).exists():
+                # Re-enter _open_file — warmup guard is now bypassed (elapsed >= duration)
+                self._open_file(filepath, priority=priority)
+        self._warmup_queued_files.clear()
+        if hasattr(self, '_status_file') and self._status_file:
+            self._status_file.setText("  No file open")
+        log.info("[Warmup] Queue flushed — Chromium should now be stable")
+
+    def _open_image_file(self, filepath: str):
+        """Open an image file in a viewer tab, scaled to fit window."""
+        from PyQt6.QtWidgets import QLabel, QScrollArea
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtGui import QPixmap
+        
+        try:
+            log.info(f"Opening image file: {filepath}")
+            path = Path(filepath)
+            
+            # Load image
+            pixmap = QPixmap(filepath)
+            
+            if pixmap.isNull():
+                log.error(f"Failed to load image: {filepath}")
+                QMessageBox.warning(self, "Error", f"Could not load image: {path.name}")
+                return
+            
+            # Get available size (tab widget size minus some padding)
+            tab_size = self._editor_tabs.size()
+            max_width = max(tab_size.width() - 40, 400)  # Min 400px width
+            max_height = max(tab_size.height() - 80, 300)  # Min 300px height
+            
+            # Scale image to fit while maintaining aspect ratio
+            scaled_pixmap = pixmap.scaled(
+                max_width, 
+                max_height,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            
+            # Create label with scaled image
+            image_label = QLabel()
+            image_label.setPixmap(scaled_pixmap)
+            image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            
+            # Create scroll area
+            scroll_area = QScrollArea()
+            scroll_area.setWidgetResizable(True)
+            scroll_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            scroll_area.setWidget(image_label)
+            
+            # Add to tabs
+            idx = self._editor_tabs.addTab(scroll_area, path.name)
+            self._editor_tabs.setTabToolTip(idx, filepath)
+            self._editor_tabs.setCurrentIndex(idx)
+            
+            self._update_status_file(filepath)
+            log.info(f"Image file opened successfully: {filepath} (scaled to {scaled_pixmap.width()}x{scaled_pixmap.height()})")
+            
+        except Exception as e:
+            log.error(f"Error opening image file {filepath}: {e}", exc_info=True)
+            QMessageBox.warning(self, "Error", f"Could not open image: {e}")
+
+    def _open_pdf_file(self, filepath: str):
+        """Open a PDF file by rendering pages as images."""
+        from PyQt6.QtWidgets import QLabel, QScrollArea, QVBoxLayout, QWidget
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtGui import QPixmap, QImage
+        import fitz  # PyMuPDF
+        
+        try:
+            log.info(f"Opening PDF file: {filepath}")
+            path = Path(filepath)
+            
+            # Open PDF with PyMuPDF
+            doc = fitz.open(filepath)
+            
+            # Store page count immediately
+            total_pages = doc.page_count
+            
+            if total_pages == 0:
+                QMessageBox.warning(self, "Error", "PDF has no pages")
+                return
+            
+            # Create scrollable container for all pages
+            container = QWidget()
+            layout = QVBoxLayout(container)
+            layout.setSpacing(10)
+            layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            
+            # Get available width
+            tab_width = self._editor_tabs.width() - 60
+            
+            # Render each page as an image
+            for page_num in range(min(total_pages, 50)):  # Limit to 50 pages
+                page = doc[page_num]
+                
+                # Calculate zoom to fit width
+                zoom = tab_width / page.rect.width
+                mat = fitz.Matrix(zoom, zoom)
+                
+                # Render page to pixmap
+                pix = page.get_pixmap(matrix=mat)
+                
+                # Convert to QImage
+                img = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888)
+                pixmap = QPixmap.fromImage(img)
+                
+                # Create label for page
+                label = QLabel()
+                label.setPixmap(pixmap)
+                label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                label.setStyleSheet("background-color: white; border: 1px solid #ccc;")
+                
+                layout.addWidget(label)
+            
+            doc.close()
+            
+            # Create scroll area
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setWidget(container)
+            scroll.setStyleSheet("background-color: #f0f0f0;")
+            
+            # Add to tabs
+            idx = self._editor_tabs.addTab(scroll, path.name)
+            self._editor_tabs.setTabToolTip(idx, f"{filepath} ({total_pages} pages)")
+            self._editor_tabs.setCurrentIndex(idx)
+            
+            self._update_status_file(filepath)
+            log.info(f"PDF file opened successfully: {filepath} ({total_pages} pages)")
+            
+        except ImportError:
+            log.error("PyMuPDF (fitz) not installed")
+            QMessageBox.warning(self, "Error", "PyMuPDF not installed. Run: pip install PyMuPDF")
+        except Exception as e:
+            log.error(f"Error opening PDF file {filepath}: {e}", exc_info=True)
+            QMessageBox.warning(self, "Error", f"Could not open PDF: {e}")
+
+    def _open_office_file(self, filepath: str):
+        """Open Office documents (Word, Excel, PowerPoint) inside the IDE as formatted text."""
+        from PyQt6.QtWidgets import QTextEdit
+        from PyQt6.QtCore import Qt
+        
+        try:
+            log.info(f"Opening Office file: {filepath}")
+            path = Path(filepath)
+            file_ext = path.suffix.lower()
+            
+            # Create text viewer
+            text_viewer = QTextEdit()
+            text_viewer.setReadOnly(True)
+            text_viewer.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+            
+            content_html = ""
+            
+            if file_ext in ['.docx']:
+                # Read Word document
+                try:
+                    from docx import Document
+                    doc = Document(filepath)
+                    
+                    content_html = f"<h2>{path.name}</h2><hr>"
+                    
+                    for para in doc.paragraphs:
+                        if para.text.strip():
+                            # Check if it's a heading based on style
+                            if para.style.name.startswith('Heading'):
+                                content_html += f"<h3>{para.text}</h3>"
+                            else:
+                                content_html += f"<p>{para.text}</p>"
+                    
+                    # Add tables
+                    for table in doc.tables:
+                        content_html += "<table border='1' cellpadding='5'>"
+                        for row in table.rows:
+                            content_html += "<tr>"
+                            for cell in row.cells:
+                                content_html += f"<td>{cell.text}</td>"
+                            content_html += "</tr>"
+                        content_html += "</table><br>"
+                    
+                except ImportError:
+                    content_html = f"<p style='color:red'>Error: python-docx library not installed.<br>Install with: pip install python-docx</p>"
+                    log.error("python-docx library not installed")
+                except Exception as e:
+                    content_html = f"<p style='color:red'>Error reading document: {e}</p>"
+                    log.error(f"Error reading docx: {e}")
+            
+            elif file_ext in ['.xlsx', '.xls']:
+                # Read Excel document
+                try:
+                    if file_ext == '.xlsx':
+                        import openpyxl
+                        wb = openpyxl.load_workbook(filepath, data_only=True)
+                        sheetnames = wb.sheetnames
+                        
+                        content_html = f"<h2>{path.name}</h2><hr>"
+                        
+                        for sheet_name in sheetnames:
+                            sheet = wb[sheet_name]
+                            content_html += f"<h3>Sheet: {sheet_name}</h3>"
+                            content_html += "<table border='1' cellpadding='5' style='border-collapse:collapse'>"
+                            
+                            # Read first 100 rows max
+                            row_count = 0
+                            for row in sheet.iter_rows(max_row=100):
+                                content_html += "<tr>"
+                                for cell in row:
+                                    value = cell.value if cell.value is not None else ""
+                                    content_html += f"<td>{value}</td>"
+                                content_html += "</tr>"
+                                row_count += 1
+                                if row_count >= 100:
+                                    content_html += "<tr><td colspan='100'>... (showing first 100 rows)</td></tr>"
+                                    break
+                            
+                            content_html += "</table><br>"
+                    
+                    elif file_ext == '.xls':
+                        import xlrd
+                        wb = xlrd.open_workbook(filepath)
+                        
+                        content_html = f"<h2>{path.name}</h2><hr>"
+                        
+                        for sheet_idx in range(wb.nsheets):
+                            sheet = wb.sheet_by_index(sheet_idx)
+                            content_html += f"<h3>Sheet: {sheet.name}</h3>"
+                            content_html += "<table border='1' cellpadding='5' style='border-collapse:collapse'>"
+                            
+                            # Read first 100 rows max
+                            for row_idx in range(min(sheet.nrows, 100)):
+                                content_html += "<tr>"
+                                for col_idx in range(sheet.ncols):
+                                    value = sheet.cell_value(row_idx, col_idx)
+                                    content_html += f"<td>{value}</td>"
+                                content_html += "</tr>"
+                            
+                            if sheet.nrows > 100:
+                                content_html += "<tr><td colspan='100'>... (showing first 100 rows)</td></tr>"
+                            
+                            content_html += "</table><br>"
+                    
+                except ImportError as e:
+                    content_html = f"<p style='color:red'>Error: Required library not installed.<br>Install with: pip install openpyxl xlrd</p>"
+                    log.error(f"Library not installed: {e}")
+                except Exception as e:
+                    content_html = f"<p style='color:red'>Error reading spreadsheet: {e}</p>"
+                    log.error(f"Error reading xlsx/xls: {e}")
+            
+            elif file_ext == '.doc':
+                # Old Word format - try to extract text
+                try:
+                    # Try using textract if available
+                    import textract
+                    text = textract.process(filepath).decode('utf-8', errors='ignore')
+                    content_html = f"<h2>{path.name}</h2><hr>"
+                    content_html += f"<pre style='white-space:pre-wrap;font-family:Arial,sans-serif'>{text}</pre>"
+                except ImportError:
+                    content_html = f"""<p style='color:orange'>
+                        <b>Old Word Format (.doc)</b><br><br>
+                        This file uses the older .doc format which requires additional libraries.<br><br>
+                        <b>Options:</b><br>
+                        1. Convert to .docx format (open in Word and Save As .docx)<br>
+                        2. Install textract: <code>pip install textract</code><br>
+                        3. Open externally with Microsoft Word
+                    </p>"""
+                    log.warning(f"Old .doc format not supported without textract: {filepath}")
+                except Exception as e:
+                    content_html = f"<p style='color:red'>Error reading .doc file: {e}</p>"
+                    log.error(f"Error reading doc: {e}")
+            
+            else:
+                content_html = f"<p>File type '{file_ext}' is not supported for internal viewing.</p>"
+            
+            # Set content with styling
+            text_viewer.setHtml(f"""
+            <html>
+            <head>
+                <style>
+                    body {{ font-family: Arial, sans-serif; padding: 20px; line-height: 1.6; }}
+                    h2 {{ color: #333; border-bottom: 2px solid #0078d4; padding-bottom: 10px; }}
+                    h3 {{ color: #555; margin-top: 20px; }}
+                    table {{ margin: 10px 0; border: 1px solid #ddd; }}
+                    td {{ padding: 8px; border: 1px solid #ddd; }}
+                    p {{ margin: 10px 0; }}
+                </style>
+            </head>
+            <body>
+                {content_html}
+            </body>
+            </html>
+            """)
+            
+            # Add to tabs
+            idx = self._editor_tabs.addTab(text_viewer, path.name)
+            self._editor_tabs.setTabToolTip(idx, filepath)
+            self._editor_tabs.setCurrentIndex(idx)
+            
+            self._update_status_file(filepath)
+            log.info(f"Office file opened internally: {filepath}")
+            
+        except Exception as e:
+            log.error(f"Error opening Office file {filepath}: {e}", exc_info=True)
+            QMessageBox.warning(self, "Error", f"Could not open document: {e}")
+
+
+    def _diff_cache_path(self):
+        try:
+            from pathlib import Path
+            return Path.home() / ".cortex" / "diff_cache.json"
+        except Exception:
+            return None
+
+    def _load_diff_cache(self):
+        if hasattr(self, '_diff_cache'):
+            return self._diff_cache
+        self._diff_cache = {}
+        try:
+            cache_path = self._diff_cache_path()
+            if cache_path and cache_path.exists():
+                import json
+                self._diff_cache = json.loads(cache_path.read_text(encoding='utf-8')) or {}
+        except Exception:
+            self._diff_cache = {}
+        return self._diff_cache
+
+    def _save_diff_cache(self):
+        try:
+            cache_path = self._diff_cache_path()
+            if not cache_path:
+                return
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            import json
+            cache_path.write_text(json.dumps(self._diff_cache), encoding='utf-8')
+        except Exception as e:
+            log.debug(f'[MainWindow] Suppressed error: {e}')
+
     def _on_show_diff(self, file_path: str):
         """Show diff in Qt dialog window — triggered by Diff button click in chat."""
+        log.info(f"[Diff] _on_show_diff called with: {file_path}")
         original, modified = '', ''
 
         # 1. Try the Python diff data store (most reliable)
-        if hasattr(self, '_diff_data_store') and file_path in self._diff_data_store:
-            original, modified = self._diff_data_store[file_path]
-        else:
-            # 2. Normalize path and try again (Windows backslash vs forward slash)
-            norm = file_path.replace('\\', '/')
-            if hasattr(self, '_diff_data_store'):
+        import os
+        import subprocess
+        from pathlib import Path
+        normalized_requested = os.path.normcase(os.path.normpath(file_path))
+        
+        if hasattr(self, '_diff_data_store'):
+            # Direct check
+            if file_path in self._diff_data_store:
+                original, modified = self._diff_data_store[file_path]
+                log.info(f"[Diff] Found in _diff_data_store (direct): {file_path}")
+            else:
+                # Iterative normalized check
+                log.debug(f"[Diff] Checking normalized path for: {normalized_requested}")
                 for k, v in self._diff_data_store.items():
-                    if k.replace('\\', '/') == norm:
+                    if os.path.normcase(os.path.normpath(k)) == normalized_requested:
                         original, modified = v
+                        log.info(f"[Diff] Found in _diff_data_store (normalized): {k}")
                         break
 
+        # 2b. Fallback to persisted diff cache
+        if not modified:
+            cache = self._load_diff_cache()
+            cached = None
+            if cache:
+                norm = os.path.normcase(os.path.normpath(file_path))
+                cached = cache.get(file_path) or cache.get(norm)
+                if not cached:
+                    # try to find by normalized keys
+                    for k, v in cache.items():
+                        if os.path.normcase(os.path.normpath(k)) == norm:
+                            cached = v
+                            break
+            if cached:
+                original = cached.get('original', '')
+                modified = cached.get('modified', '')
+                log.info(f"[Diff] Found in diff cache: {file_path}")
         # 3. Fallback to file_tracker
         if not modified:
             edit_info = self._file_tracker.get_edit(file_path)
             if edit_info:
                 original = edit_info.original_content if edit_info.edit_type != 'C' else ''
                 modified = edit_info.new_content
+                log.info(f"[Diff] Found in file_tracker: {file_path}")
 
         if not modified:
-            log.warning(f"No diff data found for {file_path}")
+            # Fallback: try Git diff against HEAD if repository available
+            try:
+                project_root = getattr(self, '_project_manager', None).root if hasattr(self, '_project_manager') else None
+                if project_root and os.path.isdir(os.path.join(project_root, '.git')) and os.path.exists(file_path):
+                    rel_path = os.path.relpath(file_path, project_root)
+                    # Try to load original from HEAD (tracked files)
+                    git_show = subprocess.run(
+                        ['git', '-C', project_root, 'show', f'HEAD:{rel_path}'],
+                        capture_output=True, text=True,
+                        encoding='utf-8', errors='replace',
+                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                    )
+                    if git_show.returncode == 0:
+                        original = git_show.stdout
+                        modified = Path(file_path).read_text(encoding='utf-8', errors='replace')
+                        log.info(f"[Diff] Loaded diff via git for: {file_path}")
+                    else:
+                        # If untracked, treat original as empty
+                        git_ls = subprocess.run(
+                            ['git', '-C', project_root, 'ls-files', '--error-unmatch', rel_path],
+                            capture_output=True, text=True,
+                            encoding='utf-8', errors='replace',
+                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                        )
+                        if git_ls.returncode != 0:
+                            original = ''
+                            modified = Path(file_path).read_text(encoding='utf-8', errors='replace')
+                            log.info(f"[Diff] Loaded diff for untracked file: {file_path}")
+            except Exception as _ge:
+                log.debug(f"[Diff] Git fallback failed: {_ge}")
+
+        # Final fallback: Use file snapshot taken when opened
+        if not modified and hasattr(self, '_file_snapshots') and file_path in self._file_snapshots:
+            original = self._file_snapshots[file_path]
+            try:
+                modified = Path(file_path).read_text(encoding='utf-8', errors='replace')
+                if original != modified:
+                    log.info(f"[Diff] Using file snapshot for diff: {file_path}")
+                else:
+                    log.info(f"[Diff] File unchanged since opened: {file_path}")
+                    original = ''
+                    modified = ''
+            except Exception as e:
+                log.warning(f"[Diff] Failed to read current file content: {e}")
+                original = ''
+                modified = ''
+
+        if not modified:
+            log.warning(f"[Diff] No diff data found for {file_path}")
+            log.debug(f"[Diff] _diff_data_store keys: {list(getattr(self, '_diff_data_store', {}).keys())}")
+            if hasattr(self, '_ai_chat'):
+                import os
+                filename = os.path.basename(file_path)
+                self._ai_chat.add_system_message(f"⚠️ No diff data available for {filename}. It was not edited in this session.")
             return
 
+        log.info(f"[Diff] Opening diff tab for {file_path} (+{len(modified)} chars)")
         is_dark = self._theme_manager.is_dark
         self._editor_tabs.open_diff_tab(file_path, original, modified, is_dark)
 
@@ -1249,7 +3200,7 @@ class CortexMainWindow(QMainWindow):
             self._ai_chat.add_system_message("Open a file to use inline edit.")
             return
 
-        file_path = self._editor_tabs.current_filepath()
+        file_path = self._webview_panel.get_active_file() or self._editor_tabs.current_filepath()
         if not file_path:
             self._ai_chat.add_system_message("Open a file to use inline edit.")
             return
@@ -1357,17 +3308,140 @@ class CortexMainWindow(QMainWindow):
 
     def _on_file_edited_diff_for_js(self, file_path: str, original: str, new_content: str):
         """Store diff data in Python dict for the Qt dialog viewer."""
+        # Ignore no-op edits to prevent false "modified" cards/files in UI.
+        if (original or "") == (new_content or ""):
+            log.info(f"[Diff] No-op edit ignored for: {file_path}")
+            return
+
         if not hasattr(self, '_diff_data_store'):
             self._diff_data_store = {}
+        norm_path = os.path.normcase(os.path.normpath(file_path))
         self._diff_data_store[file_path] = (original, new_content)
-        log.debug(f"Stored diff data for: {file_path}")
+        self._diff_data_store[norm_path] = (original, new_content)
+
+        # ── Invalidate file_manager cache so _open_file reads fresh content ──
+        try:
+            resolved = str(Path(file_path).resolve())
+            self._file_manager._file_cache.put(resolved, new_content)
+            self._file_manager._hash_cache[resolved] = self._file_manager._compute_hash(new_content)
+            if resolved in self._file_manager._open_files:
+                self._file_manager._open_files[resolved] = new_content
+            log.debug(f"[Diff] Updated file_manager cache for: {file_path} ({len(new_content)} chars)")
+        except Exception as e:
+            log.debug(f"[Diff] Cache update failed: {e}")
+        # Persist to diff cache for cross-session diff viewing
+        cache = self._load_diff_cache()
+        cache[file_path] = {
+            'original': original,
+            'modified': new_content,
+            'ts': int(__import__('time').time())
+        }
+        # Prune cache to last 100 entries
+        if len(cache) > 100:
+            items = sorted(cache.items(), key=lambda kv: kv[1].get('ts', 0), reverse=True)
+            self._diff_cache = dict(items[:100])
+        else:
+            self._diff_cache = cache
+        self._save_diff_cache()
+        log.info(f"[Diff] Stored diff data for: {file_path} (original: {len(original)} chars, new: {len(new_content)} chars)")
+        log.debug(f"[Diff] _diff_data_store now has {len(self._diff_data_store)} entries")
 
         # Update sidebar changed files panel
         try:
             edit_type = "C" if not original else "M"
-            self._sidebar.add_changed_file(file_path, edit_type)
+            self._changed_files_panel.add_file(file_path, edit_type)
         except Exception as e:
             log.debug(f"Sidebar update skipped: {e}")
+
+    # ============================================================
+    # FILE OPERATION CARDS (Create/Edit with animation)
+    # ============================================================
+    
+    def _on_file_creating_started(self, file_path: str):
+        """Show 'Creating file...' card with pulse animation."""
+        try:
+            card_id = self._ai_chat.show_file_creating_card(file_path)
+            if not hasattr(self, '_file_op_cards'):
+                self._file_op_cards = {}
+            self._file_op_cards[file_path] = card_id
+            log.debug(f"[FileOp] Started creating card ({card_id}) for: {file_path}")
+        except Exception as e:
+            log.debug(f"[FileOp] Failed to show creating card: {e}")
+
+    def _on_file_editing_started(self, file_path: str):
+        """Show 'Editing file...' card with pulse animation."""
+        try:
+            if not hasattr(self, '_file_op_cards'):
+                self._file_op_cards = {}
+            # If there's already an active card for this file, remove/complete it first
+            old_card_id = self._file_op_cards.get(file_path)
+            if old_card_id:
+                self._ai_chat.dismiss_file_op_card(old_card_id)
+                self._file_op_cards.pop(file_path, None)
+            card_id = self._ai_chat.show_file_editing_card(file_path)
+            self._file_op_cards[file_path] = card_id
+            log.debug(f"[FileOp] Started editing card ({card_id}) for: {file_path}")
+        except Exception as e:
+            log.debug(f"[FileOp] Failed to show editing card: {e}")
+
+    def _on_file_operation_completed(self, _unused_card_id: str, file_path: str, content: str, op_type: str):
+        """Transform operation card to show completed file."""
+        try:
+            # Use the card_id stored when the card was first created (from show_file_*_card)
+            # The card_id from agent_bridge is different — it was generated before the JS card was made.
+            real_card_id = getattr(self, '_file_op_cards', {}).get(file_path)
+            if not real_card_id:
+                log.debug(f"[FileOp] No stored card_id for {file_path}, skipping completion")
+                return
+            if op_type == "create":
+                self._ai_chat.complete_file_creating_card(real_card_id, file_path, content)
+            else:
+                original = ""
+                if hasattr(self, '_diff_data_store'):
+                    if file_path in self._diff_data_store:
+                        original, _ = self._diff_data_store[file_path]
+                    else:
+                        norm_path = os.path.normcase(os.path.normpath(file_path))
+                        if norm_path in self._diff_data_store:
+                            original, _ = self._diff_data_store[norm_path]
+                # If edit produced no textual change, dismiss stale card instead of
+                # showing a misleading "modified" file entry.
+                if (original or "") == (content or ""):
+                    self._ai_chat.dismiss_file_op_card(real_card_id)
+                    self._file_op_cards.pop(file_path, None)
+                    log.info(f"[FileOp] Suppressed no-op edit card for: {file_path}")
+                    return
+                self._ai_chat.complete_file_editing_card(real_card_id, file_path, original, content)
+            # Clean up stored card_id
+            self._file_op_cards.pop(file_path, None)
+            log.debug(f"[FileOp] Completed {op_type} card for: {file_path}")
+        except Exception as e:
+            log.debug(f"[FileOp] Failed to complete operation card: {e}")
+
+    def _on_ai_question_requested(self, question_payload: dict):
+        """Handle AI asking a question that requires user response in chat."""
+        log.info(f"AI requested user input: {question_payload.get('text', question_payload.get('question', ''))[:50]}...")
+        # Structuring the question info for the JS UI
+        # CRITICAL: Use permission_request_id if available (for permission cards),
+        # otherwise fall back to tool_call_id (for general questions)
+        request_id = question_payload.get("permission_request_id", question_payload.get("id", str(_uuid.uuid4())))
+        info = {
+            "id": request_id,
+            "text": question_payload["text"],
+            "type": question_payload.get("type", "text"),
+            "choices": question_payload.get("choices", []),
+            "default": question_payload.get("default", ""),
+            "details": question_payload.get("details", ""),
+            "scope": question_payload.get("scope", "user"),
+            "tool_name": question_payload.get("tool_name", "AskUserQuestion")
+        }
+        self._ai_chat.show_question(info)
+        try:
+            preview = (info.get('text') or '')
+            preview = preview.replace('\n', ' ').strip()
+            show_toast_notification('Cortex AI - Needs your input', preview[:120])
+        except Exception as e:
+            log.debug(f'[MainWindow] Suppressed error: {e}')
 
     def _open_file_at_line(self, file_path: str, line_number: int):
         """Open file and navigate to specific line."""
@@ -1384,133 +3458,471 @@ class CortexMainWindow(QMainWindow):
             log.info(f"Navigated to line {line_number} in {file_path}")
 
     def _on_accept_file_edit(self, file_path: str):
-        """Handle user accepting a file edit from the chat UI."""
+        """Accept AI edit — the file is already written to disk, just acknowledge."""
         if file_path == "__ALL__":
             self._on_accept_all_files()
             return
-        # Normalize path (convert forward slashes to backslashes on Windows)
         file_path = os.path.normpath(file_path)
-        log.info(f"User accepted file edit: {file_path}")
-        
-        # For new files (type "C"), we need to create them first
-        edit_info = self._file_tracker.get_edit(file_path)
-        if edit_info and edit_info.edit_type == "C":
-            # This is a newly created file - write it to disk first
-            from pathlib import Path
-            path = Path(file_path)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                path.write_text(edit_info.new_content, encoding="utf-8")
-                log.info(f"Created new file: {file_path}")
-            except Exception as e:
-                log.error(f"Failed to create file: {e}")
-                self.statusBar().showMessage(f"✗ Failed to create {path.name}", 3000)
-                return
-        
-        # Open the file in editor
-        self._open_file(file_path)
-        # Future: Could add to git staging or show success notification
+        log.info(f"[Accept] User accepted edit: {file_path}")
+
+        # Open/refresh the file in the editor so the user sees the accepted state
+        self._open_file(file_path, reload=True)
         self.statusBar().showMessage(f"✓ Accepted changes to {Path(file_path).name}", 3000)
-        # Remove from sidebar panel
-        self._sidebar.remove_changed_file(file_path)
+
+        # Clean up tracking state
+        if hasattr(self, '_diff_data_store'):
+            norm = os.path.normcase(file_path)
+            self._diff_data_store.pop(file_path, None)
+            self._diff_data_store.pop(norm, None)
+        if hasattr(self, '_file_snapshots'):
+            self._file_snapshots.pop(file_path, None)
+
+        self._changed_files_panel.remove_file(file_path)
 
     def _on_reject_file_edit(self, file_path: str):
-        """Handle user rejecting a file edit from the chat UI."""
+        """Reject AI edit — write original content back to disk and reload editor."""
         if file_path == "__ALL__":
             self._on_reject_all_files()
             return
-        # Normalize path (convert forward slashes to backslashes on Windows)
         file_path = os.path.normpath(file_path)
-        log.info(f"User rejected file edit: {file_path}")
-        # Open the file in editor for review
-        self._open_file(file_path)
-        # Future: Could restore from pre-edit snapshot
-        self.statusBar().showMessage(f"✗ Rejected changes to {Path(file_path).name} - review file", 5000)
-        # Remove from sidebar panel
-        self._sidebar.remove_changed_file(file_path)
+        log.info(f"[Reject] User rejected edit: {file_path}")
+
+        original = self._get_original_content(file_path)
+
+        if original is not None:
+            try:
+                # Normalize line endings to prevent doubled empty lines
+                original = original.replace("\r\n", "\n").replace("\r", "\n")
+                Path(file_path).write_text(original, encoding='utf-8', newline='')
+                log.info(f"[Reject] Reverted {file_path} ({len(original)} chars)")
+            except Exception as e:
+                log.error(f"[Reject] Failed to revert {file_path}: {e}")
+                self.statusBar().showMessage(f"✗ Revert failed for {Path(file_path).name}: {e}", 5000)
+                return
+
+            # Reload in editor so editor shows the reverted content
+            self._open_file(file_path, reload=True)
+            self.statusBar().showMessage(f"↩ Reverted {Path(file_path).name} to original", 3000)
+        else:
+            # No original found — just open the file so user can review manually
+            log.warning(f"[Reject] No original content for {file_path} — opening for review")
+            self._open_file(file_path, reload=True)
+            self.statusBar().showMessage(
+                f"⚠ No original content found for {Path(file_path).name} — review manually", 5000
+            )
+
+        # Clean up tracking state
+        if hasattr(self, '_diff_data_store'):
+            norm = os.path.normcase(file_path)
+            self._diff_data_store.pop(file_path, None)
+            self._diff_data_store.pop(norm, None)
+        if hasattr(self, '_file_snapshots'):
+            self._file_snapshots.pop(file_path, None)
+
+        self._changed_files_panel.remove_file(file_path)
+
+    def _get_original_content(self, file_path: str) -> Optional[str]:
+        """
+        Look up the original (pre-AI-edit) content for a file.
+        Priority: _diff_data_store → _file_snapshots → diff_cache.json
+        """
+        norm = os.path.normcase(os.path.normpath(file_path))
+
+        # 1. In-memory diff store (most reliable — set by _on_file_edited_diff_for_js)
+        if hasattr(self, '_diff_data_store'):
+            for key, (original, _modified) in self._diff_data_store.items():
+                if os.path.normcase(os.path.normpath(key)) == norm:
+                    if original:  # empty string means new file
+                        return original
+
+        # 2. File snapshot taken when file was first opened
+        if hasattr(self, '_file_snapshots'):
+            for key, content in self._file_snapshots.items():
+                if os.path.normcase(os.path.normpath(key)) == norm:
+                    return content
+
+        # 3. Persisted diff cache
+        try:
+            cache = self._load_diff_cache()
+            for key, entry in cache.items():
+                if os.path.normcase(os.path.normpath(key)) == norm:
+                    orig = entry.get('original', '')
+                    if orig:
+                        return orig
+        except Exception as e:
+            log.debug(f'[MainWindow] Suppressed error: {e}')
+
+        return None
+    
+    def _on_load_full_chat_requested(self, conversation_id: str):
+        """Load full chat messages from SQLite database."""
+        log.info(f"Loading full chat: {conversation_id}")
+        
+        try:
+            # Load from SQLite via bridge
+            full_chat_json_str = self._ai_chat.load_full_chat_from_sqlite(conversation_id)
+            
+            if full_chat_json_str and full_chat_json_str != "[]":
+                log.info(f"Loaded {len(full_chat_json_str)} chars of chat data")
+                # Send back to JavaScript
+                self._ai_chat._view.page().runJavaScript(
+                    f"window.handleFullChatLoad('{conversation_id}', {full_chat_json_str});"
+                )
+                self.statusBar().showMessage(f"✓ Loaded chat history", 2000)
+            else:
+                log.warning(f"No chat data found for: {conversation_id}")
+                self._ai_chat._view.page().runJavaScript(
+                    f"window.handleFullChatLoad('{conversation_id}', null);"
+                )
+        except Exception as e:
+            log.error(f"Failed to load full chat: {e}")
+            self._ai_chat._view.page().runJavaScript(
+                f"window.handleFullChatLoad('{conversation_id}, null);"
+            )
+
+    def _on_chat_selected(self, conversation_id: str):
+        """User clicked a chat in the sidebar history panel → load it in JS."""
+        log.info(f"[ChatHistory] Selected chat: {conversation_id}")
+        js_code = f"window.loadChat('{conversation_id}');"
+        self._ai_chat._view.page().runJavaScript(js_code)
+
+    def _on_chat_renamed(self, conversation_id: str, new_title: str):
+        """User renamed a chat in the sidebar — notify JS."""
+        log.info(f"[ChatHistory] Renamed chat {conversation_id} → {new_title}")
+        safe_title = new_title.replace("'", "\\'").replace('"', '\\"')
+        js_code = f"if(window.updateChatTitle) window.updateChatTitle('{conversation_id}', '{safe_title}');"
+        self._ai_chat._view.page().runJavaScript(js_code)
+
+    def _on_chat_delete_requested(self, conversation_id: str):
+        """User requested delete from sidebar → show confirmation dialog."""
+        reply = QMessageBox.question(
+            self, "Delete Chat",
+            "Are you sure you want to permanently delete this chat?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        log.info(f"[ChatHistory] Deleting chat: {conversation_id}")
+        try:
+            from src.core.chat_history import get_chat_history
+            history = get_chat_history()
+            history.delete_conversation(conversation_id)
+        except Exception as e:
+            log.error(f"[ChatHistory] Delete failed: {e}")
+        self._sidebar.remove_chat_history_item(conversation_id)
+        self._ai_chat._view.page().runJavaScript("window.renderHistoryList();")
+
+    def _on_new_chat_requested(self):
+        """User clicked '+ New Chat' in sidebar → clear and start fresh in JS."""
+        log.info("[ChatHistory] New chat requested")
+        self._ai_chat._view.page().runJavaScript("window.newChat();")
+
+    def _on_chat_list_data_updated(self, chat_list_json: str):
+        """JS pushed updated chat list → populate sidebar panel directly from JSON."""
+        self._sidebar.populate_chat_history_from_json(chat_list_json)
+
+    def _on_switch_chat_context(self, conversation_id: str):
+        """User switched to a different chat — restore AI conversation context.
+        
+        This ensures the AI has the correct conversation history loaded so
+        follow-up questions reference the right context after a crash/reopen
+        or when switching between chats.
+        """
+        try:
+            if hasattr(self, '_ai_agent') and self._ai_agent:
+                self._ai_agent.restore_conversation_context(conversation_id)
+                log.info(f"[MainWindow] AI context switched to conversation: {conversation_id}")
+        except Exception as e:
+            log.warning(f"[MainWindow] Failed to switch AI context: {e}")
 
     def _on_accept_all_files(self):
-        """Handle user accepting all pending file edits."""
-        log.info("User accepted all file edits")
+        """Accept all pending AI edits — files already on disk, just clean up state."""
+        log.info("[Accept All] User accepted all file edits")
+        # Deduplicate keys — _diff_data_store has both raw and normcase keys per file
+        seen = set()
+        for file_path in list(getattr(self, '_diff_data_store', {}).keys()):
+            try:
+                norm = os.path.normcase(os.path.normpath(file_path))
+                if norm in seen:
+                    continue
+                seen.add(norm)
+                if os.path.isfile(norm):
+                    self._open_file(norm)
+            except Exception as e:
+                log.debug(f'[MainWindow] Suppressed error: {e}')
+        if hasattr(self, '_diff_data_store'):
+            self._diff_data_store.clear()
+        if hasattr(self, '_file_snapshots'):
+            self._file_snapshots.clear()
         self.statusBar().showMessage("✓ Accepted all changes", 3000)
-        self._sidebar.clear_changed_files()
+        self._changed_files_panel.clear_files()
 
     def _on_reject_all_files(self):
-        """Handle user rejecting all pending file edits."""
-        log.info("User rejected all file edits")
-        self.statusBar().showMessage("✗ Rejected all changes - review files", 5000)
-        self._sidebar.clear_changed_files()
+        """Reject all pending AI edits — revert each file to its original content."""
+        log.info("[Reject All] User rejected all file edits")
+        reverted, failed = 0, 0
+        # Deduplicate keys — _diff_data_store has both raw and normcase keys per file
+        seen = set()
+        for file_path in list(getattr(self, '_diff_data_store', {}).keys()):
+            try:
+                norm = os.path.normcase(os.path.normpath(file_path))
+                if norm in seen:
+                    continue
+                seen.add(norm)
+                original = self._get_original_content(norm)
+                if original is not None and os.path.isfile(norm):
+                    # Normalize line endings to prevent doubled empty lines
+                    original = original.replace("\r\n", "\n").replace("\r", "\n")
+                    Path(norm).write_text(original, encoding='utf-8', newline='')
+                    self._open_file(norm)
+                    reverted += 1
+                    log.info(f"[Reject All] Reverted {norm}")
+                else:
+                    failed += 1
+            except Exception as e:
+                log.error(f"[Reject All] Failed to revert {file_path}: {e}")
+                failed += 1
+        if hasattr(self, '_diff_data_store'):
+            self._diff_data_store.clear()
+        if hasattr(self, '_file_snapshots'):
+            self._file_snapshots.clear()
+        msg = f"↩ Reverted {reverted} file(s)"
+        if failed:
+            msg += f" ({failed} could not be reverted)"
+        self.statusBar().showMessage(msg, 5000)
+        self._changed_files_panel.clear_files()
+
+    def _on_code_copied(self, text: str, file_path: str, start_line: int, end_line: int):
+        """Store copy metadata so smart paste can use it after focus changes."""
+        self._last_copy_info = {
+            'text': text,
+            'file_path': file_path,
+            'start_line': start_line,
+            'end_line': end_line,
+        }
 
     def _on_smart_paste_check(self, pasted_text: str):
-        """Check if pasted text matches current editor selection. Send result to chat."""
+        """Check if pasted text matches last editor copy. Send result to chat."""
         try:
-            # Get current editor
-            editor = self._editor_tabs.currentWidget()
-            if not isinstance(editor, CodeEditor):
-                # No editor open, just paste normally
+            import json as _json
+
+            # Use stored copy metadata (captured at Ctrl+C time, before focus changed)
+            copy_info = getattr(self, '_last_copy_info', None)
+            if not copy_info or not copy_info.get('text'):
                 self._ai_chat._view.page().runJavaScript(
-                    f"handleSmartPasteResult({{isMatch: false}});"
+                    "handleSmartPasteResult({isMatch: false});"
                 )
                 return
-            
-            # Get selected text from editor
-            selected_text = editor.selectedText()
-            
-            # Normalize texts for comparison (remove extra whitespace)
+
             def normalize(text):
                 return '\n'.join(line.strip() for line in text.strip().split('\n') if line.strip())
-            
-            pasted_normalized = normalize(pasted_text)
-            selected_normalized = normalize(selected_text)
-            
-            # Check if they match (allowing for minor differences)
-            is_match = (pasted_normalized == selected_normalized or 
-                       pasted_normalized in selected_normalized or 
-                       selected_normalized in pasted_normalized)
-            
-            if is_match:
-                # Get file path and line numbers
-                file_path = self._editor_tabs.current_filepath()
-                if file_path:
-                    # Get selection range
-                    start_line, _ = editor.getSelectionStart()
-                    end_line, _ = editor.getSelectionEnd()
-                    
-                    # Convert to 1-indexed
-                    start_line += 1
-                    end_line += 1
-                    
-                    # Build line range string
-                    if start_line == end_line:
-                        line_range = f"{start_line}"
-                    else:
-                        line_range = f"{start_line}-{end_line}"
-                    
-                    # Escape the file path for JavaScript
-                    import json
-                    file_path_js = json.dumps(file_path)
-                    
-                    # Send result to JavaScript
-                    self._ai_chat._view.page().runJavaScript(
-                        f"handleSmartPasteResult({{isMatch: true, filePath: {file_path_js}, lineRange: '{line_range}'}});"
-                    )
-                    log.info(f"Smart paste: matched selection in {file_path} lines {line_range}")
-                else:
-                    # No file path, paste normally
-                    self._ai_chat._view.page().runJavaScript(
-                        f"handleSmartPasteResult({{isMatch: false}});"
-                    )
-            else:
-                # No match, paste normally
+
+            pasted_norm = normalize(pasted_text)
+            copied_norm = normalize(copy_info['text'])
+
+            if not copied_norm or not pasted_norm:
                 self._ai_chat._view.page().runJavaScript(
-                    f"handleSmartPasteResult({{isMatch: false}});"
+                    "handleSmartPasteResult({isMatch: false});"
                 )
-                
+                return
+
+            is_match = (pasted_norm == copied_norm or
+                        pasted_norm in copied_norm or
+                        copied_norm in pasted_norm)
+
+            if is_match and copy_info.get('file_path'):
+                file_path  = copy_info['file_path']
+                start_line = copy_info['start_line']
+                end_line   = copy_info['end_line']
+                file_name  = os.path.basename(file_path)
+                ext        = os.path.splitext(file_path)[1].lstrip('.')
+                line_range = str(start_line) if start_line == end_line else f"{start_line}-{end_line}"
+
+                self._ai_chat._view.page().runJavaScript(
+                    f"handleSmartPasteResult({{isMatch: true, "
+                    f"filePath: {_json.dumps(file_path)}, "
+                    f"fileName: {_json.dumps(file_name)}, "
+                    f"lineRange: {_json.dumps(line_range)}, "
+                    f"code: {_json.dumps(pasted_text)}, "
+                    f"language: {_json.dumps(ext)}}});"
+                )
+                log.info(f"Smart paste matched: {file_name} lines {line_range}")
+                # Clear after use so next paste starts fresh
+                self._last_copy_info = None
+                return
+
+            self._ai_chat._view.page().runJavaScript(
+                "handleSmartPasteResult({isMatch: false});"
+            )
+
         except Exception as e:
             log.error(f"Smart paste check error: {e}")
-            # On error, paste normally
             self._ai_chat._view.page().runJavaScript(
-                f"handleSmartPasteResult({{isMatch: false}});"
+                "handleSmartPasteResult({isMatch: false});"
+            )
+
+    # ============================================================================
+    # NEW: OpenCode Enhancement Integration Handlers
+    # ============================================================================
+    
+    def _on_intent_classified(self, message: str, intent: str, confidence: float):
+        """Handle intent classification from AI Integration Layer."""
+        log.info(f"[Intent] {intent} (confidence: {confidence:.2f}): {message[:50]}...")
+        # Could update UI to show detected intent
+        
+    def _on_agent_selected(self, agent_type: str, reason: str, confidence: float):
+        """Handle agent selection from AI Integration Layer."""
+        log.info(f"[Agent] Selected {agent_type} (confidence: {confidence:.2f}): {reason}")
+        # Could show agent indicator in UI
+        
+    def _on_tools_selected(self, tool_names: list):
+        """Handle tool selection from AI Integration Layer."""
+        log.info(f"[Tools] Selected: {', '.join(tool_names)}")
+        # Could show tool indicators in UI
+        
+    def _on_permission_requested(self, request_id: str, html_card: str):
+        """Handle permission request - show permission card in chat."""
+        log.info(f"[Permission] Request {request_id} - showing permission card")
+        
+        # Show permission card in AI chat
+        if hasattr(self._ai_chat, 'show_permission_card'):
+            self._ai_chat.show_permission_card(request_id, html_card)
+        else:
+            # Fallback: add as system message
+            self._ai_chat.add_system_message("🔒 Permission required. Please check the chat interface.")
+            
+    def _on_permission_granted(self, request_id: str, scope: str):
+        """Handle permission grant."""
+        log.info(f"[Permission] Granted {request_id} with scope {scope}")
+        
+        # Retry the AI processing now that permission is granted
+        # Get the last user message and retry
+        if hasattr(self._ai_chat, '_last_user_message'):
+            message = self._ai_chat._last_user_message
+            context = []
+            
+            if self._project_manager.root:
+                context.append(f"Project path: {self._project_manager.root}")
+            
+            editor = self._editor_tabs.current_editor()
+            if editor:
+                fp = self._webview_panel.get_active_file() or self._editor_tabs.current_filepath()
+                if fp:
+                    name = Path(fp).name
+                    content = editor.get_all_text()
+                    if len(content) > 5000:
+                        content = content[:5000] + "... (truncated)"
+                    context.append(f"Current file ({name}):\n```\n{content}\n```")
+            
+            full_context = "\n\n".join(context)
+            
+            # NEW: Check if we have enhancement data stored
+            enhancement_data = self._ai_agent.get_last_enhancement_data()
+            if enhancement_data.get("intent"):
+                log.info("Retrying with chat_with_enhancement after permission grant")
+                self._ai_agent.chat_with_enhancement(
+                    message,
+                    intent=enhancement_data["intent"],
+                    route=enhancement_data["route"],
+                    tools=enhancement_data["tools"],
+                    code_context=full_context
+                )
+            else:
+                self._ai_agent.chat(message, full_context)
+            
+    def _on_permission_denied(self, request_id: str, reason: str):
+        """Handle permission denial."""
+        log.info(f"[Permission] Denied {request_id}: {reason}")
+        self._ai_chat.add_system_message(f"❌ Permission denied: {reason}")
+        
+    def _on_chat_permission_response(self, request_id: str, approved: bool, scope: str = "session", remember: bool = False):
+        """Handle permission response from chat UI.
+        
+        NOTE: This method is now DEPRECATED. The active permission flow uses
+        permission_decided signal connected directly to bridge.on_permission_respond().
+        This handler is kept for backwards compatibility but the permission_response
+        signal is no longer connected.
+        """
+        log.info(f"[DEPRECATED] _on_chat_permission_response called: {request_id}, approved={approved}")
+        # The real permission flow now goes through:
+        #   _ai_chat.permission_decided -> _ai_agent.on_permission_respond(decision)
+        # This method is no longer in the active path.
+    
+    def _on_user_denied_workflow(self, tool_name: str):
+        """Handle user denying workflow twice - stop AI agent."""
+        log.warning(f"User denied {tool_name} twice - stopping AI agent")
+        
+        # Stop the AI agent immediately
+        self._ai_agent.stop()
+        
+        # Add system message explaining what happened
+        self._ai_chat.add_system_message(
+            f"⏹️ **Workflow Stopped**\n\n"
+            f"You denied `{tool_name}` twice. The AI agent has stopped its current work.\n\n"
+            f"If you'd like to continue with a different approach, please send a new message."
+        )
+        
+        # Hide thinking indicator
+        self._ai_chat.hide_thinking()
+        
+        # Reset UI - show send button again
+        self._view.page().runJavaScript("if(window._onGenerationComplete) window._onGenerationComplete();")
+
+    # ========== TESTING WORKFLOW HANDLERS (NEW) ==========
+    
+    def _on_testing_decision(self, decision: str, priority: str, trigger: str):
+        """Handle testing decision signal."""
+        log.info(f"[Testing] Decision: {decision} (priority: {priority}, trigger: {trigger})")
+        
+        # Show UI notification based on decision
+        if decision == 'write_tests':
+            self._ai_chat.add_system_message(
+                f"🧪 **Testing Mode Activated**\n"
+                f"Priority: {priority.upper()} | Trigger: {trigger}\n"
+                f"The AI will analyze your code and suggest appropriate tests."
+            )
+        elif decision == 'skip_tests':
+            log.debug("Testing skipped - no triggers detected")
+    
+    def _on_test_tools_selected(self, tools: list):
+        """Handle test tools selection signal."""
+        log.info(f"[Testing] Tools selected: {tools}")
+        
+        if tools:
+            self._ai_chat.add_system_message(
+                f"🔧 **Test Framework:** {', '.join(tools)}"
+            )
+    
+    def _on_test_execution_started(self, test_type: str):
+        """Handle test execution start signal."""
+        log.info(f"[Testing] Execution started: {test_type}")
+        self._ai_chat.add_system_message(f"▶️ Running {test_type} tests...")
+    
+    def _on_test_execution_completed(self, all_passed: bool, passed_count: int, failed_count: int):
+        """Handle test execution completion signal."""
+        log.info(f"[Testing] Execution completed: {passed_count} passed, {failed_count} failed")
+        
+        if all_passed:
+            self._ai_chat.add_system_message(
+                f"✅ **All Tests Passed!** ({passed_count} tests)"
+            )
+        else:
+            self._ai_chat.add_system_message(
+                f"⚠️ **Tests Completed:** {passed_count} passed, {failed_count} failed"
+            )
+    
+    def _on_test_analysis_ready(self, analysis: dict):
+        """Handle test analysis results signal."""
+        log.info(f"[Testing] Analysis ready: {analysis.get('all_passed', False)}")
+        
+        # Display failure patterns if any
+        patterns = analysis.get('patterns', [])
+        if patterns:
+            pattern_text = '\n'.join([f"- {p.get('type', 'unknown')}: {p.get('description', '')}" 
+                                     for p in patterns[:3]])
+            self._ai_chat.add_system_message(
+                f"📊 **Failure Analysis:**\n{pattern_text}"
             )
 
     def _open_file_at_line_duplicate(self, filepath: str, line: int):
@@ -1525,13 +3937,58 @@ class CortexMainWindow(QMainWindow):
             editor.centerCursor()
 
     def _save_current(self):
-        ok = self._editor_tabs.save_current(self._file_manager)
-        if ok:
-            self._status_file.setText(f"  Saved ✓  {self._status_file.text().strip()}")
-            QTimer.singleShot(2000, lambda: self._update_status_file(
-                self._editor_tabs.current_filepath()))
+        fp = self._webview_panel.get_active_file()
+        if not fp or fp == "untitled.py":
+            return
+
+        # ── Race guard: set BEFORE the async get_current_content call ──────
+        # The debounced onContentChanged (300ms) can fire before the async
+        # callback sets _saved_content, causing the white dot to reappear
+        # after save. _saving_files blocks _on_webview_content_changed
+        # from re-marking the file during the save window.
+        if not hasattr(self, '_saving_files'):
+            self._saving_files: set = set()
+        self._saving_files.add(fp)
+        # Clear the white dot IMMEDIATELY (don't wait for async callback)
+        self._webview_panel.mark_modified(fp, False)
+
+        def _do_save(content: str):
+            if not content:
+                self._saving_files.discard(fp)
+                return
+            self._file_manager.write(fp, content)
+            # Track saved content to prevent post-save re-mark by debounced onContentChanged
+            if not hasattr(self, '_saved_content'):
+                self._saved_content: dict = {}
+            self._saved_content[fp] = content
+            self._saving_files.discard(fp)
+            if hasattr(self, '_modified_files'):
+                self._modified_files.discard(fp)
+                self._sync_window_title()
+            self._status_file.setText(f"  Saved \u2713  {self._status_file.text().strip()}")
+            QTimer.singleShot(2000, lambda: self._update_status_file(fp))
+
+        # Get FRESH content directly from Monaco (bypasses stale Python cache when
+        # Ctrl+S is pressed before the 500ms debounce delivers latest content).
+        self._webview_panel.get_current_content(fp, _do_save)
 
     def _save_all(self):
+        """Save all open files in webview editor."""
+        for fp in list(self._webview_panel._open_files.keys()):
+            content = self._webview_panel.get_content(fp)
+            if content and fp != "untitled.py":
+                self._file_manager.write(fp, content)
+                # Clear the VS Code-style white dot — file is now saved
+                self._webview_panel.mark_modified(fp, False)
+                # Track saved content to prevent post-save re-mark by debounced onContentChanged
+                if not hasattr(self, '_saved_content'):
+                    self._saved_content: dict = {}
+                self._saved_content[fp] = content
+        # Clear all modified tracking after save-all
+        if hasattr(self, '_modified_files'):
+            self._modified_files.clear()
+            self._sync_window_title()
+        # Also save legacy editor tabs
         for i in range(self._editor_tabs.count()):
             editor = self._editor_tabs.widget(i)
             fp = self._editor_tabs._files.get(i)
@@ -1540,23 +3997,85 @@ class CortexMainWindow(QMainWindow):
                 self._file_manager.write(fp, content)
 
     def _run_file(self):
-        fp = self._editor_tabs.current_filepath()
+        fp = self._webview_panel.get_active_file() or self._editor_tabs.current_filepath()
         if not fp or not Path(fp).exists():
             return
+        # HTML files → built-in Live Server (no terminal needed)
+        if Path(fp).suffix.lower() in {".html", ".htm"}:
+            self._save_current()
+            self._run_live_server(fp)
+            return
         self._save_current()
-        
-        self._terminal_tabs.setVisible(True)
-        term = self._current_terminal()
-        if not term:
-            term = self._new_terminal()
-        
-        term.setFocus()
-        lang = detect_language(fp)
-        command = self._build_run_command(fp, lang)
-        if command:
-            term.execute_command(command)
+
+        # Ensure the integrated terminal panel is visible (VS Code style)
+        if getattr(self, '_terminal_panel_hidden', False):
+            self._toggle_terminal_panel(show=True)
+
+        # Use the integrated terminal in the vertical splitter
+        term = self._integrated_terminal
+
+        # Start the shell if it hasn't been started yet
+        if not term._shell_started:
+            term._start_shell()
+
+        # Wait briefly for the shell to be ready, then execute
+        def _send_cmd():
+            if term._pty_process or (term._process and term._process.state() == QProcess.ProcessState.Running):
+                lang = detect_language(fp)
+                command = self._build_run_command(fp, lang)
+                if command:
+                    term.execute_command(command)
+                    term.setFocus()
+                else:
+                    QMessageBox.information(self, "Run", f"Running {lang} is not yet supported.")
+            else:
+                # Shell still not ready — retry once more
+                QTimer.singleShot(500, lambda: _retry_cmd(fp))
+
+        def _retry_cmd(fp):
+            if term._pty_process or (term._process and term._process.state() == QProcess.ProcessState.Running):
+                lang = detect_language(fp)
+                command = self._build_run_command(fp, lang)
+                if command:
+                    term.execute_command(command)
+                    term.setFocus()
+                else:
+                    QMessageBox.information(self, "Run", f"Running {lang} is not yet supported.")
+            else:
+                log.warning("Integrated terminal shell not ready after retry")
+                QMessageBox.warning(self, "Terminal", "Terminal shell is not ready yet. Please wait a moment and try again.")
+
+        # Give the shell a moment to start if it was just initialized
+        if term._shell_started and (term._pty_process or term._process):
+            _send_cmd()
         else:
-            QMessageBox.information(self, "Run", f"Running {lang} is not yet supported.")
+            QTimer.singleShot(300, _send_cmd)
+
+    def _run_live_server(self, file_path: str):
+        """Start built-in Live Server and open the HTML file in the browser."""
+        import webbrowser
+        from src.core.live_server import LiveServer
+
+        # Stop any existing server
+        if self._live_server and self._live_server.is_running:
+            self._live_server.stop()
+
+        root_dir = os.path.dirname(file_path)
+        self._live_server = LiveServer(root_dir, file_path)
+        try:
+            port = self._live_server.start()
+            url = self._live_server.get_url(file_path)
+            webbrowser.open(url)
+            log.info(f"Live Server started on port {port} → {url}")
+
+            # Show status in status bar
+            if hasattr(self, '_statusbar_label'):
+                self._statusbar_label.setText(
+                    f"Live Server  \u25cf  http://localhost:{port}   —   click \u25b6 to restart"
+                )
+        except Exception as e:
+            log.error(f"Live Server failed to start: {e}")
+            QMessageBox.warning(self, "Live Server", f"Failed to start Live Server:\n{e}")
 
     def _build_run_command(self, file_path: str, lang: str) -> str | None:
         """Build a run command for the current file based on language."""
@@ -1578,7 +4097,12 @@ class CortexMainWindow(QMainWindow):
         if lang in {"javascript", "jsx"}:
             return f'node {quote(file_path)}'
         if lang in {"typescript", "tsx"}:
-            return f'ts-node {quote(file_path)}'
+            # Compile with tsc and run with node (faster than npx ts-node)
+            js_out = os.path.join(build_dir, stem + ".js")
+            if is_windows:
+                return f'tsc {quote(file_path)} --outDir {quote(build_dir)}; if ($LASTEXITCODE -eq 0) {{ node {quote(js_out)} }}'
+            else:
+                return f'tsc {quote(file_path)} --outDir {quote(build_dir)} && node {quote(js_out)}'
         if lang == "bash":
             return f'bash {quote(file_path)}'
         if lang == "batch":
@@ -1623,7 +4147,11 @@ class CortexMainWindow(QMainWindow):
             return f'{mkdir_cmd}; {compile_cmd}; if ($LASTEXITCODE -eq 0) {{ {run_cmd} }}' if is_windows else f'{mkdir_cmd} && {compile_cmd} && {run_cmd}'
         return None
 
-    def _new_terminal(self) -> XTermWidget:
+    def _new_terminal(self, show_panel: bool = True) -> XTermWidget:
+        # If call comes from a signal (like clicked), show_panel might be the 'checked' state (False usually)
+        # So we force it to True if it's not explicitly False from our internal calls
+        if not isinstance(show_panel, bool): show_panel = True
+        
         term = XTermWidget()
         term.set_theme(self._theme_manager.is_dark)
         
@@ -1634,9 +4162,15 @@ class CortexMainWindow(QMainWindow):
         idx = self._terminal_tabs.addTab(term, f"Terminal {self._terminal_tabs.count() + 1}")
         self._terminal_tabs.setCurrentIndex(idx)
         
-        # Link to AI Agent immediately
-        self._ai_agent.set_terminal(term)
+        if show_panel:
+            self._terminal_tabs.setVisible(True)
+            term.setFocus()
+            
+        # Hook up "New Terminal" button from within the terminal
+        term.new_terminal_requested.connect(lambda: self._new_terminal(show_panel=True))
         
+       
+       
         # Connect file operations to AI chat
         term.file_operation_detected.connect(self._on_terminal_file_operation)
         
@@ -1692,9 +4226,10 @@ class CortexMainWindow(QMainWindow):
         self._editor_tabs.update_theme(is_dark)
         if isinstance(self._terminal_tabs.tabBar(), CleanTabBar):
             self._terminal_tabs.tabBar().set_dark(is_dark)
-            
+        
         self._ai_chat.set_theme(is_dark)
         self._sidebar.set_theme(is_dark)
+        self._changed_files_panel.set_theme(is_dark)
         if hasattr(self, '_diff_window'):
             self._diff_window.set_theme(is_dark)
         
@@ -1714,7 +4249,6 @@ class CortexMainWindow(QMainWindow):
             if isinstance(term, XTermWidget):
                 term.set_theme(is_dark)
         self._apply_welcome_theme(is_dark)
-        self._apply_toolbar_theme(is_dark)
 
 
     def _show_terminal_panel(self):
@@ -1726,32 +4260,215 @@ class CortexMainWindow(QMainWindow):
         if term:
             term.setFocus()
 
+    def _show_terminal_and_run(self, command: str):
+        """Show terminal panel and execute command (called from 'View in terminal' with a command)."""
+        self._terminal_tabs.setVisible(True)
+        if self._terminal_tabs.count() == 0:
+            self._new_terminal()
+        # Ensure the terminal panel has a visible height
+        self._terminal_tabs.setMinimumHeight(150)
+        term = self._current_terminal()
+        if term:
+            term.setFocus()
+            if command and command.strip():
+                term.execute_command(command.strip())
+
+    def _toggle_terminal_panel(self, show: bool = True):
+        """Toggle integrated terminal panel via vertical splitter — VS Code style."""
+        if not hasattr(self, '_editor_terminal_splitter'):
+            return
+        splitter = self._editor_terminal_splitter
+        sizes = splitter.sizes()
+        if len(sizes) < 2:
+            return
+        widget = splitter.widget(1)  # Terminal is bottom widget in vertical split
+        if show:
+            widget.setMinimumHeight(120)
+            widget.setMaximumHeight(16777215)
+            sizes[1] = self._terminal_panel_min_height
+        else:
+            widget.setMinimumHeight(0)
+            widget.setMaximumHeight(0)
+            sizes[1] = 0
+        splitter.setSizes(sizes)
+        self._terminal_panel_hidden = not show
+
     def _toggle_terminal(self):
-        self._terminal_tabs.setVisible(not self._terminal_tabs.isVisible())
-        if self._terminal_tabs.isVisible():
-            if self._terminal_tabs.count() == 0:
-                self._new_terminal()
-            term = self._current_terminal()
-            if term:
-                term.setFocus()
+        """Toggle terminal visibility via vertical splitter (Ctrl+J) — VS Code style."""
+        hidden = getattr(self, '_terminal_panel_hidden', False)
+        self._toggle_terminal_panel(show=hidden)
+
+    def _toggle_left_sidebar(self, show: bool = True):
+        """Toggle left sidebar via splitter — show=True to expand, False to collapse."""
+        sizes = self._main_splitter.sizes()
+        if len(sizes) < 2:
+            return
+        widget = self._main_splitter.widget(0)
+        if show:
+            widget.setMinimumWidth(180)
+            widget.setMaximumWidth(400)
+            sizes[0] = self._left_sidebar_min_width
+        else:
+            widget.setMinimumWidth(0)
+            widget.setMaximumWidth(0)
+            sizes[0] = 0
+        self._main_splitter.setSizes(sizes)
+        self._left_sidebar_hidden = not show
 
     def _toggle_sidebar(self):
-        visible = self._sidebar.isVisible()
-        self._sidebar.setVisible(not visible)
+        """Toggle left sidebar via splitter (Ctrl+B).
+        
+        Toggles the left sidebar panel embedded in the main splitter,
+        matching the toolbar toggle behavior.
+        """
+        hidden = getattr(self, '_left_sidebar_hidden', False)
+        self._toggle_left_sidebar(show=hidden)
+
+    def _toggle_ai_chat_panel(self, show: bool = True):
+        """Toggle AI chat panel via splitter."""
+        sizes = self._main_splitter.sizes()
+        if len(sizes) < 2:
+            return
+        widget = self._main_splitter.widget(1)
+        if show:
+            widget.setMinimumWidth(300)
+            widget.setMaximumWidth(16777215)  # QWIDGETSIZE_MAX
+            sizes[1] = self._chat_panel_min_width
+        else:
+            widget.setMinimumWidth(0)
+            widget.setMaximumWidth(0)
+            sizes[1] = 0
+        self._main_splitter.setSizes(sizes)
+        self._chat_panel_hidden = not show
+
+    def _toggle_code_panel(self, show: bool = True):
+        """Toggle Code Editor (Monaco/Webview) panel via splitter."""
+        sizes = self._main_splitter.sizes()
+        if len(sizes) < 3:
+            return
+        widget = self._main_splitter.widget(2)
+        if show:
+            widget.setMinimumWidth(500)
+            widget.setMaximumWidth(16777215)  # QWIDGETSIZE_MAX
+            sizes[2] = self._code_panel_min_width
+        else:
+            widget.setMinimumWidth(0)
+            widget.setMaximumWidth(0)
+            sizes[2] = 0
+        self._main_splitter.setSizes(sizes)
+        self._code_panel_hidden = not show
+
+    def _toggle_review_panel(self, show: bool = True):
+        """Toggle Git Review panel by switching sidebar to the git-review tab."""
+        if show:
+            self._sidebar._switch_panel(3)  # Git Review is index 3
+            # Ensure sidebar is visible
+            if getattr(self, '_left_sidebar_hidden', False):
+                self._toggle_left_sidebar(show=True)
+        else:
+            self._sidebar._switch_panel(0)  # Back to Explorer
+        self._review_panel_hidden = not show
+
+    def _toggle_review_panel_menu(self):
+        """Toggle Git Review panel (Alt+Ctrl+B) — menu bar action.
+        
+        Switches sidebar to the git-review tab.
+        """
+        hidden = getattr(self, '_review_panel_hidden', False)
+        self._toggle_review_panel(show=hidden)
+
+    def _toggle_summary_panel(self, show: bool = True):
+        """Toggle summary panel visibility (switch between Summary and Review tabs)."""
+        if show:
+            if hasattr(self, '_summary_tab_btn'):
+                self._summary_tab_btn.setChecked(True)
+                self._review_stack.setCurrentIndex(0)
+        else:
+            if hasattr(self, '_review_tab_btn'):
+                self._review_tab_btn.setChecked(True)
+                self._review_stack.setCurrentIndex(1)
+        self._summary_panel_hidden = not show
+
+    def _toggle_git_panel(self, show: bool = True):
+        """Toggle git panel via review panel splitter."""
+        self._toggle_review_panel(show=show)
+        self._git_panel_hidden = not show
+
+    def _toggle_fullscreen(self):
+        """Toggle full screen mode (F11)."""
+        if self.isFullScreen():
+            self.showNormal()
+        else:
+            self.showFullScreen()
+
+    def _minimize_window(self):
+        """Minimize window (Ctrl+M)."""
+        self.showMinimized()
+
+    def _zoom_window(self):
+        """Zoom window (maximize/restore)."""
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+
+    def _close_window(self):
+        """Close window (Ctrl+W)."""
+        self.close()
+
+    def _previous_chat(self):
+        """Navigate to previous chat (TODO: assign shortcut)."""
+        # TODO: Implement chat history navigation
+        log.info("Previous chat shortcut pressed")
+
+    def _next_chat(self):
+        """Navigate to next chat (TODO: assign shortcut)."""
+        # TODO: Implement chat history navigation
+        log.info("Next chat shortcut pressed")
+
+    def _navigate_back(self):
+        """Navigate back (TODO: assign shortcut)."""
+        # TODO: Implement navigation history
+        log.info("Navigate back shortcut pressed")
+
+    def _navigate_forward(self):
+        """Navigate forward (TODO: assign shortcut)."""
+        # TODO: Implement navigation history
+        log.info("Navigate forward shortcut pressed")
+
+    def _new_window(self):
+        """Open new window (Ctrl+Shift+N)."""
+        # TODO: Implement multi-window support
+        log.info("New window shortcut pressed")
+
+    def _quick_chat(self):
+        """Open quick chat (Alt+Ctrl+N)."""
+        self._on_new_chat()
+
+    def _toggle_ai_chat(self):
+        """Toggle AI chat panel visibility"""
+        # In AI-first mode, the chat is always visible
+        # This method can be used to focus it instead
+        if hasattr(self, '_ai_chat'):
+            self._ai_chat.setFocus()
 
     def _zoom_in(self):
         """Zoom in (Ctrl+=)."""
         editor = self._editor_tabs.current_editor()
         if editor:
-            zoom = editor.zoomIn() + 1
-            editor.setZoom(zoom)
+            current_zoom = editor.zoomIn()
+            if current_zoom is not None:
+                zoom = current_zoom + 1
+                editor.setZoom(zoom)
 
     def _zoom_out(self):
         """Zoom out (Ctrl+-)."""
         editor = self._editor_tabs.current_editor()
         if editor:
-            zoom = max(0, editor.zoomIn() - 1)
-            editor.setZoom(zoom)
+            current_zoom = editor.zoomIn()
+            if current_zoom is not None:
+                zoom = max(0, current_zoom - 1)
+                editor.setZoom(zoom)
 
     def _zoom_reset(self):
         """Reset zoom (Ctrl+0)."""
@@ -1766,41 +4483,97 @@ class CortexMainWindow(QMainWindow):
         self._ai_chat.activateWindow()
 
     def _command_palette(self):
-        """Show Command Palette (Ctrl+Shift+P)."""
-        # For now, show a quick open style dialog with commands
-        from PyQt6.QtWidgets import QInputDialog
-        commands = [
-            "File: New File",
-            "File: Open File...",
-            "File: Save",
-            "Edit: Find",
-            "Edit: Replace",
-            "View: Toggle Terminal",
-            "View: Toggle Sidebar",
-            "View: Toggle Theme"
-        ]
-        cmd, ok = QInputDialog.getItem(
-            self, 
-            "Command Palette", 
-            "Type a command:",
-            commands, 
-            0, 
-            False
-        )
-        if ok and cmd:
-            self._status_bar.showMessage(f"Command: {cmd}", 2000)
-            # TODO: Implement full command palette
+        """Show Command Palette (Ctrl+Shift+P) - REMOVED in AI-first mode."""
+        # Command palette not implemented
+        pass
 
     def _current_editor_action(self, action: str):
+        """Focus-aware edit action handler (supports Editor, AI Chat, and Terminal)."""
+        focused = QApplication.focusWidget()
+        log.debug(f"Action {action} requested. Current focus: {focused}")
+
+        # Map generic action strings to QWebEnginePage.WebAction enums
+        web_action_map = {
+            "copy": QWebEnginePage.WebAction.Copy,
+            "paste": QWebEnginePage.WebAction.Paste,
+            "cut": QWebEnginePage.WebAction.Cut,
+            "selectAll": QWebEnginePage.WebAction.SelectAll,
+            "undo": QWebEnginePage.WebAction.Undo,
+            "redo": QWebEnginePage.WebAction.Redo
+        }
+
+        # Determine which "logical" component has focus
+        logical_focused = None
+        widget = focused
+        max_depth = 10
+        while widget and max_depth > 0:
+            if hasattr(self, '_ai_chat') and (widget == self._ai_chat or widget == self._ai_chat._view):
+                logical_focused = "ai_chat"
+                break
+            
+            # Check if this widget belongs to a terminal tab
+            term = self._current_terminal()
+            if term and (widget == term or widget == term._webview):
+                logical_focused = "terminal"
+                break
+            
+            widget = widget.parentWidget()
+            max_depth -= 1
+
+        # 1. Route to AI Chat
+        if logical_focused == "ai_chat":
+            if action in web_action_map:
+                log.debug(f"Routing {action} to AI Chat WebEngineView")
+                self._ai_chat._view.page().triggerAction(web_action_map[action])
+                return
+
+        # 2. Route to Terminal
+        if logical_focused == "terminal":
+            term = self._current_terminal()
+            if action == "copy":
+                term.copy()
+                return
+            elif action == "paste":
+                term.paste()
+                return
+            elif action == "selectAll":
+                term.select_all()
+                return
+            elif action == "cut":
+                term.cut()
+                return
+            
+            if action in web_action_map:
+                term._webview.page().triggerAction(web_action_map[action])
+                return
+
+        # 3. Route to Sidebar explicitly (if focused)
+        if hasattr(self, '_sidebar') and self._sidebar.is_explorer_focused():
+            log.debug(f"Action {action} ignored globally: Sidebar handles it locally")
+            return
+
+        # 4. Fallback to Editor (current tab)
         editor = self._editor_tabs.current_editor()
-        if editor and hasattr(editor, action):
-            getattr(editor, action)()
+        if editor:
+            log.debug(f"Routing {action} to Code Editor")
+            if action == "selectAll":
+                if hasattr(editor, "selectAll"): editor.selectAll()
+                elif hasattr(editor, "select_all"): editor.select_all()
+                return
+            if hasattr(editor, action):
+                getattr(editor, action)()
 
     # ------------------------------------------------------------------
     # VS Code Style Keyboard Shortcuts
     # ------------------------------------------------------------------
     def _show_find(self):
-        """Show Find dialog (Ctrl+F)."""
+        """Show Find widget — Monaco native (Ctrl+F) or legacy dialog."""
+        # Monaco handles Ctrl+F natively — this is for menu-click fallback
+        fp = self._webview_panel.get_active_file()
+        if fp:
+            self._webview_panel._safe_run_js("if(typeof editor!=='undefined'&&editor)editor.trigger('keyboard','actions.find',null);")
+            return
+        # Legacy editor fallback
         editor = self._editor_tabs.current_editor()
         if editor:
             selected = editor.get_selected_text()
@@ -1812,7 +4585,13 @@ class CortexMainWindow(QMainWindow):
             self._find_replace_dialog.activateWindow()
 
     def _show_find_replace(self):
-        """Show Find & Replace dialog (Ctrl+H)."""
+        """Show Find & Replace widget — Monaco native (Ctrl+H) or legacy dialog."""
+        # Monaco handles Ctrl+H natively — this is for menu-click fallback
+        fp = self._webview_panel.get_active_file()
+        if fp:
+            self._webview_panel._safe_run_js("if(typeof editor!=='undefined'&&editor)editor.trigger('keyboard','editor.action.startFindReplaceAction',null);")
+            return
+        # Legacy editor fallback
         editor = self._editor_tabs.current_editor()
         if editor:
             selected = editor.get_selected_text()
@@ -1825,12 +4604,14 @@ class CortexMainWindow(QMainWindow):
 
     def _rename_file(self):
         """Rename file (F2)."""
+        # Check if left sidebar explorer is focused
         if self._sidebar.is_explorer_focused():
             if self._sidebar.rename_selected_item():
                 return
             return
 
-        current_file = self._editor_tabs.current_filepath()
+        # Otherwise rename the currently open file in editor
+        current_file = self._webview_panel.get_active_file() or self._editor_tabs.current_filepath()
         if not current_file:
             return
         
@@ -1863,6 +4644,32 @@ class CortexMainWindow(QMainWindow):
                 from PyQt6.QtWidgets import QMessageBox
                 QMessageBox.critical(self, "Rename Failed", f"Could not rename file: {e}")
 
+    def _rename_path(self, path: str) -> bool:
+        """Rename a file or folder by path (used by Explore panel)."""
+        try:
+            name, ok = QInputDialog.getText(self, "Rename", "New name:", text=Path(path).name)
+            if not ok or not name or name == Path(path).name:
+                return False
+
+            new_path_obj = Path(path).parent / name
+            
+            # Prevent overwriting existing files
+            if new_path_obj.exists() and new_path_obj.resolve() != Path(path).resolve():
+                QMessageBox.warning(
+                    self, 
+                    "Rename Failed", 
+                    f"A file or folder with the name '{name}' already exists.\n\nPlease choose a different name."
+                )
+                return False
+
+            new_path = str(new_path_obj)
+            Path(path).rename(new_path)
+            log.info(f"[RENAME] Renamed: {Path(path).name} -> {name}")
+            return True
+        except Exception as e:
+            QMessageBox.critical(self, "Rename Failed", f"Could not rename: {e}")
+            return False
+
     def _on_sidebar_file_renamed(self, old_path: str, new_path: str):
         old_norm = os.path.normpath(old_path)
         new_norm = os.path.normpath(new_path)
@@ -1893,6 +4700,69 @@ class CortexMainWindow(QMainWindow):
 
         if updated:
             log.info(f"Updated open tabs for rename: {old_norm} -> {new_norm}")
+    
+    def _on_sidebar_file_deleted(self, path: str):
+        """Handle file/folder deletion from sidebar."""
+        import os
+        from pathlib import Path
+        
+        norm_path = os.path.normpath(path)
+        
+        # Close tab if file is open
+        for idx, fp in list(self._editor_tabs._files.items()):
+            if os.path.normcase(fp) == os.path.normcase(norm_path):
+                self._editor_tabs._close_tab(idx)
+                break
+        
+        # Refresh sidebar to reflect deletion
+        self._sidebar.refresh()
+        
+        # Refresh project context for AI agent
+        if hasattr(self, '_ai_agent') and self._ai_agent:
+            project_root = str(self._project_manager.root) if self._project_manager.root else None
+            if project_root:
+                self._ai_agent.set_project_root(project_root)
+        
+        log.info(f"File deleted: {path}")
+    
+    def _on_file_deleted_for_undo(self, original_path: str):
+        """Track file deletion for undo functionality."""
+        log.debug(f"Undo tracking: File moved to trash: {original_path}")
+    
+    def _on_file_restored_for_redo(self, restored_path: str):
+        """Track file restoration for redo functionality."""
+        log.debug(f"Redo tracking: File restored: {restored_path}")
+        # Refresh sidebar to show restored file
+        QTimer.singleShot(100, self._sidebar.refresh)
+    
+    def _undo(self):
+        """Handle undo - prioritize editor undo, then file restore."""
+        # Try editor undo first
+        editor = self._editor_tabs.current_editor()
+        if editor and editor.document().isUndoAvailable():
+            editor.undo()
+            return
+        
+        # If no editor or no undo available, try file restore
+        if hasattr(self, '_file_manager') and self._file_manager.can_undo():
+            restored_path = self._file_manager.undo_operation()
+            if restored_path:
+                log.info(f"Restored file: {restored_path}")
+                self.statusBar().showMessage(f"Restored: {Path(restored_path).name}", 3000)
+    
+    def _redo(self):
+        """Handle redo - prioritize editor redo, then file re-delete."""
+        # Try editor redo first
+        editor = self._editor_tabs.current_editor()
+        if editor and editor.document().isRedoAvailable():
+            editor.redo()
+            return
+        
+        if hasattr(self, '_file_manager') and self._file_manager.can_redo():
+            deleted_path = self._file_manager.redo_operation()
+            if deleted_path:
+                log.info(f"Re-deleted file: {deleted_path}")
+                self.statusBar().showMessage(f"Deleted: {Path(deleted_path).name}", 3000)
 
     def _find_in_files(self):
         """Find in files (Ctrl+Shift+F)."""
@@ -1900,7 +4770,13 @@ class CortexMainWindow(QMainWindow):
         self._ai_chat.set_input_text("Search in files for: ")
 
     def _go_to_line(self):
-        """Go to line (Ctrl+G)."""
+        """Go to line — Monaco native (Ctrl+G) or legacy dialog."""
+        # Monaco handles Ctrl+G natively — this is for menu-click fallback
+        fp = self._webview_panel.get_active_file()
+        if fp:
+            self._webview_panel._safe_run_js("if(typeof editor!=='undefined'&&editor)editor.trigger('keyboard','editor.action.gotoLine',null);")
+            return
+        # Legacy editor fallback
         editor = self._editor_tabs.current_editor()
         if not editor:
             return
@@ -1914,6 +4790,26 @@ class CortexMainWindow(QMainWindow):
                 cursor.movePosition(cursor.MoveOperation.Down)
             editor.setTextCursor(cursor)
             editor.setFocus()
+
+    def _format_code(self):
+        """Format current file (Shift+Alt+F).
+
+        Routes to Monaco's editor.action.formatDocument when the webview
+        has an active file; falls back to the legacy editor's formatter.
+        """
+        # Prefer Monaco webview
+        fp = self._webview_panel.get_active_file() if hasattr(self, '_webview_panel') else None
+        if fp:
+            self._webview_panel._safe_run_js(
+                "if(typeof editor!=='undefined'&&editor)"
+                "editor.getAction('editor.action.formatDocument').run();"
+            )
+            return
+
+        # Legacy editor fallback
+        editor = self._editor_tabs.current_editor()
+        if editor and hasattr(editor, '_format_current_code'):
+            editor._format_current_code()
 
     def _toggle_comment(self):
         """Toggle comment on selected lines (Ctrl+/)."""
@@ -2107,22 +5003,44 @@ class CortexMainWindow(QMainWindow):
             self._ai_chat.add_system_message("No symbols found in current file.")
 
     def _close_current_tab(self):
-        """Close current tab (Ctrl+W)."""
-        self._editor_tabs.close_current_tab()
+        """Close current tab (Ctrl+W) — works for both webview and legacy tabs."""
+        # Close webview tab first if one is active
+        fp = self._webview_panel.get_active_file()
+        if fp:
+            self._webview_panel.close_file(fp)
+            return
+        # Fall back to legacy editor tabs
+        if hasattr(self, '_editor_tabs'):
+            self._editor_tabs.close_current_tab()
 
     def _close_all_tabs(self):
-        """Close all tabs (Ctrl+Shift+W)."""
-        self._editor_tabs.close_all_tabs()
+        """Close all tabs (Ctrl+Shift+W) — works for both webview and legacy tabs."""
+        # Close all webview tabs
+        if hasattr(self, '_webview_panel'):
+            self._webview_panel.close_all_files()
+        # Close all legacy editor tabs
+        if hasattr(self, '_editor_tabs'):
+            self._editor_tabs.close_all_tabs()
 
     def _next_tab(self):
-        """Go to next tab (Ctrl+Tab)."""
+        """Go to next tab (Ctrl+Tab) — webview or legacy."""
+        # Try webview tab navigation first
+        if hasattr(self, '_webview_panel'):
+            self._webview_panel.next_tab()
+            return
+        # Legacy tabs
         current = self._editor_tabs.currentIndex()
         count = self._editor_tabs.count()
         if count > 0:
             self._editor_tabs.setCurrentIndex((current + 1) % count)
 
     def _prev_tab(self):
-        """Go to previous tab (Ctrl+Shift+Tab)."""
+        """Go to previous tab (Ctrl+Shift+Tab) — webview or legacy."""
+        # Try webview tab navigation first
+        if hasattr(self, '_webview_panel'):
+            self._webview_panel.prev_tab()
+            return
+        # Legacy tabs
         current = self._editor_tabs.currentIndex()
         count = self._editor_tabs.count()
         if count > 0:
@@ -2244,7 +5162,6 @@ class CortexMainWindow(QMainWindow):
             flags |= 0x00010  # QTextDocument.FindFlag.FindCaseSensitively
         
         # Perform search
-        from PyQt6.QtGui import QTextDocument
         find_flags = QTextDocument.FindFlag(flags)
         
         if search_forward:
@@ -2381,6 +5298,41 @@ class CortexMainWindow(QMainWindow):
 
     def _on_ai_chat_message(self, message: str):
         """Handle user message from AI chat with project context."""
+        # TODO: POINTS SYSTEM - Disabled for development
+        # Will be enabled when connecting to https://logic-practice.com backend
+        # Points tracking will be handled via API authentication with production server
+        """
+        # Check points balance before processing
+        try:
+            points_mgr = get_points_manager()
+            perf_mode = self._get_current_performance_mode()
+            estimated_tokens = len(message) // 4  # Rough estimate: 4 chars per token
+            
+            # Check if user can afford this request
+            if not points_mgr.can_afford(estimated_tokens, perf_mode):
+                cost = points_mgr.estimate_cost(estimated_tokens, perf_mode)
+                balance = points_mgr.get_balance()
+                log.warning(
+                    f"[MainWindow] Insufficient points: need {cost:,}, have {balance:,}. "
+                    f"Mode: {perf_mode}, estimated tokens: {estimated_tokens}"
+                )
+                # Send error to UI
+                self._ai_chat.on_error(
+                    f"Insufficient points. This request needs ~{cost:,} points but you have {balance:,} points.\n\n"
+                    f"Please purchase more points or switch to Efficient mode (0.3x cost)."
+                )
+                return
+            
+            log.info(
+                f"[MainWindow] Points check passed: balance={points_mgr.get_balance():,}, "
+                f"mode={perf_mode}, estimated_cost={points_mgr.estimate_cost(estimated_tokens, perf_mode):,}"
+            )
+        except Exception as e:
+            log.warning(f"[MainWindow] Points check failed: {e} - proceeding anyway")
+        """
+        
+        # Build context for ALL messages - let agent_bridge decide
+        # what to do with simple vs complex queries
         context = []
 
         # 1. Project Root Info
@@ -2390,7 +5342,7 @@ class CortexMainWindow(QMainWindow):
         # 2. Current File Context
         editor = self._editor_tabs.current_editor()
         if editor:
-            fp = self._editor_tabs.current_filepath()
+            fp = self._webview_panel.get_active_file() or self._editor_tabs.current_filepath()
             if fp:
                 name = Path(fp).name
                 content = editor.get_all_text()
@@ -2400,37 +5352,239 @@ class CortexMainWindow(QMainWindow):
                 context.append(f"Current file ({name}):\n```\n{content}\n```")
 
         full_context = "\n\n".join(context)
-        self._ai_agent.chat(message, full_context)
+        
+        # NOTE: _ai_integration was removed - using _ai_agent directly
+        # session_id = getattr(self._ai_chat, '_current_conversation_id', 'default-session')
+        # self._ai_integration.set_session(...)  # Removed - not needed
+        
+        # Start AI processing immediately for responsiveness
+        # But wait - we need to see if enhancement layer (Intent/Routing) is fast enough
+        # Optimization: start AI chat, and if enhancement layer finds a special tool/route, 
+        # we can inject that context later or stop/restart. 
+        # For now, let's just fix the DUPLICATE problem by only calling it ONCE.
+        
+        conv_id = getattr(self._ai_chat, '_current_conversation_id', None) if hasattr(self._ai_chat, '_current_conversation_id') else None
+        
+        if conv_id and not self._title_generator.get_cached_title(conv_id):
+            title = self._ai_agent.generate_chat_title(message, conv_id)
+            if title:
+                log.info(f"Generated chat title: {title}")
+                if hasattr(self._ai_chat, 'update_conversation_title'):
+                    self._ai_chat.update_conversation_title(conv_id, title)
+        
+        if conv_id:
+            try:
+                sessions = self._session_db.list_sessions(self._project_manager.root, limit=1)
+                if not sessions:
+                    title = self._title_generator.get_cached_title(conv_id) or "New Chat"
+                    self._session_db.create_session(
+                        conv_id, 
+                        title, 
+                        self._project_manager.root or "", 
+                        self._ai_agent._settings.get("ai", "model", default="mistral-large-latest")
+                    )
+                import uuid
+                self._session_db.add_message(
+                    conv_id,
+                    str(uuid.uuid4()),
+                    "user",
+                    message,
+                    len(message) // 4
+                )
+            except Exception as e:
+                log.debug(f"Could not store message in database: {e}")
+        
+        # FIX: Initialize enhancement_result to None (not yet implemented in async flow)
+        enhancement_result = None
+        if enhancement_result and enhancement_result.get("intent"):
+            if enhancement_result.get("testing_decision") and \
+               enhancement_result["testing_decision"].decision == 'write_tests':
+                log.info("Using chat_with_testing with testing workflow")
+                self._ai_agent.chat_with_testing(
+                    message,
+                    code_changes=[],
+                    code_context=full_context
+                )
+            else:
+                log.info("Using chat_with_enhancement with intent classification data")
+                self._ai_agent.chat_with_enhancement(
+                    message, 
+                    intent=enhancement_result["intent"],
+                    route=enhancement_result["route"],
+                    tools=enhancement_result["tools"],
+                    code_context=full_context
+                )
+        else:
+            self._ai_agent.chat(message, full_context)
 
     def _on_model_changed(self, model_id: str, perf: str, cost: str):
         """Handle model selection change from AI chat."""
-        # Determine provider from model_id
-        if model_id.startswith("openai/") or model_id.startswith("llama-") or model_id.startswith("mixtral-") or model_id.startswith("gemma"):
-            provider = "groq"
-        elif model_id.startswith("deepseek-"):
+        log.info(f"[MainWindow] DEBUG: model_id='{model_id}'")
+        
+        # Check if this is a performance mode (not an actual model)
+        # These are kept for backward compatibility with settings but
+        # are no longer shown in the dropdown. They silently map to
+        # the default Auto mode which uses smart routing.
+        performance_modes = ["efficient", "auto", "performance", "ultimate"]
+        if model_id.lower() in performance_modes:
+            try:
+                from src.config.settings import get_settings
+                settings = get_settings()
+                settings.set("ai", "performance_mode", model_id.lower())
+                # All modes now default to Auto smart-routing (DeepSeek)
+                _provider, _model = "deepseek", "deepseek-chat"
+                settings.set("ai", "model_id", _model)
+                settings.set("ai", "model", _model)
+                settings.set("ai", "provider", _provider)
+                settings.set("ai", "token_multiplier", "1.0")
+                log.info(
+                    "[MainWindow] Performance mode '%s' → %s/%s (auto-routing)",
+                    model_id, _provider, _model,
+                )
+                self._ai_agent.update_settings(provider=_provider, model_id=_model)
+                return
+            except Exception as e:
+                log.error(f"[MainWindow] Failed to save performance mode: {e}")
+                return
+        
+        # This is an actual model ID - determine provider from model_id
+        if model_id.startswith("mistral-") or model_id.startswith("codestral-"):
+            # Mistral AI models (primary provider)
+            provider = "mistral"
+        elif model_id.startswith("deepseek"):
+            # DeepSeek V4 models (V4-Pro, V4-Flash)
             provider = "deepseek"
+        elif model_id.startswith("kimi-"):
+            # Kimi/Moonshot AI models (K2.6)
+            provider = "kimi"
+        elif model_id.startswith("mimo-"):
+            # Xiaomi MiMo models (V2.5 family)
+            provider = "mimo"
+        elif model_id.startswith(("gpt-", "o1", "o3")):
+            # OpenAI models - determine which API to use
+            # Chat Completions: gpt-4o, gpt-4.1-*
+            # Responses API: gpt-5.*, o1, o3, codex
+            if any(x in model_id.lower() for x in ["codex", "gpt-5", "o1", "o3"]):
+                provider = "openai_responses"
+            else:
+                provider = "openai"
+        elif "/" in model_id:
+            # Vendor models via SiliconFlow
+            provider = "siliconflow"
         else:
-            provider = "groq"  # Default
+            provider = "deepseek"  # Default to DeepSeek
+        
+        # CRITICAL: Save model_id and provider to settings so ai_chat.py can read them
+        try:
+            from src.config.settings import get_settings
+            settings = get_settings()
+            settings.set("ai", "model_id", model_id)  # Runtime key (preferred)
+            settings.set("ai", "model", model_id)      # Legacy key (backward compat)
+            settings.set("ai", "provider", provider)
+            # Reset stale token_multiplier from previous session's perf mode
+            settings.set("ai", "token_multiplier", "1.0")
+            log.info(f"[MainWindow] Saved model selection to settings: {model_id} (provider: {provider})")
+        except Exception as e:
+            log.warning(f"[MainWindow] Failed to save model to settings: {e}")
         
         log.info(f"[MainWindow] Model changed to: {model_id} (provider: {provider})")
-        self._ai_agent.update_settings(provider, model_id)
+        self._ai_agent.update_settings(provider=provider, model_id=model_id)
 
     def _on_ai_stop_requested(self):
         """Handle stop request from AI (via web bridge)."""
         self._ai_agent.stop()
+    
+    def _on_toggle_autogen(self):
+        """Toggle AutoGen multi-agent mode.
+
+        When enabled AND the currently-selected model is Mistral/Codestral,
+        switches the performance mode to "performance" which activates the
+        CoordinationEngine multi-agent path.
+        
+        For non-Mistral models (Kimi, DeepSeek, etc.), the toggle state is
+        stored in the bridge but does NOT change performance_mode — the
+        model routing in ai_chat.py already bypasses performance-mode for
+        non-Mistral models, so forcing it would have no effect.
+        """
+        # Get current status
+        status = self._ai_agent.get_autogen_status()
+        current_enabled = status.get('enabled', False)
+
+        # Toggle bridge state
+        new_state = not current_enabled
+        self._ai_agent.enable_autogen(new_state)
+
+        # ── Sync performance mode with autogen toggle ────────────
+        # Only set performance_mode when using a Mistral model, because
+        # the performance-mode pipeline hardcodes Mistral as the provider.
+        # For non-Mistral models (Kimi, DeepSeek), the routing in ai_chat.py
+        # bypasses performance-mode regardless, so we leave it unchanged.
+        try:
+            from src.config.settings import get_settings
+            settings = get_settings()
+            user_model = (settings.get("ai", "model_id", default="") or "").strip()
+            # Always persist the autogen flag so ai_chat.py can detect it
+            # even when performance_mode is left unchanged for non-Mistral models.
+            settings.set("ai", "autogen_enabled", new_state)
+            _is_mistral = user_model.startswith("mistral") or user_model.startswith("codestral") or not user_model
+            if _is_mistral:
+                _new_perf_mode = "performance" if new_state else "auto"
+                settings.set("ai", "performance_mode", _new_perf_mode)
+                log.info(
+                    f"[AutoGen] Performance mode → {_new_perf_mode} "
+                    f"({'multi-agent' if new_state else 'single-agent'}) "
+                    f"(model={user_model or 'default'})"
+                )
+            else:
+                log.info(
+                    f"[AutoGen] Toggle {'' if new_state else 'DIS'}ABLED "
+                    f"— performance_mode left unchanged (non-Mistral model: {user_model})"
+                )
+        except Exception as _e:
+            log.warning(f"[AutoGen] Failed to sync performance mode: {_e}")
+
+        log.info(f"AutoGen {'enabled' if new_state else 'disabled'} via UI toggle")
+    
+    def _show_command_palette(self):
+        """Show the command palette - REMOVED in AI-first mode."""
+        # Command palette not implemented
+        pass
+        # if hasattr(self, '_command_palette'):
+        #     self._command_palette.show_palette()
+    
+    def _on_command_selected(self, action: str, command_data: dict):
+        """Handle command selection from command palette - REMOVED in AI-first mode."""
+        # Command palette not implemented
+        pass
 
     def _on_generate_plan(self):
         log.info("MainWindow: Automated plan generation triggered")
         self._ai_agent.chat("__GENERATE_PLAN__")
 
     def _ai_action(self, action: str):
-        editor = self._editor_tabs.current_editor()
-        if not editor:
-            self._ai_chat.add_system_message("Open a file first to use AI actions.")
+        """Execute an AI tool action on the currently active file."""
+        code = ""
+        language = "plaintext"
+
+        # Prefer Monaco webview file if open
+        fp = self._webview_panel.get_active_file() if hasattr(self, '_webview_panel') else None
+        if fp:
+            code = self._webview_panel.get_content(fp)
+            from src.utils.helpers import detect_language
+            language = detect_language(fp)
+        else:
+            # Fall back to legacy editor
+            editor = self._editor_tabs.current_editor()
+            if not editor:
+                self._ai_chat.add_system_message("Open a file first to use AI actions.")
+                return
+            code = editor.get_selected_text() or editor.get_all_text()
+            language = editor.language
+
+        if not code or not code.strip():
+            self._ai_chat.add_system_message("The file appears to be empty.")
             return
 
-        code = editor.get_selected_text() or editor.get_all_text()
-        language = editor.language
         analyzer = CodeAnalyzer()
 
         prompts = {
@@ -2459,11 +5613,88 @@ class CortexMainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Project & Events
     # ------------------------------------------------------------------
+
+    def _cleanup_old_project(self):
+        """Clean up all state from the old project before opening a new one."""
+        # Only cleanup if we have a previous project loaded
+        if not hasattr(self, '_current_project_path') or not self._current_project_path:
+            log.info("🆕 First project load - skipping cleanup")
+            return
+            
+        log.info("🧹 Cleaning up old project state...")
+        
+        # 1. Close all editor tabs
+        self._editor_tabs.close_all_tabs()
+        log.info("   ✓ Closed all editor tabs")
+        
+        # 2. Clear file snapshots (diff data)
+        if hasattr(self, '_file_snapshots'):
+            self._file_snapshots.clear()
+            log.info("   ✓ Cleared file snapshots")
+        
+        # 3. Clear diff cache
+        if hasattr(self, '_diff_data_store'):
+            self._diff_data_store.clear()
+            log.info("   ✓ Cleared diff data store")
+        
+        # 4. Clear file tracker
+        if hasattr(self, '_file_tracker'):
+            if hasattr(self._file_tracker, '_edits'):
+                self._file_tracker._edits.clear()
+            log.info("   ✓ Cleared file edit history")
+        
+        # 5. Clear AI agent context
+        self._ai_agent.clear_active_file()
+        log.info("   ✓ Cleared AI agent active file")
+        
+        # 5b. CRITICAL: Clear conversation history to prevent cross-project leakage.
+        # Without this, the old project's chat context (tool calls, reasoning,
+        # file operations like dark.py) leaks into the new project, causing the
+        # AI to hallucinate files from previous projects.
+        self._ai_agent.clear_conversation()
+        log.info("   ✓ Cleared AI agent conversation history")
+        # Reset the guard flag so set_project_root() re-loads DB context
+        # for the NEW project (instead of keeping stale old-project data).
+        self._ai_agent._chat_context_restored = False
+        log.info("   ✓ Reset chat context restore flag for new project")
+        
+        # 6. Clear codebase index
+        self._codebase_index = None
+        log.info("   ✓ Cleared codebase index")
+        
+        # 7. Prepare terminals for new project (will set CWD after cleanup)
+        log.info("   ✓ Prepared terminals for new project")
+        
+        # 8. Todo list is session-based, no need to clear
+        # Todos are tied to chat sessions, not projects
+        log.info("   ✓ Skipped todo cleanup (session-based)")
+        
+        # 9. Clear search results
+        if hasattr(self, '_search_results'):
+            self._search_results.clear()
+            log.info("   ✓ Cleared search results")
+        
+        log.info("✅ Old project cleanup complete!")
+    
     def _on_project_opened(self, folder_path: str):
         log.info(f"Project opened: {folder_path}")
         
+        # Clean up old project state BEFORE loading new one (only if switching)
+        self._cleanup_old_project()
+        
         # Set project root FIRST (this loads project-specific context)
         self._ai_agent.set_project_root(folder_path)
+        self._current_project_path = folder_path  # Track current project
+        if hasattr(self, '_git_manager'):
+            repo_ok = self._git_manager.set_repository(folder_path)
+            log.info(f"[GIT] Repository set on project-opened: {folder_path} (ok={repo_ok})")
+        
+        # Update LSP manager workspace root so completions/diagnostics work
+        try:
+            from src.core.lsp_manager import get_lsp_manager
+            get_lsp_manager().set_project_root(folder_path)
+        except Exception as e:
+            log.debug(f'[MainWindow] Suppressed error: {e}')
         
         # Reset codebase index for new project
         self._codebase_index = None
@@ -2473,21 +5704,36 @@ class CortexMainWindow(QMainWindow):
         self._ai_agent.clear_active_file()
         
         self._sidebar.set_project(folder_path)
+
         # Update all current terminal tabs to the new project directory
         for i in range(self._terminal_tabs.count()):
             term = self._terminal_tabs.widget(i)
             if isinstance(term, XTermWidget):
                 term.set_cwd(folder_path)
+
+        # Also update the integrated (editor-area) terminal
+        if hasattr(self, '_integrated_terminal') and self._integrated_terminal:
+            self._integrated_terminal.set_cwd(folder_path)
                 
         project_name = Path(folder_path).name
-        self.setWindowTitle(f"Cortex AI Agent — {project_name}")
+        self._sync_window_title()
         self._ai_chat.add_system_message(f"📂 Opened: {folder_path}")
         
+        # Load existing chats for this project from SQLite BEFORE setting project info
+        try:
+            chats_json = self._ai_chat.load_chats_for_project(folder_path)
+        except Exception as e:
+            log.warning(f"Failed to load chats for project {folder_path}: {e}")
+            chats_json = "[]"
+        
         # Update project indicator in AI chat (this triggers project-specific chat loading)
-        self._ai_chat.set_project_info(project_name, folder_path)
+        self._ai_chat.set_project_info(project_name, folder_path, chats_json)
         
         # Update welcome tab if it exists
         self._update_welcome_project_info()
+        
+        # Update git status in Summary/Review panel
+        QTimer.singleShot(300, self._update_git_summary)
         
         # Auto-detect and activate virtual environment
         self._check_and_activate_venv(folder_path)
@@ -2529,19 +5775,65 @@ class CortexMainWindow(QMainWindow):
             )
 
     def _on_project_closed(self):
-        self._update_welcome_project_info()
-        self.setWindowTitle("Cortex AI Agent")
+        """Handle project close - show welcome page and clean up."""
+        log.info("Project closed - showing welcome page")
+
+        # Stop Live Server (removed in AI-first mode)
+        # if self._live_server and self._live_server.is_running:
+        #     self._live_server.stop()
+        self._live_server = None
+
+        # Clear all state
+        self._current_project_path = None
+        if hasattr(self, '_modified_files'):
+            self._modified_files.clear()
+        self._sync_window_title()
         self._ai_chat.clear_project_info()
+        
+        # Close all editor tabs
+        if hasattr(self, '_editor_tabs'):
+            self._editor_tabs.close_all_tabs()
+        
+        # Clear file snapshots and caches
+        if hasattr(self, '_file_snapshots'):
+            self._file_snapshots.clear()
+        if hasattr(self, '_diff_data_store'):
+            self._diff_data_store.clear()
+        if hasattr(self, '_file_tracker') and hasattr(self._file_tracker, '_edits'):
+            self._file_tracker._edits.clear()
+        if hasattr(self, '_search_results'):
+            self._search_results.clear()
+        
+        # Clear AI agent context
+        self._ai_agent.clear_active_file()
+        self._codebase_index = None
+
+        # Clear chat history sidebar
+        self._sidebar.populate_chat_history_from_json("[]")
+        
+        # Update welcome page
+        self._update_welcome_project_info()
+        
+        # Show welcome page if not already visible
+        self._show_welcome()
 
     def _update_welcome_project_info(self):
-        if not hasattr(self, '_welcome_project_info') or self._welcome_project_info is None:
-            return
-        if self._project_manager.root:
-            name = self._project_manager.root.name
-            path = str(self._project_manager.root)
-            self._welcome_project_info.setText(f"Project: <b>{name}</b><br/><span style='font-size:11px; color:#858585;'>{path}</span>")
-        else:
-            self._welcome_project_info.setText("No project opened")
+        """Update project info display."""
+        # Update AI chat with project info if available
+        if hasattr(self, '_ai_chat') and self._ai_chat:
+            if self._project_manager.root:
+                name = self._project_manager.root.name
+                path = str(self._project_manager.root)
+                # TODO: Update AI chat project indicator
+        
+        # Keep old welcome widget updated for backward compatibility
+        if hasattr(self, '_welcome_project_info') and self._welcome_project_info is not None:
+            if self._project_manager.root:
+                name = self._project_manager.root.name
+                path = str(self._project_manager.root)
+                self._welcome_project_info.setText(f"Project: <b>{name}</b><br/><span style='font-size:11px; color:#858585;'>{path}</span>")
+            else:
+                self._welcome_project_info.setText("No project opened")
 
 
     def _check_and_activate_venv(self, project_path: str):
@@ -2567,6 +5859,7 @@ class CortexMainWindow(QMainWindow):
                 break
 
     def _on_tab_changed(self, index: int):
+        """Legacy tab changed (welcome/PDF/image tabs only)."""
         fp = self._editor_tabs._files.get(index)
         self._update_status_file(fp)
         
@@ -2583,6 +5876,48 @@ class CortexMainWindow(QMainWindow):
             except Exception as e:
                 log.warning(f"Could not update active file for AI: {e}")
 
+    def _on_webview_file_changed(self, file_path: str):
+        """Webview editor active file changed (tab switch)."""
+        self._update_status_file(file_path if file_path else None)
+        if file_path and hasattr(self, '_ai_agent'):
+            try:
+                def _on_cursor(line, col):
+                    self._ai_agent.set_active_file(file_path, (line, col))
+                self._webview_panel.get_cursor_position(_on_cursor)
+            except Exception as e:
+                log.warning(f"Could not update active file for AI: {e}")
+
+    def _on_webview_content_changed(self, file_path: str, content: str):
+        """Webview editor content changed — mark file modified (VS Code-style white dot)."""
+        # Race guard: if file is being saved right now, suppress re-marking.
+        # The _saving_files flag is set BEFORE the async get_current_content call
+        # in _save_current, preventing the debounced onContentChanged (300ms)
+        # from re-adding the white dot after Ctrl+S.
+        if hasattr(self, '_saving_files') and file_path in self._saving_files:
+            return
+        # Race guard: skip if content matches the last-saved version (debounced
+        # onContentChanged can fire after Ctrl+S, re-marking a saved file).
+        saved = getattr(self, '_saved_content', {}).get(file_path)
+        if saved is not None and saved == content:
+            return  # Content unchanged since last save — not actually modified
+        # Mark the file as modified in the webview tab (triggers white dot on tab)
+        if hasattr(self, '_webview_panel') and self._webview_panel._page_loaded:
+            self._webview_panel.mark_modified(file_path, True)
+        # Update window title with modified indicator (VS Code-style)
+        if not hasattr(self, '_modified_files'):
+            self._modified_files: set = set()
+        self._modified_files.add(file_path)
+        self._sync_window_title()
+
+    def _on_webview_file_closed(self, file_path: str):
+        """Webview editor file tab closed."""
+        if hasattr(self, '_modified_files'):
+            self._modified_files.discard(file_path)
+            self._sync_window_title()
+        if hasattr(self, '_saved_content'):
+            self._saved_content.pop(file_path, None)
+        self._update_status_file(None)
+
     # def _apply_initial_theme(self):
     #     from PyQt6.QtWidgets import QApplication
     #     app = QApplication.instance()
@@ -2591,26 +5926,74 @@ class CortexMainWindow(QMainWindow):
     #     self._theme_btn.setText("☀️" if theme == "light" else "🌙")
 
     def _restore_session(self):
-        # Restore last project 
+        # Restore last project — skip if it no longer exists (blank state)
         log.info("Restoring last session project...")
-        self._project_manager.restore_last()
-        
-        # Restore open files 
+        restored = self._project_manager.restore_last()
+
+        if not restored:
+            # No valid project to restore — show clean blank state, no stale tabs
+            log.info("No project to restore — showing blank start state.")
+            # Remove any tabs that sneak in during build (stale welcome)
+            self._show_welcome()
+            return
+
+        # Initialize Git repository for restored project
+        if hasattr(self, '_git_manager') and self._project_manager.root:
+            project_path = str(self._project_manager.root)
+            self._git_manager.set_repository(project_path)
+            log.info(f"[GIT] Repository restored to: {project_path}")
+            QTimer.singleShot(500, self._update_git_summary)
+
+        # Populate left sidebar file tree from restored project
+        if self._project_manager.root:
+            self._sidebar.set_project(str(self._project_manager.root))
+
+        # Restore open files only if project was successfully restored
         session = self._session_manager.load()
         if session:
-            log.info(f"Restoring {len(session.get('open_files', []))} files...")
-            for fp in session.get("open_files", []):
+            project_root = str(self._project_manager.root) if self._project_manager.root else ""
+            all_files = session.get("open_files", [])
+            # Filter to only files under the current project root
+            project_files = [fp for fp in all_files
+                           if project_root and os.path.normpath(fp).startswith(os.path.normpath(project_root) + os.sep)]
+            skipped = len(all_files) - len(project_files)
+            if skipped > 0:
+                log.info(f"Skipping {skipped} files from other projects (restoring {len(project_files)} project files)")
+            log.info(f"Restoring {len(project_files)} files...")
+            large_skipped = 0
+            MAX_RESTORE_SIZE = 100 * 1024  # 100KB — skip large files during startup to avoid tokenization crash
+            for fp in project_files:
                 if Path(fp).exists():
-                    self._open_file(fp)
-                    
+                    try:
+                        fsize = Path(fp).stat().st_size
+                        if fsize > MAX_RESTORE_SIZE:
+                            log.info(f"Skipping large file ({fsize//1024}KB) during restore: {fp}")
+                            large_skipped += 1
+                            continue
+                    except Exception:
+                        pass
+                    self._open_file(fp, priority=False)
+            if large_skipped > 0:
+                log.info(f"Skipped {large_skipped} large file(s) during restore (will open on demand)")
+
+            # Ensure restore doesn't steal focus from user clicks: background
+            # opens are non-activating, then we explicitly activate the last
+            # active file (if any).
+            active_fp = session.get("active_file")
+            if active_fp and Path(active_fp).exists():
+                try:
+                    self._webview_panel.switch_to_file(os.path.normpath(active_fp))
+                except Exception as e:
+                    log.debug(f'[MainWindow] Suppressed error: {e}')
+
         # Focus the active file
-        active = session.get("active_file")
-        if active and Path(active).exists():
-            # Find the tab and select it
-            for i in range(self._editor_tabs.count()):
-                if self._editor_tabs._files.get(i) == active:
-                    self._editor_tabs.setCurrentIndex(i)
-                    break
+        if session:
+            active = session.get("active_file")
+            if active and Path(active).exists():
+                for i in range(self._editor_tabs.count()):
+                    if self._editor_tabs._files.get(i) == active:
+                        self._editor_tabs.setCurrentIndex(i)
+                        break
 
 
 
@@ -2633,6 +6016,50 @@ class CortexMainWindow(QMainWindow):
                           "<p>Features: Multi-file editor · Syntax highlighting · "
                           "AI chat · File explorer · Terminal</p>"
                           "<p><b>Version:</b> 1.0.0</p>")
+
+    def _open_documentation(self):
+        """Open Cortex documentation in browser."""
+        import webbrowser
+        webbrowser.open("https://github.com/cortex-ai/docs")
+        log.info("Opening documentation")
+
+    def _show_whats_new(self):
+        """Show what's new dialog."""
+        log.info("What's new dialog requested")
+
+    def _show_automations(self):
+        """Show automations help."""
+        log.info("Automations help requested")
+
+    def _show_local_envs(self):
+        """Show local environments help."""
+        log.info("Local environments help requested")
+
+    def _show_worktrees(self):
+        """Show worktrees help."""
+        log.info("Worktrees help requested")
+
+    def _show_skills_help(self):
+        """Show skills help."""
+        log.info("Skills help requested")
+
+    def _show_mcp_help(self):
+        """Show Model Context Protocol help."""
+        log.info("MCP help requested")
+
+    def _show_troubleshooting(self):
+        """Show troubleshooting guide."""
+        log.info("Troubleshooting guide requested")
+
+    def _send_feedback(self):
+        """Send feedback."""
+        import webbrowser
+        webbrowser.open("https://github.com/cortex-ai/feedback")
+        log.info("Opening feedback page")
+
+    def _start_trace(self):
+        """Start trace recording for debugging."""
+        log.info("Trace recording started")
 
     def _show_keyboard_shortcuts(self):
         """Show keyboard shortcuts reference dialog (F1)."""
@@ -2751,15 +6178,19 @@ class CortexMainWindow(QMainWindow):
             <div class="section">
                 <h2>📁 File Operations</h2>
                 <table>
-                    <tr><th>Action</th><th>Shortcut</th><th>Status</th></tr>
-                    <tr><td>New File</td><td><span class="shortcut">Ctrl+N</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Open Folder</td><td><span class="shortcut">Ctrl+O</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Open File</td><td><span class="shortcut">Ctrl+Shift+O</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Save</td><td><span class="shortcut">Ctrl+S</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Save All</td><td><span class="shortcut">Ctrl+Shift+S</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Close Tab</td><td><span class="shortcut">Ctrl+W</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Close All Tabs</td><td><span class="shortcut">Ctrl+Shift+W</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Rename File</td><td><span class="shortcut">F2</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><th>Action</th><th>Shortcut</th><th>Menu</th></tr>
+                    <tr><td>New Window</td><td><span class="shortcut">Ctrl+Shift+N</span></td><td>File</td></tr>
+                    <tr><td>New Chat</td><td><span class="shortcut">Ctrl+N</span></td><td>File</td></tr>
+                    <tr><td>Quick Chat</td><td><span class="shortcut">Alt+Ctrl+N</span></td><td>File</td></tr>
+                    <tr><td>Open File…</td><td><span class="shortcut">Ctrl+Shift+O</span></td><td>File</td></tr>
+                    <tr><td>Open Folder…</td><td><span class="shortcut">Ctrl+O</span></td><td>File</td></tr>
+                    <tr><td>Save</td><td><span class="shortcut">Ctrl+S</span></td><td>File</td></tr>
+                    <tr><td>Save All</td><td><span class="shortcut">Ctrl+Shift+S</span></td><td>File</td></tr>
+                    <tr><td>Settings…</td><td><span class="shortcut">Ctrl+,</span></td><td>File</td></tr>
+                    <tr><td>Exit</td><td><span class="shortcut">Alt+F4</span></td><td>File</td></tr>
+                    <tr><td>Close Tab</td><td><span class="shortcut">Ctrl+W</span></td><td>Global</td></tr>
+                    <tr><td>Close All Tabs</td><td><span class="shortcut">Ctrl+Shift+W</span></td><td>Global</td></tr>
+                    <tr><td>Rename File</td><td><span class="shortcut">F2</span></td><td>Edit</td></tr>
                 </table>
             </div>
             
@@ -2767,49 +6198,75 @@ class CortexMainWindow(QMainWindow):
             <div class="section">
                 <h2>✏️ Edit Operations</h2>
                 <table>
-                    <tr><th>Action</th><th>Shortcut</th><th>Status</th></tr>
-                    <tr><td>Undo</td><td><span class="shortcut">Ctrl+Z</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Redo</td><td><span class="shortcut">Ctrl+Y</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Cut</td><td><span class="shortcut">Ctrl+X</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Copy</td><td><span class="shortcut">Ctrl+C</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Paste</td><td><span class="shortcut">Ctrl+V</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Select All</td><td><span class="shortcut">Ctrl+A</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Toggle Comment</td><td><span class="shortcut">Ctrl+/</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Delete Line</td><td><span class="shortcut">Ctrl+Shift+K</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Indent Selection</td><td><span class="shortcut">Tab</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Outdent Selection</td><td><span class="shortcut">Shift+Tab</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><th>Action</th><th>Shortcut</th><th>Menu</th></tr>
+                    <tr><td>Undo</td><td><span class="shortcut">Ctrl+Z</span></td><td>Edit</td></tr>
+                    <tr><td>Redo</td><td><span class="shortcut">Ctrl+Y</span></td><td>Edit</td></tr>
+                    <tr><td>Cut</td><td><span class="shortcut">Ctrl+X</span></td><td>Edit</td></tr>
+                    <tr><td>Copy</td><td><span class="shortcut">Ctrl+C</span></td><td>Edit</td></tr>
+                    <tr><td>Paste</td><td><span class="shortcut">Ctrl+V</span></td><td>Edit</td></tr>
+                    <tr><td>Select All</td><td><span class="shortcut">Ctrl+A</span></td><td>Edit</td></tr>
+                    <tr><td>Find…</td><td><span class="shortcut">Ctrl+F</span></td><td>Monaco</td></tr>
+                    <tr><td>Find & Replace…</td><td><span class="shortcut">Ctrl+H</span></td><td>Monaco</td></tr>
+                    <tr><td>Find in Files…</td><td><span class="shortcut">Ctrl+Shift+F</span></td><td>Edit</td></tr>
+                    <tr><td>Go to Line…</td><td><span class="shortcut">Ctrl+G</span></td><td>Monaco</td></tr>
+                    <tr><td>Toggle Comment</td><td><span class="shortcut">Ctrl+/</span></td><td>Edit</td></tr>
+                    <tr><td>Delete Line</td><td><span class="shortcut">Ctrl+Shift+K</span></td><td>Edit</td></tr>
+                    <tr><td>Duplicate Line</td><td><span class="shortcut">Ctrl+Shift+D</span></td><td>Edit</td></tr>
+                    <tr><td>Indent</td><td><span class="shortcut">Ctrl+]</span></td><td>Edit</td></tr>
+                    <tr><td>Outdent</td><td><span class="shortcut">Ctrl+[</span></td><td>Edit</td></tr>
+                    <tr><td>Move Line Up</td><td><span class="shortcut">Alt+Up</span></td><td>Edit</td></tr>
+                    <tr><td>Move Line Down</td><td><span class="shortcut">Alt+Down</span></td><td>Edit</td></tr>
                 </table>
             </div>
             
-            <!-- Find & Replace -->
+            <!-- View & Navigation -->
             <div class="section">
-                <h2>🔍 Find & Replace</h2>
+                <h2>👁️ View & Navigation</h2>
                 <table>
-                    <tr><th>Action</th><th>Shortcut</th><th>Status</th></tr>
-                    <tr><td>Find</td><td><span class="shortcut">Ctrl+F</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Find & Replace</td><td><span class="shortcut">Ctrl+H</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Replace All</td><td><span class="shortcut">In Dialog</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><th>Action</th><th>Shortcut</th><th>Menu</th></tr>
+                    <tr><td>Toggle Sidebar</td><td><span class="shortcut">Ctrl+B</span></td><td>View</td></tr>
+                    <tr><td>Toggle Review Panel</td><td><span class="shortcut">Alt+Ctrl+B</span></td><td>View</td></tr>
+                    <tr><td>Toggle Full Screen</td><td><span class="shortcut">F11</span></td><td>View</td></tr>
+                    <tr><td>Next Tab</td><td><span class="shortcut">Ctrl+Tab</span></td><td>Global</td></tr>
+                    <tr><td>Previous Tab</td><td><span class="shortcut">Ctrl+Shift+Tab</span></td><td>Global</td></tr>
+                    <tr><td>Toggle Terminal</td><td><span class="shortcut">Ctrl+J</span></td><td>Terminal</td></tr>
+                    <tr><td>New Terminal</td><td><span class="shortcut">Ctrl+Shift+`</span></td><td>Terminal</td></tr>
+                    <tr><td>Command Palette…</td><td><span class="shortcut">Ctrl+K</span></td><td>File</td></tr>
+                    <tr><td>Minimize</td><td><span class="shortcut">Ctrl+M</span></td><td>Window</td></tr>
+                    <tr><td>Close Window</td><td><span class="shortcut">Ctrl+F4</span></td><td>Window</td></tr>
                 </table>
             </div>
             
-            <!-- Navigation -->
+            <!-- AI & Tools -->
             <div class="section">
-                <h2>🧭 Navigation</h2>
+                <h2>🤖 AI & Tools</h2>
                 <table>
-                    <tr><th>Action</th><th>Shortcut</th><th>Status</th></tr>
-                    <tr><td>Next Tab</td><td><span class="shortcut">Ctrl+Tab</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Previous Tab</td><td><span class="shortcut">Ctrl+Shift+Tab</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><th>Action</th><th>Shortcut</th><th>Menu</th></tr>
+                    <tr><td>Explain Code</td><td><span class="shortcut">Ctrl+Shift+E</span></td><td>AI</td></tr>
+                    <tr><td>Refactor Code</td><td><span class="shortcut">Ctrl+Shift+R</span></td><td>AI</td></tr>
+                    <tr><td>Write Tests</td><td><span class="shortcut">Ctrl+Shift+U</span></td><td>AI</td></tr>
+                    <tr><td>Debug Help</td><td><span class="shortcut">Ctrl+Shift+H</span></td><td>AI</td></tr>
+                    <tr><td>Memory Manager…</td><td><span class="shortcut">Ctrl+Shift+M</span></td><td>AI</td></tr>
+                    <tr><td>AI Chat Focus</td><td><span class="shortcut">Ctrl+Shift+A</span></td><td>AI</td></tr>
+                    <tr><td>Format Code</td><td><span class="shortcut">Shift+Alt+F</span></td><td>Editor</td></tr>
+                    <tr><td>Collapse Region</td><td><span class="shortcut">Ctrl+Shift+[</span></td><td>Editor</td></tr>
+                    <tr><td>Expand Region</td><td><span class="shortcut">Ctrl+Shift+]</span></td><td>Editor</td></tr>
+                    <tr><td>Collapse All</td><td><span class="shortcut">Ctrl+K Ctrl+0</span></td><td>Editor</td></tr>
+                    <tr><td>Expand All</td><td><span class="shortcut">Ctrl+K Ctrl+J</span></td><td>Editor</td></tr>
+                    <tr><td>IntelliSense</td><td><span class="shortcut">Ctrl+Space</span></td><td>Editor</td></tr>
+                    <tr><td>Debug Console</td><td><span class="shortcut">Ctrl+Alt+D</span></td><td>Chat</td></tr>
                 </table>
             </div>
             
-            <!-- View -->
+            <!-- Monaco Editor -->
             <div class="section">
-                <h2>👁️ View</h2>
+                <h2>📝 Monaco Editor</h2>
                 <table>
-                    <tr><th>Action</th><th>Shortcut</th><th>Status</th></tr>
-                    <tr><td>Toggle Theme</td><td><span class="shortcut">Ctrl+Shift+T</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Toggle Terminal</td><td><span class="shortcut">Ctrl+`</span></td><td class="status">✅ Ready</td></tr>
-                    <tr><td>Toggle Sidebar</td><td><span class="shortcut">Ctrl+B</span></td><td class="status">✅ Ready</td></tr>
+                    <tr><th>Action</th><th>Shortcut</th></tr>
+                    <tr><td>Close Editor Tab</td><td><span class="shortcut">Ctrl+W</span></td></tr>
+                    <tr><td>Send Chat Message</td><td><span class="shortcut">Enter</span></td></tr>
+                    <tr><td>New Line (Chat)</td><td><span class="shortcut">Ctrl+Enter</span> / <span class="shortcut">Shift+Enter</span></td></tr>
+                    <tr><td>Completion (Chat)</td><td><span class="shortcut">Ctrl+Space</span></td></tr>
                 </table>
             </div>
             
@@ -2827,34 +6284,693 @@ class CortexMainWindow(QMainWindow):
         
         dialog.exec()
 
+    def _emergency_shutdown_save(self) -> None:
+        """Save agent state + trigger chat persistence immediately.
+        
+        Called from closeEvent, nativeEvent (WM_ENDSESSION), and signal handlers.
+        Idempotent — safe to call multiple times.
+        
+        FIXED: Now synchronously waits for save completion instead of fire-and-forget.
+        Uses save_finished signal + QEventLoop to block until JS confirms persistence.
+        """
+        if getattr(self, '_shutdown_save_done', False):
+            return
+        self._shutdown_save_done = True
+        
+        # 1. Save agent session state
+        try:
+            from src.core.agent_session_manager import save_snapshot
+            from src.ai.agent_bridge import get_agent_bridge
+            bridge = get_agent_bridge()
+            if bridge is not None:
+                save_snapshot(bridge)
+                log.info("[SESSION] Agent state saved on shutdown")
+        except Exception as _ses_exc:
+            log.warning(f"[SESSION] Failed to save agent state on shutdown: {_ses_exc}")
+        
+        # 2. Save chat history - SYNCHRONOUS wait for completion
+        try:
+            if hasattr(self, '_ai_chat') and self._ai_chat:
+                # Step A: Flush any partial response in JS before saving
+                self._ai_chat.run_javascript(
+                    "if(window._savePartialResponse) _savePartialResponse();"
+                )
+                
+                # Step B: Trigger the save and wait for confirmation
+                save_confirmed = [False]
+                
+                def _on_save_done(status):
+                    save_confirmed[0] = True
+                    log.info(f"[SHUTDOWN] Chat save confirmed: {status}")
+                
+                # Connect to save_finished signal temporarily
+                if hasattr(self._ai_chat, 'save_finished'):
+                    self._ai_chat.save_finished.connect(_on_save_done)
+                
+                # Trigger save
+                self._ai_chat.run_javascript(
+                    "if(window.flushScheduledSaveChats) { "
+                    "  flushScheduledSaveChats(); "
+                    "  if(window.bridge && bridge.on_save_finished) bridge.on_save_finished('OK'); "
+                    "} else if(window.saveProjectChats) { "
+                    "  saveProjectChats(window.chats); "
+                    "  if(window.bridge && bridge.on_save_finished) bridge.on_save_finished('OK'); "
+                    "}"
+                )
+                
+                # Step C: Process events for up to 800ms to let JS execute + signal fire
+                from PyQt6.QtCore import QDeadlineTimer, QEventLoop as _QEventLoop
+                from PyQt6.QtWidgets import QApplication
+                deadline = QDeadlineTimer(800)
+                while not save_confirmed[0] and not deadline.hasExpired():
+                    QApplication.processEvents(
+                        _QEventLoop.ProcessEventsFlag.AllEvents, 50
+                    )
+                
+                # Disconnect temporary signal
+                if hasattr(self._ai_chat, 'save_finished'):
+                    try:
+                        self._ai_chat.save_finished.disconnect(_on_save_done)
+                    except Exception:
+                        pass
+                
+                if not save_confirmed[0]:
+                    log.warning("[SHUTDOWN] Chat save timed out after 800ms")
+        except Exception as save_exc:
+            log.warning(f"[SHUTDOWN] Chat save error: {save_exc}")
+        
+        # 3. Force-flush DB write queue (guaranteed synchronous)
+        try:
+            from src.core.database import get_database
+            db = get_database()
+            db.flush_write_queue()
+            log.info("[SHUTDOWN] DB write queue flushed")
+        except Exception as db_exc:
+            log.warning(f"[SHUTDOWN] DB flush error: {db_exc}")
+
+    def nativeEvent(self, eventType, message):
+        """Handle Windows session-end messages (shutdown/restart/logoff).
+        
+        WM_QUERYENDSESSION (0x0011): System asks if we can close — allow.
+        WM_ENDSESSION (0x0016): System IS closing — emergency save NOW.
+        """
+        if sys.platform != 'win32':
+            return False, 0
+        try:
+            import ctypes
+            from ctypes import wintypes
+            msg_ptr = int(message)
+            msg = ctypes.cast(msg_ptr, ctypes.POINTER(wintypes.MSG)).contents
+            if msg.message == 0x0011:  # WM_QUERYENDSESSION
+                log.info("[SHUTDOWN] Windows session ending — allowing close")
+                self._emergency_shutdown_save()
+                return False, 1  # Allow shutdown (TRUE)
+            elif msg.message == 0x0016:  # WM_ENDSESSION
+                log.warning("[SHUTDOWN] Windows session END — emergency save")
+                self._emergency_shutdown_save()
+                return False, 0
+        except Exception as e:
+            log.debug(f"[SHUTDOWN] nativeEvent error (non-critical): {e}")
+        return False, 0
+
     def closeEvent(self, event: QCloseEvent):
-        """Save session on close and kill terminal process cleanly."""
-        fps = self._editor_tabs.get_open_files()
-        active = self._editor_tabs.current_filepath()
-        # Collect expanded folder paths from the file tree
+        """Save session on close, prompt for unsaved files, and kill terminals."""
+        # 0. Save agent session state for resume after restart
+        self._emergency_shutdown_save()
+
+        # 1. Check for unsaved files (legacy editor tabs)
+        modified_files = set(getattr(self._editor_tabs, '_modified', set()))
+        # Also save all open webview files
+        if hasattr(self, '_webview_panel'):
+            for fp in list(self._webview_panel._open_files.keys()):
+                if fp and fp != "untitled.py":
+                    modified_files.add(fp)
+        if modified_files:
+            from PyQt6.QtWidgets import QMessageBox
+            file_names = [os.path.basename(f) for f in modified_files]
+            files_str = ", ".join(file_names[:3]) + ("..." if len(file_names) > 3 else "")
+            
+            reply = QMessageBox.question(
+                self,
+                "Unsaved Changes",
+                f"You have unsaved changes in: {files_str}\n\nDo you want to save them before closing?",
+                QMessageBox.StandardButton.SaveAll | 
+                QMessageBox.StandardButton.Discard | 
+                QMessageBox.StandardButton.Cancel
+            )
+            
+            if reply == QMessageBox.StandardButton.Cancel:
+                event.ignore()
+                return
+            elif reply == QMessageBox.StandardButton.SaveAll:
+                # Save all webview files first
+                if hasattr(self, '_webview_panel'):
+                    for filepath in list(self._webview_panel._open_files.keys()):
+                        if filepath and filepath != "untitled.py":
+                            content = self._webview_panel.get_content(filepath)
+                            if content:
+                                try:
+                                    self._file_manager.write(filepath, content)
+                                except Exception as e:
+                                    log.error(f"Failed to auto-save {filepath}: {e}")
+                # Save all legacy editor tab files
+                for filepath in list(modified_files):
+                    idx = -1
+                    for i, fp in self._editor_tabs._files.items():
+                        if fp == filepath:
+                            idx = i
+                            break
+                    
+                    if idx >= 0:
+                        editor = self._editor_tabs.widget(idx)
+                        if isinstance(editor, CodeEditor):
+                            content = editor.toPlainText()
+                            try:
+                                with open(filepath, 'w', encoding='utf-8') as f:
+                                    f.write(content)
+                                self._editor_tabs._mark_saved(filepath)
+                            except Exception as e:
+                                log.error(f"Failed to auto-save {filepath}: {e}")
+        
+        # 2. Force AI Chat persistence (fire-and-forget — don't block close)
+        # The agent snapshot is already saved above; chat DB sync is best-effort.
+        if hasattr(self, '_ai_chat') and self._ai_chat:
+            log.info("Triggering AI chat persistence (non-blocking)...")
+            try:
+                self._ai_chat.run_javascript(
+                    "if(window.saveProjectChats) saveProjectChats(window.chats);"
+                )
+                # Give JS 500ms to flush to SQLite, then force-flush the DB write queue
+                # as a safety net in case the QTimer debounce hasn't fired yet.
+                from src.core.database import get_database
+                db = get_database()
+                QTimer.singleShot(600, lambda: (db.flush_write_queue(), log.debug("Chat persistence grace period ended")))
+            except Exception as e:
+                log.warning(f"Failed to trigger chat persistence: {e}")
+        
+        # 3. Save IDE UI state
+        # Only save from the active webview editor — NOT the hidden legacy _editor_tabs
+        # which accumulates stale entries from old sessions and never gets cleaned.
+        fps = []
+        if hasattr(self, '_webview_panel'):
+            for fp in self._webview_panel._open_files:
+                if fp and fp != "untitled.py":
+                    fps.append(fp)
+            log.info(f"[SESSION] Saving {len(fps)} open files from webview: {[Path(f).name for f in fps]}")
+        active = self._webview_panel.get_active_file() or self._editor_tabs.current_filepath()
         expanded = self._sidebar.get_expanded_paths()
         self._session_manager.save(fps, active, {"expanded_paths": expanded})
         self._settings.set("window", "maximized", self.isMaximized())
         if not self.isMaximized():
             self._settings.set("window", "width", self.width())
             self._settings.set("window", "height", self.height())
-        # Save splitter panel widths so they restore correctly on next open
-        sizes = self._main_splitter.sizes()
-        if len(sizes) == 3:
-            self._settings.set("window", "sidebar_width", sizes[0])
-            self._settings.set("window", "right_panel_width", sizes[2])
-        # Kill all terminal shells before Qt destroys the widgets
+        
+        # Save panel widths (Codex 4-panel layout)
+        # Left sidebar: 220px, Review: 380px, File tree: 280px are fixed
+        # Only chat panel width varies and is not saved (flexible)
+            
+        # 4. Clean up terminals
         for i in range(self._terminal_tabs.count()):
             term = self._terminal_tabs.widget(i)
             if isinstance(term, XTermWidget):
                 term._kill_process()
+
+        # 5. Stop Live Server if running
+        # Stop Live Server (removed in AI-first mode)
+        if False and self._live_server and self._live_server.is_running:
+            self._live_server.stop()
+                
         event.accept()
 
+    def dragEnterEvent(self, event):
+        """Accept drag of folders or files from Explorer onto the window."""
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        """Handle drop of folders/files — open as project or file."""
+        for url in event.mimeData().urls():
+            path = url.toLocalFile()
+            if os.path.isdir(path):
+                self._open_folder_programmatic(path)
+                event.acceptProposedAction()
+                return
+            elif os.path.isfile(path):
+                self._open_file(path)
+                event.acceptProposedAction()
+                return
+
     def resizeEvent(self, event):
-        """Handle window resize to update welcome panel font sizes responsively."""
+        """Handle window resize — responsive layout + welcome font scaling.
+
+        VS Code behaviour:
+        - All three panels stay visible and simply shrink proportionally.
+        - Only at very small widths (<700px) does the AI chat auto-hide.
+        - Sidebar keeps its width; editor absorbs most resize delta.
+        """
         super().resizeEvent(event)
+
         if hasattr(self, '_welcome_widget') and self._welcome_widget is not None:
             self._apply_welcome_theme(self._theme_manager.is_dark)
+
+    # Phase 1, 2, 3 Integration Methods
+    def _set_agent_mode(self, mode: str):
+        """
+        Set AI agent mode (Phase 1 Integration).
+        
+        Args:
+            mode: One of 'build', 'explore', 'debug', 'plan'
+        """
+        self._ai_agent.set_mode(mode)
+        mode_names = {
+            'build': '🏗️ Build',
+            'explore': '🔍 Explore', 
+            'debug': '🐛 Debug',
+            'plan': '📋 Plan'
+        }
+        self._statusbar.showMessage(f"Agent mode: {mode_names.get(mode, mode)}", 3000)
+        log.info(f"Agent mode switched to: {mode}")
+    
+    def _show_skills_browser(self):
+        """Show skills browser dialog (Phase 3 Integration)."""
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QListWidget, QLabel, QPushButton, QTextEdit
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Skills Browser")
+        dialog.setMinimumSize(600, 400)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Title
+        title = QLabel("<h2>🛠️ Available Skills</h2>")
+        layout.addWidget(title)
+        
+        # Skills list
+        skills_list = QListWidget()
+        skills = self._ai_agent.get_available_skills()
+        
+        for skill in skills:
+            item_text = f"{skill['name']} ({skill['id']})"
+            skills_list.addItem(item_text)
+        
+        layout.addWidget(skills_list)
+        
+        # Description
+        desc_label = QLabel("Select a skill to view capabilities")
+        layout.addWidget(desc_label)
+        
+        # Capability display
+        capability_text = QTextEdit()
+        capability_text.setReadOnly(True)
+        capability_text.setPlaceholderText("Skill capabilities will appear here...")
+        layout.addWidget(capability_text)
+        
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.close)
+        layout.addWidget(close_btn)
+        
+        dialog.exec()
+        log.info("Skills browser opened")
+    
+    def _show_mcp_connections(self):
+        """Show MCP connections dialog (Phase 3 Integration)."""
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QLineEdit, QListWidget
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("MCP Connections")
+        dialog.setMinimumSize(500, 300)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Title
+        title = QLabel("<h2>🔗 MCP Server Connections</h2>")
+        layout.addWidget(title)
+        
+        # Connected servers
+        servers_label = QLabel("Connected Servers:")
+        layout.addWidget(servers_label)
+        
+        servers_list = QListWidget()
+        servers = self._ai_agent._mcp_manager.list_servers()
+        if servers:
+            for server in servers:
+                servers_list.addItem(server)
+        else:
+            servers_list.addItem("No servers connected")
+        
+        layout.addWidget(servers_list)
+        
+        # Connect new server section
+        layout.addWidget(QLabel("Connect New Server:"))
+        
+        name_input = QLineEdit()
+        name_input.setPlaceholderText("Server name (e.g., github)")
+        layout.addWidget(name_input)
+        
+        url_input = QLineEdit()
+        url_input.setPlaceholderText("Server URL (e.g., https://mcp.github.com)")
+        layout.addWidget(url_input)
+        
+        def connect_server():
+            name = name_input.text().strip()
+            url = url_input.text().strip()
+            if name and url:
+                success = self._ai_agent.connect_mcp_server(name, url)
+                if success:
+                    servers_list.addItem(name)
+                    name_input.clear()
+                    url_input.clear()
+        
+        connect_btn = QPushButton("Connect")
+        connect_btn.clicked.connect(connect_server)
+        layout.addWidget(connect_btn)
+        
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.close)
+        layout.addWidget(close_btn)
+        
+        dialog.exec()
+        log.info("MCP connections dialog opened")
+
+    # Phase 4 Integration Methods
+    def _show_todo_manager(self):
+        """Show TODO manager dialog.
+        
+        NOTE: The legacy _todo_manager has been removed. This dialog now shows
+        the current todos from the bridge/JS UI instead.
+        """
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QListWidget
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Tasks & TODOs")
+        dialog.setMinimumSize(500, 350)
+        
+        layout = QVBoxLayout(dialog)
+        
+        title = QLabel("<h2>Task Manager</h2>")
+        layout.addWidget(title)
+        
+        info = QLabel("Todos are now managed by the AI agent via TodoWrite.\nUse the chat sidebar to view and track task progress.")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+        
+        layout.addWidget(QLabel("Current session todos are shown in the sidebar."))
+        
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.close)
+        layout.addWidget(close_btn)
+        
+        dialog.exec()
+        log.info("TODO manager dialog opened")
+    
+    def _add_todo_task(self):
+        """Add a new TODO task. (Legacy - todo manager removed)"""
+        self._statusbar.showMessage("Todo manager has been removed. Ask the AI to create tasks via TodoWrite.", 5000)
+        log.info("[TODO] _add_todo_task called - todo manager removed")
+    
+    def _complete_todo_task(self):
+        """Complete a TODO task. (Legacy - todo manager removed)"""
+        self._statusbar.showMessage("Todo manager has been removed. Toggle tasks in the sidebar instead.", 5000)
+        log.info("[TODO] _complete_todo_task called - todo manager removed")
+    
+    def _show_permission_settings(self):
+        """Show permission settings dialog (Phase 4 Integration)."""
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Permission Settings")
+        dialog.setMinimumSize(500, 300)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Title
+        title = QLabel("<h2>🔒 Permission System</h2>")
+        layout.addWidget(title)
+        
+        # Info
+        info = QLabel("Permission system is active and monitoring tool usage.")
+        layout.addWidget(info)
+        
+        # Cache info
+        cache_size = len(self._permission_evaluator._permission_cache)
+        cache_label = QLabel(f"Cached decisions: {cache_size}")
+        layout.addWidget(cache_label)
+        
+        # Clear cache button
+        def clear_cache():
+            self._permission_evaluator.clear_cache()
+            cache_label.setText("Cached decisions: 0")
+        
+        clear_btn = QPushButton("Clear Permission Cache")
+        clear_btn.clicked.connect(clear_cache)
+        layout.addWidget(clear_btn)
+        
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.close)
+        layout.addWidget(close_btn)
+        
+        dialog.exec()
+        log.info("Permission settings dialog opened")
+    
+    def _show_memory_manager(self):
+        """Open the Memory Manager dialog (AI → Memory Manager...)."""
+        from src.ui.dialogs.memory_manager import MemoryManagerDialog
+        try:
+            from src.config.settings import get_settings
+            settings = get_settings()
+        except Exception:
+            settings = None
+        # Use current project path if available, fallback to cwd
+        project_root = getattr(self, '_current_project_path', None) or os.getcwd()
+        dlg = MemoryManagerDialog(project_root, settings=settings, parent=self)
+        dlg.exec()
+
+    def _show_github_integration(self):
+        """Show GitHub integration dialog (Phase 4 Integration)."""
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QLineEdit, QInputDialog
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("GitHub Integration")
+        dialog.setMinimumSize(500, 300)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Title
+        title = QLabel("<h2>🐙 GitHub Automation</h2>")
+        layout.addWidget(title)
+        
+        # Repository info
+        if self._github_agent.repo_owner and self._github_agent.repo_name:
+            repo_text = f"Repository: {self._github_agent.repo_owner}/{self._github_agent.repo_name}"
+        else:
+            repo_text = "No repository configured"
+        repo_label = QLabel(repo_text)
+        layout.addWidget(repo_label)
+        
+        # Set repository button
+        def set_repo():
+            owner, ok1 = QInputDialog.getText(self, "GitHub Repository", "Repository owner:")
+            if ok1 and owner:
+                repo, ok2 = QInputDialog.getText(self, "GitHub Repository", "Repository name:")
+                if ok2 and repo:
+                    self._github_agent.set_repository(owner, repo)
+                    repo_label.setText(f"Repository: {owner}/{repo}")
+        
+        set_repo_btn = QPushButton("Set Repository")
+        set_repo_btn.clicked.connect(set_repo)
+        layout.addWidget(set_repo_btn)
+        
+        # Analyze PR button
+        def analyze_pr():
+            pr_number, ok = QInputDialog.getInt(self, "Analyze PR", "PR number:")
+            if ok:
+                result = self._github_agent.analyze_pr(pr_number)
+                if result:
+                    msg = f"PR Analysis: {result.get('summary', {}).get('files_changed', 0)} files changed"
+                    self._statusbar.showMessage(msg, 5000)
+        
+        analyze_btn = QPushButton("Analyze PR...")
+        analyze_btn.clicked.connect(analyze_pr)
+        layout.addWidget(analyze_btn)
+        
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.close)
+        layout.addWidget(close_btn)
+        
+        dialog.exec()
+        log.info("GitHub integration dialog opened")
+
+    # Phase 4: Real-time UI Update Handlers
+    # NOTE: The following handlers are LEGACY stubs. The _todo_manager has been removed.
+    # Todo state is now managed entirely by the bridge (CortexAgentBridge) via TodoWrite.
+    
+    def _on_todo_task_added(self, task_id: str):
+        """Handle new todo task - LEGACY (todo manager removed)."""
+        log.info(f"[TODO] _on_todo_task_added called (legacy): {task_id}")
+
+    def _on_toggle_todo(self, task_id: str, completed: bool):
+        """Handle todo toggle from UI.
+        
+        NOTE: The legacy _todo_manager has been removed. Todo state is now managed
+        entirely by the bridge (CortexAgentBridge) and the JS UI. This handler
+        logs the toggle but does not persist it - the UI already shows the toggled
+        state visually and the bridge will emit updated todos on its next turn.
+        """
+        status = "completed" if completed else "reopened"
+        log.info(f"[TODO] UI toggle: {task_id} -> {status}")
+        try:
+            self._ai_agent.toggle_todo_status(task_id, completed)
+        except Exception as exc:
+            log.warning(f"[TODO] Failed to sync toggle to backend state: {exc}")
+
+    def _on_todo_task_completed(self, task_id: str):
+        """Handle completed todo - LEGACY (todo manager removed)."""
+        log.info(f"[TODO] _on_todo_task_completed called (legacy): {task_id}")
+
+    def _on_todo_task_updated(self, task_id: str):
+        """Handle updated todo - LEGACY (todo manager removed)."""
+        log.info(f"[TODO] _on_todo_task_updated called (legacy): {task_id}")
+
+    def _on_task_progress_update(self, completed: int, total: int, pct: int, message: str):
+        """Update UI with real-time AI task progress."""
+        try:
+            self._last_task_progress_msg = message
+            self._last_task_progress_counts = (completed, total, pct)
+            if hasattr(self, '_statusbar') and self._statusbar:
+                self._statusbar.showMessage(f'AI Progress: {message}', 5000)
+        except Exception as e:
+            log.debug(f'[MainWindow] Suppressed error: {e}')
+
+    def _on_ai_task_complete(self, response: str):
+        """Show Windows toast notification when AI task completes.
+
+        Extracts a clean, minimal task summary — NOT raw AI conversational text.
+        """
+        try:
+            # Build an up-to-date progress summary from todos when available
+            progress_msg = getattr(self, '_last_task_progress_msg', '')
+            try:
+                todos = getattr(self._ai_agent, '_current_todos', None) or []
+                if isinstance(todos, list) and todos:
+                    total = len(todos)
+                    completed = sum(
+                        1 for t in todos
+                        if str(getattr(t, 'get', lambda *_: '')('status', '')).upper() in ('COMPLETE', 'CANCELLED')
+                    )
+                    pending = max(0, total - completed)
+                    pct = int((completed / total) * 100) if total else 0
+                    progress_msg = f"{completed}/{total} tasks complete ({pct}%)"
+                    if pending:
+                        progress_msg += f", {pending} pending"
+            except Exception as e:
+                log.debug(f'[MainWindow] Suppressed error: {e}')
+
+            # If the bridge auto-cancelled remaining todos, never claim completion
+            if getattr(self._ai_agent, '_todos_auto_cancelled', False):
+                show_toast_notification(
+                    'Cortex AI — Needs Attention',
+                    'Tasks were auto-cancelled after repeated attempts without progress.'
+                )
+                log.info('[MainWindow] Notification shown: todos auto-cancelled')
+                return
+
+            # INDUSTRY-STANDARD: Check if notification should actually show
+            _should_notify = True
+            if hasattr(self._ai_agent, '_allow_notification'):
+                _should_notify = self._ai_agent._allow_notification
+
+            if not _should_notify:
+                if progress_msg:
+                    show_toast_notification('Cortex AI — In Progress', progress_msg)
+                log.info('[MainWindow] Completion notification suppressed: tasks not genuinely complete')
+                return
+
+            # Only show completion notification if response is meaningful
+            if response and len(response) > 10:
+                # ── Extract CLEAN, MINIMAL summary — not raw AI text ──
+                summary = _extract_notification_summary(response)
+                if progress_msg:
+                    msg = f"{progress_msg}  •  {summary}" if summary else progress_msg
+                else:
+                    msg = summary or "Task completed successfully."
+                show_toast_notification('Cortex AI — Task Complete', msg)
+                log.info(f"[MainWindow] Windows notification shown: {msg[:80]}...")
+
+            # TODO: POINTS SYSTEM - Disabled for development
+            # self._consume_points_for_response(response)
+        except Exception as e:
+            log.debug(f'[MainWindow] Suppressed error: {e}')
+
+
+    def _consume_points_for_response(self, response: str):
+        """Consume points based on actual AI response tokens."""
+        try:
+            points_mgr = get_points_manager()
+            perf_mode = self._get_current_performance_mode()
+            
+            # Estimate actual tokens used (response text)
+            actual_tokens = len(response) // 4
+            
+            # Consume points
+            result = points_mgr.consume_points(actual_tokens, perf_mode)
+            
+            log.info(
+                f"[MainWindow] Points consumed: {actual_tokens:,} tokens × "
+                f"{result['multiplier']}x = {result['points_consumed']:,} points. "
+                f"Remaining: {result['remaining_balance']:,}"
+            )
+            
+            # Update UI with remaining balance
+            if hasattr(self, '_ai_chat') and hasattr(self._ai_chat, 'update_points_balance'):
+                self._ai_chat.update_points_balance(result)
+                
+        except InsufficientPointsError as e:
+            log.error(f"[MainWindow] Points consumption error: {e}")
+            # Send warning to UI
+            if hasattr(self, '_ai_chat') and hasattr(self._ai_chat, 'on_error'):
+                self._ai_chat.on_error(
+                    f"Points consumed exceeded balance. Please purchase more points.\n"
+                    f"Required: {e.required:,}, Had: {e.balance:,}"
+                )
+        except Exception as e:
+            log.warning(f"[MainWindow] Failed to consume points: {e}")
+    
+    def _get_current_performance_mode(self) -> str:
+        """Get current performance mode from settings."""
+        try:
+            settings = get_settings()
+            return settings.get("ai", "performance_mode", default="auto")
+        except Exception:
+            return "auto"
+
+    def _on_title_generated(self, conversation_id: str, title: str):
+        """Update the chat title when a new title is generated.
+        
+        Args:
+            conversation_id: The ID of the conversation.
+            title: The new title for the chat.
+        """
+        # Update the chat tab title via JavaScript bridge
+        if hasattr(self, '_ai_chat') and hasattr(self._ai_chat, '_view'):
+            safe_title = title.replace('"', '\\"').replace("'", "\\'")
+            js_code = f"if(window.updateChatTitle) window.updateChatTitle('{conversation_id}', '{safe_title}');"
+            self._ai_chat._view.page().runJavaScript(js_code)
+            log.info(f"Chat title updated in UI: {title}")
+        
+        # Also update window title if this is current chat
+        current_id = getattr(self._ai_chat, '_current_conversation_id', None)
+        if current_id == conversation_id and title:
+            self.setWindowTitle(f"Cortex - {title}")
 
 
 def QApplication_instance():

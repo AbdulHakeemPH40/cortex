@@ -7,6 +7,7 @@ from PyQt6.QtCore import QObject, pyqtSignal, QTimer
 from pathlib import Path
 from typing import Set, Dict, Optional
 import os
+import hashlib
 from src.utils.logger import get_logger
 
 log = get_logger("file_watcher")
@@ -44,7 +45,19 @@ class FileWatcher(QObject):
         self._observer = None
         self._handler = None
         self._timer = None
-        self._poll_interval = 1000  # ms
+        self._poll_interval = 2000  # ms (increased from 1000 for better performance)
+        
+        # Debounce timers for batching rapid changes
+        self._debounce_timers: Dict[str, QTimer] = {}
+        self._debounce_interval = 500  # ms
+        
+        # Directories to exclude from watching
+        self._excluded_dirs = {
+            'venv', '.venv', 'env', '.env',
+            '__pycache__', 'node_modules', 'build', 'dist',
+            '.git', '.tox', '.eggs', '*.egg-info',
+            'coverage', '.pytest_cache', '.mypy_cache'
+        }
         
         if WATCHDOG_AVAILABLE:
             self._setup_watchdog()
@@ -137,21 +150,75 @@ class FileWatcher(QObject):
                 # For directories, scan for new/deleted files
                 self._scan_directory(path)
                 
+    def _should_exclude(self, path: str) -> bool:
+        """Check if path should be excluded from watching."""
+        path_parts = Path(path).parts
+        for part in path_parts:
+            if part in self._excluded_dirs or part.startswith('.'):
+                return True
+        return False
+        
+    def _debounced_emit(self, signal_name: str, path: str, *args):
+        """Debounce file change signals to batch rapid changes."""
+        if path in self._debounce_timers:
+            self._debounce_timers[path].stop()
+        
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        
+        # Map signal name to actual signal
+        signal_map = {
+            'file_modified': self.file_modified,
+            'file_created': self.file_created,
+            'file_deleted': self.file_deleted,
+            'file_moved': self.file_moved
+        }
+        
+        signal = signal_map.get(signal_name)
+        if not signal:
+            return
+            
+        def emit_signal():
+            if args:
+                signal.emit(path, *args)
+            else:
+                signal.emit(path)
+            # Clean up timer
+            if path in self._debounce_timers:
+                del self._debounce_timers[path]
+        
+        timer.timeout.connect(emit_signal)
+        timer.start(self._debounce_interval)
+        self._debounce_timers[path] = timer
+        
     def _scan_directory(self, dir_path: str):
-        """Scan directory for changes."""
+        """Scan directory for changes with optimizations."""
         try:
+            # Skip excluded directories
+            if self._should_exclude(dir_path):
+                return
+                
             current_files = set()
             for root, dirs, files in os.walk(dir_path):
-                # Skip hidden and common ignore directories
-                dirs[:] = [d for d in dirs if not d.startswith('.') and 
-                          d not in ['__pycache__', 'node_modules', 'venv', '.git']]
+                # Filter out excluded directories
+                dirs[:] = [
+                    d for d in dirs 
+                    if not d.startswith('.') and d not in self._excluded_dirs
+                ]
                 
+                # Skip if current directory is excluded
+                if any(d in self._excluded_dirs for d in Path(root).parts):
+                    continue
+                    
                 for file in files:
+                    # Skip excluded file patterns
+                    if file.endswith('.egg-info'):
+                        continue
+                        
                     file_path = os.path.join(root, file)
                     current_files.add(file_path)
                     
                     # Check if file is new or modified
-                    import hashlib
                     try:
                         with open(file_path, 'rb') as f:
                             content = f.read(8192)
@@ -159,11 +226,11 @@ class FileWatcher(QObject):
                             
                         old_hash = self._file_hashes.get(file_path)
                         if old_hash is None:
-                            # New file
-                            self.file_created.emit(file_path)
+                            # New file - use debounced emit
+                            self._debounced_emit('file_created', file_path)
                         elif old_hash != file_hash:
-                            # Modified file
-                            self.file_modified.emit(file_path)
+                            # Modified file - use debounced emit
+                            self._debounced_emit('file_modified', file_path)
                             
                         self._file_hashes[file_path] = file_hash
                     except:
@@ -172,7 +239,7 @@ class FileWatcher(QObject):
             # Check for deleted files
             watched_files = {p for p in self._file_hashes if p.startswith(dir_path)}
             for file_path in watched_files - current_files:
-                self.file_deleted.emit(file_path)
+                self._debounced_emit('file_deleted', file_path)
                 if file_path in self._file_hashes:
                     del self._file_hashes[file_path]
                     
@@ -196,17 +263,28 @@ if WATCHDOG_AVAILABLE:
             self.watcher = watcher
             
         def on_modified(self, event):
-            if not event.is_directory:
-                self.watcher.file_modified.emit(event.src_path)
+            if not event.is_directory and not self._should_exclude_path(event.src_path):
+                self.watcher._debounced_emit('file_modified', event.src_path)
                 
         def on_created(self, event):
-            if not event.is_directory:
-                self.watcher.file_created.emit(event.src_path)
+            if not event.is_directory and not self._should_exclude_path(event.src_path):
+                self.watcher._debounced_emit('file_created', event.src_path)
                 
         def on_deleted(self, event):
-            if not event.is_directory:
-                self.watcher.file_deleted.emit(event.src_path)
+            if not event.is_directory and not self._should_exclude_path(event.src_path):
+                self.watcher._debounced_emit('file_deleted', event.src_path)
                 
         def on_moved(self, event):
-            if not event.is_directory:
-                self.watcher.file_moved.emit(event.src_path, event.dest_path)
+            if not event.is_directory and not self._should_exclude_path(event.src_path):
+                self.watcher._debounced_emit('file_moved', event.src_path, event.dest_path)
+                
+        def _should_exclude_path(self, path: str) -> bool:
+            """Check if path should be excluded."""
+            path_parts = Path(path).parts
+            excluded = {
+                'venv', '.venv', 'env', '.env',
+                '__pycache__', 'node_modules', 'build', 'dist',
+                '.git', '.tox', '.eggs', '*.egg-info',
+                'coverage', '.pytest_cache', '.mypy_cache'
+            }
+            return any(part in excluded or part.startswith('.') for part in path_parts)

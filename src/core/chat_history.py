@@ -6,7 +6,7 @@ Migrates from JSON files to persistent SQLite database
 import os
 import json
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from datetime import datetime
 from dataclasses import dataclass
 from src.utils.logger import get_logger
@@ -58,21 +58,30 @@ class ChatHistoryManager:
         role: str,
         content: str,
         files_accessed: List[str] = None,
-        tools_used: List[str] = None
+        tools_used: List[str] = None,
+        metadata: Dict[str, Any] = None,
+        immediate: bool = False
     ) -> int:
-        """Add a message to a conversation."""
+        """Add a message to a conversation.
+        
+        Args:
+            immediate: If True, write directly bypassing the queue (for shutdown saves).
+            metadata: Optional dict with extra fields (reasoning_content, tool_calls).
+        """
         return self.db.add_message(
             conversation_id=conversation_id,
             role=role,
             content=content,
             files_accessed=files_accessed or [],
-            tools_used=tools_used or []
+            tools_used=tools_used or [],
+            metadata=metadata,
+            immediate=immediate
         )
     
     def get_messages(
         self,
         conversation_id: str,
-        limit: int = 100
+        limit: int = 5000
     ) -> List[Dict]:
         """Get messages for a conversation."""
         messages = self.db.get_messages(conversation_id, limit)
@@ -83,7 +92,8 @@ class ChatHistoryManager:
                 'content': m.content,
                 'timestamp': m.timestamp.isoformat() if m.timestamp else None,
                 'files_accessed': m.files_accessed,
-                'tools_used': m.tools_used
+                'tools_used': m.tools_used,
+                'metadata': m.metadata or {},
             }
             for m in messages
         ]

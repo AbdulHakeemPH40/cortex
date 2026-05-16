@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Memory Manager</title>
+  <link rel="stylesheet" href="./memory_management.css?v=6">
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Memory</p>
+        <h1>Memory Manager</h1>
+        <p class="subtext">Persistent project memory for the current workspace.</p>
+      </div>
+      <div class="topbar-actions">
+        <button id="statsBtn" class="ghost" title="Memory Statistics"><i class="fas fa-chart-bar"></i></button>
+        <button id="consolidateBtn" class="ghost" title="Consolidate & Deduplicate"><i class="fas fa-compress-arrows-alt"></i></button>
+        <button id="openRulesBtn" class="ghost" title="Edit active rules in IDE"><i class="fas fa-sliders-h"></i> Rules Setup</button>
+        <button id="refreshBtn" class="ghost">Refresh</button>
+        <button id="clearBtn" class="danger">Clear All</button>
+      </div>
+    </header>
+
+    <main class="content">
+      <section class="hero-card">
+        <div class="hero-copy">
+          <span class="status-dot" id="statusDot"></span>
+          <div>
+            <h2>Automatic memory generation</h2>
+            <p>Save preferences, project context, and long-term notes the agent can reuse later.</p>
+          </div>
+        </div>
+        <button id="enabledToggle" class="toggle" type="button" aria-pressed="true" title="Toggle automatic memory generation">
+          <span class="toggle-track"></span>
+        </button>
+      </section>
+
+      <section class="toolbar">
+        <div>
+          <h3>Memory List</h3>
+          <p id="countLabel">0 memories</p>
+        </div>
+        <div class="toolbar-meta">
+          <div id="scopeSwitch" class="scope-switch" role="tablist" aria-label="Memory scope">
+            <button type="button" class="scope-tab" data-scope="project" role="tab">Project</button>
+            <button type="button" class="scope-tab" data-scope="global" role="tab">Global</button>
+            <button type="button" class="scope-tab" data-scope="shared" role="tab">Shared Memories</button>
+          </div>
+          <button id="syncGlobalBtn" class="ghost" title="Sync Global Memories to Project"><i class="fas fa-sync-alt"></i> Sync</button>
+          <button id="promoteBtn" class="ghost" title="Promote to Global" style="display:none;"><i class="fas fa-arrow-up"></i> Promote</button>
+          <span id="staleCountLabel" class="pill subtle"></span>
+          <span id="projectRootLabel" class="pill"></span>
+        </div>
+      </section>
+
+      <section class="filter-bar">
+        <label class="search-shell">
+          <span class="search-label">Search</span>
+          <input id="searchInput" type="text" placeholder="Find by title, keyword, path, or content">
+          <button id="semanticSearchBtn" class="semantic-search-btn" title="Semantic Search (AI-powered)" type="button">
+            <i class="fas fa-brain"></i>
+          </button>
+        </label>
+        <div id="typeFilters" class="type-filters"></div>
+      </section>
+
+      <section id="searchModeBar" class="search-mode-bar hidden">
+        <div class="search-mode-info">
+          <i class="fas fa-brain"></i>
+          <span id="searchModeText">Semantic search mode</span>
+        </div>
+        <button id="exitSearchBtn" class="ghost" type="button">
+          <i class="fas fa-times"></i> Exit Search
+        </button>
+      </section>
+
+      <section id="emptyState" class="empty-state hidden">
+        <div class="empty-glyph">M</div>
+        <h3>No memories saved yet</h3>
+        <p>The agent will populate this space as it learns your preferences and project rules.</p>
+        <div class="empty-prompts">
+          <code>Remember that I prefer pytest over unittest</code>
+          <code>Save a memory: this project uses Django 4.2</code>
+        </div>
+      </section>
+
+      <section id="listView" class="memory-list"></section>
+
+      <footer class="footer">
+        <div>
+          <span class="footer-label">Memory Directory</span>
+          <code id="memoryDirLabel"></code>
+        </div>
+      </footer>
+    </main>
+  </div>
+
+  <div id="toastHost" class="toast-host"></div>
+  <div id="modalHost" class="modal-host hidden"></div>
+  
+  <!-- Consolidation Modal -->
+  <div id="consolidationModal" class="modal-host hidden">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h2><i class="fas fa-compress-arrows-alt"></i> Consolidation Report</h2>
+        <button id="closeConsolidationModal" class="modal-close"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="modal-body">
+        <div id="consolidationStats" class="consolidation-stats"></div>
+        <div id="consolidationClusters" class="consolidation-clusters"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="mergeAllBtn" class="primary-btn">Merge All Duplicates</button>
+        <button id="closeConsolidationModalBtn" class="secondary-btn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+  <script src="./memory_management.js?v=14"></script>
+</body>
+</html>

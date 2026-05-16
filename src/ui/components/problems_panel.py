@@ -147,6 +147,28 @@ class ProblemsWidget(QWidget):
         self._refresh_list()
         self._update_counts()
         
+        # Emit event for cross-component communication (NEW)
+        try:
+            from src.core.event_bus import get_event_bus, EventType, ProblemEventData
+            event_bus = get_event_bus()
+            event_bus.publish(
+                EventType.PROBLEMS_DETECTED,
+                ProblemEventData(
+                    source_component="problems_panel",
+                    severity=problem.severity.value,
+                    message=problem.message,
+                    file_path=problem.file_path,
+                    line=problem.line,
+                    column=problem.column,
+                    code=problem.code,
+                    error_count=sum(1 for p in self._problems if p.severity == ProblemSeverity.ERROR),
+                    warning_count=sum(1 for p in self._problems if p.severity == ProblemSeverity.WARNING),
+                    info_count=sum(1 for p in self._problems if p.severity == ProblemSeverity.INFO)
+                )
+            )
+        except Exception as e:
+            pass  # Don't break functionality if event bus fails
+        
     def add_error(self, message: str, file_path: str, line: int, column: int = 0, code: str = None):
         """Convenience method to add an error."""
         self.add_problem(Problem(
