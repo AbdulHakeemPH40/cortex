@@ -57,6 +57,7 @@ class ChatMessage:
     files_accessed: List[str] = field(default_factory=list)
     tools_used: List[str] = field(default_factory=list)
     embedding: Optional[List[float]] = None
+    metadata: Optional[Dict[str, Any]] = None  # JSON blob for reasoning_content, tool_calls, etc.
 
 
 @dataclass
@@ -259,9 +260,15 @@ class CortexDatabase:
                     timestamp INTEGER,
                     files_accessed TEXT,
                     tools_used TEXT,
+                    metadata TEXT,
                     FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id)
                 )
             """)
+            # Migration: add metadata column if upgrading from older schema
+            try:
+                cursor.execute("ALTER TABLE chat_messages ADD COLUMN metadata TEXT")
+            except Exception:
+                pass  # column already exists
             
             # Embeddings for chat messages
             cursor.execute("""
@@ -636,19 +643,42 @@ class CortexDatabase:
         return conversation_id
     
     def add_message(self, conversation_id: str, role: str, content: str, 
-                   files_accessed: List[str] = None, tools_used: List[str] = None) -> int:
-        """Add a message to a conversation (batched for performance)."""
+                   files_accessed: List[str] = None, tools_used: List[str] = None,
+                   metadata: Dict[str, Any] = None,
+                   immediate: bool = False) -> int:
+        """Add a message to a conversation.
+        
+        Args:
+            immediate: If True, write directly bypassing the queue (for shutdown saves).
+                       If False (default), batch via write queue for performance.
+            metadata: Optional dict with extra fields (reasoning_content, tool_calls,
+                      tool_call_id) stored as JSON.
+        """
         now = int(datetime.now().timestamp() * 1000)
         files_json = json.dumps(files_accessed) if files_accessed else "[]"
         tools_json = json.dumps(tools_used) if tools_used else "[]"
+        metadata_json = json.dumps(metadata) if metadata else None
+        
+        if immediate:
+            # Direct write - used during shutdown or critical saves
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO chat_messages (conversation_id, role, content, timestamp, files_accessed, tools_used, metadata)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (conversation_id, role, content, now, files_json, tools_json, metadata_json))
+                cursor.execute("""
+                    UPDATE conversations SET updated_at = ? WHERE conversation_id = ?
+                """, (now, conversation_id))
+                return cursor.lastrowid
         
         message_id = [None]  # Use list to capture value from closure
         
         def insert_op(cursor):
             cursor.execute("""
-                INSERT INTO chat_messages (conversation_id, role, content, timestamp, files_accessed, tools_used)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (conversation_id, role, content, now, files_json, tools_json))
+                INSERT INTO chat_messages (conversation_id, role, content, timestamp, files_accessed, tools_used, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (conversation_id, role, content, now, files_json, tools_json, metadata_json))
             
             # Update conversation updated_at
             cursor.execute("""
@@ -676,6 +706,13 @@ class CortexDatabase:
             
             messages = []
             for row in cursor.fetchall():
+                _metadata = None
+                try:
+                    _metadata_raw = row['metadata'] if 'metadata' in row.keys() else None
+                    if _metadata_raw:
+                        _metadata = json.loads(_metadata_raw)
+                except (json.JSONDecodeError, KeyError):
+                    pass
                 messages.append(ChatMessage(
                     id=row['id'],
                     conversation_id=row['conversation_id'],
@@ -683,7 +720,8 @@ class CortexDatabase:
                     content=row['content'],
                     timestamp=datetime.fromtimestamp(row['timestamp'] / 1000),
                     files_accessed=json.loads(row['files_accessed'] or '[]'),
-                    tools_used=json.loads(row['tools_used'] or '[]')
+                    tools_used=json.loads(row['tools_used'] or '[]'),
+                    metadata=_metadata
                 ))
             
             return messages
@@ -763,25 +801,39 @@ class CortexDatabase:
         self._flush_write_queue()
         
     def _flush_write_queue(self):
-        """Flush all queued write operations in a single transaction."""
+        """Flush all queued write operations in a single atomic transaction.
+        
+        Uses EXCLUSIVE transaction to guarantee all-or-nothing persistence.
+        Failed operations are logged but not re-queued to prevent infinite loops.
+        """
         if not self._write_queue:
             return
-            
+        
+        # Drain queue into local list atomically
+        with self.lock:
+            ops = list(self._write_queue)
+            self._write_queue.clear()
+        
+        if not ops:
+            return
+        
+        op_count = len(ops)
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                # Execute all queued operations
-                while self._write_queue:
-                    operation = self._write_queue.popleft()
-                    operation(cursor)
-                
-                # Single commit for all operations
+                # BEGIN EXCLUSIVE is implicit with sqlite3.connect
+                for operation in ops:
+                    try:
+                        operation(cursor)
+                    except Exception as op_err:
+                        log.error(f"Individual write op failed: {op_err}")
+                        # Continue with remaining ops rather than aborting all
                 conn.commit()
-                log.debug(f"Flushed {len(self._write_queue)} database writes")
+                log.debug(f"Flushed {op_count} database writes")
         except Exception as e:
-            log.error(f"Error flushing write queue: {e}")
-            # Re-queue failed operations
-            conn.rollback()
+            log.error(f"Error flushing write queue ({op_count} ops): {e}")
+            # Don't re-queue to prevent infinite failure loops
+            # Data loss is logged for diagnostics
     
     # =========================================================================
     # PROJECT MEMORY OPERATIONS

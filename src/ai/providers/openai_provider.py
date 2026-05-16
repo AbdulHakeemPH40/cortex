@@ -27,8 +27,8 @@ class OpenAIProvider(BaseProvider):
         self._max_retries = self._get_int_env("CORTEX_OPENAI_MAX_RETRIES", 4, minimum=1, maximum=5)
         self._retry_delay = 1.0
         self._connect_timeout = self._get_float_env("CORTEX_OPENAI_CONNECT_TIMEOUT_SEC", 20.0, minimum=1.0, maximum=120.0)
-        self._read_timeout = self._get_float_env("CORTEX_OPENAI_READ_TIMEOUT_SEC", 40.0, minimum=3.0, maximum=300.0)
-        self._tool_read_timeout = self._get_float_env("CORTEX_OPENAI_TOOL_READ_TIMEOUT_SEC", 45.0, minimum=5.0, maximum=300.0)
+        self._read_timeout = self._get_float_env("CORTEX_OPENAI_READ_TIMEOUT_SEC", 120.0, minimum=3.0, maximum=600.0)
+        self._tool_read_timeout = self._get_float_env("CORTEX_OPENAI_TOOL_READ_TIMEOUT_SEC", 180.0, minimum=5.0, maximum=600.0)
 
         # Initialize from environment
         api_key = os.getenv("OPENAI_API_KEY", "")

@@ -1668,6 +1668,9 @@ class CortexAgentBridge(QObject):
         self._always_allowed: bool = False
         self._interaction_mode: str = "default"
         self._conversation_history: List[ChatMessage] = []
+        self._history_lock = threading.Lock()  # Protects _conversation_history from concurrent access
+        self._last_turn_reasoning: str = ""  # Preserved from final agentic turn for MiMo/Kimi/DeepSeek
+        self._current_conversation_id: Optional[str] = None  # Active chat ID for direct DB saves
         self._enhancement_data: Dict[str, Any] = {}
         self._streaming      = None
         self._current_todos: List[Dict[str, Any]] = []   # Persisted todo list for TodoWrite
@@ -2028,6 +2031,16 @@ Shell: PowerShell (use semicolons ; not &&)
 7. TARGETED READS: Use Grep/Glob to locate code, then Read with offset/limit for the relevant section.
 8. WEB SEARCH: Use WebSearch for real-time info, current events, documentation, or anything requiring up-to-date knowledge. You HAVE internet access — NEVER say you don't have internet access or can't search the web.
 9. WEB FETCH: Use WebFetch to read and extract content from URLs the user provides. You CAN browse and visit URLs — NEVER say you can't browse or visit URLs.
+10. DIAGRAMS: When asked about project structure, file trees, architecture, workflows, or dependencies, output a ```mermaid code block DIRECTLY IN YOUR CHAT RESPONSE — do NOT use the Write tool for diagrams. The chat viewer renders mermaid natively. Use graph TD for file/dependency trees, flowchart for processes, sequenceDiagram for interactions. Wrap labels with special characters in quotes (e.g., A["my label"]).
+11. TASK COMPLETION SUMMARY: When ALL tasks/todos are finished and the work is complete, you MUST output a <task_summary> block at the very end of your response explaining to the user what was accomplished. Format it as JSON:
+<task_summary>
+{{
+  "title": "Brief task title",
+  "files": [{{"name": "file.py", "action": "created|modified|deleted", "path": "src/file.py"}}],
+  "message": "Clear explanation of everything you did — what files you changed, what bugs you fixed, what features you added. Write this in plain conversational language the user will understand."
+}}
+</task_summary>
+The message field is REQUIRED — always explain your work so the user knows exactly what changed without reading every file.
 """
         if context.get("code_context"):
             prompt += f"\n## User's Selected Code\n```\n{context['code_context']}\n```\n"
@@ -2630,8 +2643,18 @@ Shell: PowerShell (use semicolons ; not &&)
                 _hist_msg.tool_calls = _tc
             if getattr(cm, 'tool_call_id', None):
                 _hist_msg.tool_call_id = cm.tool_call_id
+            # PRESERVE reasoning_content — MiMo/Kimi/DeepSeek thinking
+            # mode requires reasoning_content from previous assistant
+            # messages to be passed back in subsequent requests.
+            # Without this, MiMo returns HTTP 400:
+            #   "The reasoning_content in the thinking mode must be
+            #    passed back to the API."
+            _rc = getattr(cm, 'reasoning_content', None)
+            if _rc:
+                _hist_msg.reasoning_content = _rc
             _new_history.append(_hist_msg)
-        self._conversation_history = _new_history
+        with self._history_lock:
+            self._conversation_history = _new_history
         log.info(f'[BRIDGE] _conversation_history pruned to {len(_new_history)} entries after compaction')
 
         # ── Emit completion status ───────────────────────────────────────
@@ -2893,7 +2916,8 @@ Shell: PowerShell (use semicolons ; not &&)
                 # Truncate very large messages (e.g. pasted file contents) so the
                 # Continue run does not re-pay the full context cost of the first request.
                 _MAX_HIST_CONTENT = _limits.max_hist_chars  # scaled to model context window
-                _all_history = self._conversation_history
+                with self._history_lock:
+                    _all_history = list(self._conversation_history)  # snapshot under lock
                 _hist_turns = _all_history[-10:]
                 
                 # Inject summary if we truncated older messages
@@ -2986,6 +3010,23 @@ Shell: PowerShell (use semicolons ; not &&)
                 log.info(f"[BRIDGE] === Agentic turn {turn + 1}/{max_turns} ===")
                 # Track per-turn tool success so we only count successful mutations
                 self._tool_call_success: Dict[str, bool] = {}
+
+                # ── STABILITY: Breathe between turns ─────────────────────
+                # If system is under pressure, yield CPU time and trigger
+                # cleanup instead of crashing. The IDE NEVER crashes.
+                try:
+                    from src.core.stability_engine import get_stability_engine
+                    _engine = get_stability_engine()
+                    if _engine.should_pause():
+                        log.warning("[BRIDGE] System CRITICAL — pausing 5s to breathe")
+                        time.sleep(5.0)
+                        _engine.breathe()
+                    elif _engine.should_defer():
+                        log.info("[BRIDGE] System HIGH — pausing 1s to breathe")
+                        time.sleep(1.0)
+                        _engine.breathe()
+                except Exception:
+                    pass
 
                 
                 # ── INDUSTRY-STANDARD: Agent Phase Tracking ─────────────────
@@ -3221,9 +3262,10 @@ Shell: PowerShell (use semicolons ; not &&)
                                 for td in active_tool_defs
                             )
                             if _has_large_content_tool:
-                                # Allow up to 75% of model max or 32K — whichever is smaller.
-                                # Write/Edit turns MUST have room to output full file content.
-                                stream_max_tokens = min(max_tokens, max(8_192, remaining_ctx // 2)) if remaining_ctx else max_tokens
+                                # Write/Edit turns need room for FULL file content.
+                                # A landing page HTML is 30,000+ chars (7,500+ tokens).
+                                # Allow up to model max or remaining context — whichever is smaller.
+                                stream_max_tokens = min(max_tokens, max(32_768, remaining_ctx // 2)) if remaining_ctx else max_tokens
                                 log.info(f"[BRIDGE] Large-content tools active (Write/Edit) — stream cap raised to {stream_max_tokens}")
                             else:
                                 prompt_chars = len(message)
@@ -3242,8 +3284,8 @@ Shell: PowerShell (use semicolons ; not &&)
                                 else:
                                     stream_max_tokens = min(budget_cap, max(1_000, tool_turn_upper_cap))
                         else:
-                            # Final answer / no-tool turns can be larger, but keep bounded.
-                            stream_max_tokens = min(max_tokens, 8_192)
+                            # Final answer / no-tool turns — allow generous output.
+                            stream_max_tokens = min(max_tokens, 16_384)
 
                         log.debug(f"[BRIDGE] Adaptive stream cap: {stream_max_tokens} (tool_turn={bool(active_tool_defs)}, est={_est_tokens}, budget={_budget}, base_max={max_tokens})")
 
@@ -3549,6 +3591,7 @@ Shell: PowerShell (use semicolons ; not &&)
                     
                     # Case 3: Legitimate exit - all done or informational
                     log.info(f"[BRIDGE] No tool calls on turn {turn + 1} — done")
+                    self._last_turn_reasoning = turn_reasoning
                     break
 
                 log.info(
@@ -4135,7 +4178,12 @@ Shell: PowerShell (use semicolons ; not &&)
             pass  # sip not available, assume object is alive
         try:
             signal.emit(*args)
-        except (RuntimeError, AttributeError) as exc:
+        except AttributeError:
+            # Signal is still the class-level pyqtSignal descriptor
+            # (not yet bound to a QObject instance). This is expected
+            # during startup/shutdown transitions — silently skip.
+            pass
+        except RuntimeError as exc:
             import logging; logging.getLogger('Cortex').warning(f"[BRIDGE] _safe_emit failed: {exc}")
 
     def _build_activity_info(
@@ -5524,8 +5572,12 @@ Shell: PowerShell (use semicolons ; not &&)
             parent = os.path.dirname(full_path)
             if parent:
                 os.makedirs(parent, exist_ok=True)
-            with open(full_path, "w", encoding="utf-8") as f:
-                f.write(content)
+            # CRITICAL: Normalize line endings to prevent doubled empty lines.
+            # Without this, mixed \r\n and \n in content causes each line to
+            # appear followed by an empty line after save.
+            normalized_content = content.replace("\r\n", "\n").replace("\r", "\n")
+            with open(full_path, "w", encoding="utf-8", newline="") as f:
+                f.write(normalized_content)
             # ── Emit UI signals (non-critical) ──
             try:
                 self.file_generated.emit(full_path, content)
@@ -5710,7 +5762,11 @@ Shell: PowerShell (use semicolons ; not &&)
             new_content = file_content.replace(old_string, new_string, 1)
             # Write back in the same encoding we successfully read with
             _write_enc = _enc if file_content is not None else "utf-8"
-            with open(full_path, "w", encoding=_write_enc) as f:
+            # CRITICAL: Normalize line endings to prevent doubled empty lines.
+            # Without this, mixed \r\n and \n in content causes each line to
+            # appear followed by an empty line after save.
+            new_content = new_content.replace("\r\n", "\n").replace("\r", "\n")
+            with open(full_path, "w", encoding=_write_enc, newline="") as f:
                 f.write(new_content)
             # Update read_file_state so the next Edit turn's staleness check passes
             try:
@@ -7145,10 +7201,24 @@ Shell: PowerShell (use semicolons ; not &&)
                     self._streaming.emit_llm_complete(response)
                 except Exception:
                     pass
-            # Save assistant turn to history
-            self._conversation_history.append(
-                ChatMessage(role="assistant", content=response)
-            )
+            # Save assistant turn to history — PRESERVE reasoning_content
+            # for MiMo/Kimi/DeepSeek thinking mode. Without this, the next
+            # request to MiMo returns HTTP 400: "reasoning_content must be
+            # passed back to the API."
+            _cm = ChatMessage(role="assistant", content=response)
+            if self._last_turn_reasoning:
+                _cm.reasoning_content = self._last_turn_reasoning
+                self._last_turn_reasoning = ""  # Clear after use
+            with self._history_lock:
+                self._conversation_history.append(_cm)
+
+            # ── IMMEDIATE PERSISTENCE: Save chat to DB after every response ──
+            # This ensures chats survive ANY crash (Chromium crash, power loss, etc.)
+            # The save is non-blocking and fire-and-forget.
+            try:
+                self._persist_chat_async()
+            except Exception:
+                pass  # Never let persistence failure break the response flow
         except Exception as exc:
             log.error(
                 "[BRIDGE] _on_response_ready CRASH: %s\nFULL TRACEBACK:",
@@ -7175,12 +7245,13 @@ Shell: PowerShell (use semicolons ; not &&)
             )
         
         log.info(f"[BRIDGE] Injecting vision exchange into history: user={len(user_text)} chars, assistant={len(assistant_response)} chars")
-        self._conversation_history.append(
-            ChatMessage(role="user", content=user_text)
-        )
-        self._conversation_history.append(
-            ChatMessage(role="assistant", content=assistant_response)
-        )
+        with self._history_lock:
+            self._conversation_history.append(
+                ChatMessage(role="user", content=user_text)
+            )
+            self._conversation_history.append(
+                ChatMessage(role="assistant", content=assistant_response)
+            )
 
     def _on_chunk_ready(self, chunk: str):
         self.response_chunk.emit(chunk)
@@ -7375,44 +7446,105 @@ Shell: PowerShell (use semicolons ; not &&)
         # session to avoid duplicate context on project switches.
         if not self._chat_context_restored:
             self._chat_context_restored = True
-            try:
-                from src.core.chat_history import get_chat_history
-                _history_mgr = get_chat_history()
-                _conversations = _history_mgr.get_conversations(path)
-                if _conversations:
-                    _latest_conv = _conversations[-1]
-                    _conv_id = _latest_conv.get('conversation_id', '')
-                    if _conv_id:
-                        _msgs = _history_mgr.get_messages(_conv_id, limit=200)
-                        _recent: List[Dict] = []
-                        for _m in reversed(_msgs):
-                            if _m.get('role') in ('user', 'assistant'):
-                                _recent.insert(0, _m)
-                                if len(_recent) >= 20:
-                                    break
-                        if _recent:
-                            _restored_count = 0
-                            for _m in _recent:
-                                _content = (_m.get('content') or '').strip()
-                                if not _content:
-                                    continue
-                                if len(_content) > 4000:
-                                    _content = _content[:4000] + '\n... [truncated on restore]'
-                                self._conversation_history.append(
-                                    ChatMessage(role=_m.get('role', 'user'), content=_content)
-                                )
-                                _restored_count += 1
-                            log.info(
-                                f'[SESSION] Restored {_restored_count} chat messages from DB '
-                                f'for conversation continuity (project: {path})'
-                            )
-            except Exception as _e:
-                log.warning(f'[SESSION] Failed to restore chat messages from DB: {_e}')
+            self._restore_latest_conversation(path)
 
         try:
             _agent_set_project_root(path)
         except Exception:
             pass
+
+    def _restore_latest_conversation(self, project_path: str) -> None:
+        """Restore the most recent conversation from DB into _conversation_history.
+        
+        Called once on project open for initial AI context.
+        """
+        try:
+            from src.core.chat_history import get_chat_history
+            _history_mgr = get_chat_history()
+            _conversations = _history_mgr.get_conversations(project_path)
+            if _conversations:
+                _latest_conv = _conversations[-1]
+                _conv_id = _latest_conv.get('conversation_id', '')
+                if _conv_id:
+                    self._restore_conversation_messages(_conv_id)
+        except Exception as _e:
+            log.warning(f'[SESSION] Failed to restore chat messages from DB: {_e}')
+
+    def restore_conversation_context(self, conversation_id: str) -> None:
+        """Restore a SPECIFIC conversation's context into _conversation_history.
+        
+        Called by the UI when the user switches to a different chat.
+        Replaces the current history with the selected conversation's messages
+        so the AI has correct context for follow-up questions.
+        
+        Args:
+            conversation_id: The conversation to load context from.
+        """
+        if not conversation_id:
+            return
+        
+        log.info(f'[SESSION] Switching AI context to conversation: {conversation_id}')
+        self._current_conversation_id = conversation_id
+        
+        # Clear existing history (except system messages like resume markers)
+        system_msgs = [m for m in self._conversation_history if m.role == 'system']
+        self._conversation_history.clear()
+        self._conversation_history.extend(system_msgs)
+        
+        # Load the selected conversation
+        self._restore_conversation_messages(conversation_id)
+
+    def _restore_conversation_messages(self, conversation_id: str) -> None:
+        """Load messages from DB and append to _conversation_history."""
+        try:
+            from src.core.chat_history import get_chat_history
+            _history_mgr = get_chat_history()
+            _msgs = _history_mgr.get_messages(conversation_id, limit=200)
+            _recent: List[Dict] = []
+            for _m in reversed(_msgs):
+                if _m.get('role') in ('user', 'assistant'):
+                    _recent.insert(0, _m)
+                    if len(_recent) >= 20:
+                        break
+            if _recent:
+                _restored_count = 0
+                for _m in _recent:
+                    _content = (_m.get('content') or '').strip()
+                    # Metadata blob stores reasoning_content, tool_calls,
+                    # tool_call_id (serialized by save_chats_to_sqlite).
+                    _meta = _m.get('metadata', {}) or {}
+                    # Allow empty content for assistant messages that have
+                    # tool_calls (tool-call placeholders) or reasoning_content
+                    # (thinking-mode models like MiMo require these preserved).
+                    _has_tc = bool(_m.get('tool_calls') or _meta.get('tool_calls'))
+                    _has_rc = bool(_m.get('reasoning_content') or _meta.get('reasoning_content'))
+                    if not _content and not _has_tc and not _has_rc:
+                        continue
+                    if len(_content) > 4000:
+                        _content = _content[:4000] + '\n... [truncated on restore]'
+                    _cm = ChatMessage(role=_m.get('role', 'user'), content=_content)
+                    # PRESERVE reasoning_content — MiMo/Kimi/DeepSeek thinking
+                    # mode requires reasoning_content from previous assistant
+                    # messages to be passed back in subsequent requests.
+                    # Without this, MiMo returns HTTP 400:
+                    #   "The reasoning_content in the thinking mode must be
+                    #    passed back to the API."
+                    _rc = _m.get('reasoning_content') or _meta.get('reasoning_content')
+                    if _rc:
+                        _cm.reasoning_content = _rc
+                    _tc = _m.get('tool_calls') or _meta.get('tool_calls')
+                    if _tc:
+                        _cm.tool_calls = _tc
+                    _tcid = _m.get('tool_call_id') or _meta.get('tool_call_id')
+                    if _tcid:
+                        _cm.tool_call_id = _tcid
+                    self._conversation_history.append(_cm)
+                    _restored_count += 1
+                log.info(
+                    f'[SESSION] Restored {_restored_count} messages from conversation {conversation_id}'
+                )
+        except Exception as _e:
+            log.warning(f'[SESSION] Failed to restore conversation messages: {_e}')
 
     def set_project_context(self, context: Any) -> None:
         if isinstance(context, dict):
@@ -7497,7 +7629,100 @@ Shell: PowerShell (use semicolons ; not &&)
 
     def clear_conversation(self):
         """Clear the in-memory conversation history."""
-        self._conversation_history.clear()
+        with self._history_lock:
+            self._conversation_history.clear()
+
+    def save_conversation_to_db(self) -> bool:
+        """Save conversation history directly to SQLite (bypasses JS/Chromium).
+
+        Used as fallback when Chromium renderer has crashed and
+        run_javascript() can't execute saveProjectChats().
+
+        Returns True if save succeeded.
+        """
+        try:
+            from src.core.chat_history import get_chat_history
+            _hist = get_chat_history()
+            _conv_id = getattr(self, '_current_conversation_id', None)
+            if not _conv_id:
+                log.debug("[BRIDGE] save_conversation_to_db: no active conversation ID")
+                return False
+            # Build message list from _conversation_history
+            _msgs = []
+            for cm in self._conversation_history:
+                if cm.role in ('user', 'assistant'):
+                    _meta: dict = {}
+                    _rc = getattr(cm, 'reasoning_content', None)
+                    if _rc:
+                        _meta['reasoning_content'] = _rc
+                    _tc = getattr(cm, 'tool_calls', None)
+                    if _tc:
+                        _meta['tool_calls'] = _tc
+                    _tcid = getattr(cm, 'tool_call_id', None)
+                    if _tcid:
+                        _meta['tool_call_id'] = _tcid
+                    _msgs.append({
+                        'role': cm.role,
+                        'content': cm.content or '',
+                        'metadata': _meta if _meta else None,
+                    })
+            if not _msgs:
+                return False
+            # Save directly to DB
+            _hist.create_conversation(
+                project_path=getattr(self, '_project_root', '') or '',
+                title=f"Chat {_conv_id[:8]}",
+                conversation_id=_conv_id,
+            )
+            for msg in _msgs:
+                _hist.add_message(
+                    conversation_id=_conv_id,
+                    role=msg['role'],
+                    content=msg['content'],
+                    metadata=msg['metadata'],
+                    immediate=True,
+                )
+            _hist.db.flush_write_queue()
+            log.info(f"[BRIDGE] Direct DB save: {len(_msgs)} messages for conversation {_conv_id}")
+            return True
+        except Exception as e:
+            log.warning(f"[BRIDGE] Direct DB save failed: {e}")
+            return False
+
+    def _persist_chat_async(self) -> None:
+        """
+        Non-blocking chat persistence to SQLite.
+
+        Saves the current conversation to the database immediately after
+        each AI response. This ensures chats survive ANY crash:
+        - Chromium renderer crash
+        - Power loss
+        - IDE force-kill
+        - Windows session end
+
+        Uses a background thread with a 2-second debounce to avoid
+        excessive DB writes during rapid conversation turns.
+        """
+        import threading as _threading
+
+        # Debounce: skip if a persist is already scheduled
+        if hasattr(self, '_persist_timer') and self._persist_timer is not None:
+            if self._persist_timer.is_alive():
+                return  # Already scheduled
+
+        def _do_persist():
+            try:
+                time.sleep(2.0)  # Debounce: wait for turn to complete
+                self.save_conversation_to_db()
+            except Exception as e:
+                log.debug(f"[BRIDGE] Async persist failed: {e}")
+
+        self._persist_timer = _threading.Thread(
+            target=_do_persist,
+            daemon=True,
+            name="ChatPersist",
+        )
+        self._persist_timer.start()
 
     @staticmethod
     def _extract_semantic_summary(checkpoint_text: str, max_chars: int = 500) -> str:

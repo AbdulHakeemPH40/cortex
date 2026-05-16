@@ -41,7 +41,7 @@ def get_logger(name: str = "cortex") -> logging.Logger:
             delay=True
         )
         file_handler.rotator = _windows_safe_rotator
-        file_handler.setLevel(logging.INFO)  # INFO not DEBUG - prevents heartbeat/debug spam
+        file_handler.setLevel(logging.DEBUG)  # DEBUG — captures all provider error bodies, SSE frames, tool schemas
         file_handler.setFormatter(
             logging.Formatter(
                 "[%(asctime)s] %(levelname)s %(name)s: %(message)s",

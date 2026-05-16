@@ -39,7 +39,10 @@ all_binaries = winpty_dlls + ripgrep_binaries
 
 a = Analysis(
     ['src\\main.py'],
-    pathex=[project_root],
+    pathex=[
+        project_root,
+        os.path.join(project_root, 'src'),
+    ],
     binaries=all_binaries,  # winpty + ripgrep
     datas=[
         # ── UI HTML panels ────────────────────────────────────────────────────
@@ -81,9 +84,11 @@ a = Analysis(
         ('node_modules/.bin/vscode-html-language-server*', 'node_modules/.bin'),
         ('node_modules/.bin/vscode-css-language-server*', 'node_modules/.bin'),
         ('node_modules/.bin/vscode-json-language-server*', 'node_modules/.bin'),
+        # ── Monaco Editor (code editor component) ────────────────────────────
+        ('node_modules/monaco-editor/min/vs', 'node_modules/monaco-editor/min/vs'),
         # ── Environment / config ──────────────────────────────────────────────
         # SECURITY: Do NOT include .env with API keys! Only .env.example
-        ('.env.example', '.'),
+        (os.path.join(project_root, '.env.example'), '.'),
     ],
     hiddenimports=[
         # ── PyQt6 ───────────────────────────────────────────────────────────
@@ -204,6 +209,32 @@ a = Analysis(
         # ── Terminal utilities ─────────────────────────────────────
         'InquirerPy',                       # Interactive prompts
         'prompt_toolkit',                   # Terminal UI
+        # ── agent.src dynamic imports (importlib.import_module) ──────
+        # These are loaded at runtime through importlib — PyInstaller
+        # cannot trace them without explicit hiddenimports.
+        'agent.src.bootstrap.state',        # AGENT_STATE_KEYS, etc.
+        'agent.src.tools.FileReadTool.FileReadTool',
+        'agent.src.tools.FileEditTool.FileEditTool',
+        'agent.src.tools.FileWriteTool.FileWriteTool',
+        'agent.src.tools.GlobTool.GlobTool',
+        'agent.src.tools.GrepTool.GrepTool',
+        'agent.src.tools.BashTool.destructiveCommandWarning',
+        'agent.src.tools.WebFetchTool.utils',
+        'agent.src.utils.abortController',
+        'agent.src.utils.sandbox.sandbox_adapter',
+        'agent.src.hooks.useDiffData',
+        'agent.src.hooks.useDiffInIDE',
+        'agent.src.memdir.memdir',
+        'agent.src.memdir.memoryAge',
+        'agent.src.setup',                  # Agent initialization
+        # ── Async HTTP (used by agent/src modules) ──────────────────
+        'aiohttp',
+        'aiohttp.client',
+        'aiofiles',
+        # ── AI changes module (dynamic diff rendering) ──────────────
+        'src.ai.changes',
+        'src.ai.changes.types',
+        'src.ai.changes.diff_renderer',
     ],
     hookspath=[],
     hooksconfig={},

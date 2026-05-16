@@ -128,16 +128,12 @@ _REGISTRY: List[Tuple[str, int, int]] = [
 
     # ── DeepSeek V4 / legacy aliases ─────────────────────────────────────────
     # DeepSeek V4 supports 1M context across all tiers.
-    # Operational caps set for production agent systems:
-    #   Pro:   131K output (generous headroom for complex multi-file work)
-    #   Flash:  65K output (balanced speed/capacity for rapid iteration)
+    # Full output cap for agentic coding — agent needs to write complete files.
     ("deepseek-v4-pro",     1_000_000, 131_072),
-    ("deepseek-v4-flash",   1_000_000,  65_536),
-    # ("deepseek-v4-pro",   1_000_000, 384_000),
-    # ("deepseek-v4-flash", 1_000_000, 384_000),
-    ("deepseek-chat",       1_000_000,  65_536),  # currently routed to V4 tier
-    ("deepseek-reasoner",   1_000_000,  65_536),  # currently routed to V4 tier
-    ("deepseek",            1_000_000,  65_536),  # generic DeepSeek fallback
+    ("deepseek-v4-flash",   1_000_000, 131_072),
+    ("deepseek-chat",       1_000_000, 131_072),
+    ("deepseek-reasoner",   1_000_000, 131_072),
+    ("deepseek",            1_000_000, 131_072),
 
     # ── OpenAI GPT-5.4 Series (Budget-Friendly) ──────────────────────────
     ("gpt-5.4-nano",         400_000, 128_000),
@@ -145,99 +141,92 @@ _REGISTRY: List[Tuple[str, int, int]] = [
     ("gpt-5.4",            1_000_000, 128_000),
 
     # ── OpenAI GPT-4.1 Series ─────────────────────────────────────────
-    # Real output limit is 32,768 (confirmed via API error).
-    ("gpt-4.1-nano",       1_000_000,  32_768),
-    ("gpt-4.1-mini",       1_000_000,  32_768),
-    ("gpt-4.1",            1_000_000,  32_768),
+    ("gpt-4.1-nano",       1_000_000,  65_536),
+    ("gpt-4.1-mini",       1_000_000,  65_536),
+    ("gpt-4.1",            1_000_000,  65_536),
 
     # ── OpenAI GPT-4o Mini (Best Value) ───────────────────────────────────
-    ("gpt-4o-mini",          128_000,  16_000),
+    ("gpt-4o-mini",          128_000,  32_768),
 
     # ── Anthropic Claude 3.x ─────────────────────────────────────────────────
-    ("claude-3-5-haiku",     200_000,   8_192),
-    ("claude-3-5-sonnet",    200_000,   8_192),
-    ("claude-3-7-sonnet",    200_000,  32_000),
-    ("claude-3-opus",        200_000,   4_096),
-    ("claude-3-haiku",       200_000,   4_096),
-    ("claude-3-sonnet",      200_000,   4_096),
+    ("claude-3-5-haiku",     200_000,  16_384),
+    ("claude-3-5-sonnet",    200_000,  16_384),
+    ("claude-3-7-sonnet",    200_000,  64_000),
+    ("claude-3-opus",        200_000,  16_384),
+    ("claude-3-haiku",       200_000,  16_384),
+    ("claude-3-sonnet",      200_000,  16_384),
 
     # ── Anthropic Claude 4.x ─────────────────────────────────────────────────
-    ("claude-sonnet-4-6",    200_000,  32_000),
-    ("claude-sonnet-4-5",    200_000,  32_000),
-    ("claude-sonnet-4",      200_000,  32_000),
-    ("claude-opus-4-6",      200_000,  32_000),
-    ("claude-opus-4",        200_000,  32_000),
-    ("claude-haiku-4",       200_000,  16_000),
-    ("claude",               200_000,   8_192),   # generic claude fallback
+    ("claude-sonnet-4-6",    200_000,  64_000),
+    ("claude-sonnet-4-5",    200_000,  64_000),
+    ("claude-sonnet-4",      200_000,  64_000),
+    ("claude-opus-4-6",      200_000,  64_000),
+    ("claude-opus-4",        200_000,  64_000),
+    ("claude-haiku-4",       200_000,  32_768),
+    ("claude",               200_000,  16_384),
 
     # ── Mistral ──────────────────────────────────────────────────────────────
-    ("mistral-large",        128_000,   4_096),
-    ("mistral-medium",       128_000,   4_096),
-    ("mistral-small",         32_000,   4_096),
-    ("mistral-7b",            32_000,   4_096),
-    ("codestral",             32_000,   4_096),
-    ("mixtral-8x22b",         65_536,   4_096),
-    ("mixtral-8x7b",          32_768,   4_096),
-    ("mistral",               128_000,   4_096),   # generic mistral fallback
+    # CRITICAL FIX: Was 4,096 — too low to write any real code file.
+    # A landing page HTML is 30,000+ chars. Raised to 32K minimum.
+    ("mistral-large",        128_000,  32_768),
+    ("mistral-medium",       128_000,  32_768),
+    ("mistral-small",         32_000,  16_384),
+    ("mistral-7b",            32_000,  16_384),
+    ("codestral",             32_000,  16_384),
+    ("mixtral-8x22b",         65_536,  32_768),
+    ("mixtral-8x7b",          32_768,  16_384),
+    ("mistral",               128_000,  32_768),
 
     # ── Google Gemini ─────────────────────────────────────────────────────────
     ("gemini-2.5",          1_000_000,  65_536),
-    ("gemini-2.0-flash",    1_000_000,   8_192),
-    ("gemini-1.5-pro",      1_000_000,   8_192),
-    ("gemini-1.5-flash",    1_000_000,   8_192),
-    ("gemini-1.0-pro",        32_768,   2_048),
-    ("gemini",                32_768,   2_048),   # generic gemini fallback
+    ("gemini-2.0-flash",    1_000_000,  32_768),
+    ("gemini-1.5-pro",      1_000_000,  32_768),
+    ("gemini-1.5-flash",    1_000_000,  32_768),
+    ("gemini-1.0-pro",        32_768,   8_192),
+    ("gemini",                32_768,   8_192),
 
     # ── Qwen / SiliconFlow / Alibaba ─────────────────────────────────────────
-    ("qwen2.5-72b",          131_072,   8_192),
-    ("qwen2.5-coder",        131_072,   8_192),
-    ("qwen2.5",              131_072,   8_192),
-    ("qwen-max",              32_000,   8_192),
-    ("qwen-plus",            131_072,   8_192),
-    ("qwen-turbo",            32_000,   2_048),
-    ("qwen",                  32_000,   2_048),   # generic qwen fallback
+    ("qwen2.5-72b",          131_072,  32_768),
+    ("qwen2.5-coder",        131_072,  32_768),
+    ("qwen2.5",              131_072,  32_768),
+    ("qwen-max",              32_000,  16_384),
+    ("qwen-plus",            131_072,  32_768),
+    ("qwen-turbo",            32_000,   8_192),
+    ("qwen",                  32_000,   8_192),
 
     # ── Meta Llama ───────────────────────────────────────────────────────────
-    ("llama-3.3-70b",        131_072,   8_192),
-    ("llama-3.2",            131_072,   4_096),
-    ("llama-3.1",            131_072,   4_096),
-    ("llama-3",               8_192,   2_048),
-    ("llama-2",               4_096,   2_048),
-    ("llama",                 8_192,   2_048),    # generic llama fallback
+    ("llama-3.3-70b",        131_072,  32_768),
+    ("llama-3.2",            131_072,  16_384),
+    ("llama-3.1",            131_072,  16_384),
+    ("llama-3",               8_192,   8_192),
+    ("llama-2",               4_096,   4_096),
+    ("llama",                 8_192,   8_192),
 
     # ── Cohere ───────────────────────────────────────────────────────────────
-    ("command-r-plus",       128_000,   4_000),
-    ("command-r",            128_000,   4_000),
-    ("command",               4_096,   4_000),
+    ("command-r-plus",       128_000,  16_384),
+    ("command-r",            128_000,  16_384),
+    ("command",               4_096,   4_096),
 
     # ── Yi ────────────────────────────────────────────────────────────────────
-    ("yi-large",             200_000,   4_096),
-    ("yi-medium",             16_000,   4_096),
-    ("yi",                   200_000,   4_096),
+    ("yi-large",             200_000,  16_384),
+    ("yi-medium",             16_000,   8_192),
+    ("yi",                   200_000,  16_384),
 
     # ── Kimi / Moonshot AI ───────────────────────────────────────────────────
-    # Kimi K2.6 supports 1M tokens per request with 262,144 context window.
-    # We register the full 1M budget so derived caps (tool/history/file/turns)
-    # are generous enough for complex multi-file agentic workflows.
-    ("kimi-k2.6",             1_000_000,  32_768),
-    ("kimi",                   1_000_000,  32_768),   # generic kimi fallback
+    # CRITICAL FIX: Was 32,768 — too low for code generation with 1M context.
+    # Raised to 65,536 to match DeepSeek V4 Flash.
+    ("kimi-k2.6",             1_000_000,  65_536),
+    ("kimi",                   1_000_000,  65_536),
 
     # ── Xiaomi MiMo V2.5 Family ──────────────────────────────────────────────
-    # MiMo-V2.5-Pro: 1.02T-param MoE (42B active), 1.05M ctx, 131.1K output
-    #   — Flagship agentic coding, long-horizon autonomous agent loops
-    # MiMo-V2.5: Full-modal (text/image/video/audio), 1.05M ctx, 131.1K output
-    #   — Multimodal agentic perception & workflows
-    # MiMo-V2.5-Flash: Lightweight, 256K (262,144) ctx, 64K output
-    #   — High-throughput coding, simple tasks, cheap fallback
-    # All support streaming + tool calling (OpenAI-compatible API).
     ("mimo-v2.5-pro",          1_048_576, 131_072),
     ("mimo-v2.5",              1_048_576, 131_072),
     ("mimo-v2.5-flash",          262_144,  65_536),
-    ("mimo",                   1_048_576,  32_768),   # generic mimo fallback
+    ("mimo",                   1_048_576,  65_536),
 
     # ── SiliconFlow generic ───────────────────────────────────────────────────
-    ("pro/deepseek",         128_000,   8_000),
-    ("free/deepseek",        128_000,   8_000),
+    ("pro/deepseek",         128_000,  32_768),
+    ("free/deepseek",        128_000,  32_768),
 ]
 # fmt: on
 
@@ -302,10 +291,16 @@ def get_model_limits(model_id: str) -> ModelLimits:
 # Escalation tiers per model (levels: 0=default, 1=moderate, 2=full)
 _ESCALATION_TABLE: Dict[str, Tuple[int, int, int]] = {
     "deepseek-v4-pro":   (131_072, 256_000, 384_000),
-    "deepseek-v4-flash": ( 65_536,  96_000, 131_072),
-    "deepseek-chat":     ( 65_536,  96_000, 131_072),
-    "deepseek-reasoner": ( 65_536,  96_000, 131_072),
-    "deepseek":          ( 65_536,  96_000, 131_072),
+    "deepseek-v4-flash": (131_072, 196_000, 262_144),
+    "deepseek-chat":     (131_072, 196_000, 262_144),
+    "deepseek-reasoner": (131_072, 196_000, 262_144),
+    "deepseek":          (131_072, 196_000, 262_144),
+    "mimo-v2.5-pro":     (131_072, 131_072, 131_072),
+    "mimo-v2.5":         (131_072, 131_072, 131_072),
+    "kimi-k2.6":         ( 65_536,  98_304, 131_072),
+    "mistral-large":     ( 32_768,  49_152,  65_536),
+    "mistral-medium":    ( 32_768,  49_152,  65_536),
+    "mistral":           ( 32_768,  49_152,  65_536),
 }
 
 
@@ -330,7 +325,13 @@ def get_escalated_max_output_tokens(model_id: str, escalation_level: int = 0) ->
     for pattern, tiers in _ESCALATION_TABLE.items():
         if pattern in needle:
             level = min(escalation_level, len(tiers) - 1)
-            return tiers[level]
+            escalated = tiers[level]
+            # Safety clamp: never exceed the model's actual max_output_tokens
+            try:
+                model_limit = get_model_limits(model_id).max_output_tokens
+                return min(escalated, model_limit)
+            except Exception:
+                return escalated
 
     # Unknown model — return its base cap from the registry
     return get_model_limits(model_id).max_output_tokens

@@ -635,8 +635,11 @@ class XTermWidget(QWidget):
             
     def set_cwd(self, path: str):
         self._cwd = path
-        # PowerShell only - change directory
-        self.execute_command(f'Set-Location -Path "{path}"')
+        # If the shell process is already running, change directory inline.
+        # If not yet spawned (race during project-open before showEvent fires),
+        # just update self._cwd — the shell will spawn with that cwd.
+        if self._pty_process or (self._process and self._process.state() == QProcess.ProcessState.Running):
+            self.execute_command(f'Set-Location -Path "{path}"')
              
     def activate_virtual_env(self, venv_path: str):
         if sys.platform == "win32":

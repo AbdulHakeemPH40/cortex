@@ -63,11 +63,11 @@ class MistralProvider(BaseProvider):
         # Reuse HTTP connections across calls (reduces TLS/handshake overhead).
         self._session = requests.Session()
         self._token_count = {"input": 0, "output": 0}
-        self._max_retries = self._get_int_env("CORTEX_MISTRAL_MAX_RETRIES", 2, minimum=1, maximum=5)
+        self._max_retries = self._get_int_env("CORTEX_MISTRAL_MAX_RETRIES", 4, minimum=1, maximum=5)
         self._retry_delay = 1.0
         self._connect_timeout = self._get_float_env("CORTEX_MISTRAL_CONNECT_TIMEOUT_SEC", 20.0, minimum=1.0, maximum=120.0)
-        self._read_timeout = self._get_float_env("CORTEX_MISTRAL_READ_TIMEOUT_SEC", 40.0, minimum=3.0, maximum=300.0)
-        self._tool_read_timeout = self._get_float_env("CORTEX_MISTRAL_TOOL_READ_TIMEOUT_SEC", 45.0, minimum=5.0, maximum=300.0)
+        self._read_timeout = self._get_float_env("CORTEX_MISTRAL_READ_TIMEOUT_SEC", 120.0, minimum=3.0, maximum=600.0)
+        self._tool_read_timeout = self._get_float_env("CORTEX_MISTRAL_TOOL_READ_TIMEOUT_SEC", 180.0, minimum=5.0, maximum=600.0)
         self._tool_desc_max_chars = self._get_int_env("CORTEX_MISTRAL_TOOL_DESC_MAX_CHARS", 180, minimum=60, maximum=500)
         self._param_desc_max_chars = self._get_int_env("CORTEX_MISTRAL_PARAM_DESC_MAX_CHARS", 140, minimum=40, maximum=400)
         self._allowed_tool_names = set(VALID_TOOL_NAMES)  # Dynamic tool name validation
@@ -422,6 +422,8 @@ class MistralProvider(BaseProvider):
                     error_type = 'timeout'
                 elif "429" in error_str or "rate limit" in error_str or "too many requests" in error_str:
                     error_type = 'rate_limit'
+                elif " 400 " in f" {error_str} " or "bad request" in error_str:
+                    error_type = 'bad_request'
                 elif (
                     "unreachable_backend" in error_str
                     or "service unavailable" in error_str
@@ -455,6 +457,11 @@ class MistralProvider(BaseProvider):
                     else:
                         # Final attempt failed - provide clear error
                         raise Exception(f"Mistral API rate limit exceeded. Please wait {backoff_seconds} seconds before trying again. (429 Too Many Requests)")
+
+                # Non-retryable 400 Bad Request — don't waste retries
+                if error_type == 'bad_request':
+                    log.error(f"[Mistral] HTTP 400 Bad Request (non-retryable): {e}")
+                    raise last_error
 
                 # Transient 5xx/server-side errors: back off a bit more than the default.
                 if error_type == 'server_error':
@@ -731,7 +738,10 @@ class MistralProvider(BaseProvider):
                 retry_callback=kwargs.get("retry_callback"),
                 **chat_kwargs,
             ):
-                chunks.append(chunk)
+                # Filter out reasoning_content markers — these are for the
+                # thought card UI only and must not appear in the response text.
+                if chunk and not chunk.startswith("__REASONING_DELTA__:"):
+                    chunks.append(chunk)
 
             full_content = "".join(chunks)
             duration_ms = (time.time() - start_time) * 1000

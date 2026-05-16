@@ -4179,12 +4179,14 @@ body.loaded #loading-overlay {
     opacity: 1;
     transition: max-height 0.25s ease, opacity 0.2s ease, padding 0.25s ease;
 }
-/* Collapsed: show preview so users see thought content at a glance */
+/* Collapsed: HIDE preview — only show header */
 .ca-card:not(.expanded) .ca-card-preview {
-    max-height: 30px;
-    padding: 3px 16px 8px 30px;
-    opacity: 0.75;
+    max-height: 0;
+    padding: 0 16px 0 30px;
+    opacity: 0;
+    overflow: hidden;
 }
+/* Expanded: show preview as muted summary above body */
 .ca-card.expanded .ca-card-preview {
     max-height: 30px;
     padding: 3px 16px 8px 30px;
@@ -5248,71 +5250,154 @@ body.light-mode {
    ================================================ */
 
 .mermaid-wrapper {
-    background: var(--bg-code);
-    border-radius: 10px;
+    background: linear-gradient(135deg, #0d1117 0%, #161b22 100%);
+    border-radius: 12px;
     margin: 16px 0;
-    overflow: hidden;
-    border: 1px solid #2f3542;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.28);
+    overflow: visible;
+    border: 1px solid rgba(88, 166, 255, 0.15);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(88, 166, 255, 0.05);
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* Ensure child elements respect the parent border-radius */
+.mermaid-wrapper > .mermaid-header {
+    border-radius: 12px 12px 0 0;
+}
+.mermaid-wrapper > .mermaid-container {
+    border-radius: 0 0 12px 12px;
+}
+
+.mermaid-wrapper:hover {
+    border-color: rgba(88, 166, 255, 0.3);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(88, 166, 255, 0.1);
 }
 
 .mermaid-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background: #131722;
+    background: linear-gradient(90deg, rgba(88, 166, 255, 0.08) 0%, rgba(13, 17, 23, 0.95) 100%);
     padding: 10px 16px;
-    border-bottom: 1px solid #2f3542;
+    border-bottom: 1px solid rgba(88, 166, 255, 0.12);
     font-size: 13px;
-    color: #ffffff;
+    color: #e6edf3;
     font-weight: 600;
+    backdrop-filter: blur(8px);
 }
 
-.mermaid-header i { margin-right: 6px; color: #ffffff; }
+.mermaid-header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.mermaid-header-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: rgba(88, 166, 255, 0.12);
+    border: 1px solid rgba(88, 166, 255, 0.2);
+    color: #58a6ff;
+    font-size: 13px;
+    flex-shrink: 0;
+}
+
+.mermaid-header-title {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.mermaid-header-title span:first-child {
+    font-size: 13px;
+    font-weight: 600;
+    color: #e6edf3;
+    letter-spacing: 0.01em;
+}
+
+.mmermaid-header-title span:last-child,
+.mermaid-header-subtitle {
+    font-size: 11px;
+    color: #8b949e;
+    font-weight: 400;
+}
 
 .mermaid-actions {
     display: flex;
-    gap: 6px;
+    gap: 4px;
     align-items: center;
 }
 
 .mermaid-action-btn {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: var(--text-secondary);
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: #8b949e;
     cursor: pointer;
-    padding: 4px 10px;
-    border-radius: 4px;
+    padding: 5px 12px;
+    border-radius: 6px;
     font-size: 12px;
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    transition: all 0.2s;
+    gap: 5px;
+    transition: all 0.2s ease;
+    font-family: 'Geist', -apple-system, sans-serif;
+    font-weight: 500;
+    line-height: 1;
+}
+
+.mermaid-action-btn svg {
+    width: 13px;
+    height: 13px;
+    opacity: 0.7;
+    transition: opacity 0.2s ease;
 }
 
 .mermaid-toggle-btn {
-    width: 30px;
+    width: 32px;
+    height: 28px;
     justify-content: center;
     font-weight: 700;
-    padding: 4px 0;
+    padding: 0;
+    font-size: 11px;
+    letter-spacing: 0;
+}
+
+.mermaid-toggle-btn svg {
+    transition: transform 0.3s ease;
+}
+
+.mermaid-wrapper:not(.collapsed) .mermaid-toggle-btn svg {
+    transform: rotate(90deg);
 }
 
 .mermaid-action-btn:hover {
-    background: rgba(255, 255, 255, 0.12);
-    color: #ffffff;
-    border-color: rgba(255, 255, 255, 0.3);
+    background: rgba(88, 166, 255, 0.12);
+    color: #58a6ff;
+    border-color: rgba(88, 166, 255, 0.25);
+}
+
+.mermaid-action-btn:hover svg {
+    opacity: 1;
+}
+
+.mermaid-action-btn:active {
+    transform: scale(0.96);
 }
 
 .mermaid-container {
-    padding: 16px;
-    display: flex;
-    justify-content: center;
-    align-items: center;
+    padding: 20px;
+    display: block;
     min-height: 80px;
-    background: #0b1220;
-    overflow: auto; /* Allow both x and y scrolling for panning */
+    max-height: 70vh;
+    background: linear-gradient(180deg, #0d1117 0%, #0a0e14 100%);
+    background-attachment: local;
+    overflow: auto;
     cursor: grab;
     user-select: none;
+    text-align: center;
 }
 
 .mermaid-wrapper.collapsed .mermaid-container {
@@ -5324,12 +5409,14 @@ body.light-mode {
 }
 
 .mermaid-container svg {
-    max-width: none !important; /* Overridden by JS for panning */
+    max-width: none !important;
     height: auto !important;
-    max-height: none !important; /* Overridden by JS for panning */
+    max-height: none !important;
     text-rendering: optimizeLegibility;
     shape-rendering: geometricPrecision;
     image-rendering: -webkit-optimize-contrast;
+    display: inline-block;
+    vertical-align: top;
 }
 
 .mermaid-rendered svg {
@@ -5366,11 +5453,24 @@ body.light-mode {
 
 .mermaid-loading {
     text-align: center;
-    color: var(--text-secondary);
+    color: #8b949e;
     font-size: 13px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 24px;
 }
 
-.mermaid-loading i { margin-right: 6px; }
+.mermaid-loading svg {
+    animation: mermaid-spin 1.5s linear infinite;
+    color: #58a6ff;
+}
+
+@keyframes mermaid-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
 
 .mermaid-error {
     color: #f87171;
@@ -5440,24 +5540,28 @@ body.light-mode {
     align-items: center;
     justify-content: space-between;
     padding: 0 12px 0 14px;
-    color: #ffffff;
-    border-bottom: 1px solid #2f3542;
-    background: #131722;
+    color: #e6edf3;
+    border-bottom: 1px solid rgba(88, 166, 255, 0.12);
+    background: linear-gradient(90deg, rgba(88, 166, 255, 0.06) 0%, #0d1117 100%);
     font-size: 13px;
     font-weight: 600;
 }
 
 .mermaid-popup-close {
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    color: #ffffff;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #8b949e;
     background: rgba(255, 255, 255, 0.04);
     border-radius: 6px;
-    padding: 4px 10px;
+    padding: 5px 12px;
     cursor: pointer;
+    font-size: 12px;
+    transition: all 0.2s ease;
 }
 
 .mermaid-popup-close:hover {
-    background: rgba(255, 255, 255, 0.12);
+    background: rgba(88, 166, 255, 0.12);
+    color: #58a6ff;
+    border-color: rgba(88, 166, 255, 0.25);
 }
 
 .mermaid-popup-frame {
@@ -5496,4 +5600,54 @@ body.mermaid-popup-open {
     display: flex;
     align-items: center;
     justify-content: center;
+}
+
+/* ============================================
+   LARGE CONTENT SAFE RENDERER
+   Styles for content >100K chars that bypasses
+   markdown/syntax highlighting to prevent OOM
+   ============================================ */
+.large-content-wrapper {
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-main);
+    max-height: 600px;
+    overflow-y: auto;
+    padding: 12px;
+    background: var(--bg-code);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+}
+.large-content-wrapper::-webkit-scrollbar {
+    width: 6px;
+}
+.large-content-wrapper::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 3px;
+}
+.large-content-code {
+    background: var(--bg-void);
+    padding: 12px;
+    border-radius: 6px;
+    margin: 8px 0;
+    overflow-x: auto;
+    font-family: 'Fira Code', 'JetBrains Mono', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* Memory cleanup: collapsed tool cards */
+.ca-card-collapsed {
+    max-height: 40px;
+    overflow: hidden;
+    opacity: 0.7;
+    cursor: pointer;
+    transition: max-height 0.2s ease, opacity 0.2s ease;
+}
+.ca-card-collapsed:hover {
+    max-height: none;
+    opacity: 1;
 }

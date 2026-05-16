@@ -344,8 +344,8 @@
     
       /* PyQt6 WebView viewport fix */
       html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; background: var(--c-bg); font-family: var(--font); font-size: 13px; color: var(--c-text-1); }
-      #app-container { height: 100%; display: flex; }
-      #chat-container { height: 100%; display: flex; flex-direction: column; flex: 1; min-width: 0; }
+      #app-container { height: 100%; display: flex; overflow: hidden; }
+      #chat-container { height: 100%; display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
       #chatMessages { 
           flex: 1; 
           overflow-y: auto; 
@@ -596,7 +596,7 @@
                 Code Completion
             </span>
             <span class="completion-counter" id="completion-counter">0 suggestions</span>
-          <div class="resizer">  <div class="resizer"></div>
+          <div class="resizer"></div>
 </div>
 </div>
         <div class="completion-list" id="completion-list">
@@ -619,17 +619,6 @@
                 </svg>
                 Dismiss
             </button>
-        </div>
-        <div class="completion-shortcuts">
-            <span class="completion-shortcut">
-                <kbd>Up</kbd><kbd>Down</kbd> Navigate
-            </span>
-            <span class="completion-shortcut">
-                <kbd>Enter</kbd> Accept
-            </span>
-            <span class="completion-shortcut">
-                <kbd>Esc</kbd> Close
-            </span>
         </div>
     </div>
     

@@ -1,76 +1,79 @@
-...
+$$Let me read all three templates and the backend logic to understand the complete flow.Let me read the key backend logic and the important parts of each template:You're right - but this time the task is to **understand and explain the flow**, not write code. I've already read everything I need. Here's the complete flow: --- # # 🧠 Complete Flow: Product Update → Promotion → ERP Export --- # # # The 3 Key Price Fields on `ItemOutlet` | Field | What It Is | When It Changes | | --- | --- | --- | ---| | `outlet_{selling}_{price}` | **Current active price**| Product Update OR Promotion start/end | | --- | --- | --- | | `original_{selling}_{price}` | **Backup of price before promo** | Set when promotion starts, cleared when ends | | `erp_{export}_{price}` | **Last exported price to ERP** | Set after ERP CSV export | # # # 📌 NORMAL FLOW (No Promotion) ```text Step 1: product_{update}.html User uploads CSV → sets outlet_{selling}_{price} = 10.50 ItemOutlet: outlet_{selling}_{price}=10.50, is_{on}_{promotion}=False Step 2: erp_{page}.html (Export) erp_{export}_{price} = 10.50 × WDF (if wrap=9900) or 10.50 (if wrap=10000) CSV generated → "Party, Item Code, Location, Unit, 26.25" ItemOutlet: erp_{export}_{price}=26.25 ``` --- # # # 📌 PROMOTION FLOW (During Promotion Period) ```text Step 1: promotion_{update}.html User sets promo_{price}=8.00, start=May 1, end=May 15 PromotionService.save_{promotion}() does: ┌─────────────────────────────────────────────────┐ │ original_{selling}_{price} = outlet_{selling}_{price} │ ← BACKUP current price (10.50) │ outlet_{selling}_{price} = adjusted (if needed) │ ← may stay same │ promo_{price} = 8.00 │ │ converted_{promo} = 8.00 × margin + WDF │ ← calculated promo │ is_{on}_{promotion} = True │ │ promo_{start}_{date} = May 1 │ │ promo_{end}_{date} = May 15 │ └─────────────────────────────────────────────────┘ ItemOutlet now: - outlet_{selling}_{price} = 10.50 (unchanged for Pasons) - original_{selling}_{price} = 10.50 (backup) - promo_{price} = 8.00 - converted_{promo} = calculated value - is_{on}_{promotion} = True Step 2: erp_{page}.html (Export during promotion) ┌─────────────────────────────────────────────────┐ │ deactivate_{promotions}() runs FIRST │ │ → checks promo_{end}_{date} < now │ │ → May 15 not passed yet → NO action │ │ │ │ Query: is_{on}_{promotion}=False only │ │ → THIS ITEM IS EXCLUDED FROM EXPORT! │ │ → Promotional items NEVER go to ERP │ └─────────────────────────────────────────────────┘ Result: Item NOT in CSV. ERP keeps old price. ``` --- # # # 📌 EXPIRY FLOW (After Promotion Ends) ```text Step 1: May 16 arrives (promotion expired) Step 2: erp_{page}.html (Export after expiry) ┌─────────────────────────────────────────────────┐ │ deactivate_{promotions}() runs FIRST │ │ → promo_{end}_{date} (May 15) < now (May 16) ✅ │ │ → RESTORES: outlet_{selling}_{price} = 10.50 │ │ (from original_{selling}_{price}) │ │ → CLEARS: promo_{price}, converted_{promo}, │ │ original_{selling}_{price}, promo dates │ │ → Sets: is_{on}_{promotion} = False │ │ │ │ Now query: is_{on}_{promotion}=False │ │ → ITEM IS INCLUDED! │ │ │ │ Partial export: compare erp_{export}_{price} vs │ │ current calculated price │ │ → If same → SKIP (no change) │ │ → If different → EXPORT │ └─────────────────────────────────────────────────┘ ItemOutlet after: - outlet_{selling}_{price} = 10.50 (restored) - is_{on}_{promotion} = False - promo_{price} = None (cleared) - original_{selling}_{price} = None (cleared) - erp_{export}_{price} = recalculated ``` --- # # # ⚠️ KEY INSIGHT: The Problem with This Flow **During promotion:**- `outlet_{selling}_{price}` stays at original price (10.50) - The PROMO price is in `promo_{price}` / `converted_{promo}` - ERP export **completely skips**promo items - **So ERP never knows about the promotion** **After promotion expires:**- Price restored to `original_{selling}_{price}` (10.50) - ERP export includes it again - If price didn't change → partial export SKIPS it (same `erp_{export}_{price}`) - If price DID change → partial export includes it **The question is:**Do you want ERP to also get promotional prices during promotion period? Or is the current behavior correct (ERP only gets normal prices)?$$
 
+flowchart TD
+    subgraph STEP1["📋 STEP 1: product_update.html"]
+        A["User uploads CSV<br/>with new prices"] --> B["Item.price_fields updated<br/>(converted_cost, weight, etc.)"]
+        B --> C["ItemOutlet.outlet_selling_price<br/>= base_price × margin × WDF"]
+        C --> D["✅ Items ready<br/>is_on_promotion = False"]
+    end
 
-Product
-<a href="#features">Features</a>
-      ...
-    
+    subgraph STEP2["🏷️ STEP 2: promotion_update.html"]
+        E["User sets promo_price<br/>start_date, end_date"] --> F{"PromotionService<br/>.save_promotion()"}
+        F --> G["💾 BACKUP:<br/>original_selling_price<br/>= outlet_selling_price"]
+        G --> H["📊 CALCULATE:<br/>converted_promo<br/>= promo × margin × WDF"]
+        H --> I["✅ SET:<br/>is_on_promotion = True<br/>promo_start / promo_end"]
+    end
 
+    subgraph STEP3["📤 STEP 3: erp_page.html — Export"]
+        J["User clicks<br/>Export CSV"] --> K["🔄 deactivate_promotions()<br/>auto-expire ended promos"]
 
-Resources
-...
-    
+        K --> L{"Any promo<br/>end_date  M["♻️ RESTORE:<br/>outlet_selling_price<br/>= original_selling_price<br/>CLEAR: promo_price,<br/>converted_promo, dates<br/>SET: is_on_promotion = False"]
+        M --> N["Query: is_on_promotion = False"]
+        L -- NO --> N
 
+        N --> O["Get Talabat items<br/>(EXCLUDES promotion items)"]
 
-Company
-...
-    
+        O --> P{"Full or<br/>Partial?"}
 
+        P -- FULL --> Q["Export ALL items<br/>in CSV"]
+        P -- PARTIAL --> R{"Compare:<br/>current_erp_price vs<br/>erp_export_price?"}
 
-<p>&copy; 2025 Cortex AI. All rights reserved.</p>
-    
-<a href="#">𝕏</a>  <!-- X/Twitter -->
-      <a href="#">GH</a>  <!-- GitHub -->
-      <a href="#">DC</a>  <!-- Discord -->
-    
+        R -- SAME --> S["⏭️ SKIP<br/>No change detected"]
+        R -- DIFFERENT --> T["📤 EXPORT<br/>Only changed items"]
+        R -- NEVER EXPORTED --> T
 
+        Q --> U["🧮 Calculate ERP Price:<br/>wrap=9900 → price × WDF<br/>wrap=10000 → price"]
+        T --> U
 
-★★★★★
-<p>"Cortex is the first AI tool that actually understands my entire codebase..."</p>
-  
+        U --> V["🔀 Dedup wrap=9900:<br/>Same item_code + unit<br/>→ keep LOWEST price"]
+        V
 
-S
+```mermaid
+flowchart TD
+    subgraph STEP1["📋 STEP 1: product_update.html"]
+        A["User uploads CSV<br/>with new prices"] --> B["Item.price_fields updated<br/>(converted_cost, weight, etc.)"]
+        B --> C["ItemOutlet.outlet_selling_price<br/>= base_price × margin × WDF"]
+        C --> D["✅ Items ready<br/>is_on_promotion = False"]
+    end
 
-<strong>Sarah Chen</strong>
-      <span>Staff Engineer @ Vercel</span>
-    
+    subgraph STEP2["🏷️ STEP 2: promotion_update.html"]
+        E["User sets promo_price<br/>start_date, end_date"] --> F{"PromotionService<br/>.save_promotion()"}
+        F --> G["💾 BACKUP:<br/>original_selling_price<br/>= outlet_selling_price"]
+        G --> H["📊 CALCULATE:<br/>converted_promo<br/>= promo × margin × WDF"]
+        H --> I["✅ SET:<br/>is_on_promotion = True<br/>promo_start / promo_end"]
+    end
 
+    subgraph STEP3["📤 STEP 3: erp_page.html — Export"]
+        J["User clicks<br/>Export CSV"] --> K["🔄 deactivate_promotions()<br/>auto-expire ended promos"]
 
-❌ Without Cortex
-<pre><code>...</code></pre>
-  
+        K --> L{"Any promo<br/>end_date  M["♻️ RESTORE:<br/>outlet_selling_price<br/>= original_selling_price<br/>CLEAR: promo_price,<br/>converted_promo, dates<br/>SET: is_on_promotion = False"]
+        M --> N["Query: is_on_promotion = False"]
+        L -- NO --> N
 
+        N --> O["Get Talabat items<br/>(EXCLUDES promotion items)"]
 
-✅ With Cortex
-<pre><code>...</code></pre>
-  
+        O --> P{"Full or<br/>Partial?"}
 
+        P -- FULL --> Q["Export ALL items<br/>in CSV"]
+        P -- PARTIAL --> R{"Compare:<br/>current_erp_price vs<br/>erp_export_price?"}
 
-1
+        R -- SAME --> S["⏭️ SKIP<br/>No change detected"]
+        R -- DIFFERENT --> T["📤 EXPORT<br/>Only changed items"]
+        R -- NEVER EXPORTED --> T
 
+        Q --> U["🧮 Calculate ERP Price:<br/>wrap=9900 → price × WDF<br/>wrap=10000 → price"]
+        T --> U
 
-Install & Open
-<p>Download Cortex for your platform...</p>
-    
-
-...
-
-<p>From idea to production in minutes.</p>
-
-🤖
-
-Autonomous Agents
-<p>AI agents that understand your entire codebase...</p>
-  <span>AI-Powered</span>
-
-
-<p>Trusted by engineers at</p>
-  
-
-Vercel
-
-Stripe
-...
-  
-
-
+        U --> V["🔀 Dedup wrap=9900:<br/>Same item_code + unit<br/> → keep LOWEST price"]
+        V --> W["📄 Generate CSV<br/>Party, Item Code,<
+        

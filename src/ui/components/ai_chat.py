@@ -687,6 +687,12 @@ class ChatBridge(QObject):
     # Vision response signal
     _vision_response_received = pyqtSignal(str)  # response text
     
+    # Mermaid fullscreen in main editor
+    open_mermaid_fullscreen = pyqtSignal(str)  # mermaid code
+    
+    # Chat context switch signal
+    switch_chat_context = pyqtSignal(str)  # conversation_id
+    
     # Chat persistence signals
     save_chats_requested = pyqtSignal(str, str)  # storage_key, json_data
     load_chats_requested = pyqtSignal(str)       # storage_key
@@ -1156,6 +1162,23 @@ class ChatBridge(QObject):
         except Exception as e:
             log.error(f"Failed to request full chat {conversation_id}: {e}")
 
+    @pyqtSlot(str)
+    def on_switch_chat_context(self, conversation_id: str):
+        """Called by JS when user switches to a different chat.
+        Notifies the AI agent to restore that conversation's context
+        so follow-up questions have correct history.
+        """
+        log.info(f"[ChatContext] Switching AI context to conversation: {conversation_id}")
+        self.switch_chat_context.emit(conversation_id)
+
+    @pyqtSlot(str)
+    def on_open_mermaid_fullscreen(self, mermaid_code: str):
+        """Open mermaid diagram in fullscreen dialog within the IDE."""
+        line_count = mermaid_code.count('\n') + 1
+        log.info(f"[Mermaid] Opening fullscreen viewer ({len(mermaid_code)} chars, {line_count} lines)")
+        log.info(f"[Mermaid] First 300 chars: {mermaid_code[:300]!r}")
+        self.open_mermaid_fullscreen.emit(mermaid_code)
+
     # â”€â”€ THREE FEATURES: Project Tree, Terminal, Todo Bridge Slots â”€â”€â”€â”€â”€
 
     @pyqtSlot(str)
@@ -1250,12 +1273,24 @@ class ChatBridge(QObject):
                 # Handle both 'content' (new) and 'text' (legacy) keys
                 msg_content = msg.get('content') or msg.get('text', '')
                 msg_role = msg.get('role') or msg.get('sender') or 'user'
+                # Build metadata with reasoning_content / tool_calls
+                _meta: dict = {}
+                _rc = msg.get('reasoning_content')
+                if _rc:
+                    _meta['reasoning_content'] = _rc
+                _tc = msg.get('tool_calls')
+                if _tc:
+                    _meta['tool_calls'] = _tc
+                _tcid = msg.get('tool_call_id')
+                if _tcid:
+                    _meta['tool_call_id'] = _tcid
                 history.add_message(
                     conversation_id=conversation_id,
                     role=msg_role,
                     content=msg_content,
                     files_accessed=msg.get('files_accessed', []),
-                    tools_used=msg.get('tools_used', [])
+                    tools_used=msg.get('tools_used', []),
+                    metadata=_meta if _meta else None
                 )
                     
             # CRITICAL: Force-flush the write queue so messages are persisted
@@ -1314,12 +1349,26 @@ class ChatBridge(QObject):
                 
                 # Add only new messages
                 for msg in messages[existing_count:]:
+                    # Build metadata dict from JS message fields that
+                    # must survive round-trip (MiMo/Kimi/DeepSeek thinking
+                    # mode requires reasoning_content in subsequent requests).
+                    _meta: dict = {}
+                    _rc = msg.get('reasoning_content')
+                    if _rc:
+                        _meta['reasoning_content'] = _rc
+                    _tc = msg.get('tool_calls')
+                    if _tc:
+                        _meta['tool_calls'] = _tc
+                    _tcid = msg.get('tool_call_id')
+                    if _tcid:
+                        _meta['tool_call_id'] = _tcid
                     history.add_message(
                         conversation_id=conversation_id,
                         role=msg.get('role', msg.get('sender', 'user')),
                         content=msg.get('content', msg.get('text', '')),
                         files_accessed=msg.get('files_accessed', []),
-                        tools_used=msg.get('tools_used', [])
+                        tools_used=msg.get('tools_used', []),
+                        metadata=_meta if _meta else None
                     )
                             
                 # CRITICAL: Force-flush after each conversation's messages
@@ -1514,6 +1563,12 @@ class AIChatWidget(QWidget):
     load_full_chat_requested = pyqtSignal(str)  # conversation_id
     save_finished = pyqtSignal(str)             # status
     
+    # Switch AI conversation context signal
+    switch_chat_context = pyqtSignal(str)  # conversation_id
+    
+    # Mermaid fullscreen in main editor
+    open_mermaid_fullscreen = pyqtSignal(str)  # mermaid code
+    
     # Todo management signal
     toggle_todo_requested = pyqtSignal(str, bool)  # task_id, completed
     
@@ -1578,6 +1633,103 @@ class AIChatWidget(QWidget):
         self.hide_memory_saving_animation()
         if error_message:
             log.warning(f"[MEMORY] Summary save UI marked failed: {error_message}")
+
+    def open_mermaid_in_editor(self, mermaid_code: str):
+        """Open mermaid diagram in a fullscreen dialog within the IDE."""
+        # Debounce: prevent rapid repeated opens
+        import time
+        now = time.time()
+        last = getattr(self, '_last_mermaid_open', 0)
+        if now - last < 2.0:
+            return
+        self._last_mermaid_open = now
+        try:
+            import os
+            from PyQt6.QtWidgets import QDialog, QVBoxLayout
+            from PyQt6.QtWebEngineWidgets import QWebEngineView
+            from PyQt6.QtCore import Qt, QUrl
+            
+            html_dir = os.path.join(os.path.dirname(__file__), '..', 'html', 'ai_chat')
+            mermaid_html_path = os.path.abspath(os.path.join(html_dir, 'mermaid.html'))
+            
+            if not os.path.exists(mermaid_html_path):
+                log.error(f"[Mermaid] Template not found: {mermaid_html_path}")
+                return
+            
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Mermaid Diagram Viewer")
+            dialog.setWindowFlags(
+                dialog.windowFlags() | 
+                Qt.WindowType.WindowMaximizeButtonHint |
+                Qt.WindowType.WindowMinimizeButtonHint
+            )
+            
+            parent = self.window()
+            if hasattr(parent, 'geometry'):
+                geo = parent.geometry()
+                dialog.resize(int(geo.width() * 0.9), int(geo.height() * 0.9))
+            else:
+                dialog.resize(1200, 800)
+            
+            layout = QVBoxLayout(dialog)
+            layout.setContentsMargins(0, 0, 0, 0)
+            
+            web_view = QWebEngineView(dialog)
+            layout.addWidget(web_view)
+            
+            # Pass noautoload=1 to prevent the demo diagram from rendering
+            mermaid_url = QUrl.fromLocalFile(mermaid_html_path)
+            mermaid_url.setQuery("noautoload=1")
+            web_view.setUrl(mermaid_url)
+            
+            def on_load_finished(ok):
+                if not ok:
+                    log.error("[Mermaid] Page load FAILED")
+                    return
+                log.info(f"[Mermaid] Page loaded, injecting {len(mermaid_code)} chars of mermaid code")
+                # Use json.dumps for proper JS string escaping (handles all special chars)
+                safe_code = json.dumps(mermaid_code)
+                js = f"""
+                (function() {{
+                    var code = {safe_code};
+                    window.__mermaidCodeInjected = true;
+                    console.log('[MermaidViewer] Received code length:', code.length);
+                    console.log('[MermaidViewer] First 200 chars:', code.substring(0, 200));
+                    if (window.renderDiagram) {{
+                        console.log('[MermaidViewer] Calling renderDiagram...');
+                        window.renderDiagram(code);
+                    }} else {{
+                        console.log('[MermaidViewer] renderDiagram not ready, retrying in 1s...');
+                        setTimeout(function() {{
+                            if (window.renderDiagram) {{
+                                console.log('[MermaidViewer] Calling renderDiagram (retry)...');
+                                window.renderDiagram(code);
+                            }} else {{
+                                console.error('[MermaidViewer] renderDiagram STILL not available!');
+                            }}
+                        }}, 1000);
+                    }}
+                }})();
+                """
+                web_view.page().runJavaScript(js, lambda result: log.info(f"[Mermaid] JS result: {result}"))
+            
+            web_view.loadFinished.connect(on_load_finished)
+            dialog.show()
+            dialog.raise_()
+            dialog.activateWindow()
+            
+            if not hasattr(self, '_mermaid_dialogs'):
+                self._mermaid_dialogs = []
+            self._mermaid_dialogs.append(dialog)
+            
+            def on_dialog_finished():
+                if dialog in self._mermaid_dialogs:
+                    self._mermaid_dialogs.remove(dialog)
+            dialog.finished.connect(on_dialog_finished)
+            
+            log.info("[Mermaid] Opened fullscreen viewer dialog")
+        except Exception as e:
+            log.error(f"[Mermaid] Failed to open fullscreen viewer: {e}")
 
     def set_active_agent_mode(self, mode: str):
         """Activate a specific agent mode in the grid.
@@ -1688,6 +1840,9 @@ class AIChatWidget(QWidget):
         self._response_buffer = ""
         self._js_call_pending = False  # Debounce flag for runJavaScript flood
         self._js_call_timer = None     # QTimer for debounced JS push
+        
+        # Crash recovery state — survives render process crashes
+        self._crash_state = None
 
         # Track current interaction mode: 'Agent', 'Ask', or 'Plan'
         self._current_interaction_mode = "Agent"
@@ -1730,6 +1885,8 @@ class AIChatWidget(QWidget):
         
         # Web View with custom page for console logging
         self._view = QWebEngineView()
+        from PyQt6.QtWidgets import QSizePolicy
+        self._view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._page = ConsolePage(self._view)
         self._view.setPage(self._page)
         
@@ -1812,6 +1969,12 @@ class AIChatWidget(QWidget):
         # NEW: Connect todo toggle from bridge to widget
         self._bridge.toggle_todo_requested.connect(self.toggle_todo_requested.emit)
         
+        # NEW: Switch AI conversation context when user switches chats
+        self._bridge.switch_chat_context.connect(self.switch_chat_context.emit)
+        
+        # NEW: Open mermaid diagram fullscreen in main editor
+        self._bridge.open_mermaid_fullscreen.connect(self.open_mermaid_in_editor)
+        
         # Terminal signals
         self._bridge.terminal_input.connect(lambda d: self._pty_process.write(d) if self._pty_process else (self._terminal_process.write(d.encode()) if self._terminal_process else None))
         self._bridge.terminal_resize.connect(lambda c, r: self._pty_process.setwinsize(r, c) if self._pty_process else None)
@@ -1870,7 +2033,10 @@ class AIChatWidget(QWidget):
         print(f"[WEBVIEW] URL set: {url.toString()}")
         
     def _on_page_loaded(self, ok):
-        """Apply the current theme immediately after the page finishes loading."""
+        """Apply the current theme immediately after the page finishes loading.
+        
+        Also restores crash state if the page was reloaded after a render crash.
+        """
         import logging as _log
         if ok:
             self._page_loaded = True
@@ -1881,19 +2047,111 @@ class AIChatWidget(QWidget):
             if self._pending_project_info and not getattr(self, '_project_info_applied', False):
                 name, path, chats_json = self._pending_project_info
                 self._apply_project_info(name, path, chats_json)
+            
+            # CRASH RECOVERY: Restore lost messages after render crash
+            crash_state = getattr(self, '_crash_state', None)
+            if crash_state and (crash_state.get('user_message') or crash_state.get('assistant_response')):
+                _log.info(f"[CRASH_RECOVERY] Restoring crash state: user={len(crash_state['user_message'])} chars, "
+                         f"assistant={len(crash_state['assistant_response'])} chars")
+                # Delay to ensure project info is applied and chat is ready
+                QTimer.singleShot(2000, lambda: self._restore_crash_state(crash_state))
+                self._crash_state = None  # Clear after scheduling restore
         else:
             _log.error("[AI_CHAT] Page load failed!")
 
+    def _restore_crash_state(self, crash_state: dict):
+        """Restore user message and assistant response lost in render crash."""
+        import json as _json
+        import logging as _log
+        
+        user_msg = crash_state.get('user_message', '')
+        assistant_resp = crash_state.get('assistant_response', '')
+        
+        if not user_msg and not assistant_resp:
+            return
+        
+        _log.info(f"[CRASH_RECOVERY] Injecting {len(user_msg)} char user msg + {len(assistant_resp)} char response")
+        
+        # Build JS to inject the lost messages into the chat
+        safe_user = _json.dumps(user_msg) if user_msg else 'null'
+        safe_resp = _json.dumps(assistant_resp) if assistant_resp else 'null'
+        
+        js_code = f"""
+        (function() {{
+            try {{
+                var container = document.getElementById('chatMessages');
+                if (!container) return;
+                
+                // Remove empty state if present
+                var emptyState = document.getElementById('empty-state');
+                if (emptyState) emptyState.remove();
+                
+                // Inject user message
+                if ({safe_user}) {{
+                    var userDiv = document.createElement('div');
+                    userDiv.className = 'message-bubble user';
+                    var userContent = document.createElement('div');
+                    userContent.className = 'message-content';
+                    userContent.textContent = {safe_user};
+                    userDiv.appendChild(userContent);
+                    container.appendChild(userDiv);
+                }}
+                
+                // Inject assistant response (as recovered message)
+                if ({safe_resp}) {{
+                    var assistDiv = document.createElement('div');
+                    assistDiv.className = 'message-bubble assistant';
+                    var assistContent = document.createElement('div');
+                    assistContent.className = 'message-content';
+                    var recoveryNote = document.createElement('div');
+                    recoveryNote.style.cssText = 'font-size:11px;opacity:0.5;margin-bottom:8px;font-style:italic;';
+                    recoveryNote.textContent = '[Recovered from render crash]';
+                    assistDiv.appendChild(recoveryNote);
+                    assistContent.innerHTML = {safe_resp}.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\\n/g,'<br>');
+                    assistDiv.appendChild(assistContent);
+                    container.appendChild(assistDiv);
+                }}
+                
+                // Scroll to bottom
+                container.scrollTop = container.scrollHeight;
+                
+                console.log('[CRASH_RECOVERY] Messages restored successfully');
+            }} catch(e) {{
+                console.error('[CRASH_RECOVERY] Failed:', e.message);
+            }}
+        }})();
+        """
+        self.run_javascript(js_code)
+        _log.info("[CRASH_RECOVERY] Recovery JS injected")
+
     def _on_render_process_terminated(self, termination_type: int):
-        """Handle QWebEnginePage render process crash."""
+        """Handle QWebEnginePage render process crash.
+        
+        Saves crash state (user message + streaming response) in Python
+        so it can be restored after page reload.
+        """
         import logging as _log
         reasons = {0: "normal exit", 1: "abnormal termination", 2: "crashed", 3: "killed"}
         reason = reasons.get(termination_type, f"unknown ({termination_type})")
-        _log.error(f"[AI_CHAT] Render process terminated: {reason}. Reloading...")
+        _log.error(f"[AI_CHAT] Render process terminated: {reason}. Saving state and reloading...")
+        
+        # Save crash state in Python-side variables (survives the crash)
+        self._crash_state = {
+            'user_message': getattr(self, '_last_user_message', ''),
+            'assistant_response': self._response_buffer or '',
+            'conversation_id': getattr(self, '_current_conversation_id', None),
+            'timestamp': time.time() if 'time' in dir(__import__('time')) else 0,
+        }
+        _log.error(f"[CRASH_RECOVERY] Saved crash state: user_msg={len(self._crash_state['user_message'])} chars, "
+                   f"assistant_response={len(self._crash_state['assistant_response'])} chars")
+        
+        # NOTE: run_javascript() FAILS here because render process is dead.
+        # That's why we save to Python variables above instead.
+        
         self._page_loaded = False
-        # Reload the page to recover
+        # Reload the page to recover with a longer delay for GPU cleanup
         from PyQt6.QtCore import QTimer
-        QTimer.singleShot(500, self._delayed_load_page)
+        QTimer.singleShot(1000, self._delayed_load_page)
 
     def on_chunk(self, chunk):
         """Handle AI streaming chunk - accumulate buffer and push to JS."""
@@ -1939,7 +2197,7 @@ class AIChatWidget(QWidget):
                         self._js_call_pending = True
                         return
                 if not self._js_call_timer.isActive():
-                    self._js_call_timer.start(40)  # 40ms coalescing window
+                    self._js_call_timer.start(150)  # 150ms coalescing window (reduced from 40ms to prevent OOM)
         except Exception as exc:
             log.error(f"[AI_CHAT] on_chunk CRASH: {exc}", exc_info=True)
 

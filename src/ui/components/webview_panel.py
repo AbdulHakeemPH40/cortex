@@ -4,6 +4,7 @@ Replaces the PyQt6 QPlainTextEdit-based CodeEditor with VS Code-quality editing.
 """
 import json
 import logging
+import sys
 import time
 from pathlib import Path
 from typing import Optional
@@ -176,10 +177,13 @@ class WebviewPanel(QWidget):
         # Inlining loader.js avoids <script src="file:///..."> cross-directory loading
         # issues in QWebEngineView. Dynamic script/XHR fetches from file:/// URIs
         # work correctly with LocalContentCanAccessFileUrls enabled.
-        _project_root = Path(__file__).parent.parent.parent.parent
-        editor_html = Path(__file__).parent.parent.parent / "assets" / "editor.html"
-        _monaco_loader = _project_root / "node_modules" / "monaco-editor" / "min" / "vs" / "loader.js"
-        _monaco_vs_dir = _project_root / "node_modules" / "monaco-editor" / "min" / "vs"
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            _bundle_root = Path(sys._MEIPASS)
+        else:
+            _bundle_root = Path(__file__).parent.parent.parent.parent
+        editor_html = _bundle_root / "src" / "assets" / "editor.html"
+        _monaco_loader = _bundle_root / "node_modules" / "monaco-editor" / "min" / "vs" / "loader.js"
+        _monaco_vs_dir = _bundle_root / "node_modules" / "monaco-editor" / "min" / "vs"
 
         if not editor_html.exists():
             log.error(f"[WebviewPanel] editor.html not found at: {editor_html}")
@@ -249,7 +253,7 @@ class WebviewPanel(QWidget):
         self.editor_ready.emit()
 
     def _on_render_crash(self, termination_status, exit_code):
-        """Chromium render process crashed — log details for debugging."""
+        """Chromium render process crashed — log and auto-recover."""
         # termination_status: QWebEnginePage.RenderProcessTerminationStatus enum
         #   NormalTerminationStatus=0, AbnormalTerminationStatus=1, CrashedTerminationStatus=2,
         #   KilledTerminationStatus=3
@@ -260,6 +264,27 @@ class WebviewPanel(QWidget):
               flush=True)
         # Mark page dead so we stop sending JS. Future opens will queue until reload.
         self._page_loaded = False
+
+        # Auto-recover: reload the Monaco editor page after a short delay.
+        # Without this, the editor is permanently dead and the user must restart.
+        _current_file = getattr(self, '_current_file', None)
+        if not hasattr(self, '_crash_reload_count'):
+            self._crash_reload_count = 0
+        self._crash_reload_count += 1
+        if self._crash_reload_count <= 3:
+            log.info(f"[WebviewPanel] Auto-recovering from crash ({self._crash_reload_count}/3)...")
+            QTimer.singleShot(2000, self._reload_after_crash)
+        else:
+            log.error("[WebviewPanel] Too many crashes — NOT auto-reloading. Restart IDE to recover.")
+
+    def _reload_after_crash(self):
+        """Reload the Monaco editor page after a render process crash."""
+        try:
+            if hasattr(self, '_view') and self._view:
+                self._view.reload()
+                log.info("[WebviewPanel] Page reload triggered after crash")
+        except Exception as e:
+            log.warning(f"[WebviewPanel] Crash recovery reload failed: {e}")
 
     # ---- Public API -------------------------------------------------------
 

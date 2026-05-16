@@ -182,8 +182,9 @@ class LiveServer:
             log.debug(f"Asset scan error: {e}")
 
         with self._lock:
-            self._watched = watched
-        log.debug(f"Watching {len(watched)} file(s): {watched}")
+            if watched != self._watched:
+                self._watched = watched
+                log.debug(f"Watching {len(watched)} file(s): {watched}")
 
     def _resolve_asset(self, href: str, base_dir: str) -> Optional[str]:
         """Turn a relative URL (no scheme) into an absolute local path."""
@@ -214,11 +215,16 @@ class LiveServer:
         return latest
 
     def _watch_loop(self):
-        """Background thread: poll watched files every 300 ms."""
+        """Background thread: poll watched files every 1 s."""
+        _asset_scan_counter = 0
         while self._running:
-            time.sleep(0.3)
-            # Re-scan HTML for new/removed linked assets
-            self._refresh_watched_files()
+            time.sleep(1.0)
+            # Re-scan HTML for new/removed linked assets every ~5 seconds
+            # (not every iteration — avoids excessive file I/O)
+            _asset_scan_counter += 1
+            if _asset_scan_counter >= 5:
+                _asset_scan_counter = 0
+                self._refresh_watched_files()
             current = self._scan_mtime()
             if current != self._latest_mtime:
                 self._latest_mtime = current

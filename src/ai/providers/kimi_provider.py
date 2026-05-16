@@ -39,8 +39,8 @@ class KimiProvider(BaseProvider):
         self._max_retries = self._get_int_env("CORTEX_KIMI_MAX_RETRIES", 4, minimum=1, maximum=5)
         self._retry_delay = 1.0
         self._connect_timeout = self._get_float_env("CORTEX_KIMI_CONNECT_TIMEOUT_SEC", 20.0, minimum=1.0, maximum=120.0)
-        self._read_timeout = self._get_float_env("CORTEX_KIMI_READ_TIMEOUT_SEC", 40.0, minimum=3.0, maximum=300.0)
-        self._tool_read_timeout = self._get_float_env("CORTEX_KIMI_TOOL_READ_TIMEOUT_SEC", 45.0, minimum=5.0, maximum=300.0)
+        self._read_timeout = self._get_float_env("CORTEX_KIMI_READ_TIMEOUT_SEC", 120.0, minimum=3.0, maximum=600.0)
+        self._tool_read_timeout = self._get_float_env("CORTEX_KIMI_TOOL_READ_TIMEOUT_SEC", 180.0, minimum=5.0, maximum=600.0)
         self._token_count = {"input": 0, "output": 0}
 
     @staticmethod
@@ -150,9 +150,11 @@ class KimiProvider(BaseProvider):
 
                 duration_ms = (time.time() - start_time) * 1000
                 message = result['choices'][0].get('message', {})
-                # Kimi K2.6 thinking model: content may be empty, actual
-                # response is in reasoning_content
-                content = message.get('content') or message.get('reasoning_content') or ""
+                # Kimi K2.6 thinking model: content may be empty when
+                # reasoning_content contains the actual chain-of-thought.
+                # IMPORTANT: Do NOT fallback to reasoning_content as the
+                # visible response — it leaks internal thinking to the user.
+                content = message.get('content') or ""
                 tool_calls = message.get('tool_calls')
 
                 # Track token usage

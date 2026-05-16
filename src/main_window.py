@@ -670,7 +670,9 @@ class EditorTabWidget(QTabWidget):
                 if editor:
                     content = editor.get_all_text()
                     try:
-                        Path(filepath).write_text(content, encoding='utf-8')
+                        # Normalize line endings to prevent doubled empty lines
+                        content = content.replace("\r\n", "\n").replace("\r", "\n")
+                        Path(filepath).write_text(content, encoding='utf-8', newline='')
                         self._mark_saved(filepath)
                     except Exception as e:
                         from PyQt6.QtWidgets import QMessageBox
@@ -722,7 +724,9 @@ class EditorTabWidget(QTabWidget):
         """Save a specific file and update its modified state."""
         from pathlib import Path as _Path
         try:
-            _Path(filepath).write_text(content, encoding='utf-8')
+            # Normalize line endings to prevent doubled empty lines
+            content = content.replace("\r\n", "\n").replace("\r", "\n")
+            _Path(filepath).write_text(content, encoding='utf-8', newline='')
             self._mark_saved(filepath)
             return True
         except Exception as e:
@@ -2192,9 +2196,11 @@ class CortexMainWindow(QMainWindow):
                 background-color: #1e1e1e;
                 color: #cccccc;
                 border-top: 1px solid #2a2a2a;
+                font-size: 12px;
             }
             QLabel {
                 color: #cccccc;
+                padding: 0 6px;
             }
         """)
         self._status_file = QLabel("  No file open")
@@ -2205,7 +2211,53 @@ class CortexMainWindow(QMainWindow):
         for lbl in [self._status_file, self._status_cursor, self._status_lang, self._status_ai]:
             sb.addWidget(lbl)
 
-        sb.addPermanentWidget(QLabel("  Cortex AI Agent v1.0.15  "))
+        # ── System Monitor: RAM & CPU ──
+        self._status_ram = QLabel("RAM: --")
+        self._status_ram.setToolTip("Memory usage")
+        self._status_ram.setStyleSheet("color: #8be9fd; font-size: 11px; padding: 0 8px;")
+        self._status_cpu = QLabel("CPU: --")
+        self._status_cpu.setToolTip("CPU usage")
+        self._status_cpu.setStyleSheet("color: #50fa7b; font-size: 11px; padding: 0 8px;")
+        sb.addPermanentWidget(self._status_ram)
+        sb.addPermanentWidget(self._status_cpu)
+
+        # ── Version ──
+        version_lbl = QLabel("  Cortex AI Agent v1.0.15  ")
+        version_lbl.setStyleSheet("color: #6272a4; font-size: 11px;")
+        sb.addPermanentWidget(version_lbl)
+
+        # ── System Monitor Timer ──
+        self._system_monitor_timer = QTimer()
+        self._system_monitor_timer.timeout.connect(self._update_system_monitor)
+        self._system_monitor_timer.start(2000)
+        self._update_system_monitor()
+
+    def _update_system_monitor(self):
+        """Update RAM and CPU usage in status bar."""
+        try:
+            import psutil
+            mem = psutil.virtual_memory()
+            cpu = psutil.cpu_percent(interval=0.05)
+            ram_gb = mem.used / (1024 ** 3)
+            ram_total = mem.total / (1024 ** 3)
+            self._status_ram.setText(f"RAM: {ram_gb:.1f}/{ram_total:.1f} GB ({mem.percent}%)")
+            self._status_cpu.setText(f"CPU: {cpu:.1f}%")
+            # Color based on pressure
+            if mem.percent > 90:
+                self._status_ram.setStyleSheet("color: #ff5555; font-size: 11px; padding: 0 8px;")
+            elif mem.percent > 70:
+                self._status_ram.setStyleSheet("color: #ffb86c; font-size: 11px; padding: 0 8px;")
+            else:
+                self._status_ram.setStyleSheet("color: #8be9fd; font-size: 11px; padding: 0 8px;")
+            if cpu > 90:
+                self._status_cpu.setStyleSheet("color: #ff5555; font-size: 11px; padding: 0 8px;")
+            elif cpu > 70:
+                self._status_cpu.setStyleSheet("color: #ffb86c; font-size: 11px; padding: 0 8px;")
+            else:
+                self._status_cpu.setStyleSheet("color: #50fa7b; font-size: 11px; padding: 0 8px;")
+        except ImportError:
+            self._status_ram.setText("RAM: --")
+            self._status_cpu.setText("CPU: --")
 
     def _update_status_cursor(self, line: int, col: int):
         self._status_cursor.setText(f"Ln {line}, Col {col}")
@@ -2378,6 +2430,9 @@ class CortexMainWindow(QMainWindow):
 
         # AI chat list changes → refresh sidebar chat history panel (instant from JS JSON)
         self._ai_chat.chat_list_updated_with_data.connect(self._on_chat_list_data_updated)
+
+        # AI context sync: when user switches chats, restore conversation context for AI
+        self._ai_chat.switch_chat_context.connect(self._on_switch_chat_context)
 
         # Project manager
         self._project_manager.project_opened.connect(self._on_project_opened)
@@ -3436,7 +3491,9 @@ class CortexMainWindow(QMainWindow):
 
         if original is not None:
             try:
-                Path(file_path).write_text(original, encoding='utf-8')
+                # Normalize line endings to prevent doubled empty lines
+                original = original.replace("\r\n", "\n").replace("\r", "\n")
+                Path(file_path).write_text(original, encoding='utf-8', newline='')
                 log.info(f"[Reject] Reverted {file_path} ({len(original)} chars)")
             except Exception as e:
                 log.error(f"[Reject] Failed to revert {file_path}: {e}")
@@ -3565,6 +3622,20 @@ class CortexMainWindow(QMainWindow):
         """JS pushed updated chat list → populate sidebar panel directly from JSON."""
         self._sidebar.populate_chat_history_from_json(chat_list_json)
 
+    def _on_switch_chat_context(self, conversation_id: str):
+        """User switched to a different chat — restore AI conversation context.
+        
+        This ensures the AI has the correct conversation history loaded so
+        follow-up questions reference the right context after a crash/reopen
+        or when switching between chats.
+        """
+        try:
+            if hasattr(self, '_ai_agent') and self._ai_agent:
+                self._ai_agent.restore_conversation_context(conversation_id)
+                log.info(f"[MainWindow] AI context switched to conversation: {conversation_id}")
+        except Exception as e:
+            log.warning(f"[MainWindow] Failed to switch AI context: {e}")
+
     def _on_accept_all_files(self):
         """Accept all pending AI edits — files already on disk, just clean up state."""
         log.info("[Accept All] User accepted all file edits")
@@ -3601,7 +3672,9 @@ class CortexMainWindow(QMainWindow):
                 seen.add(norm)
                 original = self._get_original_content(norm)
                 if original is not None and os.path.isfile(norm):
-                    Path(norm).write_text(original, encoding='utf-8')
+                    # Normalize line endings to prevent doubled empty lines
+                    original = original.replace("\r\n", "\n").replace("\r", "\n")
+                    Path(norm).write_text(original, encoding='utf-8', newline='')
                     self._open_file(norm)
                     reverted += 1
                     log.info(f"[Reject All] Reverted {norm}")
@@ -5637,6 +5710,10 @@ class CortexMainWindow(QMainWindow):
             term = self._terminal_tabs.widget(i)
             if isinstance(term, XTermWidget):
                 term.set_cwd(folder_path)
+
+        # Also update the integrated (editor-area) terminal
+        if hasattr(self, '_integrated_terminal') and self._integrated_terminal:
+            self._integrated_terminal.set_cwd(folder_path)
                 
         project_name = Path(folder_path).name
         self._sync_window_title()
@@ -6212,10 +6289,15 @@ class CortexMainWindow(QMainWindow):
         
         Called from closeEvent, nativeEvent (WM_ENDSESSION), and signal handlers.
         Idempotent — safe to call multiple times.
+        
+        FIXED: Now synchronously waits for save completion instead of fire-and-forget.
+        Uses save_finished signal + QEventLoop to block until JS confirms persistence.
         """
         if getattr(self, '_shutdown_save_done', False):
             return
         self._shutdown_save_done = True
+        
+        # 1. Save agent session state
         try:
             from src.core.agent_session_manager import save_snapshot
             from src.ai.agent_bridge import get_agent_bridge
@@ -6225,19 +6307,66 @@ class CortexMainWindow(QMainWindow):
                 log.info("[SESSION] Agent state saved on shutdown")
         except Exception as _ses_exc:
             log.warning(f"[SESSION] Failed to save agent state on shutdown: {_ses_exc}")
-        # Trigger chat persistence (fire-and-forget)
+        
+        # 2. Save chat history - SYNCHRONOUS wait for completion
         try:
             if hasattr(self, '_ai_chat') and self._ai_chat:
+                # Step A: Flush any partial response in JS before saving
                 self._ai_chat.run_javascript(
-                    "if(window.saveProjectChats) saveProjectChats(window.chats);"
+                    "if(window._savePartialResponse) _savePartialResponse();"
                 )
-                # Force-flush the DB write queue after a short delay
-                # to ensure chat messages are persisted before system shutdown.
-                from src.core.database import get_database
-                db = get_database()
-                QTimer.singleShot(600, lambda: db.flush_write_queue())
-        except Exception:
-            pass
+                
+                # Step B: Trigger the save and wait for confirmation
+                save_confirmed = [False]
+                
+                def _on_save_done(status):
+                    save_confirmed[0] = True
+                    log.info(f"[SHUTDOWN] Chat save confirmed: {status}")
+                
+                # Connect to save_finished signal temporarily
+                if hasattr(self._ai_chat, 'save_finished'):
+                    self._ai_chat.save_finished.connect(_on_save_done)
+                
+                # Trigger save
+                self._ai_chat.run_javascript(
+                    "if(window.flushScheduledSaveChats) { "
+                    "  flushScheduledSaveChats(); "
+                    "  if(window.bridge && bridge.on_save_finished) bridge.on_save_finished('OK'); "
+                    "} else if(window.saveProjectChats) { "
+                    "  saveProjectChats(window.chats); "
+                    "  if(window.bridge && bridge.on_save_finished) bridge.on_save_finished('OK'); "
+                    "}"
+                )
+                
+                # Step C: Process events for up to 800ms to let JS execute + signal fire
+                from PyQt6.QtCore import QDeadlineTimer, QEventLoop as _QEventLoop
+                from PyQt6.QtWidgets import QApplication
+                deadline = QDeadlineTimer(800)
+                while not save_confirmed[0] and not deadline.hasExpired():
+                    QApplication.processEvents(
+                        _QEventLoop.ProcessEventsFlag.AllEvents, 50
+                    )
+                
+                # Disconnect temporary signal
+                if hasattr(self._ai_chat, 'save_finished'):
+                    try:
+                        self._ai_chat.save_finished.disconnect(_on_save_done)
+                    except Exception:
+                        pass
+                
+                if not save_confirmed[0]:
+                    log.warning("[SHUTDOWN] Chat save timed out after 800ms")
+        except Exception as save_exc:
+            log.warning(f"[SHUTDOWN] Chat save error: {save_exc}")
+        
+        # 3. Force-flush DB write queue (guaranteed synchronous)
+        try:
+            from src.core.database import get_database
+            db = get_database()
+            db.flush_write_queue()
+            log.info("[SHUTDOWN] DB write queue flushed")
+        except Exception as db_exc:
+            log.warning(f"[SHUTDOWN] DB flush error: {db_exc}")
 
     def nativeEvent(self, eventType, message):
         """Handle Windows session-end messages (shutdown/restart/logoff).

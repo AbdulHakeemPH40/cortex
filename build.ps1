@@ -109,19 +109,19 @@ $internalDir = Join-Path $buildRoot "_internal"
 $checkRoot = if (Test-Path $internalDir) { $internalDir } else { $buildRoot }
 
 $buildChecks = @{
-    "Cortex.exe" = "dist\Cortex\Cortex.exe"
-    ".env.example" = "$checkRoot\.env.example"
-    "rg.exe" = "$checkRoot\bin\rg.exe"
-    "node.exe" = "$checkRoot\bin\node\node.exe"
-    "Pyright LSP" = "$checkRoot\node_modules\pyright"
-    "TypeScript LSP" = "$checkRoot\node_modules\typescript-language-server"
-    "AI Chat UI" = "$checkRoot\src\ui\html\ai_chat"
+    "Cortex.exe" = Join-Path $buildRoot "Cortex.exe"
+    ".env.example" = Join-Path $checkRoot ".env.example"
+    "rg.exe" = Join-Path $checkRoot "bin\rg.exe"
+    "node.exe" = Join-Path $checkRoot "bin\node\node.exe"
+    "Pyright LSP" = Join-Path $checkRoot "node_modules\pyright"
+    "TypeScript LSP" = Join-Path $checkRoot "node_modules\typescript-language-server"
+    "AI Chat UI" = Join-Path $checkRoot "src\ui\html\ai_chat"
 }
 
 $allPassed = $true
 foreach ($name in $buildChecks.Keys) {
-    $path = Join-Path $PROJECT_ROOT $buildChecks[$name]
-    if (Test-Path $path) {
+    $path = $buildChecks[$name]
+    if (Test-Path -LiteralPath $path) {
         Write-Host "  [OK] $name" -ForegroundColor Green
     } else {
         Write-Host "  [FAIL] $name - MISSING" -ForegroundColor Red

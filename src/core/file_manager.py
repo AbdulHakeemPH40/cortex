@@ -386,13 +386,19 @@ class FileManager(QObject):
         try:
             resolved_path = str(Path(filepath).resolve())
             
-            # Write to disk
-            Path(filepath).write_text(content, encoding="utf-8")
+            # Normalize line endings to prevent doubled empty lines.
+            # Monaco editor returns \n, but content from other sources
+            # might have mixed \r\n and \n.
+            normalized_content = content.replace("\r\n", "\n").replace("\r", "\n")
+            
+            # Write to disk with newline='' to prevent Python from converting
+            # \n to \r\n (which would cause doubling)
+            Path(filepath).write_text(normalized_content, encoding="utf-8", newline='')
             
             # Update all caches
-            self._open_files[resolved_path] = content
-            self._file_cache.put(resolved_path, content)
-            self._hash_cache[resolved_path] = self._compute_hash(content)
+            self._open_files[resolved_path] = normalized_content
+            self._file_cache.put(resolved_path, normalized_content)
+            self._hash_cache[resolved_path] = self._compute_hash(normalized_content)
             
             log.info(f"Saved: {filepath}")
             return True

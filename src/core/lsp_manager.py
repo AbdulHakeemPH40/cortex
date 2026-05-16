@@ -347,6 +347,11 @@ class LSPServerInstance(QObject):
         if not self.process or not self.process.stderr: return
         while self._is_running and self.process:
             try:
+                # ── Windows broken-pipe guard ──────────────────────
+                # Same access-violation risk as _read_loop — the
+                # subprocess may die while readline() is in flight.
+                if self.process.poll() is not None:
+                    break
                 line = self.process.stderr.readline()
             except (OSError, ValueError, EOFError):
                 # Pipe closed — process exited or was stopped
@@ -360,6 +365,16 @@ class LSPServerInstance(QObject):
         stdout = self.process.stdout
         while self._is_running and self.process:
             try:
+                # ── Windows broken-pipe guard ──────────────────────
+                # On Windows, reading from a pipe whose subprocess has
+                # already exited triggers a fatal access violation
+                # (0xC0000005) at the C level — BEFORE Python can
+                # catch OSError/ValueError. poll() detects a dead
+                # subprocess so we break cleanly instead.
+                if self.process.poll() is not None:
+                    log.debug(f"LSP process {self.name} exited with code {self.process.returncode}")
+                    break
+
                 line = stdout.readline()
                 if not line: break
                 
@@ -369,17 +384,19 @@ class LSPServerInstance(QObject):
                     
                     # Consume lines until we find the start of the body
                     while True:
+                        # Guard inner reads against same broken-pipe crash
+                        if self.process.poll() is not None:
+                            break
                         l = stdout.readline().decode('ascii', errors='ignore').strip()
                         if not l: break
                     
+                    # Guard the body read as well
+                    if self.process.poll() is not None:
+                        break
                     body = stdout.read(length).decode('utf-8', errors='ignore')
                     msg = json.loads(body)
                     self._handle_message(msg)
             except (OSError, ValueError, EOFError):
-                # Pipe closed at C level — process exited or was stopped.
-                # On Windows, reading from a broken pipe in a daemon thread
-                # can trigger a fatal access violation. Catching OSError/
-                # ValueError here prevents the process crash.
                 log.debug(f"LSP pipe closed for {self.name} — reader exiting")
                 break
             except Exception as e:

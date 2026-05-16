@@ -29,6 +29,10 @@ window.onerror = function(message, source, lineno, colno, error) {
 // Debounced persistence to avoid blocking the UI / delaying message submission.
 var _saveChatsTimer = null;
 
+// Auto-save partial responses during streaming (every N chunks)
+var _autoSaveChunkCounter = 0;
+var _AUTO_SAVE_INTERVAL = 20; // Save partial response every 20 chunks (~10s at typical streaming rate)
+
 // Initialize batch buffer when DOM is ready
 document.addEventListener('DOMContentLoaded', function() {
     _terminalBatchBuffer = '';
@@ -36,15 +40,70 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Initialize message virtualization for long conversations
     initMessageVirtualization();
+    
+    // Periodic memory cleanup for long sessions (every 5 minutes)
+    setInterval(cleanupOldMessageContent, 300000);
 });
+
+// ============================================
+// MEMORY CLEANUP for long sessions
+// Collapses old tool cards and reduces DOM size to prevent OOM
+// ============================================
+function cleanupOldMessageContent() {
+    var container = document.getElementById('chatMessages');
+    if (!container) return;
+    
+    var messages = container.querySelectorAll('.message-bubble');
+    var totalMsgs = messages.length;
+    
+    // Only cleanup if we have more than 30 messages
+    if (totalMsgs <= 30) return;
+    
+    var cleaned = 0;
+    var _start = performance.now();
+    
+    // Keep the last 20 messages untouched, collapse tool cards in older ones
+    for (var i = 0; i < totalMsgs - 20; i++) {
+        var msg = messages[i];
+        
+        // Collapse large tool execution cards (they hold heavy DOM)
+        var toolCards = msg.querySelectorAll('.tool-card-expanded, .ca-card');
+        toolCards.forEach(function(card) {
+            if (!card.classList.contains('ca-card-collapsed')) {
+                card.classList.add('ca-card-collapsed');
+                var body = card.querySelector('.ca-body, .tool-card-body');
+                if (body) {
+                    body.style.display = 'none';
+                    body.dataset.collapsedByCleanup = 'true';
+                }
+                cleaned++;
+            }
+        });
+        
+        // Collapse diff previews (very heavy DOM)
+        var diffPreviews = msg.querySelectorAll('.diff-preview, pre.ca-diff-preview');
+        diffPreviews.forEach(function(el) {
+            if (el.style.display !== 'none') {
+                el.style.display = 'none';
+                el.dataset.collapsedByCleanup = 'true';
+                cleaned++;
+            }
+        });
+    }
+    
+    if (cleaned > 0) {
+        var elapsed = (performance.now() - _start).toFixed(1);
+        console.log('[CHAT] Memory cleanup: collapsed ' + cleaned + ' elements in ' + elapsed + 'ms (' + totalMsgs + ' messages)');
+    }
+}
 
 // ============================================
 // MESSAGE VIRTUALIZATION for long conversations
 // ============================================
 var _virtualizationConfig = {
     enabled: true,
-    maxVisibleMessages: 100,  // Max messages to render at once
-    messageBuffer: 20,        // Extra messages to keep above/below viewport
+    maxVisibleMessages: 50,  // Max messages to render at once (reduced from 100 to prevent OOM)
+    messageBuffer: 10,        // Extra messages to keep above/below viewport
     totalMessages: 0,
     renderedRange: { start: 0, end: 0 }
 };
@@ -138,6 +197,7 @@ function loadProjectChats() {
     console.log('[CHAT] LOAD SQLITE - Found', sqlChats.length, 'chat(s) in SQLite');
     
     if (sqlChats.length === 0) return lsChats;
+    if (lsChats.length === 0) return sqlChats;
     
     // Merge: Create a map of LS chats for easy lookup
     var lsMap = {};
@@ -146,23 +206,52 @@ function loadProjectChats() {
     });
     
     // Build final merged list based on SQLite's authoritative list
-    var merged = sqlChats.map(function(sqlChat) {
+    var merged = [];
+    var pendingLazyLoads = [];
+    
+    sqlChats.forEach(function(sqlChat) {
         var lsChat = lsMap[sqlChat.id];
         if (lsChat) {
-            // Update LS chat metadata if SQLite has newer info
             var sqlCount = sqlChat.message_count || 0;
             var lsCount = (lsChat.messages && lsChat.messages.length) || lsChat.message_count || 0;
             
-            if (sqlCount > lsCount) {
-                console.log('[CHAT]   Chat "' + sqlChat.title + '" has newer messages in SQLite ('+sqlCount+' vs '+lsCount+')');
+            if (sqlCount > lsCount && lsCount > 0) {
+                // SQLite has more messages - LS has partial content
+                // Keep LS content (has actual text) but mark for lazy load to get full history
+                console.log('[CHAT]   Chat "' + sqlChat.title + '" SQLite has ' + sqlCount + ' msgs, LS has ' + lsCount + ' - marking for lazy load');
                 lsChat.message_count = sqlCount;
-                lsChat.truncated = true; // Mark as needing lazy load
+                lsChat.truncated = true;
+                lsChat.loaded = false;
+                merged.push(lsChat);
+            } else if (sqlCount > 0 && lsCount === 0) {
+                // SQLite has messages but LS has none - need lazy load
+                console.log('[CHAT]   Chat "' + sqlChat.title + '" has ' + sqlCount + ' msgs in SQLite, 0 in LS - lazy load needed');
+                sqlChat.loaded = false;
+                sqlChat.truncated = true;
+                merged.push(sqlChat);
+            } else if (sqlCount === lsCount && lsCount > 0) {
+                // Counts match - LS content is current
+                merged.push(lsChat);
+            } else {
+                // Fallback: use LS data
+                merged.push(lsChat);
             }
-            return lsChat;
+            delete lsMap[sqlChat.id];
         } else {
             // New chat from SQLite that isn't in LS cache
             console.log('[CHAT]   Adding missing chat from SQLite:', sqlChat.title);
-            return sqlChat;
+            sqlChat.loaded = false;
+            sqlChat.truncated = true;
+            merged.push(sqlChat);
+        }
+    });
+    
+    // Add any LS-only chats (not in SQLite yet - newly created, not yet persisted)
+    Object.keys(lsMap).forEach(function(id) {
+        var lsChat = lsMap[id];
+        if (lsChat && lsChat.messages && lsChat.messages.length > 0) {
+            console.log('[CHAT]   Adding LS-only chat:', lsChat.title);
+            merged.push(lsChat);
         }
     });
     
@@ -173,7 +262,6 @@ function loadProjectChats() {
             chat.messages = chat.messages.filter(function(msg) {
                 if (!msg || !msg.text) return true;
                 var text = String(msg.text);
-                // Filter out thinking/temporary indicators
                 var isThinking = text.includes('Thinking') || 
                                  text.includes('Analyzing your request') ||
                                  text.includes('Cortex is working');
@@ -305,6 +393,10 @@ var RENDER_INTERVAL = 32; // ~30fps for smooth visual but low CPU
 var userScrolled = false; // Track if user manually scrolled
 var _taskSummaryBuffer = ""; // Accumulates <task_summary>...</task_summary> during streaming
 var _inTaskSummary = false;  // True while receiving a task_summary block
+
+// Lazy load race condition guards
+var _lazyLoadInProgress = false;
+var _pendingLoadChatId = null;
 
 // -- CHUNK QUEUE (Phase C: prevent race conditions between consecutive onChunk calls) --
 var _chunkQueue = [];          // Queued chunks waiting to be processed
@@ -2007,6 +2099,69 @@ function saveChats() {
     renderHistoryList();
 }
 
+// Save partial response during streaming for crash recovery
+function _savePartialResponse() {
+    if (!_isGenerating || !currentContent || !currentContent.trim()) return;
+    if (!currentProjectPath || !currentChatId) return;
+    
+    try {
+        var chat = chats.find(function(c) { return c.id == currentChatId; });
+        if (!chat) return;
+        
+        // Check if last message is already an assistant message
+        var messages = chat.messages || [];
+        var lastMsg = messages[messages.length - 1];
+        var isAssistant = lastMsg && (lastMsg.role === 'assistant' || lastMsg.sender === 'assistant');
+        
+        // Strip custom tags for clean storage
+        var cleanContent = currentContent
+            .replace(/<task_summary>[\s\S]*?<\/task_summary>/g, '')
+            .replace(/<file_edited>[\s\S]*?<\/file_edited>/g, '')
+            .replace(/<exploration>[\s\S]*?<\/exploration>/g, '')
+            .trim();
+        
+        if (!cleanContent) return;
+        
+        if (isAssistant) {
+            // Update existing assistant message with latest content
+            lastMsg.text = cleanContent;
+            lastMsg.content = cleanContent;
+            lastMsg.partial = true;
+        } else {
+            // Add new partial assistant message
+            chat.messages.push({
+                text: cleanContent,
+                content: cleanContent,
+                role: 'assistant',
+                sender: 'assistant',
+                partial: true
+            });
+        }
+        
+        // Save to localStorage immediately (lightweight)
+        var key = getStorageKey();
+        try {
+            var storageChats = chats.map(function(c) {
+                return {
+                    id: c.id,
+                    title: c.title,
+                    created_at: c.created_at,
+                    message_count: (c.messages || []).length,
+                    messages: (c.messages || []).slice(-50),
+                    truncated: (c.messages || []).length > 50
+                };
+            });
+            localStorage.setItem(key, JSON.stringify(storageChats));
+        } catch (e) {
+            // localStorage full - silent fail
+        }
+        
+        if (_CHAT_DEBUG) console.log('[CHAT] Auto-saved partial response (' + cleanContent.length + ' chars)');
+    } catch (e) {
+        console.warn('[CHAT] _savePartialResponse error:', e.message);
+    }
+}
+
 function scheduleSaveChats(delayMs) {
     delayMs = (typeof delayMs === 'number') ? delayMs : 150;
     if (_saveChatsTimer) {
@@ -2181,6 +2336,14 @@ function hideLoadingIndicator() {
 
 function loadChat(id) {
     console.log('[CHAT] loadChat called with ID:', id);
+    
+    // Race condition guard: if a lazy load is in progress, queue this request
+    if (_lazyLoadInProgress) {
+        console.log('[CHAT] Lazy load in progress, queueing request for:', id);
+        _pendingLoadChatId = id;
+        return;
+    }
+    
     var chat = chats.find(function (c) { return c.id == id; });
     if (!chat) {
         console.error('[CHAT] Chat not found in list:', id);
@@ -2188,6 +2351,11 @@ function loadChat(id) {
     }
     console.log('[CHAT] Found chat:', chat.title, 'Messages:', chat.messages ? chat.messages.length : 0, 'Message count:', chat.message_count);
     currentChatId = id;
+    
+    // Notify Python to switch AI conversation context for follow-up questions
+    if (bridge && typeof bridge.on_switch_chat_context === 'function') {
+        bridge.on_switch_chat_context(id);
+    }
     
     // LAZY LOADING: If messages are not loaded yet, request them from the bridge
     var canLazyLoad = bridge && typeof bridge.load_full_chat === 'function';
@@ -2199,6 +2367,8 @@ function loadChat(id) {
     console.log('[CHAT] canLazyLoad:', canLazyLoad, 'needsLazyLoad:', needsLazyLoad, 'msgCount:', msgCount, 'message_count:', chat.message_count);
     if (needsLazyLoad && canLazyLoad) {
         console.log('[CHAT] Lazy loading messages for chat:', id);
+        _lazyLoadInProgress = true;
+        _pendingLoadChatId = null;
         clearMessages();
         
         // Ensure empty state is removed or hidden during loading
@@ -2213,6 +2383,7 @@ function loadChat(id) {
         } else {
             console.warn('[CHAT] Bridge not ready for lazy load. bridge exists:', !!bridge, 'type:', typeof (bridge && bridge.load_full_chat));
             hideLoadingIndicator();
+            _lazyLoadInProgress = false;
         }
         return;
     }
@@ -2245,20 +2416,44 @@ function loadChat(id) {
             }
         }
 
-        appendMessage(msgText, msgSender || 'user', false);
-        // Restore tool activities (like directory listings) if present
+        // Restore tool activities (like directory listings, cards) if present
         if (msg.toolActivities && msg.toolActivities.length > 0) {
+            // appendMessage will create the turn via _beginTurn() for user messages
+            appendMessage(msgText, msgSender || 'user', false);
+            // Now restore ALL cards inside the turn using showToolActivity router
             msg.toolActivities.forEach(function (activity) {
-                if (activity.type === 'directory' && activity.contents) {
-                    // Temporarily set currentAssistantMessage to last bubble for appending
-                    var container = document.getElementById('chatMessages');
-                    var bubbles = container.querySelectorAll('.message-bubble.assistant');
-                    if (bubbles.length > 0) {
-                        currentAssistantMessage = bubbles[bubbles.length - 1];
-                        renderDirectoryContents(activity.path, activity.contents);
+                if (!activity || !activity.type) return;
+                try {
+                    // Directory activities have a special shape (path + contents)
+                    if (activity.type === 'directory' && activity.contents) {
+                        var container = document.getElementById('chatMessages');
+                        var bubbles = (_currentTurn || container).querySelectorAll('.message-bubble.assistant');
+                        if (bubbles.length > 0) {
+                            currentAssistantMessage = bubbles[bubbles.length - 1];
+                            renderDirectoryContents(activity.path, activity.contents);
+                        }
+                    } else {
+                        // Route ALL other activity types through showToolActivity
+                        // (read_file, edit_file, search, run_command, thinking, etc.)
+                        var infoStr = (typeof activity.info === 'string')
+                            ? activity.info
+                            : JSON.stringify(activity.info || {});
+                        showToolActivity(activity.type, infoStr, activity.status || 'complete');
                     }
+                } catch(e) {
+                    console.warn('[CHAT] Failed to restore card:', activity.type, e.message);
                 }
             });
+            // End the turn after restoring all cards
+            try { _endTurn(); } catch(e) {}
+        } else {
+            // No tool activities - just append message normally
+            appendMessage(msgText, msgSender || 'user', false);
+            // End turn after assistant messages without tool activities
+            // to prevent the next message's cards from being inserted into this turn
+            if (msgSender === 'assistant' && _currentTurn) {
+                try { _endTurn(); } catch(e) {}
+            }
         }
     });
     
@@ -2366,9 +2561,11 @@ window.handleFullChatLoad = function(conversationId, chatData) {
     }
     hideLoadingIndicator();
     
+    // Clear lazy load flag
+    _lazyLoadInProgress = false;
+    
     if (!chatData || !chatData.messages || chatData.messages.length === 0) {
         console.warn('[CHAT] No chat data received for:', conversationId);
-        // Show empty state
         var container = document.getElementById('chatMessages');
         if (container && !document.getElementById('empty-state')) {
             var emptyState = document.createElement('div');
@@ -2376,6 +2573,8 @@ window.handleFullChatLoad = function(conversationId, chatData) {
             emptyState.innerHTML = '<p>No chat history found</p>';
             container.appendChild(emptyState);
         }
+        // Process any queued loadChat request
+        _processPendingLoadChat();
         return;
     }
     
@@ -2385,6 +2584,7 @@ window.handleFullChatLoad = function(conversationId, chatData) {
     var chat = chats.find(function(c) { return c.id == conversationId; });
     if (!chat) {
         console.error('[CHAT] Chat not found in list:', conversationId);
+        _processPendingLoadChat();
         return;
     }
     
@@ -2401,21 +2601,38 @@ window.handleFullChatLoad = function(conversationId, chatData) {
         var msgText = msg.content || msg.text;
         var msgSender = msg.role || msg.sender;
         
-        if (!msgText || msgText === 'undefined' || msgText.trim() === '') return;
-        appendMessage(msgText, msgSender || 'user', false);
+        if (!msgText || msgText === 'undefined' || String(msgText).trim() === '') return;
         
-        // Restore tool activities
+        // Restore tool activities if present — route ALL types through showToolActivity
         if (msg.toolActivities && msg.toolActivities.length > 0) {
+            appendMessage(msgText, msgSender || 'user', false);
             msg.toolActivities.forEach(function(activity) {
-                if (activity.type === 'directory' && activity.contents) {
-                    var container = document.getElementById('chatMessages');
-                    var bubbles = container.querySelectorAll('.message-bubble.assistant');
-                    if (bubbles.length > 0) {
-                        currentAssistantMessage = bubbles[bubbles.length - 1];
-                        renderDirectoryContents(activity.path, activity.contents);
+                if (!activity || !activity.type) return;
+                try {
+                    if (activity.type === 'directory' && activity.contents) {
+                        var container = document.getElementById('chatMessages');
+                        var bubbles = (_currentTurn || container).querySelectorAll('.message-bubble.assistant');
+                        if (bubbles.length > 0) {
+                            currentAssistantMessage = bubbles[bubbles.length - 1];
+                            renderDirectoryContents(activity.path, activity.contents);
+                        }
+                    } else {
+                        var infoStr = (typeof activity.info === 'string')
+                            ? activity.info
+                            : JSON.stringify(activity.info || {});
+                        showToolActivity(activity.type, infoStr, activity.status || 'complete');
                     }
+                } catch(e) {
+                    console.warn('[CHAT] Failed to restore card:', activity.type, e.message);
                 }
             });
+            try { _endTurn(); } catch(e) {}
+        } else {
+            appendMessage(msgText, msgSender || 'user', false);
+            // End turn after assistant messages without tool activities
+            if (msgSender === 'assistant' && _currentTurn) {
+                try { _endTurn(); } catch(e) {}
+            }
         }
     });
     
@@ -2440,8 +2657,24 @@ window.handleFullChatLoad = function(conversationId, chatData) {
         updateTodos([], '');
     }
     
+    // Save updated chat to localStorage for next time
+    scheduleSaveChats(100);
+    
     console.log('[CHAT] Chat loaded successfully:', conversationId);
+    
+    // Process any queued loadChat request
+    _processPendingLoadChat();
 };
+
+// Process queued loadChat requests (race condition prevention)
+function _processPendingLoadChat() {
+    if (_pendingLoadChatId) {
+        var nextId = _pendingLoadChatId;
+        _pendingLoadChatId = null;
+        console.log('[CHAT] Processing queued loadChat request for:', nextId);
+        setTimeout(function() { loadChat(nextId); }, 50);
+    }
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // MEMORY SAVING ANIMATION
@@ -3307,6 +3540,7 @@ function stopGeneration() {
     _taskSummaryBuffer      = '';
     _inTaskSummary          = false;
     _isGenerating           = false;
+    _lastFlushedContentLen  = 0;
     var sendBtn = document.getElementById('sendBtn');
     var stopBtn = document.getElementById('stopBtn');
     if (sendBtn) sendBtn.style.display = 'flex';
@@ -3335,6 +3569,7 @@ var _caSeenFileKeys = Object.create(null);
 var _caThoughtFlushTimer = null;
 var _turnStartTime = null;        // timestamp when turn began (for elapsed display)
 var _interleavedMode = true;      // interleaved card+text flow (cards inline in turn, not bundled)
+var _lastFlushedContentLen = 0;   // tracks the full accumulated buffer length that has been flushed to previous bubbles
 
 // ── Helpers ──────────────────────────────────────────────
 function _caFindCard(type, key) {
@@ -3393,6 +3628,8 @@ function _beginTurn() {
     _caStats = { reads: 0, edits: 0, searches: 0, thoughts: 0, commands: 0 };
     _caSeenFileKeys = Object.create(null);
     _turnStartTime = Date.now();
+    _nextTextBubble = null;  // Reset text bubble reference
+    _lastFlushedContentLen = 0;  // Reset interleaved content tracker
 
     // Create turn container
     var turn = document.createElement('div');
@@ -3490,7 +3727,6 @@ function _caInsertCard(card) {
 
     if (_interleavedMode) {
         // Thought cards go BEFORE any AI text (right after user bubble)
-        // All other cards: flush AI text segment and insert after (text→card→text)
         if (card.dataset.caType === 'thought') {
             var userBubble = group.querySelector('.message-bubble.user:last-of-type');
             if (userBubble && userBubble.nextSibling) {
@@ -3499,8 +3735,15 @@ function _caInsertCard(card) {
                 group.appendChild(card);
             }
         } else {
+            // All other cards: flush AI text segment first
             _flushAIContentSegment();
-            group.appendChild(card);
+            // Insert card BEFORE the new text bubble (not after)
+            // _flushAIContentSegment stores the new bubble in _nextTextBubble
+            if (_nextTextBubble && group.contains(_nextTextBubble)) {
+                group.insertBefore(card, _nextTextBubble);
+            } else {
+                group.appendChild(card);
+            }
         }
     } else {
         // Classic mode: show processing block and append to processing body
@@ -3523,10 +3766,31 @@ function _caMarkGroupComplete() {
 // ── Flush AI Content Segment (interleaved mode) ───────────
 // When a card arrives during streaming, finalize the current AI text bubble
 // and start a fresh one after the card — creating text→card→text pattern
+var _nextTextBubble = null;  // Reference to the new bubble created by flush
+
 function _flushAIContentSegment() {
     if (!_interleavedMode) return;
     if (!currentAssistantMessage) return;
     if (!_currentTurn) return;
+
+    // Cancel any pending debounced render to prevent it from firing
+    // after we've already flushed — it would render into the wrong bubble
+    if (window._streamRenderTimeout) {
+        clearTimeout(window._streamRenderTimeout);
+        window._streamRenderTimeout = null;
+        renderPending = false;
+    }
+
+    // CRITICAL: Force a synchronous render of current content into the bubble
+    // BEFORE reading the DOM. The 500ms debounce timer may not have fired yet,
+    // so the bubble's DOM might be empty even though currentContent has text.
+    if (currentContent && currentContent.trim()) {
+        try {
+            updateStreamingUI();
+        } catch (e) {
+            console.warn('[CHAT] _flushAIContentSegment: pre-flush render error:', e.message);
+        }
+    }
 
     var contentDiv = currentAssistantMessage.querySelector('.message-content');
     if (!contentDiv) return;
@@ -3534,6 +3798,11 @@ function _flushAIContentSegment() {
     // Check if the current bubble has any meaningful content
     var text = contentDiv.textContent || contentDiv.innerText || '';
     if (text.trim().length === 0) return;
+
+    // Record the FULL accumulated buffer length that has been flushed.
+    // Python sends the full buffer each time, so we need to track the
+    // absolute position, not the delta length.
+    _lastFlushedContentLen = window._fullAccumulatedLen || 0;
 
     // The current bubble has content — it will stay in the DOM as-is.
     // Create a fresh assistant bubble for subsequent onChunk writes.
@@ -3544,8 +3813,10 @@ function _flushAIContentSegment() {
     newContent.className = 'message-content';
     newBubble.appendChild(newContent);
 
-    // Append after the card will be inserted by _caInsertCard
-    // We append it NOW so future onChunk calls find it
+    // Store reference so _caInsertCard can insert card BEFORE this bubble
+    _nextTextBubble = newBubble;
+
+    // Append the new bubble to the turn container
     _currentTurn.appendChild(newBubble);
 
     currentAssistantMessage = newBubble;
@@ -3575,6 +3846,18 @@ function showToolActivity(type, info, status) {
                 data = { raw: info };
             }
         }
+    }
+
+    // ── CARD PERSISTENCE: Save card data for restore on IDE restart ──
+    // Only save completed cards (not running state) to avoid duplicates
+    if (status === 'complete' || status === 'error') {
+        if (!window._pendingToolActivities) window._pendingToolActivities = [];
+        window._pendingToolActivities.push({
+            type: type,
+            info: info,
+            status: status,
+            timestamp: Date.now()
+        });
     }
 
     // Update thinking status text for the old indicator bar
@@ -4959,7 +5242,9 @@ function showToolSummary(summaryData) {
         ce.className = 'message-content';
         currentAssistantMessage.appendChild(ce);
         currentContent = "";
-        container.appendChild(currentAssistantMessage);
+        // CRITICAL: Append to turn container for interleaved cards
+        var turnContainer = _currentTurn || container;
+        turnContainer.appendChild(currentAssistantMessage);
         var es = document.getElementById('empty-state');
         if (es) es.remove();
     }
@@ -5466,18 +5751,9 @@ function showThinking() {
         currentAssistantMessage.appendChild(content);
         currentContent = '';
         
-        // Place inside turn-ai-response if turn exists
-        if (_currentTurn && document.body.contains(_currentTurn)) {
-            var aiResponse = _currentTurn.querySelector('.turn-ai-response');
-            if (aiResponse) {
-                aiResponse.innerHTML = '';
-                aiResponse.appendChild(currentAssistantMessage);
-            } else {
-                container.appendChild(currentAssistantMessage);
-            }
-        } else {
-            container.appendChild(currentAssistantMessage);
-        }
+        // CRITICAL: Always append to turn container for interleaved cards
+        var turnContainer = _currentTurn || container;
+        turnContainer.appendChild(currentAssistantMessage);
         
         var emptyState = document.getElementById('empty-state');
         if (emptyState) emptyState.remove();
@@ -5686,6 +5962,88 @@ function showCreatedFilesCard(summaryData) {
     smartScroll(container);
 }
 
+// Completion message card — rendered when <task_summary> has a "message"
+// but no "files" array. Shows a simple "Task Complete" card with the
+// AI's own explanation of what was accomplished.
+function showCompletionMessageCard(summaryData) {
+    var container = document.getElementById('chatMessages');
+    if (!container || !summaryData) return;
+
+    var title = summaryData.title || 'Task Complete';
+    var msg   = summaryData.message || '';
+
+    var card = document.createElement('div');
+    card.className = 'created-files-card';  // reuse existing card styles
+    card.setAttribute('aria-label', 'Task completion summary');
+
+    // Header row
+    var header = document.createElement('div');
+    header.className = 'cfc-header';
+    header.innerHTML =
+        '<span class="cfc-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>' +
+        '<span class="cfc-title">' + escapeHtml(title) + '</span>';
+    card.appendChild(header);
+
+    // Message body
+    if (msg) {
+        var body = document.createElement('div');
+        body.className = 'cfc-footer';
+        body.textContent = msg;
+        card.appendChild(body);
+    }
+
+    // Interleaved mode support
+    var parent = (_interleavedMode && _currentTurn && document.body.contains(_currentTurn)) ? _currentTurn : container;
+    parent.appendChild(card);
+
+    requestAnimationFrame(function() {
+        card.classList.add('cfc-visible');
+    });
+
+    smartScroll(container);
+}
+
+// Completion message card — rendered when <task_summary> has a "message"
+// but no "files" array. Shows a simple "Task Complete" card with the
+// AI's own explanation of what was accomplished.
+function showCompletionMessageCard(summaryData) {
+    var container = document.getElementById('chatMessages');
+    if (!container || !summaryData) return;
+
+    var title = summaryData.title || 'Task Complete';
+    var msg   = summaryData.message || '';
+
+    var card = document.createElement('div');
+    card.className = 'created-files-card';  // reuse existing card styles
+    card.setAttribute('aria-label', 'Task completion summary');
+
+    // Header row
+    var header = document.createElement('div');
+    header.className = 'cfc-header';
+    header.innerHTML =
+        '<span class="cfc-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>' +
+        '<span class="cfc-title">' + escapeHtml(title) + '</span>';
+    card.appendChild(header);
+
+    // Message body
+    if (msg) {
+        var body = document.createElement('div');
+        body.className = 'cfc-footer';
+        body.textContent = msg;
+        card.appendChild(body);
+    }
+
+    // Interleaved mode support
+    var parent = (_interleavedMode && _currentTurn && document.body.contains(_currentTurn)) ? _currentTurn : container;
+    parent.appendChild(card);
+
+    requestAnimationFrame(function() {
+        card.classList.add('cfc-visible');
+    });
+
+    smartScroll(container);
+}
+
 function getCfcFileIcon(ext) {
     var icons = {
         'py':   '<span class="cfc-ext-badge py">PY</span>',
@@ -5739,21 +6097,9 @@ function startStreaming() {
         currentAssistantMessage.appendChild(content);
         currentContent = "";
     
-        // Interleaved mode: append directly to turn container
-        if (_interleavedMode && _currentTurn && document.body.contains(_currentTurn)) {
-            _currentTurn.appendChild(currentAssistantMessage);
-        } else if (_currentTurn && document.body.contains(_currentTurn)) {
-            // Classic mode: place inside turn-ai-response if turn exists
-            var aiResponse = _currentTurn.querySelector('.turn-ai-response');
-            if (aiResponse) {
-                aiResponse.innerHTML = '';
-                aiResponse.appendChild(currentAssistantMessage);
-            } else {
-                container.appendChild(currentAssistantMessage);
-            }
-        } else {
-            container.appendChild(currentAssistantMessage);
-        }
+        // CRITICAL: Always append to turn container for interleaved cards
+        var turnContainer = _currentTurn || container;
+        turnContainer.appendChild(currentAssistantMessage);
         
         // Remove empty state if present
         var emptyState = document.getElementById('empty-state');
@@ -5765,6 +6111,11 @@ function startStreaming() {
 }
 
 function onChunk(chunk) {
+    // If stop was requested, silently discard all incoming chunks.
+    // The backend cancellation is async — chunks may still arrive for a brief
+    // window after the user clicks stop, but they must not be rendered.
+    if (_stopRequested) return;
+
     // Queue the chunk to avoid race conditions between consecutive runJavaScript calls
     var _totalChunksReceived = window._totalChunksReceived || 0;
     _totalChunksReceived++;
@@ -5793,6 +6144,11 @@ function _processChunkQueue() {
 }
 
 function _processSingleChunk(chunk) {
+    // Stop guard: discard chunks that arrive after user clicked stop.
+    // Prevents new assistant messages from being created and rendered
+    // while the backend is still processing the cancellation.
+    if (_stopRequested) return;
+
     if (chunk === undefined || chunk === null) {
         console.warn('[JS] onChunk received undefined/null chunk');
         return;
@@ -5899,7 +6255,9 @@ function _processSingleChunk(chunk) {
         var content = document.createElement('div');
         content.className = 'message-content';
         currentAssistantMessage.appendChild(content);
-        container.appendChild(currentAssistantMessage);
+        // CRITICAL: Append to turn container (not main container) for interleaved cards
+        var turnContainer = _currentTurn || container;
+        turnContainer.appendChild(currentAssistantMessage);
         currentContent = '';
         var emptyState = document.getElementById('empty-state');
         if (emptyState) emptyState.remove();
@@ -5908,15 +6266,41 @@ function _processSingleChunk(chunk) {
     // Use Python's full buffer as source of truth (replaces, not appends).
     // Python sends the complete accumulated text each time, so JS always
     // has consistent state even if a chunk was dropped by the debounce.
-    currentContent = chunk;
+    // After a _flushAIContentSegment, _lastFlushedContentLen tracks how much
+    // of the full buffer has been flushed to previous bubbles — extract only the new portion.
+    window._fullAccumulatedLen = chunk.length;  // Track full buffer length for flush
+    if (_lastFlushedContentLen > 0 && chunk.length > _lastFlushedContentLen) {
+        currentContent = chunk.substring(_lastFlushedContentLen);
+    } else if (_lastFlushedContentLen > 0 && chunk.length <= _lastFlushedContentLen) {
+        // Full buffer hasn't grown past what was already flushed — skip
+        return;
+    } else {
+        currentContent = chunk;
+    }
 
-    // Throttled Rendering (200ms debounce)
-    if (!renderPending) {
+    // Auto-save partial response periodically during streaming
+    // This ensures crash recovery has recent content even if onComplete never fires
+    _autoSaveChunkCounter++;
+    if (_autoSaveChunkCounter >= _AUTO_SAVE_INTERVAL) {
+        _autoSaveChunkCounter = 0;
+        _savePartialResponse();
+    }
+
+    // Throttled Rendering (500ms debounce — reduced from 200ms to prevent OOM crashes)
+    // Only schedule render if content has changed significantly (500+ chars)
+    var _lastRenderedLen = window._lastRenderedContentLen || 0;
+    var _contentDelta = currentContent.length - _lastRenderedLen;
+    if (!renderPending && _contentDelta > 500) {
         renderPending = true;
         window._streamRenderTimeout = setTimeout(function() {
             renderPending = false;
-            updateStreamingUI();
-        }, 200);
+            window._lastRenderedContentLen = currentContent ? currentContent.length : 0;
+            try {
+                updateStreamingUI();
+            } catch (timerErr) {
+                console.error('[CHAT] updateStreamingUI from timer error:', timerErr.message || timerErr);
+            }
+        }, 500);
     }
 }
 // End _processSingleChunk
@@ -6368,6 +6752,7 @@ function normalizeMarkdownText(text) {
 
     // Limit blank lines.
     text = text.replace(/\n{4,}/g, '\n\n\n');
+
     return text;
 
 }
@@ -6464,13 +6849,36 @@ function updateStreamingUI() {
             .replace(/[\u2299\u229a\u25ce\u25cf\u2609\u2605\u2606]\s*Thought\s*[\u00B7\u00b7\.\xB7]\s*\d+s\s*/g, '')
             .trim();
 
+        // -- 1a. Strip leading/trailing $$ wrappers (model reasoning leaks) -
+        // Some models (especially MiMo) wrap their entire response in $$...$$
+        // which is interpreted as LaTeX display math — producing garbled text.
+        if (cleanText.startsWith('$$') && cleanText.endsWith('$$') && cleanText.length > 4) {
+            cleanText = cleanText.substring(2, cleanText.length - 2).trim();
+        }
+        // Also catch $$-wrapped blocks where $$ appears as reasoning markers
+        // around long prose (not real math). This regex matches ^$$\n...\n$$ .
+        cleanText = cleanText.replace(/^\$\$\n?([\s\S]*?)\n?\$\$\n?/, function(match, inner) {
+            // Only strip if the wrapped content is very long prose (not real math)
+            if (inner && inner.length > 300 && /^#{1,6}\s|```|\n\|\s|[.!?]\s/.test(inner)) {
+                return inner.trim();
+            }
+            return match;
+        });
+
         // -- 1b. Normalize markdown for consistent bold/italic rendering ----
         cleanText = normalizeMarkdownText(cleanText);
 
         // -- 2. Parse markdown via formatMessage (full rendering pipeline) ---
+        // LARGE CONTENT SAFETY: Reduce threshold to 100K to prevent Chromium OOM crashes.
+        // The markdown parser + syntax highlighter + DOM diffing can exhaust memory
+        // on very large content (e.g. 285K char file diffs in chat bubbles).
         var html = '';
         try {
-            if (cleanText.length > 500000) {
+            if (cleanText.length > 100000) {
+                // For very large content, use lightweight plain-text rendering
+                // Skip markdown parsing, syntax highlighting, and MathJax entirely
+                html = _renderLargeContentSafe(cleanText);
+            } else if (cleanText.length > 50000) {
                 html = formatMarkdownFallback(cleanText);
             } else {
                 html = formatMessage(cleanText, false);
@@ -6503,8 +6911,9 @@ function updateStreamingUI() {
         html = convertSuggestionChips(html);
         contentDiv.innerHTML = stripStrayPipeParagraphsFromHtml(html);
 
-        // -- 3. Syntax highlight (skip already-highlighted blocks) ----------
-        if (window.hljs) {
+        // -- 3. Syntax highlight (skip for large content to prevent OOM) ----------
+        // Skip syntax highlighting entirely for content > 80K to prevent Chromium crash
+        if (window.hljs && cleanText.length <= 80000) {
             contentDiv.querySelectorAll('pre code').forEach(function(block) {
                 if (!block.dataset.highlighted) {
                     // Get the language from data-lang attribute or class
@@ -6560,23 +6969,78 @@ function updateStreamingUI() {
         });
 
         // -- 5. Real-time MathJax typesetting (throttled) ----------------
-        typesetMathJax(contentDiv);
-
-        // -- 6. Real-time Mermaid diagram rendering (incremental) --------
-        // Only trigger if we have pending diagrams to avoid redundant work
-        if (contentDiv.querySelector('.mermaid-container[data-mermaid-pending]')) {
-            renderMermaidDiagrams(contentDiv);
+        // Only typeset during streaming if no open math delimiters (prevents
+        // crash from processing incomplete/truncated LaTeX expressions)
+        // Also skip MathJax for large content to prevent OOM
+        if (cleanText.length <= 50000) {
+            var openDollars = (cleanText.match(/\$/g) || []).length;
+            var openDisplay = (cleanText.match(/\$\$/g) || []).length;
+            if (openDisplay % 2 === 0 && openDollars % 2 === 0) {
+                typesetMathJax(contentDiv);
+            }
         }
 
+        // -- 6. Mermaid: defer rendering to onComplete ------------------
+        // Rendering during streaming is wasteful — each chunk rebuilds
+        // innerHTML which destroys the SVG. The mermaid container shows
+        // a "Rendering diagram..." placeholder; onComplete does the
+        // actual mermaid.render() once with the complete code.
+        // (renderMermaidDiagrams is called in onComplete at line 6961)
+
     } catch (e) {
-        console.error('Markdown parse error:', e);
-        contentDiv.innerHTML = stripStrayPipeParagraphsFromHtml(formatMarkdownFallback(currentContent));
+        console.error('[CHAT] Markdown parse error:', e.message || e);
+        // Fallback: attempt to render with simple markdown formatter
+        // Wrapped in secondary try-catch so an error in the fallback itself
+        // cannot cascade into an uncaught exception and block UI recovery.
+        try {
+            var fallbackHtml = formatMarkdownFallback(String(currentContent || ''));
+            contentDiv.innerHTML = stripStrayPipeParagraphsFromHtml(fallbackHtml);
+        } catch (fbErr) {
+            console.error('[CHAT] Markdown fallback also failed:', fbErr.message || fbErr);
+            // Last resort: plain text with <br> for newlines
+            var safeText = String(currentContent || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/\n/g, '<br>');
+            contentDiv.innerHTML = safeText;
+        }
     }
 
     smartScroll(container);
 }
 
 // Fallback markdown formatter for when marked.js fails
+/**
+ * Safe renderer for very large content (>100K chars).
+ * Avoids markdown parsing, syntax highlighting, and complex DOM operations
+ * that can crash the Chromium render process with OOM.
+ * Renders as escaped plain text with basic code block detection.
+ */
+function _renderLargeContentSafe(text) {
+    if (!text) return '';
+    // Escape HTML
+    var safe = text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+
+    // Preserve code blocks with minimal styling
+    safe = safe.replace(/```(\w*)\n([\s\S]*?)```/g, function(m, lang, code) {
+        return '<pre class="large-content-code"><code>' + code + '</code></pre>';
+    });
+
+    // Convert newlines to <br> for readability
+    safe = safe.replace(/\n/g, '<br>');
+
+    // Truncate if still too large (>500K rendered)
+    if (safe.length > 500000) {
+        safe = safe.substring(0, 500000) + '<br><br><em style="opacity:0.5">[Content truncated for performance]</em>';
+    }
+
+    return '<div class="large-content-wrapper">' + safe + '</div>';
+}
+
 function formatMarkdownFallback(text) {
     if (!text) return '';
     
@@ -6780,167 +7244,246 @@ function collapseFecContainer() {
 }
 
 function onComplete(fullText) {
-    // If the user already clicked Stop, Python's late-firing onComplete is a no-op
-    if (_stopRequested) {
-        _stopRequested = false;
-        console.log('[CHAT] onComplete: suppressed (stop was requested)');
-        return;
-    }
+    // ── Button-state sentinel — ensures send/stop toggle ALWAYS executes ──
+    var _onCompleteFinally = false; // Set true when we reach the final block
 
-    // If Python sent the full buffered text, ALWAYS use it as source of truth.
-    // Python sends the complete accumulated response each time, so this is the
-    // authoritative version regardless of what currentContent contains.
-    if (typeof fullText === 'string' && fullText.length > 0) {
-        console.log('[CHAT] onComplete: setting content from Python (', fullText.length, 'chars)');
-        currentContent = fullText;
-        currentAssistantMessageContent = fullText;
-    }
+    try {
+        // If the user already clicked Stop, Python's late-firing onComplete is a no-op
+        if (_stopRequested) {
+            _stopRequested = false;
+            console.log('[CHAT] onComplete: suppressed (stop was requested)');
+            _onCompleteFinally = true;
+            return;
+        }
 
-    removeThinkingIndicator();
-    hideThinking();
-    collapseFecContainer();     // Force-complete any open FEC cards
+        // If Python sent the full buffered text, ALWAYS use it as source of truth.
+        // Python sends the complete accumulated response each time, so this is the
+        // authoritative version regardless of what currentContent contains.
+        if (typeof fullText === 'string' && fullText.length > 0) {
+            console.log('[CHAT] onComplete: setting content from Python (', fullText.length, 'chars)');
+            currentContent = fullText;
+            currentAssistantMessageContent = fullText;
+        }
 
-    // Phase C: Clear any pending render timeout before doing final render
-    if (window._streamRenderTimeout) {
-        clearTimeout(window._streamRenderTimeout);
-        window._streamRenderTimeout = null;
-    }
+        removeThinkingIndicator();
+        hideThinking();
+        try { collapseFecContainer(); } catch(e) {}  // Force-complete any open FEC cards
 
-    // If a debounced render is still pending (not yet fired), execute it
-    // synchronously RIGHT NOW before reading contentDiv.innerHTML.
-    // This handles Responses API / fast models that deliver content in one
-    // final burst just before onComplete fires — the 200ms timer never runs.
-    // If renderPending is false AND _streamRenderTimeout is null the last
-    // debounced render already ran, so we do NOT re-render (avoids flicker).
-    if (renderPending || window._streamRenderTimeout) {
+        // Phase C: Clear any pending render timeout before doing final render
         if (window._streamRenderTimeout) {
             clearTimeout(window._streamRenderTimeout);
             window._streamRenderTimeout = null;
         }
-        renderPending = false;
-        updateStreamingUI(); // One synchronous render with complete content
-    }
 
-    if (currentAssistantMessage) {
-        // -- Strip all custom tags for history save -------------------------
-        var displayText = currentContent
-            .replace(/<task_summary>[\s\S]*?<\/task_summary>/g, '')
-            .replace(/<file_edited>[\s\S]*?<\/file_edited>/g, '')
-            .replace(/<exploration>[\s\S]*?<\/exploration>/g, '')
-            .replace(/<tasklist>[\s\S]*?<\/tasklist>/g, '')
-            .replace(/<plan>[\s\S]*?<\/plan>/g, '')
-            .replace(/<permission>[\s\S]*?<\/permission>/g, '')
-            .replace(/[\u2299\u2299]Thought\s*[\u00B7\u00b7\.\s]\s*\d+s\s*/g, '')
-            .trim();
+        // ── INTERLEAVED MODE: preserve text→card→text structure ──────────
+        // During streaming, _flushAIContentSegment creates multiple assistant
+        // bubbles interspersed with tool cards. We must NOT re-render the full
+        // text into the last bubble — that would duplicate/destroy the
+        // interleaved layout. Instead, only update the last bubble with the
+        // remaining text that hasn't been rendered yet.
+        var _turnHasCards = _currentTurn && _currentTurn.querySelectorAll('.ca-card').length > 0;
+        var _hasMultipleBubbles = _currentTurn && _currentTurn.querySelectorAll('.message-bubble.assistant').length > 1;
 
-        displayText = normalizeMarkdownText(displayText);
-
-        console.log('[CHAT] onComplete: displayText length:', displayText ? displayText.length : 0);
-
-        // -- Save to history (only if content is valid) ---------------------
-        var chat = chats.find(function(c) { return c.id == currentChatId; });
-        if (chat && displayText && displayText.trim() !== '' && displayText !== 'undefined') {
-            chat.messages.push({ text: displayText, sender: 'assistant', role: 'assistant' });
-            scheduleSaveChats(50);
-        }
-
-        // -- Final touches on already-rendered content (NO re-render) ------
-        // The last streaming render already produced the correct HTML.
-        // We batch ALL DOM modifications into a single innerHTML assignment
-        // to prevent the browser from tearing down and rebuilding the DOM.
-        var contentDiv = currentAssistantMessage.querySelector('.message-content');
-        
-        if (contentDiv) {
-            try {
-                // Batch all modifications into ONE innerHTML write
-                var finalHtml = contentDiv.innerHTML;
-        
-                // Apply suggestion chips if not already present
-                if (finalHtml.indexOf('suggestion-chip') === -1) {
-                    finalHtml = convertSuggestionChips(finalHtml);
-                }
-                // Replace thought timer patterns
-                var thoughtPattern = /([\u2299\u229a\u25ce\u29bf]Thought\s*[\u00B7\u00b7\.\xB7]\s*\d+s)/g;
-                if (thoughtPattern.test(finalHtml)) {
-                    finalHtml = finalHtml.replace(
-                        thoughtPattern,
-                        '<span class="thought-timer">$1</span>'
-                    );
-                }
-                // Single innerHTML assignment - no DOM teardown/rebuild cycle
-                contentDiv.innerHTML = finalHtml;
-        
-                console.log('[CHAT] onComplete: contentDiv.innerHTML length:', contentDiv.innerHTML.length);
-        
-                // -- Code block headers + syntax highlight -------------------
-                contentDiv.querySelectorAll('pre code').forEach(function(block) {
-                    if (!block.dataset.highlighted && window.hljs) {
-                        try { hljs.highlightElement(block); } catch(e) {}
+        if (_interleavedMode && _turnHasCards && _hasMultipleBubbles) {
+            // Interleaved path: only render the tail segment into the last bubble
+            console.log('[CHAT] onComplete: interleaved mode — preserving card+text layout');
+            // Extract only the portion that hasn't been flushed to previous bubbles
+            var _tailSource = currentContent;
+            if (_lastFlushedContentLen > 0 && _tailSource.length > _lastFlushedContentLen) {
+                _tailSource = _tailSource.substring(_lastFlushedContentLen);
+            }
+            var _lastBubble = currentAssistantMessage;
+            if (_lastBubble) {
+                var _lastContentDiv = _lastBubble.querySelector('.message-content');
+                if (_lastContentDiv && _tailSource) {
+                    // Strip custom tags for display
+                    var _tailText = _tailSource
+                        .replace(/<task_summary>[\s\S]*?<\/task_summary>/g, '')
+                        .replace(/<file_edited>[\s\S]*?<\/file_edited>/g, '')
+                        .replace(/<exploration>[\s\S]*?<\/exploration>/g, '')
+                        .replace(/<tasklist>[\s\S]*?<\/tasklist>/g, '')
+                        .replace(/<plan>[\s\S]*?<\/plan>/g, '')
+                        .replace(/<permission>[\s\S]*?<\/permission>/g, '')
+                        .replace(/<think>[\s\S]*?<\/think>/gi, '')
+                        .trim();
+                    if (_tailText) {
+                        try {
+                            var _tailHtml = formatMessage(normalizeMarkdownText(_tailText), false);
+                            _lastContentDiv.innerHTML = stripStrayPipeParagraphsFromHtml(_tailHtml || _tailText);
+                            // Syntax highlight
+                            if (window.hljs) {
+                                _lastContentDiv.querySelectorAll('pre code').forEach(function(block) {
+                                    if (!block.dataset.highlighted && window.hljs) {
+                                        try { hljs.highlightElement(block); } catch(e) {}
+                                    }
+                                    injectCodeBlockHeader(block, {});
+                                });
+                            }
+                        } catch (e) {
+                            console.warn('[CHAT] onComplete: tail render error:', e.message);
+                        }
                     }
-                    injectCodeBlockHeader(block, {});
-                });
-            } catch (renderErr) {
-                console.error('[CHAT] onComplete: post-render error:', renderErr.message);
+                }
             }
         } else {
-            console.error('[CHAT] onComplete: contentDiv NOT FOUND!');
+            // Standard path: no interleaved cards — render full content as before
+            var _contentDiv = currentAssistantMessage ? currentAssistantMessage.querySelector('.message-content') : null;
+            var _needRender = !_contentDiv || !_contentDiv.innerHTML.trim();
+            if (renderPending || window._streamRenderTimeout || (_needRender && currentContent)) {
+                if (window._streamRenderTimeout) {
+                    clearTimeout(window._streamRenderTimeout);
+                    window._streamRenderTimeout = null;
+                }
+                renderPending = false;
+                try {
+                    updateStreamingUI(); // One synchronous render with complete content
+                } catch (uiErr) {
+                    console.error('[CHAT] onComplete: updateStreamingUI error:', uiErr.message);
+                }
+            }
         }
 
-        // -- File edit cards ? KEY FIX --------------------------------
-        // Render cards AFTER ensuring content is visible
-        renderCustomTagsInto(currentAssistantMessage, currentContent);
+        if (currentAssistantMessage) {
+            // -- Strip all custom tags for history save -------------------------
+            var displayText = currentContent
+                .replace(/<task_summary>[\s\S]*?<\/task_summary>/g, '')
+                .replace(/<file_edited>[\s\S]*?<\/file_edited>/g, '')
+                .replace(/<exploration>[\s\S]*?<\/exploration>/g, '')
+                .replace(/<tasklist>[\s\S]*?<\/tasklist>/g, '')
+                .replace(/<plan>[\s\S]*?<\/plan>/g, '')
+                .replace(/<permission>[\s\S]*?<\/permission>/g, '')
+                .replace(/[\u2299\u2299]Thought\s*[\u00B7\u00b7\.\s]\s*\d+s\s*/g, '')
+                .trim();
 
-        // -- Thought duration badge ----------------------------------
-        var secs = getThoughtSeconds();
-        if (secs >= 1) {
-            currentAssistantMessage.appendChild(buildThoughtBadge(secs));
-        }
-        _thinkingStartTime = null;
+            displayText = normalizeMarkdownText(displayText);
 
-        // -- Task summary card ---------------------------------------
-        var summaryText = _taskSummaryBuffer || currentContent;
-        var summaryMatch = summaryText.match(/<task_summary>([\s\S]*?)<\/task_summary>/);
-        if (summaryMatch) {
+            console.log('[CHAT] onComplete: displayText length:', displayText ? displayText.length : 0);
+
+            // -- Save to history (only if content is valid) ---------------------
+            var chat = chats.find(function(c) { return c.id == currentChatId; });
+            if (chat && displayText && displayText.trim() !== '' && displayText !== 'undefined') {
+                var messageData = { text: displayText, sender: 'assistant', role: 'assistant' };
+                // CRITICAL: Save tool activities (cards) with the message for persistence
+                if (window._pendingToolActivities && window._pendingToolActivities.length > 0) {
+                    messageData.toolActivities = window._pendingToolActivities;
+                    window._pendingToolActivities = []; // Clear after saving
+                }
+                chat.messages.push(messageData);
+                scheduleSaveChats(50);
+            }
+
+            // -- Final touches on already-rendered content (NO re-render) ------
+            var contentDiv = currentAssistantMessage.querySelector('.message-content');
+            
+            if (contentDiv) {
+                try {
+                    // Batch all modifications into ONE innerHTML write
+                    var finalHtml = contentDiv.innerHTML;
+            
+                    // Apply suggestion chips if not already present
+                    if (finalHtml.indexOf('suggestion-chip') === -1) {
+                        finalHtml = convertSuggestionChips(finalHtml);
+                    }
+                    // Replace thought timer patterns
+                    var thoughtPattern = /([\u2299\u229a\u25ce\u29bf]Thought\s*[\u00B7\u00b7\.\xB7]\s*\d+s)/g;
+                    if (thoughtPattern.test(finalHtml)) {
+                        finalHtml = finalHtml.replace(
+                            thoughtPattern,
+                            '<span class="thought-timer">$1</span>'
+                        );
+                    }
+                    // Single innerHTML assignment - no DOM teardown/rebuild cycle
+                    contentDiv.innerHTML = finalHtml;
+            
+                    console.log('[CHAT] onComplete: contentDiv.innerHTML length:', contentDiv.innerHTML.length);
+            
+                    // -- Code block headers + syntax highlight -------------------
+                    contentDiv.querySelectorAll('pre code').forEach(function(block) {
+                        if (!block.dataset.highlighted && window.hljs) {
+                            try { hljs.highlightElement(block); } catch(e) {}
+                        }
+                        injectCodeBlockHeader(block, {});
+                    });
+                } catch (renderErr) {
+                    console.error('[CHAT] onComplete: post-render error:', renderErr.message);
+                }
+            } else {
+                console.error('[CHAT] onComplete: contentDiv NOT FOUND!');
+            }
+
+            // -- File edit cards — render AFTER ensuring content is visible
+            try { renderCustomTagsInto(currentAssistantMessage, currentContent); } catch (e) {
+                console.error('[CHAT] onComplete: renderCustomTagsInto error:', e.message);
+            }
+
+            // -- Thought duration badge ----------------------------------
             try {
-                var sd = JSON.parse(summaryMatch[1].trim());
-                if (sd && sd.files && sd.files.length > 0) showCreatedFilesCard(sd);
-            } catch (e) { /* silent */ }
+                var secs = getThoughtSeconds();
+                if (secs >= 1) {
+                    currentAssistantMessage.appendChild(buildThoughtBadge(secs));
+                }
+            } catch (e) {
+                console.error('[CHAT] onComplete: thoughtBadge error:', e.message);
+            }
+            _thinkingStartTime = null;
+
+            // -- Task summary card ---------------------------------------
+            var summaryText = _taskSummaryBuffer || currentContent;
+            var summaryMatch = summaryText.match(/<task_summary>([\s\S]*?)<\/task_summary>/);
+            if (summaryMatch) {
+                try {
+                    var sd = JSON.parse(summaryMatch[1].trim());
+                    if (sd) {
+                        // Show created-files card if files array present
+                        if (sd.files && sd.files.length > 0) {
+                            showCreatedFilesCard(sd);
+                        } else if (sd.message) {
+                            // Show completion message even without files
+                            showCompletionMessageCard(sd);
+                        }
+                    }
+                } catch (e) { /* silent */ }
+            }
+
+            // -- Final MathJax typeset (supports typesetPromise) ---------------
+            try { typesetMathJax(currentAssistantMessage); } catch(e) {}
+
+            // -- Render Mermaid diagrams after stream ends ---------------------
+            try { renderMermaidDiagrams(currentAssistantMessage); } catch(e) {}
+        } else {
+            console.warn('[CHAT] onComplete: currentAssistantMessage is null!');
         }
 
-        if (window.MathJax && window.MathJax.typeset) {
-            window.MathJax.typeset([currentAssistantMessage]);
+        // -- Collapse turn processing block, show summary stats ---------
+        try { _endTurn(); } catch(e) { console.error('[CHAT] _endTurn error:', e.message); }
+
+        // -- Show task completion summary ---------------------------------
+        try { showTaskCompletionSummary(); } catch(e) { console.error('[CHAT] showTaskCompletionSummary error:', e.message); }
+
+        // -- Reset state ------------------------------------------------
+        currentAssistantMessage = null;
+        currentContent          = '';
+        _taskSummaryBuffer      = '';
+        _inTaskSummary          = false;
+        _chunkQueue.length      = 0;   // Clear any stale queued chunks
+        _chunkProcessing        = false;
+        _autoSaveChunkCounter   = 0;   // Reset auto-save counter
+    _lastFlushedContentLen = 0;  // Reset interleaved content tracker
+    window._fullAccumulatedLen = 0;
+
+        _onCompleteFinally = true;
+    } finally {
+        // ── GUARANTEED: always restore send/stop button state ────────────
+        var sendBtn = document.getElementById('sendBtn');
+        var stopBtn = document.getElementById('stopBtn');
+        if (sendBtn) sendBtn.style.display = 'flex';
+        if (stopBtn) stopBtn.style.display = 'none';
+
+        // Only run queue processing if we completed normally (not from early _stopRequested return)
+        if (_onCompleteFinally) {
+            _onGenerationComplete();
         }
-
-        // -- Final MathJax typeset (supports typesetPromise) ---------------
-        typesetMathJax(currentAssistantMessage);
-
-        // -- Render Mermaid diagrams after stream ends ---------------------
-        renderMermaidDiagrams(currentAssistantMessage);
-    } else {
-        console.warn('[CHAT] onComplete: currentAssistantMessage is null!');
     }
-
-    // -- Collapse turn processing block, show summary stats ---------
-    _endTurn();
-
-    // -- Show task completion summary ---------------------------------
-    showTaskCompletionSummary();
-
-    // -- Reset state ------------------------------------------------
-    currentAssistantMessage = null;
-    currentContent          = '';
-    _taskSummaryBuffer      = '';
-    _inTaskSummary          = false;
-    _chunkQueue.length      = 0;   // Clear any stale queued chunks
-    _chunkProcessing        = false;
-
-    var sendBtn = document.getElementById('sendBtn');
-    var stopBtn = document.getElementById('stopBtn');
-    if (sendBtn) sendBtn.style.display = 'flex';
-    if (stopBtn) stopBtn.style.display = 'none';
-
-    // -- Trigger queue processing ------------------------------------
-    _onGenerationComplete();
 }
 
 
@@ -11022,6 +11565,9 @@ window.continueTask = continueTask;
 function _sendNow(text) {
     _isGenerating = true;
     _stopRequested = false;  // Clear any previous stop so the new response is not suppressed
+    _autoSaveChunkCounter = 0;  // Reset auto-save counter for new generation
+    _lastFlushedContentLen = 0;  // Reset interleaved content tracker
+    window._fullAccumulatedLen = 0;  // Reset full buffer length tracker
     
     // Check if there are attached images
     var hasImages = _attachedImages.length > 0;
@@ -13512,13 +14058,46 @@ function protectMath(text) {
     // 2.2: Re-hide newly backtick-wrapped paths
     processed = processed.replace(/(`+[^`]+`+)/g, function(match) { return hideCode(match); });
 
-    // 3. Protect display math ($$...$$)
+    // 3. Protect display math ($$...$$) — but skip blocks that are AI reasoning
+    // or natural language accidentally wrapped in $$ delimiters.
+    // Heuristic: real LaTeX math is short, dense with math symbols, and lacks
+    // markdown structures. Long prose with tables/headings/code is NOT math.
     processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, function(match, content) {
+        // Skip if content is too long for real math (models sometimes wrap entire
+        // responses in $$, which crashes MathJax and shows garbled text).
+        if (content.length > 600) return match;
+        // Skip if content contains markdown structures (headings, code fences, tables, lists)
+        if (/^#{1,6}\s|```|\n\|\s|\n[-*]\s/.test(content)) return match;
+        // Skip if content is mostly natural language prose (high ratio of alphabetics to math symbols)
+        var alphaCount = (content.match(/[a-zA-Z]/g) || []).length;
+        var mathSymCount = (content.match(/[+\-*/=^<>{}[\]\\|&%#~`_]/g) || []).length;
+        if (alphaCount > 40 && mathSymCount < alphaCount * 0.25) return match;
+        // Skip if content looks like a sentence (has punctuation & spaces pattern of prose)
+        if (/[.!?]\s/.test(content) && content.length > 100) return match;
+
         var token = '<!--LPTOKEN:MATHDISP:' + _mathTokenCounter + '-->';
         _mathContext.tokens[token] = { type: 'mathdisp', content: content };
         _mathTokenCounter++;
         return token;
     });
+
+    // 3.5 Fix Broken LaTeX Delimiters (\[...\] and \(...\))
+    processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, function(match, content) {
+        var token = '<!--LPTOKEN:MATHDISP:' + _mathTokenCounter + '-->';
+        _mathContext.tokens[token] = { type: 'mathdisp', content: content };
+        _mathTokenCounter++;
+        return token;
+    });
+    processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, function(match, content) {
+        var token = '<!--LPTOKEN:MATHINLINE:' + _mathTokenCounter + '-->';
+        _mathContext.tokens[token] = { type: 'mathinline', content: content };
+        _mathTokenCounter++;
+        return token;
+    });
+
+    // 3.8: Protect currency $ signs (AFTER display math is safe, BEFORE inline math)
+    // $29, $99/mo, $1,000 etc. are prices, NOT LaTeX math delimiters.
+    processed = processed.replace(/\$(\d[\d,]*\.?\d*)(?![a-zA-Z_\^\\{])/g, '<!--LPTOKEN:DOLLAR-->$1');
 
     // 4. Protect inline math ($...$)
     processed = processed.replace(/(?<!\$)\$(?!\$)([^\$\n]+?)(?<!\$)\$(?!\$)/g, function(match, content) {
@@ -13540,6 +14119,38 @@ function protectMath(text) {
         return '$' + trimmed + '$' + trailing;
     });
 
+    // 5.5: Detect Unicode math symbols in prose and wrap for MathJax
+    // AI often outputs math with Unicode chars (², μ₀, √, 10⁻⁷, etc.) without
+    // $ delimiters. MathJax skips these unless wrapped in $...$ or $$...$$.
+    var mathLines = processed.split('\n');
+    for (var mi = 0; mi < mathLines.length; mi++) {
+        var mline = mathLines[mi];
+        if (mline.indexOf('<!--LPTOKEN:') !== -1) continue;
+        if (mline.indexOf('<!--PH_CODE_') !== -1) continue;
+        var mtrimmed = mline.trim();
+        if (!mtrimmed) continue;
+        if (/^#{1,6}\s/.test(mtrimmed)) continue;
+        if (/^[-*+]\s/.test(mtrimmed)) continue;
+        if (/^\d+[.)]\s/.test(mtrimmed)) continue;
+        if (/^>\s/.test(mtrimmed)) continue;
+        if (/<[a-zA-Z\/]/.test(mline)) continue;
+        if (/^[-─═_]{3,}$/.test(mtrimmed)) continue;
+        // Skip lines with CJK or Arabic scripts
+        if (/[\u4E00-\u9FFF\u3040-\u309F\u30A0-\u30FF\u0600-\u06FF]/.test(mtrimmed)) continue;
+        // Count Unicode math: Greek, super/subscripts, math operators, fractions
+        var ucMath = (mtrimmed.match(/[\u0391-\u03C9\u00B2\u00B3\u00B9\u2070-\u207F\u2080-\u208E\u2200-\u22FF\u221A-\u221E\u2248\u2260\u2264\u2265\u00B1\u00D7\u00F7\u22C5]/g) || []).length;
+        ucMath += (mtrimmed.match(/[\u00BC-\u00BE\u2150-\u215E]/g) || []).length;
+        // Equation pattern: "var = expr" with math chars nearby
+        var hasEq = /[=+\-*\/×÷]\s*[\d\u0391-\u03C9\u221A]/.test(mtrimmed);
+        if (ucMath >= 2 || (ucMath >= 1 && hasEq)) {
+            var leadWs = mline.match(/^(\s*)/)[1];
+            // Use $$ for display-style (long lines, fraction bars, multiple expressions)
+            var isDisplay = /[─═]{2,}/.test(mtrimmed) || mtrimmed.length > 70 || /[$]/.test(mtrimmed);
+            mathLines[mi] = leadWs + (isDisplay ? '$$' : '$') + mtrimmed + (isDisplay ? '$$' : '$');
+        }
+    }
+    processed = mathLines.join('\n');
+
     // 6. Restore code blocks
     codePlaceholders.forEach(function(code, id) {
         var placeholder = '<!--PH_CODE_' + id + '-->';
@@ -13552,15 +14163,17 @@ function protectMath(text) {
 // --- Restore math after marked.js ---
 function restoreMath(html) {
     if (!html) return html;
+    // Restore currency dollar signs — wrap in no-mathjax span so MathJax ignores them
+    html = html.replace(/<!--LPTOKEN:DOLLAR-->/g, '<span class="no-mathjax">$</span>');
     var tokens = _mathContext.tokens;
     for (var token in tokens) {
         if (!tokens.hasOwnProperty(token)) continue;
         var entry = tokens[token];
         var replacement;
         if (entry.type === 'mathdisp') {
-            replacement = '$$' + entry.content + '$$';
+            replacement = '$$' + balanceBraces(entry.content.trim()) + '$$';
         } else {
-            replacement = '$' + entry.content + '$';
+            replacement = '$' + balanceBraces(entry.content) + '$';
         }
         // Use split/join to avoid $ special replacement issues
         html = html.split(token).join(replacement);
@@ -13593,15 +14206,18 @@ function detectContentType(text) {
     if (/(?:^|\n)(?:Balance Sheet|Income Statement|Cash Flow|Debit|Credit|Accounting|Finance|Budget)\s*:/i.test(t)) return 'accounting';
     if (/(?:\$[\d,]+\.?\d*\s*(?:debit|credit|balance|expense|revenue))/i.test(t)) return 'accounting';
 
-    // Equation detection (pure math)
-    if (/^\s*(?:\\[a-zA-Z]+\{|\\sum|\\int|\\frac|\\sqrt|\\prod|\\lim|\\partial|\\nabla)/.test(t) && !/\n\n/.test(t)) return 'equation';
-    if (/^\s*\$\$[\s\S]+\$\$\s*$/.test(t)) return 'equation';
+    // Equation detection (pure math) — must NOT be a multi-paragraph
+    // markdown document with headings, code fences, or horizontal rules.
+    // These indicate a rich AI response, not a standalone equation.
+    var hasMarkdownStructure = /^#{1,6}\s/m.test(t) || /```/m.test(t) || /^[-─═_]{3,}/m.test(t) || /\n\n/.test(t);
+    if (/^\s*(?:\\[a-zA-Z]+\{|\\sum|\\int|\\frac|\\sqrt|\\prod|\\lim|\\partial|\\nabla)/.test(t) && !hasMarkdownStructure) return 'equation';
+    if (/^\s*\$\$[\s\S]+\$\$\s*$/.test(t) && t.length < 1000) return 'equation';
 
     // Calculation detection (step-by-step)
     if (/(?:^|\n)(?:Step\s+\d|Calculation|Solution|Working|Compute)\s*:/i.test(t) && /=\s*[\d.]/.test(t)) return 'calculation';
 
-    // Math result detection
-    if (/^\s*(?:The (?:result|answer|value) is|=)\s*[\d.]+\s*$/im.test(t)) return 'math';
+    // Math result detection — only for short single-line answers
+    if (t.length < 150 && /^\s*(?:The (?:result|answer|value) is|=)\s*[\d.]+\s*$/im.test(t)) return 'math';
 
     // Prompt list detection
     if (/(?:^|\n)(?:REFINED PROMPTS?|PROMPT SUGGESTIONS?|SUGGESTED PROMPTS?)\s*:/i.test(t)) return 'prompt-list';
@@ -13877,27 +14493,70 @@ function formatMessage(text, isUser) {
                 if (typeof cleanCode === 'string') {
                     cleanCode = cleanCode.replace(/^```[a-z]*\s*\n?/i, '');
                     cleanCode = cleanCode.replace(/\n?```\s*$/i, '');
+                    // Strip raw HTML <pre><code> tags that AI may return from web-scraped content
+                    if (cleanCode.indexOf('<pre>') !== -1 || cleanCode.indexOf('<code>') !== -1) {
+                        cleanCode = cleanCode
+                            .replace(/<\/?pre[^>]*>/gi, '')
+                            .replace(/<\/?code[^>]*>/gi, '');
+                    }
                 }
 
                 // Mermaid diagram
                 if (lang === 'mermaid') {
                     var mermaidId = 'mermaid-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
                     var encodedCode = cleanCode.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-                    return '<div class="mermaid-wrapper collapsed"><div class="mermaid-header">' +
-                        '<span><i class="fas fa-project-diagram"></i> Architecture Diagram</span>' +
-                        '<div class="mermaid-actions">' +
-                        '<button class="mermaid-action-btn mermaid-toggle-btn" onclick="toggleMermaidCard(this)" aria-label="Expand diagram" title="Expand">></button>' +
-                        '<button class="mermaid-action-btn" onclick="openMermaidPopup(this)" data-mermaid-src="' + encodedCode + '"><i class="fas fa-expand"></i> Expand</button>' +
-                        '<button class="mermaid-action-btn" onclick="copyMermaidCode(this)" data-mermaid-src="' + encodedCode + '"><i class="fas fa-copy"></i> Copy</button>' +
-                        '</div></div>' +
+                    return '<div class="mermaid-wrapper collapsed">' +
+                        '<div class="mermaid-header">' +
+                            '<div class="mermaid-header-left">' +
+                                '<span class="mermaid-header-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></span>' +
+                                '<div class="mermaid-header-title">' +
+                                    '<span>Architecture Diagram</span>' +
+                                    '<span class="mermaid-header-subtitle">Mermaid</span>' +
+                                '</div>' +
+                            '</div>' +
+                            '<div class="mermaid-actions">' +
+                                '<button class="mermaid-action-btn mermaid-toggle-btn" onclick="toggleMermaidCard(this)" aria-label="Expand diagram" title="Expand">' +
+                                    '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>' +
+                                '</button>' +
+                                '<button class="mermaid-action-btn" onclick="openMermaidPopup(this)" data-mermaid-src="' + encodedCode + '" title="Open in fullscreen">' +
+                                    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>' +
+                                    'Expand' +
+                                '</button>' +
+                                '<button class="mermaid-action-btn" onclick="copyMermaidCode(this)" data-mermaid-src="' + encodedCode + '" title="Copy source">' +
+                                    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>' +
+                                    'Copy' +
+                                '</button>' +
+                            '</div>' +
+                        '</div>' +
                         '<div class="mermaid-container" id="' + mermaidId + '" data-mermaid-pending="true" data-mermaid-code="' + encodedCode + '">' +
-                        '<div class="mermaid-loading"><i class="fas fa-spinner fa-spin"></i> Rendering diagram...</div>' +
+                            '<div class="mermaid-loading"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> Rendering diagram...</div>' +
                         '</div></div>';
                 }
 
                 // Math/LaTeX code block
                 if (lang === 'math' || lang === 'latex' || lang === 'tex') {
                     return '<div class="math-display" data-math-pending="true">$$' + cleanCode + '$$</div>';
+                }
+
+                // Detect math inside unlabeled/text/plaintext code blocks that AI wraps
+                // in code fences. Math formulas with Unicode chars (μ₀, 10⁻⁷, √, ²)
+                // inside ```text / ```plaintext blocks should render as MathJax math.
+                var isTextLike = (lang === 'text' || lang === 'plaintext' || lang === 'plain' || lang === 'txt' || !lang);
+                if (isTextLike) {
+                    var sample = cleanCode.substring(0, 300);
+                    // Count Unicode math symbols in the sample
+                    var mathScore = (sample.match(/[\u0391-\u03C9\u00B2\u00B3\u00B9\u2070-\u207F\u2080-\u208E\u2200-\u22FF\u221A-\u221E\u2248\u2260\u2264\u2265\u00B1\u00D7\u00F7\u22C5]/g) || []).length;
+                    // Count LaTeX commands
+                    mathScore += (sample.match(/\\[a-zA-Z]+\{/g) || []).length;
+                    // Count equation-like patterns (var = expr with math)
+                    var eqLines = (sample.match(/^[^a-zA-Z]*[a-zA-Z\d₀₁₂₃₄₅₆₇₈₉]\s*[=+\-×÷]\s*[\d\u0391-\u03C9\u221A]/gm) || []).length;
+                    mathScore += eqLines;
+                    // SKIP if it looks like actual code (has keywords, semicolons, braces)
+                    var isCode = /\b(function|class|var |const |let |import |def |return|if |for |while|print|console\.|require\(|from |async|await|export|module\.|\w+\s*=\s*require|#include|package |using |namespace)\b/.test(sample);
+                    isCode = isCode || /[{}();]/.test(sample) && mathScore < 5;
+                    if (mathScore >= 3 && !isCode) {
+                        return '<div class="math-display" data-math-pending="true">$$' + cleanCode + '$$</div>';
+                    }
                 }
 
                 // Regular code: highlight with hljs
@@ -14106,6 +14765,13 @@ function ensureMermaidPopupElements() {
 }
 
 function openMermaidPopup(btn) {
+    // Debounce: prevent rapid repeated opens
+    if (btn && btn.dataset.opening === '1') return;
+    if (btn) {
+        btn.dataset.opening = '1';
+        setTimeout(function() { btn.dataset.opening = ''; }, 2000);
+    }
+    
     var src = btn && btn.getAttribute ? btn.getAttribute('data-mermaid-src') : '';
     if (!src) {
         if (typeof window.showToast === 'function') {
@@ -14117,6 +14783,14 @@ function openMermaidPopup(btn) {
     }
 
     var decoded = decodeMermaidSource(src);
+    
+    // Open in main IDE editor area (full-screen)
+    if (bridge && typeof bridge.on_open_mermaid_fullscreen === 'function') {
+        bridge.on_open_mermaid_fullscreen(decoded);
+        return;
+    }
+    
+    // Fallback: show inline overlay if bridge not available
     var overlay = ensureMermaidPopupElements();
     var frame = document.getElementById('mermaid-popup-frame');
     if (!frame) return;
@@ -14153,8 +14827,6 @@ function openMermaidPopup(btn) {
     };
     frame.addEventListener('load', onLoad);
 
-    // If the iframe is already loaded but its ready ping was missed,
-    // try a delayed post as a fallback.
     setTimeout(function() {
         if (overlay.classList.contains('visible') && frame.dataset.ready === '1') {
             postDiagram();

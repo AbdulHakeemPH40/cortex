@@ -147,6 +147,17 @@ def main():
     except Exception as e:
         log.debug(f"[CRASH] faulthandler not enabled: {e}")
 
+    # ═══════════════════════════════════════════════════════════════
+    # STABILITY ENGINE — The Anti-Crash Guardian
+    # Monitors CPU/RAM and gracefully degrades instead of crashing.
+    # ═══════════════════════════════════════════════════════════════
+    try:
+        from src.core.stability_engine import init_stability_engine
+        _stability = init_stability_engine()
+        log.info("[STABILITY] Anti-Crash Guardian active")
+    except Exception as e:
+        log.warning(f"[STABILITY] Could not start stability engine: {e}")
+
     # HiDPI support is automatic in Qt6
     
     app = QApplication(sys.argv)
@@ -238,6 +249,8 @@ def main():
         if _shutdown_saved:
             return
         _shutdown_saved = True
+
+        # ── 1. Save agent state snapshot ──
         try:
             from src.core.agent_session_manager import save_snapshot
             from src.ai.agent_bridge import get_agent_bridge
@@ -247,8 +260,9 @@ def main():
                 log.info(f"[SHUTDOWN] Agent state saved (reason: {reason})")
         except Exception as e:
             log.warning(f"[SHUTDOWN] Failed to save agent state: {e}")
+
+        # ── 2. Flush settings ──
         try:
-            # Force settings flush
             from src.config.settings import get_settings
             settings = get_settings()
             if hasattr(settings, 'sync'):
@@ -258,15 +272,46 @@ def main():
             log.info(f"[SHUTDOWN] Settings flushed (reason: {reason})")
         except Exception as e:
             log.warning(f"[SHUTDOWN] Failed to flush settings: {e}")
-        # Persist chat history to SQLite (fire-and-forget via window reference)
+
+        # ── 3. Persist chat history — CRITICAL: chats must survive ANY crash ──
+        # Try JavaScript first (requires Chromium alive), then direct DB fallback.
+        _chat_saved = False
         try:
             if window and hasattr(window, '_ai_chat') and window._ai_chat:
-                window._ai_chat.run_javascript(
-                    "if(window.saveProjectChats) saveProjectChats(window.chats);"
-                )
-                log.info(f"[SHUTDOWN] Chat persistence triggered (reason: {reason})")
+                try:
+                    window._ai_chat.run_javascript(
+                        "if(window.saveProjectChats) saveProjectChats(window.chats);"
+                    )
+                    log.info(f"[SHUTDOWN] Chat persistence via JS (reason: {reason})")
+                    _chat_saved = True
+                except Exception:
+                    pass  # Chromium may be dead
+
+            # Direct DB fallback — works even when Chromium is dead
+            if not _chat_saved:
+                try:
+                    from src.ai.agent_bridge import get_agent_bridge
+                    bridge = get_agent_bridge()
+                    if bridge is not None:
+                        saved = bridge.save_conversation_to_db()
+                        if saved:
+                            log.info(f"[SHUTDOWN] Chat persistence via direct DB (reason: {reason})")
+                            _chat_saved = True
+                except Exception as e:
+                    log.warning(f"[SHUTDOWN] Direct DB chat save failed: {e}")
+
+            if not _chat_saved:
+                log.warning(f"[SHUTDOWN] Chat persistence FAILED — chats may be lost (reason: {reason})")
         except Exception as e:
             log.warning(f"[SHUTDOWN] Failed to trigger chat persistence: {e}")
+
+        # ── 4. Register with stability engine for future emergency saves ──
+        try:
+            from src.core.stability_engine import get_stability_engine
+            engine = get_stability_engine()
+            engine.register_callback("emergency_save_main", lambda: _emergency_save("stability_engine"))
+        except Exception:
+            pass
 
     def _auto_save_tick() -> None:
         """Periodic background save — fires every 30s when IDE is idle."""

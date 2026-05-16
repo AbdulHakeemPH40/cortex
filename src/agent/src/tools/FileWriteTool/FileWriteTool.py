@@ -301,8 +301,20 @@ def read_file_sync_with_metadata(path: str) -> Dict[str, Any]:
     }
 
 def write_text_content(path: str, content: str, encoding: str, line_endings: str) -> None:
-    """Write text content with specified encoding and line endings."""
-    # Note: For Write tool, we use the line endings from content directly
+    """Write text content with specified encoding and line endings.
+    
+    CRITICAL: Always normalize to \\n first, then convert to target endings.
+    This prevents doubled lines when content has mixed or already-converted endings.
+    """
+    # Step 1: Normalize ALL line endings to \n (handles \r\n, \r, \n)
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
+    
+    # Step 2: Convert to target line endings
+    if line_endings == "CRLF":
+        content = content.replace("\n", "\r\n")
+    # Note: For Write tool, we use LF as default (line_endings parameter is "LF")
+    
+    # Step 3: Write with newline="" to prevent Python from adding more conversions
     with open(path, "w", encoding=encoding, newline="") as f:
         f.write(content)
 

@@ -293,10 +293,19 @@ def verify_edit(path: str, old_string: str, new_string: str, replace_all: bool) 
         return False
 
 def write_text_content(path: str, content: str, encoding: str, line_endings: str) -> None:
-    """Write text content with specified encoding and line endings."""
+    """Write text content with specified encoding and line endings.
+    
+    CRITICAL: Always normalize to \\n first, then convert to target endings.
+    This prevents doubled lines when content has mixed or already-converted endings.
+    """
+    # Step 1: Normalize ALL line endings to \n (handles \r\n, \r, \n)
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
+    
+    # Step 2: Convert to target line endings
     if line_endings == "CRLF":
         content = content.replace("\n", "\r\n")
     
+    # Step 3: Write with newline="" to prevent Python from adding more conversions
     with open(path, "w", encoding=encoding, newline="") as f:
         f.write(content)
 

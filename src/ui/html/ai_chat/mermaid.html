@@ -616,8 +616,16 @@
         }
       });
 
-      // Render a tiny fallback if user opens mermaid.html directly.
-      renderDiagram('graph TD; A[Ready] --> B[Send Diagram From Chat];');
+      // Expose renderDiagram globally so Python runJavaScript can call it
+      window.renderDiagram = renderDiagram;
+
+      // Only render fallback if opened standalone (not via iframe popup, not via Python).
+      // When opened as a popup, the parent sends 'renderMermaid' via postMessage.
+      // When opened by Python, code is injected via runJavaScript.
+      var _params = new URLSearchParams(window.location.search);
+      if (window.parent === window && !_params.has('noautoload')) {
+        renderDiagram('graph TD; A[Ready] --> B[Send Diagram From Chat];');
+      }
     })();
   </script>
 </body>

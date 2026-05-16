@@ -28,8 +28,8 @@ Env vars:
                                       (sk-* = pay-as-you-go, tp-* = token plan)
   CORTEX_MIMO_MAX_RETRIES          — int, default 4
   CORTEX_MIMO_CONNECT_TIMEOUT_SEC  — float, default 20.0
-  CORTEX_MIMO_READ_TIMEOUT_SEC     — float, default 40.0
-  CORTEX_MIMO_TOOL_READ_TIMEOUT_SEC — float, default 50.0
+  CORTEX_MIMO_READ_TIMEOUT_SEC     — float, default 120.0
+  CORTEX_MIMO_TOOL_READ_TIMEOUT_SEC — float, default 180.0
 """
 import os
 import json
@@ -77,8 +77,8 @@ class MimoProvider(BaseProvider):
         self._max_retries = self._get_int_env("CORTEX_MIMO_MAX_RETRIES", 4, minimum=1, maximum=5)
         self._retry_delay = 1.0
         self._connect_timeout = self._get_float_env("CORTEX_MIMO_CONNECT_TIMEOUT_SEC", 20.0, minimum=1.0, maximum=120.0)
-        self._read_timeout = self._get_float_env("CORTEX_MIMO_READ_TIMEOUT_SEC", 40.0, minimum=3.0, maximum=300.0)
-        self._tool_read_timeout = self._get_float_env("CORTEX_MIMO_TOOL_READ_TIMEOUT_SEC", 50.0, minimum=5.0, maximum=300.0)
+        self._read_timeout = self._get_float_env("CORTEX_MIMO_READ_TIMEOUT_SEC", 120.0, minimum=3.0, maximum=600.0)
+        self._tool_read_timeout = self._get_float_env("CORTEX_MIMO_TOOL_READ_TIMEOUT_SEC", 180.0, minimum=5.0, maximum=600.0)
         self._token_count = {"input": 0, "output": 0}
 
     # ─── env helpers ──────────────────────────────────────────────────────────
@@ -164,6 +164,39 @@ class MimoProvider(BaseProvider):
         """Set the Mimo API key at runtime."""
         self._api_key = api_key
         super().set_api_key(api_key)
+
+    # ─── message formatting (MiMo-specific) ────────────────────────────────
+
+    def _format_messages_for_provider(self, messages: List[ChatMessage]) -> List[Dict[str, Any]]:
+        """Format messages for MiMo API.
+
+        MiMo REQUIRES reasoning_content to be present on assistant messages
+        when using thinking mode. If reasoning_content is missing from an
+        assistant message that has content, the API returns HTTP 400:
+          "The reasoning_content in the thinking mode must be passed back to the API."
+
+        We defensively ensure all assistant messages include reasoning_content
+        (defaulting to empty string if not available).
+        """
+        formatted: List[Dict[str, Any]] = []
+        for msg in messages:
+            m: Dict[str, Any] = {"role": msg.role, "content": msg.content}
+            if msg.name:
+                m["name"] = msg.name
+            if msg.tool_calls:
+                m["tool_calls"] = msg.tool_calls
+                if not msg.content:
+                    m["content"] = None
+            if msg.tool_call_id:
+                m["tool_call_id"] = msg.tool_call_id
+            # MiMo thinking mode: always include reasoning_content on assistant messages
+            if msg.role == "assistant":
+                _rc = getattr(msg, "reasoning_content", None)
+                m["reasoning_content"] = _rc if _rc else ""
+            elif hasattr(msg, "reasoning_content") and getattr(msg, "reasoning_content"):
+                m["reasoning_content"] = getattr(msg, "reasoning_content")
+            formatted.append(m)
+        return formatted
 
     # ─── chat (non-streaming) ─────────────────────────────────────────────────
 
@@ -270,6 +303,22 @@ class MimoProvider(BaseProvider):
                     return ChatResponse(
                         content="", model=model, provider="mimo",
                         error=f"QUOTA_EXHAUSTED: {_resp_body}",
+                        duration_ms=(time.time() - start_time) * 1000,
+                    )
+
+                # Non-retryable parameter errors (400)
+                if status == 400:
+                    _is_reasoning_err = "reasoning_content" in _resp_body.lower()
+                    if _is_reasoning_err:
+                        log.error(
+                            f"Mimo API HTTP 400: reasoning_content mismatch — "
+                            f"conversation history missing thinking data. Body: {_resp_body[:300]}"
+                        )
+                    else:
+                        log.error(f"Mimo API HTTP 400 (non-retryable): {_resp_body[:300]}")
+                    return ChatResponse(
+                        content="", model=model, provider="mimo",
+                        error=f"HTTP 400: {_resp_body[:200]}",
                         duration_ms=(time.time() - start_time) * 1000,
                     )
 
@@ -424,6 +473,23 @@ class MimoProvider(BaseProvider):
                     raise RuntimeError(
                         f"QUOTA_EXHAUSTED: Mimo daily token quota reached — {_resp_body}"
                     )
+
+                # Non-retryable parameter errors (400) — especially the
+                # "reasoning_content must be passed back" error from MiMo.
+                # Retrying won't help; return a clear error immediately.
+                if status == 400:
+                    _is_reasoning_err = "reasoning_content" in _resp_body.lower()
+                    if _is_reasoning_err:
+                        log.error(
+                            f"Mimo API stream HTTP 400: reasoning_content mismatch — "
+                            f"conversation history may be missing thinking data. "
+                            f"Clearing history for this request. Body: {_resp_body[:300]}"
+                        )
+                        yield "[Error: MiMo requires reasoning_content in thinking mode. Please start a new chat.]"
+                    else:
+                        log.error(f"Mimo API stream HTTP 400 (non-retryable): {_resp_body[:300]}")
+                        yield f"[Error: HTTP 400 — {_resp_body[:200]}]"
+                    return
 
                 if status in (429, 502, 503, 504) and attempt < self._max_retries:
                     log.warning(f"Mimo API stream transient HTTP {status} (attempt {attempt + 1})")
